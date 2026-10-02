@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { isAuthenticated } from '../auth';
+import { getPlatformUserId } from '../authIdentity';
 import { callClaudeWebSearch } from '../claude';
 import {
   discoverLegalMeshTier3,
@@ -27,6 +28,7 @@ import {
   buildSpectraDiscoveryWaves,
   SPECTRA_DISCOVERY_POLICY,
 } from '../services/spectra/SpectraSourceRegistry';
+import { persistSpectraAcquisition } from '../services/spectra/SpectraAcquisitionPersistence';
 
 const router = Router();
 router.use(isAuthenticated);
@@ -55,6 +57,7 @@ const directEvidenceSchema = z.object({
 const acquireSchema = z.object({
   target: z.string().trim().min(1).max(500),
   details: z.string().trim().min(1).max(4000),
+  sessionId: z.string().trim().min(1).max(200).optional(),
   directEvidence: z.array(directEvidenceSchema).max(20).default([]),
 });
 
@@ -580,7 +583,11 @@ router.post('/acquire', async (req: Request, res: Response) => {
     });
   }
 
-  const { target, details, directEvidence } = parsed.data;
+  const { target, details, directEvidence, sessionId: requestedSessionId } = parsed.data;
+  const userId = getPlatformUserId(req.user as any);
+  if (!userId) {
+    return res.status(401).json({ success: false, error: 'Authentication required.' });
+  }
   const normalizedTarget = normalizeTargetIntent(target);
   const combinedTargetText = [normalizedTarget, details].filter(Boolean).join(' ');
   const phone = extractPhoneNumber(combinedTargetText);
@@ -915,11 +922,38 @@ router.post('/acquire', async (req: Request, res: Response) => {
       sourceKeys.add(discoverySourceKey({ url }));
     }
 
+    const persistence = await persistSpectraAcquisition({
+      userId,
+      sessionId: requestedSessionId,
+      subjectLabel: resolvedTargetLabel,
+      clues: [target, details],
+      observations: qualityLocationObservations,
+      state: {
+        identityConfidence,
+        locationConfidence,
+        sourceCount: sourceKeys.size,
+        discoveryPasses,
+        discoveryQueriesAttempted,
+        discoveryQueriesFailed,
+        lastAcquiredAt: new Date().toISOString(),
+      },
+    }).catch(error => {
+      console.warn('[SPECTRA] Persistence unavailable', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return {
+        available: false,
+        sessionId: requestedSessionId || '',
+      };
+    });
+
     return res.json({
       success: true,
       target,
       details,
       resolvedTargetLabel,
+      sessionId: persistence.sessionId || requestedSessionId,
+      persistenceAvailable: persistence.available,
       acquisition: {
         identityConfidence,
         locationConfidence,
