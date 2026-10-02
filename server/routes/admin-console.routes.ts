@@ -47,8 +47,8 @@ const strictAuth = (req: Request, res: Response, next: () => void) => {
 
   const user = req.user as Express.User;
   
-  // Check if user has admin access (master password or admin bypass)
-  if (!user.isMasterBypass && !user.isAdminBypass) {
+  // The master password session is the sole browser admin authority.
+  if (!user.isMasterBypass) {
     return res.status(403).json({
       success: false,
       error: 'Forbidden',
