@@ -1272,6 +1272,10 @@ must(
   'document export must retain strict server validation/type identity',
 );
 must(
+  conversation.includes("{ role: 'lexara', content: String(data?.response || '').trim() }"),
+  'same-turn grounded Lexara guidance must remain in the legal-document handoff',
+);
+must(
   consultationRoutes.includes("/api/lexara/documents/official-form") &&
     conversation.includes("/api/lexara/documents/official-form"),
   'mandatory verified official forms must continue from Lexara conversation into completion/download',

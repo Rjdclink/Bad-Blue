@@ -1329,7 +1329,9 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       if (documentIntentRequested) {
         const resolvedJurisdiction = String(data?.jurisdiction || jurisdiction || '').trim();
         if (resolvedJurisdiction) {
-          const facts = [...previousMessages, { role: 'user', content: message }]
+          // Preserve Lexara's current grounded answer in the document handoff so
+          // same-turn background findings already used in legal guidance are not dropped.
+          const facts = [...previousMessages, { role: 'user', content: message }, { role: 'lexara', content: String(data?.response || '').trim() }]
             .map(item => `${item.role === 'user' ? 'USER' : 'LEXARA'}: ${item.content}`)
             .join('\n\n')
             .slice(-30000);
