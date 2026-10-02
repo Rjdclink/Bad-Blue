@@ -213,7 +213,7 @@ const telemetryBatchSchema = z.object({
   sessionId: z.string().trim().min(1).max(200).optional(),
   subjectLabel: z.string().trim().min(1).max(500).optional(),
   sourceId: z.string().trim().min(1).max(200).optional(),
-  measurements: z.array(telemetryMeasurementSchema).min(1).max(250),
+  measurements: z.array(telemetryMeasurementSchema).min(1).max(2000),
   metadata: z.record(z.unknown()).optional(),
 });
 
@@ -1349,7 +1349,7 @@ router.post('/telemetry/import', async (req: Request, res: Response) => {
       sessionId: validation.data.sessionId,
       subjectLabel: validation.data.subjectLabel,
       sourceId: `import:${validation.data.format}`,
-      measurements: imported.slice(0, 250).map(point => ({
+      measurements: imported.map(point => ({
         kind: 'position',
         source,
         timestamp: point.timestamp,
