@@ -286,6 +286,7 @@ test('SPECTRA universal telemetry gateway accepts browser, provider, radio and r
   geoconsoleRoutes.includes("router.post('/telemetry-ingest'") &&
   geoconsoleRoutes.includes("router.post('/telemetry/provider/:providerId'") &&
   geoconsoleRoutes.includes('googleRadioPoint') &&
+  geoconsoleRoutes.includes('beaconDbRadioPoint') &&
   geoconsoleRoutes.includes('openCellIdPoint') &&
   geoconsoleRoutes.includes('rangingPoint'));
 test('Structured telemetry imports cover the supported interchange formats',
@@ -322,6 +323,7 @@ test('SPECTRA acquisition session stays attached to GeoRuntime and telemetry upd
 test('SPECTRA adapter capability registry truthfully exposes optional and built-in lanes',
   adapterRegistry.includes("id: 'browser-geolocation'") &&
   adapterRegistry.includes("id: 'signed-provider-webhook'") &&
+  adapterRegistry.includes("id: 'beacondb-radio-geolocation'") &&
   adapterRegistry.includes("id: 'structured-telemetry-import'") &&
   adapterRegistry.includes("id: 'trafficland'") &&
   adapterRegistry.includes("id: 'overpass-place-context'") &&
