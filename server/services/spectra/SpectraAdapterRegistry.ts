@@ -45,7 +45,8 @@ export const SPECTRA_ADAPTER_CAPABILITIES: SpectraAdapterCapability[] = [
     mode: 'provider-webhook',
     sourceTypes: [
       'device_gps','gnss_fix','gnss_raw','vehicle_telemetry',
-      'wifi_fingerprint','cellular','wifi_rtt','uwb_range','uwb_direction',
+      'visual_detection','network_region',
+      'wifi_fingerprint','cellular','wifi_rtt','wifi_rssi','uwb_range','uwb_direction',
       'bluetooth_proximity','ble_rssi','ble_aoa',
       'accelerometer','imu_gyro','magnetometer','barometer',
     ],
