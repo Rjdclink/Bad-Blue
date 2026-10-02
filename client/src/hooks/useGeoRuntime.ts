@@ -42,6 +42,7 @@ export interface GeoRuntimeConfig {
   autoFetch: boolean;
   interpolationEnabled: boolean;
   predictiveEnabled: boolean;
+  sessionId?: string;
 }
 
 export interface GeoRuntimeState {
@@ -130,11 +131,14 @@ export function useGeoRuntime(
   
   // Config (not memoized to avoid stale closures)
   const cfg: GeoRuntimeConfig = { ...DEFAULT_CONFIG, ...config };
+  const configuredSessionId = typeof cfg.sessionId === 'string' && cfg.sessionId.trim()
+    ? cfg.sessionId.trim()
+    : null;
 
   // Core state - frames array (IMMUTABLE updates only)
   const [frames, setFrames] = useState<GeoFrame[]>([]);
   const [futurecastFrames, setFuturecastFrames] = useState<GeoFrame[]>([]);
-  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(configuredSessionId);
   
   // Index state - this is what drives frame selection
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -158,6 +162,10 @@ export function useGeoRuntime(
   useEffect(() => {
     framesRef.current = frames;
   }, [frames]);
+
+  useEffect(() => {
+    if (configuredSessionId) setSessionId(configuredSessionId);
+  }, [configuredSessionId]);
 
   // Convert GPS points to frames
   const convertToFrames = useCallback((points: GPSPoint[]): GeoFrame[] => {
@@ -316,7 +324,7 @@ export function useGeoRuntime(
         framesRef.current = [];
         setFrames([]);
         setFuturecastFrames([]);
-        setSessionId(null);
+        setSessionId(configuredSessionId);
         setCurrentIndex(0);
         setIsPlaying(false);
         setIsLive(false);
@@ -327,7 +335,7 @@ export function useGeoRuntime(
 
       let canonicalPoints = points;
       let canonicalFuturecast: GeoFrame[] | null = null;
-      setSessionId(null);
+      if (!configuredSessionId) setSessionId(null);
 
       try {
         const response = await fetch('/api/geoconsole/process', {
@@ -335,6 +343,7 @@ export function useGeoRuntime(
           credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
+            sessionId: configuredSessionId || sessionId || undefined,
             inputs: points.map(point => ({
               ...point,
               timestamp: new Date(point.timestamp).toISOString(),
@@ -457,8 +466,10 @@ export function useGeoRuntime(
   }, [
     convertToFrames,
     cfg.maxFrameBuffer,
+    configuredSessionId,
     predictionPayloadToFrames,
     requestAuthoritativeFuturecast,
+    sessionId,
   ]);
 
 
