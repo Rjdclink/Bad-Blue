@@ -1721,6 +1721,36 @@ export class DatabaseStorage implements IStorage {
       .where(and(
         eq(lexaraConversations.userId, userId),
         sql`${lexaraConversations.context}->'representationMatter' IS NOT NULL`,
+      ))
+      .orderBy(desc(lexaraConversations.createdAt), desc(lexaraConversations.id))
+      .limit(limit);
+
+    const seen = new Set<string>();
+    return rows.flatMap(row => {
+      const matter = (row.context as any)?.representationMatter;
+      const key = String(matter?.matterId || row.sessionId || '').trim();
+      if (!key || seen.has(key) || !matter || typeof matter !== 'object') return [];
+      seen.add(key);
+      return [{ sessionId: row.sessionId, matter, createdAt: row.createdAt }];
+    });
+  }
+
+  /**
+   * Restore only completed/usable matter snapshots for live reasoning. Pending
+   * background-enrichment rows stay durable but cannot temporarily outrank the
+   * last complete matter state.
+   */
+  async getUserLexaraRestorableMatterStates(userId: string, limit = 200) {
+    const rows = await getLexaraConversationPersistenceDb()
+      .select({
+        sessionId: lexaraConversations.sessionId,
+        context: lexaraConversations.context,
+        createdAt: lexaraConversations.createdAt,
+      })
+      .from(lexaraConversations)
+      .where(and(
+        eq(lexaraConversations.userId, userId),
+        sql`${lexaraConversations.context}->'representationMatter' IS NOT NULL`,
         sql`(
           ${lexaraConversations.context}->'matterEnrichmentJob' IS NULL
           OR ${lexaraConversations.context}->'matterEnrichmentJob'->>'status' = 'failed'
