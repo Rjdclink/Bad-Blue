@@ -996,6 +996,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     if (!historyReadyRef.current) return;
     const message = rawMessage.trim();
     if (!message) return;
+    const spectraTarget = spectraTargetFromPrompt(message);
 
     // Speech that arrives while legal analysis is running is a new conversational
     // turn, never a continuation silently grafted onto the prior blue bubble.
@@ -1105,6 +1106,20 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         role: item.role,
         content: item.content,
       }));
+
+    const spectraLaunch: ConversationMessage['spectraLaunch'] = spectraTarget
+      ? {
+          target: spectraTarget,
+          clues: [
+            ...previousMessages
+              .filter(item => item.role === 'user')
+              .slice(-12)
+              .map(item => item.content),
+            message,
+          ].join('\n').slice(-8_000),
+          lexaraSessionId: sessionIdRef.current,
+        }
+      : undefined;
 
     const userEmotion = emotionFromUserText(message);
     responseEmotionRef.current = userEmotion === 'calm' ? 'authoritative' : userEmotion;
@@ -1447,8 +1462,9 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
 
         if (streamedAnswerMessageId) {
           updateMessageContent(streamedAnswerMessageId, answer);
+          if (spectraLaunch) attachSpectraLaunch(streamedAnswerMessageId, spectraLaunch);
         } else {
-          appendMessage('lexara', answer);
+          appendMessage('lexara', answer, spectraLaunch);
         }
         // A document-action turn owns the artifact handoff. Keep the full draft
         // visible in chat, but do not feed document bodies/markup/placeholders
@@ -1514,7 +1530,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         }
       }
     }
-  }, [appendMessage, clearVoiceTurnBuffer, jurisdiction, lawTypeId, lawTypeName, liveEnabled, pendingDocument, representationMatter, resumeListening, setConversationPhase, speakLexara, stopSpeaking, updateMessageContent, voiceReady]);
+  }, [appendMessage, attachSpectraLaunch, clearVoiceTurnBuffer, jurisdiction, lawTypeId, lawTypeName, liveEnabled, pendingDocument, representationMatter, resumeListening, setConversationPhase, speakLexara, stopSpeaking, updateMessageContent, voiceReady]);
 
   handleMessageRef.current = handleUserMessage;
 
