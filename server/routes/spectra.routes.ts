@@ -678,7 +678,7 @@ router.post('/device-observation', async (req: Request, res: Response) => {
     point = await acquireRadioPosition({
       ...input,
       timestamp: new Date(input.timestamp),
-    }, req.signal);
+    });
   } else {
     point = acquireRangingPosition({
       ...input,
@@ -728,8 +728,7 @@ router.get('/cameras', async (req: Request, res: Response) => {
     latitude: parsed.data.lat,
     longitude: parsed.data.lng,
     radiusMeters: parsed.data.radiusMeters,
-    signal: req.signal,
-  });
+      });
 
   return res.json({
     success: true,
