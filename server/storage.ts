@@ -1721,6 +1721,10 @@ export class DatabaseStorage implements IStorage {
       .where(and(
         eq(lexaraConversations.userId, userId),
         sql`${lexaraConversations.context}->'representationMatter' IS NOT NULL`,
+        sql`(
+          ${lexaraConversations.context}->'matterEnrichmentJob' IS NULL
+          OR ${lexaraConversations.context}->'matterEnrichmentJob'->>'status' = 'failed'
+        )`,
       ))
       .orderBy(desc(lexaraConversations.createdAt), desc(lexaraConversations.id))
       .limit(limit);
@@ -1733,6 +1737,21 @@ export class DatabaseStorage implements IStorage {
       seen.add(key);
       return [{ sessionId: row.sessionId, matter, createdAt: row.createdAt }];
     });
+  }
+
+  async getLatestCompletedLexaraMatterEnrichmentState(userId: string, sessionId: string) {
+    const [row] = await getLexaraConversationPersistenceDb()
+      .select({ context: lexaraConversations.context })
+      .from(lexaraConversations)
+      .where(and(
+        eq(lexaraConversations.userId, userId),
+        eq(lexaraConversations.sessionId, sessionId),
+        sql`${lexaraConversations.context}->'representationMatter' IS NOT NULL`,
+        sql`${lexaraConversations.context}->>'matterEnrichmentCompletedAt' IS NOT NULL`,
+      ))
+      .orderBy(desc(lexaraConversations.createdAt), desc(lexaraConversations.id))
+      .limit(1);
+    return (row?.context as any)?.representationMatter || null;
   }
 
   /**
@@ -1793,9 +1812,14 @@ export class DatabaseStorage implements IStorage {
     const result = await getLexaraConversationPersistenceDb().execute(sql`
       UPDATE lexara_conversations
       SET context = jsonb_set(
-        COALESCE(context, '{}'::jsonb) - 'matterEnrichmentJob',
-        '{representationMatter}',
-        ${serialized}::jsonb,
+        jsonb_set(
+          COALESCE(context, '{}'::jsonb) - 'matterEnrichmentJob',
+          '{representationMatter}',
+          ${serialized}::jsonb,
+          true
+        ),
+        '{matterEnrichmentCompletedAt}',
+        to_jsonb(NOW()::text),
         true
       )
       WHERE id = ${conversationId}
