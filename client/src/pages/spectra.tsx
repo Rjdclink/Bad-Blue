@@ -26,6 +26,22 @@ interface MediaExtractionResponse {
   error?: string;
 }
 
+interface TelemetryImportResponse {
+  success?: boolean;
+  error?: string;
+  data?: {
+    sessionId?: string;
+    parsedObservationCount?: number;
+    processedObservationCount?: number;
+    persistence?: { available?: boolean };
+  };
+}
+
+function isSpectraTelemetryFile(file: File): boolean {
+  const extension = file.name.toLowerCase().split('.').pop() || '';
+  return ['geojson', 'gpx', 'kml', 'nmea', 'csv', 'ndjson', 'jsonl', 'log', 'txt'].includes(extension);
+}
+
 interface AcquisitionResponse {
   success: boolean;
   error?: string;
@@ -212,6 +228,7 @@ export default function SpectraPage() {
     targetValue: string,
     detailsValue: string,
     extraEvidence: GPSPoint[] = directEvidence,
+    sessionOverride?: string,
   ) => {
     const requestId = ++requestRef.current;
     setPhase('acquiring');
@@ -299,7 +316,7 @@ export default function SpectraPage() {
         body: JSON.stringify({
           target: targetValue,
           details: detailsValue,
-          sessionId: spectraSessionId || undefined,
+          sessionId: sessionOverride || spectraSessionId || undefined,
           directEvidence: extraEvidence.map(point => ({
             ...point,
             timestamp: new Date(point.timestamp).toISOString(),
