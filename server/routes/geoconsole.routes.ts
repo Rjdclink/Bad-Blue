@@ -604,6 +604,178 @@ router.get('/public-geotagged-media', async (req: Request, res: Response) => {
   });
 });
 
+interface EnvironmentContextResult {
+  weather?: Record<string, unknown>;
+  earthObservation?: Array<Record<string, unknown>>;
+}
+
+async function nwsLatestObservation(lat: number, lng: number): Promise<Record<string, unknown> | null> {
+  const headers = {
+    Accept: 'application/geo+json,application/json',
+    'User-Agent': 'LegalWhat-SPECTRA/1.0',
+  };
+
+  try {
+    const pointResponse = await fetch(`https://api.weather.gov/points/${lat},${lng}`, {
+      headers,
+      signal: AbortSignal.timeout(6_000),
+    });
+    if (!pointResponse.ok) return null;
+    const point: any = await pointResponse.json();
+    const stationsUrl = String(point?.properties?.observationStations || '').trim();
+    if (!/^https:\/\/api\.weather\.gov\//i.test(stationsUrl)) return null;
+
+    const stationResponse = await fetch(`${stationsUrl}?limit=1`, {
+      headers,
+      signal: AbortSignal.timeout(6_000),
+    });
+    if (!stationResponse.ok) return null;
+    const stationPayload: any = await stationResponse.json();
+    const station = Array.isArray(stationPayload?.features) ? stationPayload.features[0] : null;
+    const stationId = String(station?.properties?.stationIdentifier || '').trim();
+    if (!stationId) return null;
+
+    const observationResponse = await fetch(
+      `https://api.weather.gov/stations/${encodeURIComponent(stationId)}/observations/latest`,
+      {
+        headers,
+        signal: AbortSignal.timeout(6_000),
+      },
+    );
+    if (!observationResponse.ok) return null;
+    const observation: any = await observationResponse.json();
+    const properties = observation?.properties || {};
+    return {
+      provider: 'National Weather Service',
+      stationId,
+      stationName: station?.properties?.name,
+      observedAt: properties.timestamp,
+      textDescription: properties.textDescription,
+      temperatureC: properties.temperature?.value,
+      relativeHumidityPct: properties.relativeHumidity?.value,
+      windSpeedMps: properties.windSpeed?.value,
+      windDirectionDegrees: properties.windDirection?.value,
+      visibilityMeters: properties.visibility?.value,
+      precipitationLastHourMm: properties.precipitationLastHour?.value,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function copernicusItems(
+  lat: number,
+  lng: number,
+  from: Date,
+  to: Date,
+): Promise<Array<Record<string, unknown>>> {
+  const delta = 0.05;
+  const endpoint = new URL('https://stac.dataspace.copernicus.eu/v1/search');
+  const body = {
+    collections: ['sentinel-2-l2a'],
+    bbox: [lng - delta, lat - delta, lng + delta, lat + delta],
+    datetime: `${from.toISOString()}/${to.toISOString()}`,
+    limit: 20,
+    sortby: [{ field: 'properties.datetime', direction: 'desc' }],
+    fields: {
+      include: [
+        'id',
+        'collection',
+        'bbox',
+        'geometry',
+        'properties.datetime',
+        'properties.eo:cloud_cover',
+        'properties.platform',
+        'properties.instruments',
+        'links',
+      ],
+    },
+  };
+
+  try {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/geo+json,application/json',
+        'Content-Type': 'application/json',
+        'User-Agent': 'LegalWhat-SPECTRA/1.0',
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!response.ok) return [];
+    const payload: any = await response.json();
+    const features = Array.isArray(payload?.features) ? payload.features : [];
+    return features.map((feature: any) => ({
+      provider: 'Copernicus Data Space',
+      id: feature?.id,
+      collection: feature?.collection,
+      observedAt: feature?.properties?.datetime,
+      cloudCover: feature?.properties?.eo?.cloud_cover ?? feature?.properties?.['eo:cloud_cover'],
+      platform: feature?.properties?.platform,
+      instruments: feature?.properties?.instruments,
+      bbox: feature?.bbox,
+      geometry: feature?.geometry,
+      links: Array.isArray(feature?.links)
+        ? feature.links
+            .filter((link: any) => ['preview', 'thumbnail', 'self'].includes(String(link?.rel || '')))
+            .slice(0, 5)
+        : [],
+    }));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * GET /api/geoconsole/environment-context
+ * Independent time/place context from NWS observations and Copernicus STAC.
+ */
+router.get('/environment-context', async (req: Request, res: Response) => {
+  const validation = z.object({
+    lat: z.coerce.number().min(-90).max(90),
+    lng: z.coerce.number().min(-180).max(180),
+    from: z.string().datetime().optional(),
+    to: z.string().datetime().optional(),
+  }).safeParse(req.query);
+
+  if (!validation.success) {
+    return res.status(400).json({ success: false, error: 'Invalid environment-context request' });
+  }
+
+  const now = new Date();
+  const to = validation.data.to ? new Date(validation.data.to) : now;
+  const from = validation.data.from
+    ? new Date(validation.data.from)
+    : new Date(to.getTime() - 24 * 60 * 60_000);
+  if (from.getTime() > to.getTime()) {
+    return res.status(400).json({ success: false, error: 'from must not be later than to' });
+  }
+
+  const [weatherOutcome, earthOutcome] = await Promise.allSettled([
+    nwsLatestObservation(validation.data.lat, validation.data.lng),
+    copernicusItems(validation.data.lat, validation.data.lng, from, to),
+  ]);
+
+  const data: EnvironmentContextResult = {
+    weather: weatherOutcome.status === 'fulfilled' && weatherOutcome.value
+      ? weatherOutcome.value
+      : undefined,
+    earthObservation: earthOutcome.status === 'fulfilled'
+      ? earthOutcome.value
+      : [],
+  };
+
+  return res.json({
+    success: true,
+    data,
+    requestedWindow: {
+      from: from.toISOString(),
+      to: to.toISOString(),
+    },
+  });
+});
+
 /**
  * POST /api/geoconsole/process
  * Process raw location inputs through the full pipeline
