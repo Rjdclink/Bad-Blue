@@ -556,6 +556,90 @@ async function openCellIdPoint(
   return null;
 }
 
+function sanitizedWifiAccessPoints(
+  measurement: z.infer<typeof telemetryRadioSchema>,
+) {
+  return (measurement.wifiAccessPoints || []).filter(accessPoint => {
+    const mac = accessPoint.macAddress.toLowerCase();
+    if (!/^(?:[0-9a-f]{2}:){5}[0-9a-f]{2}$/.test(mac)) return false;
+    const firstOctet = Number.parseInt(mac.slice(0, 2), 16);
+    return (firstOctet & 0x02) === 0;
+  });
+}
+
+async function beaconDbRadioPoint(
+  measurement: z.infer<typeof telemetryRadioSchema>,
+): Promise<GPSPoint | null> {
+  const wifiAccessPoints = sanitizedWifiAccessPoints(measurement);
+  const cellTowers = (measurement.cellTowers || []).map(tower => ({
+    radioType: measurement.radioType,
+    mobileCountryCode: tower.mobileCountryCode ?? measurement.homeMobileCountryCode,
+    mobileNetworkCode: tower.mobileNetworkCode ?? measurement.homeMobileNetworkCode,
+    locationAreaCode: tower.locationAreaCode,
+    cellId: tower.cellId,
+    signalStrength: tower.signalStrength,
+    timingAdvance: tower.timingAdvance,
+    age: tower.age,
+  }));
+
+  if (!wifiAccessPoints.length && !cellTowers.length) return null;
+
+  try {
+    const response = await fetch('https://api.beacondb.net/v1/geolocate', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        'User-Agent': 'LegalWhat-SPECTRA/1.0',
+      },
+      body: JSON.stringify({
+        considerIp: false,
+        wifiAccessPoints: wifiAccessPoints.length ? wifiAccessPoints : undefined,
+        cellTowers: cellTowers.length ? cellTowers : undefined,
+      }),
+      signal: AbortSignal.timeout(6_000),
+    });
+    if (!response.ok) return null;
+
+    const payload: any = await response.json();
+    const latitude = Number(payload?.location?.lat);
+    const longitude = Number(payload?.location?.lng);
+    const accuracy = Number(payload?.accuracy);
+    if (
+      !Number.isFinite(latitude) || !Number.isFinite(longitude)
+      || latitude < -90 || latitude > 90
+      || longitude < -180 || longitude > 180
+    ) return null;
+
+    const source: DataSource = wifiAccessPoints.length ? 'wifi_fingerprint' : 'cellular';
+    return signServerEvidence({
+      latitude,
+      longitude,
+      accuracy: Number.isFinite(accuracy) && accuracy > 0 ? accuracy : undefined,
+      timestamp: measurement.timestamp,
+      receivedAt: new Date(),
+      source,
+      confidence: confidenceForAccuracy(accuracy, 0.8),
+      observationKind: 'inferred',
+      correlationGroup: `radio:${measurement.provider || 'beacondb'}`,
+      provenance: {
+        provider: 'beaconDB',
+        capturedAt: measurement.timestamp,
+        transformedBy: ['spectra_radio_geolocation'],
+      },
+      metadata: {
+        ...(measurement.metadata || {}),
+        radioType: measurement.radioType,
+        wifiAccessPointCount: wifiAccessPoints.length,
+        cellTowerCount: cellTowers.length,
+        acquisitionMethod: 'beacondb-ichnaea-geolocation',
+      },
+    });
+  } catch {
+    return null;
+  }
+}
+
 async function googleRadioPoint(
   measurement: z.infer<typeof telemetryRadioSchema>,
 ): Promise<GPSPoint | null> {
@@ -567,12 +651,7 @@ async function googleRadioPoint(
   ).trim();
   if (!key) return null;
 
-  const wifiAccessPoints = (measurement.wifiAccessPoints || []).filter(accessPoint => {
-    const mac = accessPoint.macAddress.toLowerCase();
-    if (!/^(?:[0-9a-f]{2}:){5}[0-9a-f]{2}$/.test(mac)) return false;
-    const firstOctet = Number.parseInt(mac.slice(0, 2), 16);
-    return (firstOctet & 0x02) === 0;
-  });
+  const wifiAccessPoints = sanitizedWifiAccessPoints(measurement);
 
   const endpoint = new URL('https://www.googleapis.com/geolocation/v1/geolocate');
   endpoint.searchParams.set('key', key);
@@ -634,28 +713,46 @@ async function googleRadioPoint(
 async function radioPoint(
   measurement: z.infer<typeof telemetryRadioSchema>,
 ): Promise<GPSPoint | null> {
-  const [googleOutcome, openCellOutcome] = await Promise.allSettled([
+  const [googleOutcome, beaconOutcome, openCellOutcome] = await Promise.allSettled([
     googleRadioPoint(measurement),
+    beaconDbRadioPoint(measurement),
     openCellIdPoint(measurement),
   ]);
 
   const googlePoint = googleOutcome.status === 'fulfilled' ? googleOutcome.value : null;
+  const beaconPoint = beaconOutcome.status === 'fulfilled' ? beaconOutcome.value : null;
   const openCellPoint = openCellOutcome.status === 'fulfilled' ? openCellOutcome.value : null;
-  if (googlePoint && openCellPoint) {
-    const distance = Math.hypot(
-      (googlePoint.latitude - openCellPoint.latitude) * 111_320,
-      (googlePoint.longitude - openCellPoint.longitude)
-        * 111_320
-        * Math.max(0.15, Math.cos(googlePoint.latitude * Math.PI / 180)),
-    );
-    googlePoint.metadata = {
-      ...(googlePoint.metadata || {}),
-      independentCellCorroborationMeters: Math.round(distance),
-      independentCellProvider: 'OpenCellID',
-    };
-  }
+  const candidates = [googlePoint, beaconPoint, openCellPoint].filter(
+    (point): point is GPSPoint => Boolean(point)
+  );
+  if (!candidates.length) return null;
 
-  return googlePoint || openCellPoint;
+  const selected = [...candidates].sort((left, right) =>
+    (left.accuracy ?? Number.MAX_SAFE_INTEGER) - (right.accuracy ?? Number.MAX_SAFE_INTEGER)
+    || right.confidence - left.confidence
+  )[0];
+
+  const corroboration = candidates
+    .filter(point => point !== selected)
+    .map(point => {
+      const distance = Math.hypot(
+        (selected.latitude - point.latitude) * 111_320,
+        (selected.longitude - point.longitude)
+          * 111_320
+          * Math.max(0.15, Math.cos(selected.latitude * Math.PI / 180)),
+      );
+      return {
+        provider: point.provenance?.provider || point.source,
+        distanceMeters: Math.round(distance),
+        accuracyMeters: point.accuracy,
+      };
+    });
+
+  selected.metadata = {
+    ...(selected.metadata || {}),
+    radioCorroboration: corroboration,
+  };
+  return selected;
 }
 
 async function telemetryPoint(
