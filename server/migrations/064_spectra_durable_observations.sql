@@ -67,6 +67,17 @@ CREATE TABLE IF NOT EXISTS public.spectra_location_observations (
   accuracy_meters double precision CHECK (accuracy_meters IS NULL OR accuracy_meters >= 0),
   confidence double precision NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
   observation_kind text NOT NULL,
+  evidence_class text NOT NULL,
+  subject_match_confidence double precision CHECK (
+    subject_match_confidence IS NULL OR
+    (subject_match_confidence >= 0 AND subject_match_confidence <= 1)
+  ),
+  timestamp_confidence double precision CHECK (
+    timestamp_confidence IS NULL OR
+    (timestamp_confidence >= 0 AND timestamp_confidence <= 1)
+  ),
+  acquisition_method text,
+  source_url text,
   observed_at timestamptz NOT NULL,
   received_at timestamptz NOT NULL DEFAULT now(),
   correlation_group text,
