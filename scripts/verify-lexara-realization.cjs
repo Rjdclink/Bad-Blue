@@ -950,6 +950,8 @@ must(
     lexaraConversationOrchestrator.includes('resolvedSubject: resolvedBackgroundSubject || undefined') &&
     lexaraBackgroundInvestigation.includes('const resolved = context.resolvedSubject') &&
     lexaraBackgroundSubject.includes('CONVERSATIONAL_LEAD') &&
+    lexaraBackgroundSubject.includes('commaSubjectLocation') &&
+    lexaraBackgroundSubject.includes('jurisdictionSubjectLocality') &&
     lexaraBackgroundBoundary.includes("from './LexaraBackgroundInvestigation'") &&
     !lexaraBackgroundBoundary.includes('LexaraPantheonInvestigation') &&
     !lexaraBackgroundBoundary.includes('PantheonDiscoveryCoordinator') &&
