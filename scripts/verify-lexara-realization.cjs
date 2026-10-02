@@ -1273,12 +1273,18 @@ must(
 );
 must(
   lexaraConversationOrchestrator.includes('backgroundDocumentContext?: string') &&
-    lexaraConversationOrchestrator.includes('backgroundResearchRequested && backgroundInvestigation?.evidenceSummary') &&
+    lexaraConversationOrchestrator.includes('function formatBackgroundFactsForDocument') &&
+    lexaraConversationOrchestrator.includes("result.endpoint !== 'evidence-sufficient'") &&
+    lexaraConversationOrchestrator.includes('ASSESSMENT:\\s*DIRECT') &&
+    lexaraConversationOrchestrator.includes("backgroundDocumentContext: formatBackgroundFactsForDocument(backgroundInvestigation)") &&
+    lexaraConversationOrchestrator.includes('BACKGROUND USER-PRESENTATION RULE') &&
+    lexaraConversationOrchestrator.includes('Do not expose background source names or URLs, confidence percentages') &&
     lexaraChatRoutes.includes('backgroundDocumentContext: result.backgroundDocumentContext') &&
     lexaraChatRoutes.includes('backgroundDocumentContext: conversationResult.backgroundDocumentContext') &&
     conversation.includes('APPLICATION-SUPPLIED LEXARA BACKGROUND EVIDENCE') &&
-    conversation.includes("data.backgroundDocumentContext.trim().slice(0, 9_000)"),
-  'verified Lexara background evidence must flow into the document fact bundle without re-running background research',
+    conversation.includes("data.backgroundDocumentContext.trim().slice(0, 9_000)") &&
+    consultationRoutes.includes('never expose source, provenance, confidence, retrieval metadata, or the research process in the document'),
+  'Lexara must keep background provenance internal while concise direct facts flow into legal guidance and document drafting',
 );
 must(
   consultationRoutes.includes("/api/lexara/documents/official-form") &&
