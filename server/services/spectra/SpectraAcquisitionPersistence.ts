@@ -30,6 +30,36 @@ function observationFingerprint(point: GPSPoint): string {
     .digest('hex');
 }
 
+function evidenceClassForPoint(point: GPSPoint): string {
+  if (point.observationKind === 'predicted' || point.source === 'predicted') return 'PREDICTED';
+  if (point.observationKind === 'interpolated' || point.source === 'interpolated') return 'INTERPOLATED';
+  if (
+    point.observationKind === 'historical'
+    || point.source === 'historical_location'
+    || point.source === 'public_record'
+  ) return 'HISTORICAL';
+  if (point.observationKind === 'inferred') return 'INFERRED';
+
+  const ageMs = Math.max(0, Date.now() - point.timestamp.getTime());
+  if (ageMs <= 5 * 60_000) return 'CURRENT';
+  if (ageMs <= 24 * 60 * 60_000) return 'RECENT';
+  return 'HISTORICAL';
+}
+
+function optionalConfidence(value: unknown): number | null {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 && parsed <= 1 ? parsed : null;
+}
+
+function metadataString(point: GPSPoint, ...keys: string[]): string | null {
+  const metadata = point.metadata || {};
+  for (const key of keys) {
+    const value = metadata[key];
+    if (typeof value === 'string' && value.trim()) return value.trim().slice(0, 2_000);
+  }
+  return null;
+}
+
 function clueType(value: string): string {
   if (/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i.test(value)) return 'email';
   if (/(?:\+\d{1,3}[\s().-]*)?(?:\d[\s().-]*){7,15}/.test(value)) return 'phone';
@@ -101,14 +131,18 @@ export async function persistSpectraAcquisition(input: {
           (
             investigation_id, user_id, session_id, subject_label,
             source_type, provider, latitude, longitude, altitude, accuracy_meters,
-            confidence, observation_kind, observed_at, received_at, correlation_group,
+            confidence, observation_kind, evidence_class, subject_match_confidence,
+            timestamp_confidence, acquisition_method, source_url,
+            observed_at, received_at, correlation_group,
             provenance, metadata, evidence_fingerprint
           )
          VALUES (
             $1::uuid, $2, $3, $4,
             $5, $6, $7, $8, $9, $10,
-            $11, $12, $13, $14, $15,
-            $16::jsonb, $17::jsonb, $18
+            $11, $12, $13, $14,
+            $15, $16, $17,
+            $18, $19, $20,
+            $21::jsonb, $22::jsonb, $23
          )
          ON CONFLICT (session_id, evidence_fingerprint) DO NOTHING`,
         [
@@ -124,6 +158,13 @@ export async function persistSpectraAcquisition(input: {
           point.accuracy ?? null,
           point.confidence,
           point.observationKind || 'observed',
+          evidenceClassForPoint(point),
+          optionalConfidence(point.metadata?.subjectMatchConfidence),
+          optionalConfidence(point.metadata?.timestampConfidence),
+          metadataString(point, 'acquisitionMethod')
+            || point.provenance?.transformedBy?.[0]
+            || null,
+          metadataString(point, 'sourceUrl', 'url'),
           point.timestamp,
           point.receivedAt || new Date(),
           point.correlationGroup || null,
