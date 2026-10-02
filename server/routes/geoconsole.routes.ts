@@ -1757,7 +1757,7 @@ function cameraAttributeNumber(
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
-async function trafficLandCameras(
+export async function trafficLandCameras(
   lat: number,
   lng: number,
   radiusMiles: number,
@@ -1821,7 +1821,7 @@ async function trafficLandCameras(
   });
 }
 
-async function arcGisCameras(
+export async function arcGisCameras(
   lat: number,
   lng: number,
   radiusMiles: number,
@@ -1963,7 +1963,7 @@ interface PublicGeoMediaResult {
   metadata?: Record<string, unknown>;
 }
 
-async function wikimediaNearbyMedia(
+export async function wikimediaNearbyMedia(
   lat: number,
   lng: number,
   radiusMeters: number,
@@ -2023,7 +2023,7 @@ async function wikimediaNearbyMedia(
   });
 }
 
-async function flickrNearbyMedia(
+export async function flickrNearbyMedia(
   lat: number,
   lng: number,
   radiusKm: number,
@@ -2158,7 +2158,7 @@ interface EnvironmentContextResult {
   earthObservation?: Array<Record<string, unknown>>;
 }
 
-async function nwsLatestObservation(lat: number, lng: number): Promise<Record<string, unknown> | null> {
+export async function nwsLatestObservation(lat: number, lng: number): Promise<Record<string, unknown> | null> {
   const headers = {
     Accept: 'application/geo+json,application/json',
     'User-Agent': 'LegalWhat-SPECTRA/1.0',
@@ -2212,7 +2212,7 @@ async function nwsLatestObservation(lat: number, lng: number): Promise<Record<st
   }
 }
 
-async function copernicusItems(
+export async function copernicusItems(
   lat: number,
   lng: number,
   from: Date,
