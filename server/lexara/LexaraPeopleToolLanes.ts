@@ -39,12 +39,29 @@ const DOMAIN_CUE = /\b(?:domain|website|site|company\s+domain)\s*(?:is|=|:)?\s*(
 
 let whatsMyNameCache: { expiresAt: number; sites: WhatsMyNameSite[] } | null = null;
 
+function isPublicHttpUrl(raw: string): boolean {
+  try {
+    const url = new URL(raw);
+    if (!/^https?:$/.test(url.protocol)) return false;
+    const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+    if (!host || host === 'localhost' || host.endsWith('.local')) return false;
+    if (host === '::1' || host.startsWith('fc') || host.startsWith('fd') || host.startsWith('fe80:')) return false;
+    if (/^127\./.test(host) || /^10\./.test(host) || /^169\.254\./.test(host) || /^0\./.test(host)) return false;
+    const private172 = /^172\.(\d{1,3})\./.exec(host);
+    if (private172 && Number(private172[1]) >= 16 && Number(private172[1]) <= 31) return false;
+    if (/^192\.168\./.test(host)) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function uniqueCandidates(items: readonly LegalMeshCandidate[]): LegalMeshCandidate[] {
   const seen = new Set<string>();
   const output: LegalMeshCandidate[] = [];
   for (const item of items) {
     const url = String(item.url || '').trim();
-    if (!/^https?:\/\//i.test(url) || seen.has(url)) continue;
+    if (!isPublicHttpUrl(url) || seen.has(url)) continue;
     seen.add(url);
     output.push(item);
   }
@@ -200,7 +217,7 @@ async function checkWhatsMyNameSite(
 ): Promise<LegalMeshCandidate | null> {
   if (!site.uri_check) return null;
   const url = site.uri_check.replace(/\{account\}/g, encodeURIComponent(username));
-  if (!/^https?:\/\//i.test(url)) return null;
+  if (!isPublicHttpUrl(url)) return null;
   const response = await fetchWithDeadline(
     url,
     { headers: { 'user-agent': 'LegalWhat-Lexara/1.0', accept: 'text/html,application/json;q=0.9,*/*;q=0.8' } },
@@ -269,7 +286,7 @@ async function runHunter(
     const sourceRows = Array.isArray(payload?.data?.sources) ? payload.data.sources : [];
     const sourceUrls = sourceRows
       .map((item: any) => String(item?.uri || item?.url || '').trim())
-      .filter((value: string) => /^https?:\/\//i.test(value))
+      .filter((value: string) => isPublicHttpUrl(value))
       .slice(0, 6);
     const candidates: LegalMeshCandidate[] = sourceUrls.map(sourceUrl => ({
       url: sourceUrl,
@@ -312,7 +329,8 @@ function collectUrls(value: unknown, output = new Set<string>(), depth = 0): Set
   if (depth > 6 || output.size >= 40) return output;
   if (typeof value === 'string') {
     for (const match of value.matchAll(/https?:\/\/[^\s"'<>]+/g)) {
-      output.add(match[0].replace(/[),.;]+$/g, ''));
+      const candidate = match[0].replace(/[),.;]+$/g, '');
+      if (isPublicHttpUrl(candidate)) output.add(candidate);
       if (output.size >= 40) break;
     }
     return output;
