@@ -32,6 +32,8 @@ interface AcquisitionResponse {
   target?: string;
   details?: string;
   resolvedTargetLabel?: string;
+  investigationId?: string;
+  persistenceAvailable?: boolean;
   acquisition?: {
     identityConfidence: number;
     locationConfidence: number;
@@ -73,6 +75,7 @@ export default function SpectraPage() {
   const [directEvidence, setDirectEvidence] = useState<GPSPoint[]>([]);
   const [confidence, setConfidence] = useState<number | null>(null);
   const [sourceCount, setSourceCount] = useState(0);
+  const [investigationId, setInvestigationId] = useState<string | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
   const [acquisitionStage, setAcquisitionStage] = useState('Waiting for target');
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -197,6 +200,7 @@ export default function SpectraPage() {
     setDirectEvidence([]);
     setConfidence(null);
     setSourceCount(0);
+    setInvestigationId(null);
     setLastError(null);
     setAcquisitionStage('Waiting for target');
     setInput('');
@@ -295,6 +299,7 @@ export default function SpectraPage() {
         body: JSON.stringify({
           target: targetValue,
           details: detailsValue,
+          investigationId: investigationId || undefined,
           directEvidence: extraEvidence.map(point => ({
             ...point,
             timestamp: new Date(point.timestamp).toISOString(),
@@ -344,6 +349,7 @@ export default function SpectraPage() {
       );
 
       const canonicalLocationConfidence = payload.acquisition?.locationConfidence ?? 0;
+      if (payload.investigationId) setInvestigationId(payload.investigationId);
       setObservations(points);
       setCandidateLocations(Array.isArray(payload.candidateLocations) ? payload.candidateLocations : []);
       setConfidence(
@@ -380,7 +386,83 @@ export default function SpectraPage() {
       addMessage('spectra', responseText);
       speakIfEnabled(responseText);
     }
-  }, [addMessage, directEvidence, speakIfEnabled]);
+  }, [addMessage, directEvidence, investigationId, speakIfEnabled]);
+
+  useEffect(() => {
+    if (!investigationId) return;
+
+    const stream = new EventSource(
+      `/api/spectra/investigations/${encodeURIComponent(investigationId)}/stream`,
+      { withCredentials: true },
+    );
+
+    const onObservation = (event: MessageEvent) => {
+      try {
+        const message = JSON.parse(event.data);
+        const row = message?.payload || {};
+        const latitude = Number(row.latitude);
+        const longitude = Number(row.longitude);
+        const timestamp = new Date(row.observed_at);
+        if (
+          !Number.isFinite(latitude)
+          || !Number.isFinite(longitude)
+          || !Number.isFinite(timestamp.getTime())
+        ) {
+          return;
+        }
+
+        const evidenceClass = String(row.evidence_class || '');
+        const point: GPSPoint = {
+          latitude,
+          longitude,
+          altitude: row.altitude == null ? undefined : Number(row.altitude),
+          accuracy: row.accuracy_meters == null ? undefined : Number(row.accuracy_meters),
+          timestamp: timestamp.toISOString(),
+          receivedAt: row.received_at || new Date().toISOString(),
+          source: row.source_type as GPSPoint['source'],
+          confidence: Math.max(0, Math.min(1, Number(row.confidence) || 0)),
+          observationKind:
+            evidenceClass === 'PREDICTED_LOCATION' ? 'predicted'
+            : evidenceClass === 'INTERPOLATED_LOCATION' ? 'interpolated'
+            : evidenceClass === 'INFERRED_LOCATION' ? 'inferred'
+            : evidenceClass === 'HISTORICAL_LOCATION' ? 'historical'
+            : 'observed',
+          correlationGroup: row.correlation_group || undefined,
+          provenance: row.provenance || undefined,
+          metadata: row.raw_observation?.metadata || {},
+        };
+
+        setObservations(previous => {
+          const merged = new Map<string, GPSPoint>();
+          for (const item of [...previous, point]) {
+            const observedAt = new Date(item.timestamp).toISOString();
+            const evidenceGroup =
+              item.correlationGroup
+              || item.provenance?.recordId
+              || `${item.source}:${item.provenance?.provider || 'unknown'}`;
+            merged.set([
+              Number(item.latitude).toFixed(6),
+              Number(item.longitude).toFixed(6),
+              observedAt,
+              item.source,
+              evidenceGroup,
+            ].join('|'), item);
+          }
+          return [...merged.values()].sort(
+            (left, right) => new Date(left.timestamp).getTime() - new Date(right.timestamp).getTime(),
+          );
+        });
+      } catch {
+        // A malformed realtime event is isolated; the durable history remains authoritative.
+      }
+    };
+
+    stream.addEventListener('observation', onObservation as EventListener);
+    return () => {
+      stream.removeEventListener('observation', onObservation as EventListener);
+      stream.close();
+    };
+  }, [investigationId]);
 
   const handleMediaEvidence = useCallback(async (file: File) => {
     if (phase === 'awaiting_target') {
