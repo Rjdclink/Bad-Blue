@@ -55,6 +55,26 @@ export const SPECTRA_ADAPTER_CAPABILITIES: SpectraAdapterCapability[] = [
     notes: 'Generic adapter for external live telemetry feeds that can POST normalized measurements.',
   },
   {
+    id: 'generic-https-json-pull',
+    label: 'Configured HTTPS JSON telemetry pull',
+    mode: 'live-telemetry',
+    sourceTypes: [
+      'device_gps','gnss_fix','vehicle_telemetry','social_geotag',
+      'public_camera','traffic_cam','historical_location','public_record',
+    ],
+    configured: () => {
+      try {
+        const configured = JSON.parse(String(process.env.SPECTRA_GENERIC_JSON_ADAPTERS || '[]'));
+        return Array.isArray(configured) && configured.length > 0;
+      } catch {
+        return false;
+      }
+    },
+    priority: 'high',
+    supportsRealtime: true,
+    notes: 'Fixed HTTPS pull adapters normalize provider JSON into SPECTRA observations.',
+  },
+  {
     id: 'google-radio-geolocation',
     label: 'Google radio geolocation',
     mode: 'radio-resolution',
