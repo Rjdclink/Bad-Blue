@@ -210,7 +210,7 @@ async function loadRepresentationContext(
   if (!userId) return { persistent: false, activeMatter: null, activeSessionId: requestedSessionId, savedMatters: [] };
 
   const { storage } = await import('../storage');
-  const rows = await storage.getUserLexaraMatterStates(userId, 200);
+  const rows = await storage.getUserLexaraRestorableMatterStates(userId, 200);
   const matters = rows.flatMap((row: any) => {
     const state = sanitizeRepresentationMatter(row?.matter);
     return state ? [{ state, summary: summarizeMatter(state) }] : [];
