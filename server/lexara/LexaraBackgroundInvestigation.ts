@@ -20,6 +20,7 @@ import {
 import { rememberLexaraDiscoveryOutcome } from './LexaraDiscoveryLearning';
 import { searchLexaraBackgroundWithClaude } from './LexaraClaudeBackgroundSearch';
 import { lookupLexaraAuthoritativeSources } from './LexaraAuthoritativeLookup';
+import { runLexaraPeopleToolLanes } from './LexaraPeopleToolLanes';
 
 export interface LexaraBackgroundProgressEvent {
   type: 'searching' | 'checkpoint' | 'evidence' | 'endpoint';
@@ -560,6 +561,20 @@ export async function investigateLexaraBackgroundQuestion(
       return [] as LegalMeshCandidate[];
     });
 
+    const peopleToolPromise = runLexaraPeopleToolLanes({
+      prompt,
+      subject,
+      decision,
+      categories,
+      signal: laneSignal,
+      deep: deepAcquisitionRequested,
+    }).catch(error => {
+      console.warn('[LEXARA Background] specialized people-tool lanes failed; preserving native research', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return { candidates: [], evidence: [], lanesAttempted: [] };
+    });
+
     const authoritativeEvidence = await lookupLexaraAuthoritativeSources({
       subject,
       requestedFact: decision.requestedFact,
@@ -623,8 +638,32 @@ export async function investigateLexaraBackgroundQuestion(
       };
     }
 
-    const nativeCandidates = await nativeDiscoveryPromise;
-    candidates = uniqueCandidates(nativeCandidates);
+    const [nativeCandidates, peopleTools] = await Promise.all([
+      nativeDiscoveryPromise,
+      peopleToolPromise,
+    ]);
+    peopleTools.lanesAttempted.forEach(lane => discoveryLanes.add(lane));
+    for (const evidence of peopleTools.evidence) {
+      discoveryLanes.add(evidence.provider);
+      const evaluation = assessEvidence(
+        evidence.content,
+        evidence.url,
+        evidence.retrievedAt,
+        subject,
+        decision,
+        prompt,
+      );
+      if (!evaluation) continue;
+      const existing = assessed.get(evidence.url);
+      if (!existing || evaluation.confidence > existing.confidence) assessed.set(evidence.url, evaluation);
+      context.onProgress?.({
+        type: 'evidence',
+        pass: 0,
+        confidence: evaluation.confidence,
+        sourceUrl: evaluation.url,
+      });
+    }
+    candidates = uniqueCandidates([...nativeCandidates, ...peopleTools.candidates]).slice(0, maxCandidates);
     candidates.forEach(item => discoveryLanes.add(item.provider));
 
     const integrateClaudeParallel = () => {
