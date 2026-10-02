@@ -27,6 +27,12 @@ import {
   buildSpectraDiscoveryWaves,
   SPECTRA_DISCOVERY_POLICY,
 } from '../services/spectra/SpectraSourceRegistry';
+import {
+  acquireRadioPosition,
+  acquireRangingPosition,
+  normalizeAbsoluteDeviceObservation,
+} from '../services/spectra/SpectraDeviceAcquisitionAdapters';
+import { acquireNearbyTrafficCameras } from '../services/spectra/SpectraCameraAcquisitionAdapter';
 
 const router = Router();
 router.use(isAuthenticated);
@@ -57,6 +63,76 @@ const acquireSchema = z.object({
   details: z.string().trim().min(1).max(4000),
   directEvidence: z.array(directEvidenceSchema).max(20).default([]),
 });
+
+const absoluteDeviceObservationSchema = z.object({
+  kind: z.literal('absolute'),
+  source: z.enum(['device_gps', 'gnss_fix', 'gnss_raw', 'browser_geolocation', 'vehicle_telemetry']),
+  latitude: z.number().min(-90).max(90),
+  longitude: z.number().min(-180).max(180),
+  timestamp: z.string().datetime(),
+  accuracy: z.number().positive().max(5_000_000).optional(),
+  altitude: z.number().optional(),
+  verticalAccuracy: z.number().nonnegative().optional(),
+  speed: z.number().nonnegative().optional(),
+  heading: z.number().min(0).max(360).optional(),
+  confidence: z.number().min(0).max(1).optional(),
+  provider: z.string().max(200).optional(),
+  correlationGroup: z.string().max(300).optional(),
+  sensorTelemetry: z.object({
+    accelerometer: z.object({ x: z.number(), y: z.number(), z: z.number() }).optional(),
+    gyroscope: z.object({ x: z.number(), y: z.number(), z: z.number() }).optional(),
+    magnetometer: z.object({ x: z.number(), y: z.number(), z: z.number() }).optional(),
+    barometerHpa: z.number().positive().optional(),
+  }).optional(),
+});
+
+const radioDeviceObservationSchema = z.object({
+  kind: z.literal('radio'),
+  timestamp: z.string().datetime(),
+  radioType: z.enum(['gsm', 'cdma', 'wcdma', 'lte', 'nr']).optional(),
+  homeMobileCountryCode: z.number().int().nonnegative().optional(),
+  homeMobileNetworkCode: z.number().int().nonnegative().optional(),
+  carrier: z.string().max(120).optional(),
+  provider: z.string().max(200).optional(),
+  wifiAccessPoints: z.array(z.object({
+    macAddress: z.string().max(32),
+    signalStrength: z.number().optional(),
+    signalToNoiseRatio: z.number().optional(),
+    channel: z.number().optional(),
+    age: z.number().nonnegative().optional(),
+  })).max(40).optional(),
+  cellTowers: z.array(z.object({
+    cellId: z.number().int().nonnegative().optional(),
+    newRadioCellId: z.number().int().nonnegative().optional(),
+    locationAreaCode: z.number().int().nonnegative().optional(),
+    mobileCountryCode: z.number().int().nonnegative(),
+    mobileNetworkCode: z.number().int().nonnegative(),
+    signalStrength: z.number().optional(),
+    timingAdvance: z.number().nonnegative().optional(),
+  })).max(16).optional(),
+});
+
+const rangingDeviceObservationSchema = z.object({
+  kind: z.literal('ranging'),
+  source: z.enum(['wifi_rtt', 'uwb_range', 'uwb_direction', 'ble_rssi', 'ble_aoa', 'bluetooth_proximity']),
+  timestamp: z.string().datetime(),
+  provider: z.string().max(200).optional(),
+  correlationGroup: z.string().max(300).optional(),
+  metadata: z.record(z.unknown()).optional(),
+  anchors: z.array(z.object({
+    latitude: z.number().min(-90).max(90),
+    longitude: z.number().min(-180).max(180),
+    distanceMeters: z.number().nonnegative().max(1_000_000),
+    uncertaintyMeters: z.number().positive().max(1_000_000).optional(),
+    id: z.string().max(200).optional(),
+  })).max(32),
+});
+
+const deviceObservationSchema = z.discriminatedUnion('kind', [
+  absoluteDeviceObservationSchema,
+  radioDeviceObservationSchema,
+  rangingDeviceObservationSchema,
+]);
 
 const PHONE_CANDIDATE_RE = /(?:\+\d{1,3}[\s().-]*)?(?:\d[\s().-]*){7,15}/;
 
@@ -583,6 +659,84 @@ function dedupeObservations(points: any[]): any[] {
     return true;
   });
 }
+
+router.post('/device-observation', async (req: Request, res: Response) => {
+  const parsed = deviceObservationSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ success: false, error: 'Invalid SPECTRA device observation.' });
+  }
+
+  const input = parsed.data;
+  let point: GPSPoint | null = null;
+
+  if (input.kind === 'absolute') {
+    point = normalizeAbsoluteDeviceObservation({
+      ...input,
+      timestamp: new Date(input.timestamp),
+    });
+  } else if (input.kind === 'radio') {
+    point = await acquireRadioPosition({
+      ...input,
+      timestamp: new Date(input.timestamp),
+    }, req.signal);
+  } else {
+    point = acquireRangingPosition({
+      ...input,
+      timestamp: new Date(input.timestamp),
+    });
+  }
+
+  if (!point) {
+    return res.json({
+      success: true,
+      acquired: false,
+      reason: 'The supplied measurements did not produce an absolute position.',
+    });
+  }
+
+  const normalized = signServerEvidence(normalizeClientEvidence(point));
+  return res.json({
+    success: true,
+    acquired: true,
+    point: {
+      ...normalized,
+      timestamp: normalized.timestamp.toISOString(),
+      receivedAt: normalized.receivedAt?.toISOString(),
+      provenance: normalized.provenance
+        ? {
+            ...normalized.provenance,
+            capturedAt: normalized.provenance.capturedAt instanceof Date
+              ? normalized.provenance.capturedAt.toISOString()
+              : normalized.provenance.capturedAt,
+          }
+        : undefined,
+    },
+  });
+});
+
+router.get('/cameras', async (req: Request, res: Response) => {
+  const parsed = z.object({
+    lat: z.coerce.number().min(-90).max(90),
+    lng: z.coerce.number().min(-180).max(180),
+    radiusMeters: z.coerce.number().min(250).max(100_000).optional(),
+  }).safeParse(req.query);
+  if (!parsed.success) {
+    return res.status(400).json({ success: false, error: 'Invalid camera search coordinates.' });
+  }
+
+  const cameras = await acquireNearbyTrafficCameras({
+    latitude: parsed.data.lat,
+    longitude: parsed.data.lng,
+    radiusMeters: parsed.data.radiusMeters,
+    signal: req.signal,
+  });
+
+  return res.json({
+    success: true,
+    cameras,
+    count: cameras.length,
+  });
+});
 
 router.post('/acquire', async (req: Request, res: Response) => {
   const parsed = acquireSchema.safeParse(req.body);
