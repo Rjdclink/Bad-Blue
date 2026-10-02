@@ -411,13 +411,13 @@ export async function runLexaraPeopleToolLanes(input: {
   const email = extractEmail(input.prompt);
   const domain = extractDomain(input.prompt, email);
   const deep = input.deep === true || DEEP_PROMPT.test(input.prompt);
-  const wantsSocial = requestedFactMatches(
+  const wantsSocial = Boolean(username && deep) || requestedFactMatches(
     input.decision.requestedFact,
     input.categories,
     ['social-online'],
     ['social-online'],
   );
-  const wantsContact = requestedFactMatches(
+  const wantsContact = Boolean((email || domain) && deep) || requestedFactMatches(
     input.decision.requestedFact,
     input.categories,
     ['contact-address', 'employment'],
@@ -448,7 +448,7 @@ export async function runLexaraPeopleToolLanes(input: {
     }
   }
 
-  if (domain && wantsContact && input.subject.kind === 'person') {
+  if (!email && domain && wantsContact && input.subject.kind === 'person') {
     jobs.push((async () => {
       const hunter = await runHunter(input.subject, domain, input.signal);
       return {
