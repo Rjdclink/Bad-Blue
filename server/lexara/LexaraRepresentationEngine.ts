@@ -152,6 +152,7 @@ interface AdvanceMatterInput {
   prior?: RepresentationMatterState | null;
   allowClaudeOpus?: boolean;
   signal?: AbortSignal;
+  skipPacketPlanning?: boolean;
 }
 
 const STAGES = new Set<RepresentationStage>([
@@ -868,7 +869,7 @@ export async function advanceRepresentationMatter(input: AdvanceMatterInput): Pr
     updateMatterTitle(matter, input.prompt, prior);
   }
 
-  if (shouldPlanPacket(input.prompt, matter)) {
+  if (!input.skipPacketPlanning && shouldPlanPacket(input.prompt, matter)) {
     const previousPacket = matter.packet;
     const replannedPacket = await buildPacket(matter, {
       allowClaudeOpus: input.allowClaudeOpus,
