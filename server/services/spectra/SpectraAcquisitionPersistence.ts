@@ -157,14 +157,32 @@ export async function persistSpectraAcquisition(input: {
 
   try {
     await client.query('BEGIN');
+
+    const existing = await client.query(
+      `SELECT user_id, subject_label
+       FROM public.spectra_investigations
+       WHERE session_id = $1
+       FOR UPDATE`,
+      [sessionId],
+    );
+    if (existing.rows.length) {
+      const existingUserId = String(existing.rows[0]?.user_id || '');
+      const existingSubject = normalizeClue(String(existing.rows[0]?.subject_label || ''));
+      const incomingSubject = normalizeClue(input.subjectLabel);
+      if (existingUserId && existingUserId !== input.userId) {
+        throw new Error('SPECTRA session ownership mismatch');
+      }
+      if (existingSubject && incomingSubject && existingSubject !== incomingSubject) {
+        throw new Error('SPECTRA session subject mismatch');
+      }
+    }
+
     const investigation = await client.query(
       `INSERT INTO public.spectra_investigations
         (user_id, subject_label, session_id, clues, state)
        VALUES ($1, $2, $3, $4::jsonb, $5::jsonb)
        ON CONFLICT (session_id)
        DO UPDATE SET
-         user_id = EXCLUDED.user_id,
-         subject_label = COALESCE(EXCLUDED.subject_label, public.spectra_investigations.subject_label),
          clues = public.spectra_investigations.clues || EXCLUDED.clues,
          state = public.spectra_investigations.state || EXCLUDED.state,
          updated_at = now()
