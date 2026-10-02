@@ -407,6 +407,8 @@ async function runDiscoveryPass(
           const locationEvidence = evidence.observations.map(observation => ({
             ...observation,
             kind: 'location',
+            subjectMatchConfidence: 0.35,
+            timestampConfidence: observation.timestamp ? 0.75 : 0,
           }));
 
           if (existing) {
@@ -601,6 +603,21 @@ function collectCoordinateObservations(
       source === 'public_record' || source === 'historical_location'
         ? 'historical'
         : 'observed';
+    const subjectMatchRaw = Number(object.subjectMatchConfidence);
+    const subjectMatchConfidence =
+      Number.isFinite(subjectMatchRaw) && subjectMatchRaw >= 0 && subjectMatchRaw <= 1
+        ? subjectMatchRaw
+        : undefined;
+    const timestampConfidenceRaw = Number(object.timestampConfidence);
+    const timestampConfidence =
+      Number.isFinite(timestampConfidenceRaw)
+      && timestampConfidenceRaw >= 0
+      && timestampConfidenceRaw <= 1
+        ? timestampConfidenceRaw
+        : undefined;
+    const observationConfidence = subjectMatchConfidence === undefined
+      ? confidence
+      : Math.min(confidence, subjectMatchConfidence);
 
     out.push({
       latitude,
@@ -610,7 +627,7 @@ function collectCoordinateObservations(
       timestamp: timestamp.toISOString(),
       receivedAt: new Date().toISOString(),
       source,
-      confidence,
+      confidence: observationConfidence,
       observationKind,
       correlationGroup: `spectra:${sourceName.toLowerCase().replace(/[^a-z0-9]+/g, '_')}`,
       provenance: {
@@ -620,6 +637,14 @@ function collectCoordinateObservations(
       },
       metadata: {
         sourceName,
+        subjectMatchConfidence,
+        timestampConfidence,
+        acquisitionMethod: typeof object.acquisitionMethod === 'string'
+          ? object.acquisitionMethod
+          : undefined,
+        sourceUrl: typeof object.sourceUrl === 'string'
+          ? object.sourceUrl
+          : undefined,
       },
     });
   }
