@@ -45,7 +45,12 @@ function isPublicHttpUrl(raw: string): boolean {
     if (!/^https?:$/.test(url.protocol)) return false;
     const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, '');
     if (!host || host === 'localhost' || host.endsWith('.local')) return false;
-    if (host === '::1' || host.startsWith('fc') || host.startsWith('fd') || host.startsWith('fe80:')) return false;
+    if (host.includes(':') && (
+      host === '::1'
+      || /^f[cd][0-9a-f]{0,2}:/i.test(host)
+      || /^fe[89ab][0-9a-f]?:/i.test(host)
+      || /::ffff:(?:127\.|10\.|169\.254\.|192\.168\.)/i.test(host)
+    )) return false;
     if (/^127\./.test(host) || /^10\./.test(host) || /^169\.254\./.test(host) || /^0\./.test(host)) return false;
     const private172 = /^172\.(\d{1,3})\./.exec(host);
     if (private172 && Number(private172[1]) >= 16 && Number(private172[1]) <= 31) return false;
