@@ -54,55 +54,134 @@ function authenticatedUserId(req: Request): string | undefined {
   return typeof id === 'string' && id.trim() ? id.trim() : undefined;
 }
 
-interface MatterEnrichmentTask {
-  userId: string;
-  sessionId: string;
-  prompt: string;
-  response: string;
-  lawType?: string;
-  jurisdiction?: string;
-  fallbackMatter?: RepresentationMatterState | null;
+function mergeMatterEnrichmentBase(
+  currentValue: unknown,
+  completedValue: unknown,
+): RepresentationMatterState | null {
+  const current = sanitizeRepresentationMatter(currentValue);
+  const completed = sanitizeRepresentationMatter(completedValue);
+  if (!current) return completed;
+  if (!completed) return current;
+
+  const mergeStrings = (older: string[], newer: string[], max: number) => {
+    const seen = new Set<string>();
+    return [...older, ...newer].filter(value => {
+      const key = String(value || '').trim().toLowerCase();
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    }).slice(0, max);
+  };
+  const mergeByKey = <T>(older: T[], newer: T[], keyFor: (value: T) => string, max: number) => {
+    const merged = new Map<string, T>();
+    for (const value of [...older, ...newer]) {
+      const key = keyFor(value);
+      if (key) merged.set(key, value);
+    }
+    return [...merged.values()].slice(0, max);
+  };
+
+  return {
+    ...completed,
+    ...current,
+    knownFacts: mergeStrings(completed.knownFacts, current.knownFacts, 60),
+    legalIssues: mergeStrings(completed.legalIssues, current.legalIssues, 40),
+    defensesAndRisks: mergeStrings(completed.defensesAndRisks, current.defensesAndRisks, 40),
+    missingInformation: mergeStrings(completed.missingInformation, current.missingInformation, 40),
+    evidenceNeeds: mergeStrings(completed.evidenceNeeds, current.evidenceNeeds, 40),
+    parties: mergeStrings(completed.parties, current.parties, 30),
+    historySummary: completed.historySummary || current.historySummary,
+    courtOrAgency: current.courtOrAgency || completed.courtOrAgency,
+    artifacts: mergeByKey(completed.artifacts, current.artifacts, artifact => artifact.id, 100),
+    scheduleItems: mergeByKey(
+      completed.scheduleItems,
+      current.scheduleItems,
+      item => [item.label, item.date, item.time, item.when].filter(Boolean).join('|').toLowerCase(),
+      60,
+    ),
+    deadlines: mergeByKey(
+      completed.deadlines,
+      current.deadlines,
+      deadline => [deadline.label, deadline.date].filter(Boolean).join('|').toLowerCase(),
+      60,
+    ),
+    nextSteps: mergeStrings(completed.nextSteps, current.nextSteps, 20),
+  };
 }
 
-const matterEnrichmentChains = new Map<string, Promise<void>>();
+let matterEnrichmentDrainPromise: Promise<void> | null = null;
 
-function enqueueMatterEnrichment(task: MatterEnrichmentTask): void {
-  const key = `${task.userId}:${task.sessionId}`;
-  const previous = matterEnrichmentChains.get(key) || Promise.resolve();
-  const run = previous
-    .catch(() => undefined)
-    .then(async () => {
-      const { storage } = await import('../storage');
-      const rows = await storage.getUserLexaraMatterStates(task.userId, 200);
-      const persisted = rows.find((row: any) => String(row?.matter?.sessionId || '') === task.sessionId);
-      const prior = sanitizeRepresentationMatter(persisted?.matter) || sanitizeRepresentationMatter(task.fallbackMatter);
-      if (!shouldEnrichRepresentationMatter(task.prompt, task.response, prior)) return;
+async function drainDurableMatterEnrichmentJobs(): Promise<void> {
+  if (matterEnrichmentDrainPromise) return matterEnrichmentDrainPromise;
+  matterEnrichmentDrainPromise = (async () => {
+    const { storage } = await import('../storage');
+    for (let processed = 0; processed < 4; processed += 1) {
+      const job = await storage.claimNextLexaraMatterEnrichmentJob();
+      if (!job) break;
 
-      const enriched = await advanceRepresentationMatter({
-        prompt: task.prompt,
-        response: task.response,
-        sessionId: task.sessionId,
-        lawType: task.lawType,
-        jurisdiction: task.jurisdiction || prior?.jurisdiction,
-        prior,
-        allowClaudeOpus: false,
-        skipPacketPlanning: true,
-      });
-      if (enriched) {
-        await storage.updateLatestLexaraMatterState(task.userId, task.sessionId, enriched);
+      const attempts = Number(job?.context?.matterEnrichmentJob?.attempts || 1);
+      try {
+        const userId = String(job?.userId || '').trim();
+        const sessionId = String(job?.sessionId || '').trim();
+        const prompt = String(job?.userPrompt || '').trim();
+        const response = String(job?.lexaraResponse || '').trim();
+        if (!userId || !sessionId || !prompt || !response) {
+          await storage.clearLexaraMatterEnrichmentJob(String(job?.id || ''));
+          continue;
+        }
+
+        const latestCompleted = await storage.getLatestCompletedLexaraMatterEnrichmentState(userId, sessionId);
+        const prior = mergeMatterEnrichmentBase(job?.context?.representationMatter, latestCompleted);
+        if (!shouldEnrichRepresentationMatter(prompt, response, prior)) {
+          await storage.clearLexaraMatterEnrichmentJob(job.id);
+          continue;
+        }
+
+        const enriched = await advanceRepresentationMatter({
+          prompt,
+          response,
+          sessionId,
+          lawType: cleanOptionalString(job?.context?.lawType),
+          jurisdiction: cleanOptionalString(job?.context?.jurisdiction, 80) || prior?.jurisdiction,
+          prior,
+          allowClaudeOpus: false,
+          skipPacketPlanning: true,
+        });
+        if (enriched) {
+          await storage.completeLexaraMatterEnrichmentJob(job.id, enriched);
+        } else {
+          await storage.clearLexaraMatterEnrichmentJob(job.id);
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        await storage.retryLexaraMatterEnrichmentJob(String(job?.id || ''), message, attempts).catch(() => undefined);
+        log.warn('[LEXARA] Durable post-response matter enrichment unavailable', {
+          error: message,
+          sessionId: job?.sessionId || null,
+          attempts,
+        });
       }
-    })
-    .catch(error => {
-      log.warn('[LEXARA] Post-response matter enrichment unavailable', {
-        error: error instanceof Error ? error.message : String(error),
-        sessionId: task.sessionId,
-      });
-    })
-    .finally(() => {
-      if (matterEnrichmentChains.get(key) === run) matterEnrichmentChains.delete(key);
-    });
-  matterEnrichmentChains.set(key, run);
+    }
+  })().finally(() => {
+    matterEnrichmentDrainPromise = null;
+  });
+  return matterEnrichmentDrainPromise;
 }
+
+function scheduleMatterEnrichmentDrain(): void {
+  setImmediate(() => {
+    void drainDurableMatterEnrichmentJobs().catch(error => {
+      log.warn('[LEXARA] Durable matter-enrichment drain failed', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  });
+}
+
+const matterEnrichmentRecoveryTimer = setInterval(scheduleMatterEnrichmentDrain, 60_000);
+matterEnrichmentRecoveryTimer.unref?.();
+const initialMatterEnrichmentRecovery = setTimeout(scheduleMatterEnrichmentDrain, 15_000);
+initialMatterEnrichmentRecovery.unref?.();
 
 async function loadRepresentationContext(
   req: Request,
@@ -344,6 +423,7 @@ async function persistConversationTurn(
     behaviorMode: string;
     audioBase64?: string;
     representationMatter?: RepresentationMatterState | null;
+    matterEnrichmentPending?: boolean;
   },
 ): Promise<{ conversationId: string | null; persistenceSuccess: boolean | null; persistenceStatus: 'saved' | 'master-ephemeral' | 'trial-ephemeral' }> {
   const user = (req as any).user;
@@ -372,6 +452,13 @@ async function persistConversationTurn(
       mappedLawType: data.mappedLawType || null,
       behaviorMode: data.behaviorMode,
       representationMatter: data.representationMatter || null,
+      ...(data.matterEnrichmentPending ? {
+        matterEnrichmentJob: {
+          status: 'pending',
+          attempts: 0,
+          enqueuedAt: new Date().toISOString(),
+        },
+      } : {}),
     },
   });
   return { conversationId: conversation.id, persistenceSuccess: true, persistenceStatus: 'saved' };
@@ -612,13 +699,24 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
       }
     }
     const response = result.text;
-    const representationMatter = preRepresentationMatter || representationContext.activeMatter;
-    const enrichmentUserId = representationContext.persistent ? authenticatedUserId(req) : undefined;
-    const enrichmentNeeded = Boolean(
-      enrichmentUserId
-      && representationMatter
-      && shouldEnrichRepresentationMatter(prompt, response, representationMatter)
+    const baseRepresentationMatter = preRepresentationMatter || representationContext.activeMatter;
+    const durableEnrichmentNeeded = Boolean(
+      representationContext.persistent
+      && baseRepresentationMatter
+      && shouldEnrichRepresentationMatter(prompt, response, baseRepresentationMatter)
     );
+    const representationMatter = !representationContext.persistent && !genericLegalIntake
+      ? await advanceRepresentationMatter({
+          prompt,
+          response,
+          sessionId: activeSessionId,
+          lawType: cleanOptionalString((rawContext as any).lawType),
+          jurisdiction: result.jurisdiction || explicitJurisdiction,
+          prior: baseRepresentationMatter,
+          allowClaudeOpus: canUseClaudeOpus(req),
+          signal: controller.signal,
+        })
+      : baseRepresentationMatter;
     let persistence: Awaited<ReturnType<typeof persistConversationTurn>>;
     try {
       persistence = await persistConversationTurn(req, {
@@ -630,6 +728,7 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
         mappedLawType: result.mappedLawType,
         behaviorMode: (rawContext as any).behaviorMode === 'personable' ? 'personable' : 'professional',
         representationMatter,
+        matterEnrichmentPending: durableEnrichmentNeeded,
       });
     } catch (dbError) {
       log.error('[LEXARA] Failed to persist streamed conversation', { error: dbError });
@@ -643,17 +742,8 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
       });
       return;
     }
-    if (enrichmentNeeded && enrichmentUserId && representationMatter) {
-      const enrichmentTask: MatterEnrichmentTask = {
-        userId: enrichmentUserId,
-        sessionId: activeSessionId,
-        prompt,
-        response,
-        lawType: cleanOptionalString((rawContext as any).lawType),
-        jurisdiction: result.jurisdiction || explicitJurisdiction,
-        fallbackMatter: representationMatter,
-      };
-      res.once('finish', () => enqueueMatterEnrichment(enrichmentTask));
+    if (durableEnrichmentNeeded && persistence.persistenceStatus === 'saved') {
+      res.once('finish', scheduleMatterEnrichmentDrain);
     }
     send('complete', {
       success: true,
@@ -806,13 +896,18 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
 
 
     const responseText = conversationResult.text;
-    const representationMatter = preRepresentationMatter || representationContext.activeMatter;
-    const enrichmentUserId = representationContext.persistent ? authenticatedUserId(req) : undefined;
-    const enrichmentNeeded = Boolean(
-      enrichmentUserId
-      && representationMatter
-      && shouldEnrichRepresentationMatter(prompt, responseText, representationMatter)
-    );
+    const representationMatter = genericLegalIntake
+      ? preRepresentationMatter || representationContext.activeMatter
+      : await advanceRepresentationMatter({
+          prompt,
+          response: responseText,
+          sessionId,
+          lawType,
+          jurisdiction: conversationResult.jurisdiction || jurisdiction,
+          prior: preRepresentationMatter || representationContext.activeMatter,
+          allowClaudeOpus: canUseClaudeOpus(req),
+          signal: requestController.signal,
+        });
     const model = 'lexara-legal-orchestrator';
 
     // Preserve the deterministic explicit-request fast path, but let LEXARA's
@@ -890,19 +985,6 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
         persistenceSuccess: false,
         persistenceStatus: 'failed',
       });
-    }
-
-    if (enrichmentNeeded && enrichmentUserId && representationMatter) {
-      const enrichmentTask: MatterEnrichmentTask = {
-        userId: enrichmentUserId,
-        sessionId,
-        prompt,
-        response: responseText,
-        lawType,
-        jurisdiction: conversationResult.jurisdiction || jurisdiction,
-        fallbackMatter: representationMatter,
-      };
-      res.once('finish', () => enqueueMatterEnrichment(enrichmentTask));
     }
 
     return res.json({
