@@ -29,7 +29,10 @@ import {
   buildSpectraDiscoveryWaves,
   SPECTRA_DISCOVERY_POLICY,
 } from '../services/spectra/SpectraSourceRegistry';
-import { persistSpectraAcquisition } from '../services/spectra/SpectraAcquisitionPersistence';
+import {
+  loadSpectraSessionObservations,
+  persistSpectraAcquisition,
+} from '../services/spectra/SpectraAcquisitionPersistence';
 
 const router = Router();
 router.use(isAuthenticated);
@@ -622,6 +625,10 @@ router.post('/acquire', async (req: Request, res: Response) => {
   const resolvedTargetLabel = resolvedName || phone || normalizedTarget;
 
   try {
+    const persistedObservationsPromise = requestedSessionId
+      ? loadSpectraSessionObservations(userId, requestedSessionId).catch(() => [])
+      : Promise.resolve([] as GPSPoint[]);
+
     const semanticSubject = resolveLexaraBackgroundSubject(
       [target, details].filter(Boolean).join('. '),
       [],
@@ -658,9 +665,10 @@ router.post('/acquire', async (req: Request, res: Response) => {
       location: semanticSubject?.location || details,
     });
 
-    const [backgroundOutcome, firstPass] = await Promise.all([
+    const [backgroundOutcome, firstPass, persistedObservations] = await Promise.all([
       backgroundPromise,
       firstPassPromise,
+      persistedObservationsPromise,
     ]);
 
     const background = backgroundOutcome.status === 'fulfilled'
@@ -779,7 +787,21 @@ router.post('/acquire', async (req: Request, res: Response) => {
       throw new Error('All SPECTRA discovery paths failed');
     }
 
-    const observations: any[] = directEvidence.map(point => {
+    const observations: any[] = [
+      ...persistedObservations.map(point => ({
+        ...point,
+        timestamp: point.timestamp.toISOString(),
+        receivedAt: point.receivedAt?.toISOString(),
+        provenance: point.provenance
+          ? {
+              ...point.provenance,
+              capturedAt: point.provenance.capturedAt instanceof Date
+                ? point.provenance.capturedAt.toISOString()
+                : point.provenance.capturedAt,
+            }
+          : undefined,
+      })),
+      ...directEvidence.map(point => {
       const normalized = normalizeClientEvidence({
         ...point,
         timestamp: new Date(point.timestamp),
@@ -807,7 +829,8 @@ router.post('/acquire', async (req: Request, res: Response) => {
             }
           : undefined,
       };
-    });
+    }),
+    ];
 
     for (const source of report.sources || []) {
       collectCoordinateObservations(
