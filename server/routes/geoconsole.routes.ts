@@ -6,7 +6,7 @@
  */
 
 import { Router, Request, Response } from 'express';
-import { randomUUID } from 'crypto';
+import { createHmac, randomUUID, timingSafeEqual } from 'crypto';
 import { z } from 'zod';
 import { hybridGeoconsole } from '../services/geoconsole';
 import { GPSPoint, DataSource } from '../services/geoconsole/types';
@@ -14,15 +14,13 @@ import { assessLocationQuality } from '../services/geoconsole/location-quality';
 import { selectCrawlerPlan } from '../services/crawlers/CrawlerSelectionUtility';
 import { createLogger } from '../logger';
 import { isAuthenticated } from '../auth';
+import { pool } from '../db';
 import {
   normalizeClientEvidence,
   signServerEvidence,
 } from '../services/geoconsole/evidence-proof';
 
 const router = Router();
-
-// GeoConsole contains sensitive location evidence; require an authenticated session.
-router.use(isAuthenticated);
 const log = createLogger('GeoconsoleRoutes');
 
 const validDateString = z.string()
