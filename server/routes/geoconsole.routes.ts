@@ -893,7 +893,7 @@ async function persistTelemetryBatch(input: {
        ON CONFLICT (session_id)
        DO UPDATE SET
          user_id = COALESCE(public.spectra_investigations.user_id, EXCLUDED.user_id),
-         subject_label = COALESCE(EXCLUDED.subject_label, public.spectra_investigations.subject_label),
+         subject_label = COALESCE(public.spectra_investigations.subject_label, EXCLUDED.subject_label),
          state = public.spectra_investigations.state || EXCLUDED.state,
          updated_at = now()
        RETURNING id, user_id`,
