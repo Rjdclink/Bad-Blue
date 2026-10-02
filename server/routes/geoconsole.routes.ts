@@ -424,6 +424,186 @@ router.get('/public-cameras', async (req: Request, res: Response) => {
   });
 });
 
+interface PublicGeoMediaResult {
+  id: string;
+  title: string;
+  latitude: number;
+  longitude: number;
+  provider: string;
+  capturedAt?: string;
+  imageUrl?: string;
+  pageUrl?: string;
+  accuracy?: number;
+  metadata?: Record<string, unknown>;
+}
+
+async function wikimediaNearbyMedia(
+  lat: number,
+  lng: number,
+  radiusMeters: number,
+): Promise<PublicGeoMediaResult[]> {
+  const endpoint = new URL('https://commons.wikimedia.org/w/api.php');
+  endpoint.searchParams.set('action', 'query');
+  endpoint.searchParams.set('format', 'json');
+  endpoint.searchParams.set('generator', 'geosearch');
+  endpoint.searchParams.set('ggscoord', `${lat}|${lng}`);
+  endpoint.searchParams.set('ggsradius', String(Math.max(10, Math.min(10_000, radiusMeters))));
+  endpoint.searchParams.set('ggslimit', '100');
+  endpoint.searchParams.set('ggsnamespace', '6');
+  endpoint.searchParams.set('prop', 'coordinates|imageinfo');
+  endpoint.searchParams.set('iiprop', 'url|timestamp|mime');
+
+  const response = await fetch(endpoint, {
+    headers: {
+      Accept: 'application/json',
+      'User-Agent': 'LegalWhat-SPECTRA/1.0',
+    },
+    signal: AbortSignal.timeout(6_000),
+  });
+  if (!response.ok) return [];
+
+  const payload: any = await response.json();
+  const pages = payload?.query?.pages && typeof payload.query.pages === 'object'
+    ? Object.values(payload.query.pages)
+    : [];
+
+  return pages.flatMap((page: any) => {
+    const coordinate = Array.isArray(page?.coordinates) ? page.coordinates[0] : null;
+    const latitude = Number(coordinate?.lat);
+    const longitude = Number(coordinate?.lon);
+    if (
+      !Number.isFinite(latitude) || !Number.isFinite(longitude)
+      || latitude < -90 || latitude > 90
+      || longitude < -180 || longitude > 180
+    ) return [];
+
+    const imageInfo = Array.isArray(page?.imageinfo) ? page.imageinfo[0] : null;
+    return [{
+      id: String(page?.pageid || page?.title || `${latitude},${longitude}`),
+      title: String(page?.title || 'Wikimedia media'),
+      latitude,
+      longitude,
+      provider: 'Wikimedia Commons',
+      capturedAt: imageInfo?.timestamp ? new Date(imageInfo.timestamp).toISOString() : undefined,
+      imageUrl: typeof imageInfo?.url === 'string' ? imageInfo.url : undefined,
+      pageUrl: typeof imageInfo?.descriptionurl === 'string' ? imageInfo.descriptionurl : undefined,
+      metadata: {
+        namespace: page?.ns,
+        mime: imageInfo?.mime,
+        coordinateType: coordinate?.type,
+        coordinateName: coordinate?.name,
+      },
+    } satisfies PublicGeoMediaResult];
+  });
+}
+
+async function flickrNearbyMedia(
+  lat: number,
+  lng: number,
+  radiusKm: number,
+): Promise<PublicGeoMediaResult[]> {
+  const apiKey = String(process.env.FLICKR_API_KEY || '').trim();
+  if (!apiKey) return [];
+
+  const endpoint = new URL('https://www.flickr.com/services/rest/');
+  endpoint.searchParams.set('method', 'flickr.photos.search');
+  endpoint.searchParams.set('api_key', apiKey);
+  endpoint.searchParams.set('format', 'json');
+  endpoint.searchParams.set('nojsoncallback', '1');
+  endpoint.searchParams.set('lat', String(lat));
+  endpoint.searchParams.set('lon', String(lng));
+  endpoint.searchParams.set('radius', String(Math.max(0.1, Math.min(32, radiusKm))));
+  endpoint.searchParams.set('radius_units', 'km');
+  endpoint.searchParams.set('has_geo', '1');
+  endpoint.searchParams.set('per_page', '100');
+  endpoint.searchParams.set('extras', 'geo,date_taken,date_upload,url_o,url_l,url_c,owner_name');
+
+  const response = await fetch(endpoint, {
+    headers: {
+      Accept: 'application/json',
+      'User-Agent': 'LegalWhat-SPECTRA/1.0',
+    },
+    signal: AbortSignal.timeout(6_000),
+  });
+  if (!response.ok) return [];
+
+  const payload: any = await response.json();
+  const photos = Array.isArray(payload?.photos?.photo) ? payload.photos.photo : [];
+  return photos.flatMap((photo: any) => {
+    const latitude = Number(photo?.latitude);
+    const longitude = Number(photo?.longitude);
+    if (
+      !Number.isFinite(latitude) || !Number.isFinite(longitude)
+      || latitude < -90 || latitude > 90
+      || longitude < -180 || longitude > 180
+    ) return [];
+
+    const taken = typeof photo?.datetaken === 'string' && Number.isFinite(Date.parse(photo.datetaken))
+      ? new Date(photo.datetaken).toISOString()
+      : undefined;
+    return [{
+      id: String(photo?.id || `${latitude},${longitude}`),
+      title: String(photo?.title || 'Flickr photo'),
+      latitude,
+      longitude,
+      provider: 'Flickr',
+      capturedAt: taken,
+      imageUrl: String(photo?.url_o || photo?.url_l || photo?.url_c || '') || undefined,
+      pageUrl: photo?.owner && photo?.id
+        ? `https://www.flickr.com/photos/${encodeURIComponent(String(photo.owner))}/${encodeURIComponent(String(photo.id))}`
+        : undefined,
+      accuracy: Number.isFinite(Number(photo?.accuracy)) ? Number(photo.accuracy) : undefined,
+      metadata: {
+        ownerName: photo?.ownername,
+        dateUploaded: photo?.dateupload,
+      },
+    } satisfies PublicGeoMediaResult];
+  });
+}
+
+/**
+ * GET /api/geoconsole/public-geotagged-media
+ * Public geotagged media around a map position. Results remain context evidence;
+ * they are not promoted into a target observation without independent subject matching.
+ */
+router.get('/public-geotagged-media', async (req: Request, res: Response) => {
+  const validation = z.object({
+    lat: z.coerce.number().min(-90).max(90),
+    lng: z.coerce.number().min(-180).max(180),
+    radiusMeters: z.coerce.number().min(10).max(32_000).default(5_000),
+  }).safeParse(req.query);
+
+  if (!validation.success) {
+    return res.status(400).json({ success: false, error: 'Invalid media search coordinates' });
+  }
+
+  const { lat, lng, radiusMeters } = validation.data;
+  const [wikimediaResult, flickrResult] = await Promise.allSettled([
+    wikimediaNearbyMedia(lat, lng, radiusMeters),
+    flickrNearbyMedia(lat, lng, radiusMeters / 1000),
+  ]);
+
+  const seen = new Set<string>();
+  const media = [
+    ...(wikimediaResult.status === 'fulfilled' ? wikimediaResult.value : []),
+    ...(flickrResult.status === 'fulfilled' ? flickrResult.value : []),
+  ].filter(item => {
+    const key = `${item.provider}:${item.id}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).slice(0, 200);
+
+  return res.json({
+    success: true,
+    data: media,
+    providers: {
+      wikimedia: true,
+      flickr: Boolean(process.env.FLICKR_API_KEY),
+    },
+  });
+});
+
 /**
  * POST /api/geoconsole/process
  * Process raw location inputs through the full pipeline
