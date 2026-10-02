@@ -112,7 +112,7 @@ export const SPECTRA_ADAPTER_CAPABILITIES: SpectraAdapterCapability[] = [
     id: 'multilateration',
     label: 'SPECTRA multilateration',
     mode: 'ranging',
-    sourceTypes: ['wifi_rtt','uwb_range','uwb_direction','bluetooth_proximity','ble_rssi','ble_aoa'],
+    sourceTypes: ['wifi_rtt','wifi_rssi','uwb_range','uwb_direction','bluetooth_proximity','ble_rssi','ble_aoa'],
     configured: () => true,
     priority: 'critical',
     supportsRealtime: true,
