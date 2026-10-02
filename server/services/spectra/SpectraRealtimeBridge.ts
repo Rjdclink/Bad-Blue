@@ -13,6 +13,11 @@ export interface SpectraRealtimeObservationRow {
   accuracy_meters?: number | null;
   confidence: number;
   observation_kind: string;
+  evidence_class?: string | null;
+  subject_match_confidence?: number | null;
+  timestamp_confidence?: number | null;
+  acquisition_method?: string | null;
+  source_url?: string | null;
   observed_at: string;
   received_at: string;
   correlation_group?: string | null;
