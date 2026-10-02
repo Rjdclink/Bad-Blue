@@ -42,6 +42,7 @@ import {
   persistSpectraAcquisition,
 } from '../services/spectra/SpectraAcquisitionPersistence';
 import { acquireSpectraPlaceContext } from '../services/spectra/SpectraPlaceContext';
+import { retrieveSpectraPublicEvidence } from '../services/spectra/SpectraPublicRetrieval';
 
 const router = Router();
 router.use(isAuthenticated);
@@ -383,8 +384,63 @@ async function runDiscoveryPass(
       failed += 1;
     }
 
+    let enrichedResults = dedupeDiscoveryResults(results);
+    const retrievalTargets = [...enrichedResults]
+      .sort((left, right) =>
+        (right.reliability === 'high' ? 2 : right.reliability === 'medium' ? 1 : 0)
+        - (left.reliability === 'high' ? 2 : left.reliability === 'medium' ? 1 : 0)
+        || right.relevanceScore - left.relevanceScore
+      )
+      .slice(0, 6)
+      .map(result => result.url);
+
+    if (retrievalTargets.length) {
+      const retrieved = await retrieveSpectraPublicEvidence(
+        retrievalTargets,
+        controller.signal,
+      ).catch(() => []);
+
+      if (retrieved.length) {
+        const byUrl = new Map(enrichedResults.map(result => [result.url, result]));
+        for (const evidence of retrieved) {
+          const existing = byUrl.get(evidence.url);
+          const locationEvidence = evidence.observations.map(observation => ({
+            ...observation,
+            kind: 'location',
+          }));
+
+          if (existing) {
+            existing.metadata = {
+              ...(existing.metadata || {}),
+              sourceUrl: evidence.url,
+              retrievedAt: evidence.retrievedAt,
+              fetchedTitle: evidence.title,
+              fetchedExcerpt: evidence.textExcerpt,
+              retrievedLocationEvidence: locationEvidence,
+            };
+          } else if (locationEvidence.length) {
+            enrichedResults.push({
+              title: evidence.title || 'SPECTRA retrieved source',
+              url: evidence.url,
+              snippet: evidence.textExcerpt,
+              provider: 'spectra-public-retrieval',
+              reliability: reliabilityForUrl(evidence.url),
+              relevanceScore: 76,
+              metadata: {
+                sourceUrl: evidence.url,
+                retrievedAt: evidence.retrievedAt,
+                fetchedExcerpt: evidence.textExcerpt,
+                retrievedLocationEvidence: locationEvidence,
+              },
+            });
+          }
+        }
+        enrichedResults = dedupeDiscoveryResults(enrichedResults);
+      }
+    }
+
     return {
-      results: dedupeDiscoveryResults(results),
+      results: enrichedResults,
       attempted: uniqueQueries.length + 1,
       failed,
       claudeNotes,
