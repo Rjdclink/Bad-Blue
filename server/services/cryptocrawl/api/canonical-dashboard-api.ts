@@ -104,7 +104,7 @@ function hasControlAuthority(req: any): boolean {
   const internalKey = String(process.env.INTERNAL_KEY || process.env.INTERNAL_API_KEY || '');
   const supplied = String(req.header('X-Internal-Key') || req.header('X-Internal-Api-Key') || '');
   if (internalKey && supplied && supplied === internalKey) return true;
-  return !!(req.isAuthenticated?.() && req.user && (req.user.isMasterBypass || req.user.isAdminBypass));
+  return !!(req.isAuthenticated?.() && req.user?.isMasterBypass);
 }
 
 router.get('/stats', (_req, res) => {

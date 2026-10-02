@@ -86,9 +86,11 @@ export default function AdminEmail() {
     queryKey: ['/api/auth/user'],
   });
 
+  const hasMasterAccess = Boolean((user as any)?.isMasterBypass);
+
   // Redirect if not admin
   useEffect(() => {
-    if (!isLoadingUser && (!user || user.id !== 'admin-bypass')) {
+    if (!isLoadingUser && !hasMasterAccess) {
       toast({
         title: "Access Denied",
         description: "Admin access required",
@@ -96,12 +98,12 @@ export default function AdminEmail() {
       });
       setLocation('/');
     }
-  }, [user, isLoadingUser, setLocation, toast]);
+  }, [hasMasterAccess, isLoadingUser, setLocation, toast]);
 
   // Fetch email settings
   const { data: settings, isLoading: isLoadingSettings } = useQuery<EmailSettings>({
     queryKey: ['/api/admin/support-email'],
-    enabled: !!user && user.id === 'admin-bypass',
+    enabled: hasMasterAccess,
   });
 
   // Update form when settings are loaded
@@ -115,7 +117,7 @@ export default function AdminEmail() {
   // Fetch user logins
   const { data: loginsData, isLoading: isLoadingLogins } = useQuery<UserLoginsResponse>({
     queryKey: ['/api/admin/users/logins', { query: searchQuery, filter, page }],
-    enabled: !!user && user.id === 'admin-bypass',
+    enabled: hasMasterAccess,
   });
 
   // Save email settings mutation
@@ -352,7 +354,7 @@ export default function AdminEmail() {
     );
   }
 
-  if (!user || user.id !== 'admin-bypass') {
+  if (!hasMasterAccess) {
     return null;
   }
 

@@ -131,8 +131,10 @@ export default function AdminSubscriptions() {
     queryKey: ['/api/auth/user'],
   });
 
+  const hasMasterAccess = Boolean((user as any)?.isMasterBypass);
+
   useEffect(() => {
-    if (!isLoadingUser && (!user || user.id !== 'admin-bypass')) {
+    if (!isLoadingUser && !hasMasterAccess) {
       toast({
         title: "Access Denied",
         description: "Admin access required",
@@ -140,7 +142,7 @@ export default function AdminSubscriptions() {
       });
       setLocation('/');
     }
-  }, [user, isLoadingUser, setLocation, toast]);
+  }, [hasMasterAccess, isLoadingUser, setLocation, toast]);
 
   // Fetch all registered users (Bad Blue Users) with paid services
   const { data: usersData, isLoading: isLoadingUsers } = useQuery<{
@@ -148,13 +150,13 @@ export default function AdminSubscriptions() {
     pagination: { page: number; limit: number; total: number; totalPages: number };
   }>({
     queryKey: ['/api/admin/users', usersPage],
-    enabled: !!user && user.id === 'admin-bypass',
+    enabled: hasMasterAccess,
   });
 
   // Fetch subscription tiers
   const { data: tiersData, isLoading: isLoadingTiers } = useQuery<{ tiers: SubscriptionTier[] }>({
     queryKey: ['/api/admin/subscription-tiers'],
-    enabled: !!user && user.id === 'admin-bypass',
+    enabled: hasMasterAccess,
   });
 
   // Fetch user subscriptions
@@ -163,7 +165,7 @@ export default function AdminSubscriptions() {
     pagination: { page: number; limit: number; total: number; totalPages: number };
   }>({
     queryKey: ['/api/admin/user-subscriptions', page],
-    enabled: !!user && user.id === 'admin-bypass',
+    enabled: hasMasterAccess,
   });
 
   // Create tier mutation
@@ -330,7 +332,7 @@ export default function AdminSubscriptions() {
     return `$${(cents / 100).toFixed(2)}`;
   };
 
-  if (isLoadingUser || !user || user.id !== 'admin-bypass') {
+  if (isLoadingUser || !hasMasterAccess) {
     return (
       <div className="flex items-center justify-center min-h-screen" data-testid="loading-spinner">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
