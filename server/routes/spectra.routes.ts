@@ -1,6 +1,14 @@
 import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { isAuthenticated } from '../auth';
+import {
+  arcGisCameras,
+  copernicusItems,
+  flickrNearbyMedia,
+  nwsLatestObservation,
+  trafficLandCameras,
+  wikimediaNearbyMedia,
+} from './geoconsole.routes';
 import { getPlatformUserId } from '../authIdentity';
 import { callClaudeWebSearch } from '../claude';
 import {
@@ -33,6 +41,7 @@ import {
   loadSpectraSessionObservations,
   persistSpectraAcquisition,
 } from '../services/spectra/SpectraAcquisitionPersistence';
+import { acquireSpectraPlaceContext } from '../services/spectra/SpectraPlaceContext';
 
 const router = Router();
 router.use(isAuthenticated);
@@ -592,6 +601,83 @@ function dedupeObservations(points: any[]): any[] {
     seen.add(key);
     return true;
   });
+}
+
+
+interface SpectraContextEvidence {
+  anchor?: {
+    latitude: number;
+    longitude: number;
+    accuracyMeters?: number;
+    observedAt?: string;
+    basis: 'timestamped_observation' | 'regional_candidate';
+  };
+  places: Awaited<ReturnType<typeof acquireSpectraPlaceContext>>;
+  cameras: any[];
+  geotaggedMedia: any[];
+  weather?: Record<string, unknown>;
+  earthObservation: Array<Record<string, unknown>>;
+  sourceFamilies: string[];
+}
+
+async function collectSpectraContextEvidence(input: {
+  latitude: number;
+  longitude: number;
+  accuracyMeters?: number;
+  observedAt?: Date;
+  basis: 'timestamped_observation' | 'regional_candidate';
+}): Promise<SpectraContextEvidence> {
+  const referenceTime = input.observedAt && Number.isFinite(input.observedAt.getTime())
+    ? input.observedAt
+    : new Date();
+  const earthFrom = new Date(referenceTime.getTime() - 12 * 60 * 60_000);
+  const earthTo = new Date(referenceTime.getTime() + 12 * 60 * 60_000);
+  const weatherRelevant = Math.abs(Date.now() - referenceTime.getTime()) <= 24 * 60 * 60_000;
+
+  const outcomes = await Promise.allSettled([
+    acquireSpectraPlaceContext(input.latitude, input.longitude, 2_000),
+    trafficLandCameras(input.latitude, input.longitude, 10),
+    arcGisCameras(input.latitude, input.longitude, 10),
+    wikimediaNearbyMedia(input.latitude, input.longitude, 5_000),
+    flickrNearbyMedia(input.latitude, input.longitude, 5),
+    weatherRelevant
+      ? nwsLatestObservation(input.latitude, input.longitude)
+      : Promise.resolve(null),
+    copernicusItems(input.latitude, input.longitude, earthFrom, earthTo),
+  ]);
+
+  const places = outcomes[0].status === 'fulfilled' ? outcomes[0].value : [];
+  const trafficLand = outcomes[1].status === 'fulfilled' ? outcomes[1].value : [];
+  const arcGis = outcomes[2].status === 'fulfilled' ? outcomes[2].value : [];
+  const wikimedia = outcomes[3].status === 'fulfilled' ? outcomes[3].value : [];
+  const flickr = outcomes[4].status === 'fulfilled' ? outcomes[4].value : [];
+  const weather = outcomes[5].status === 'fulfilled' && outcomes[5].value
+    ? outcomes[5].value
+    : undefined;
+  const earthObservation = outcomes[6].status === 'fulfilled' ? outcomes[6].value : [];
+
+  const sourceFamilies: string[] = [];
+  if (places.length) sourceFamilies.push('place-context');
+  if (trafficLand.length || arcGis.length) sourceFamilies.push('public-camera');
+  if (wikimedia.length || flickr.length) sourceFamilies.push('geotagged-media');
+  if (weather) sourceFamilies.push('weather');
+  if (earthObservation.length) sourceFamilies.push('earth-observation');
+
+  return {
+    anchor: {
+      latitude: input.latitude,
+      longitude: input.longitude,
+      accuracyMeters: input.accuracyMeters,
+      observedAt: input.observedAt?.toISOString(),
+      basis: input.basis,
+    },
+    places: places.slice(0, 80),
+    cameras: [...trafficLand, ...arcGis].slice(0, 120),
+    geotaggedMedia: [...wikimedia, ...flickr].slice(0, 120),
+    weather,
+    earthObservation: earthObservation.slice(0, 20),
+    sourceFamilies,
+  };
 }
 
 router.post('/acquire', async (req: Request, res: Response) => {
