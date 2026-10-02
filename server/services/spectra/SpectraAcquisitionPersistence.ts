@@ -72,6 +72,78 @@ function clueType(value: string): string {
   return 'freeform';
 }
 
+export async function loadSpectraSessionObservations(
+  userId: string,
+  sessionId: string,
+  limit = 2_000,
+): Promise<GPSPoint[]> {
+  const normalizedSessionId = sessionId.trim();
+  if (!normalizedSessionId || normalizedSessionId.length > 200) return [];
+  const boundedLimit = Math.max(1, Math.min(2_000, Math.floor(limit)));
+
+  try {
+    const result = await pool.query(
+      `SELECT
+         source_type, provider, latitude, longitude, altitude, accuracy_meters,
+         confidence, observation_kind, evidence_class,
+         subject_match_confidence, timestamp_confidence, acquisition_method, source_url,
+         observed_at, received_at, correlation_group, provenance, metadata
+       FROM public.spectra_location_observations
+       WHERE session_id = $1 AND user_id = $2
+       ORDER BY observed_at ASC
+       LIMIT $3`,
+      [normalizedSessionId, userId, boundedLimit],
+    );
+
+    return result.rows.flatMap((row: any) => {
+      const latitude = Number(row.latitude);
+      const longitude = Number(row.longitude);
+      const observedAt = new Date(row.observed_at);
+      if (
+        !Number.isFinite(latitude)
+        || !Number.isFinite(longitude)
+        || !Number.isFinite(observedAt.getTime())
+      ) return [];
+
+      const metadata = row.metadata && typeof row.metadata === 'object'
+        ? { ...row.metadata }
+        : {};
+      return [{
+        latitude,
+        longitude,
+        altitude: row.altitude == null ? undefined : Number(row.altitude),
+        accuracy: row.accuracy_meters == null ? undefined : Number(row.accuracy_meters),
+        timestamp: observedAt,
+        receivedAt: row.received_at ? new Date(row.received_at) : undefined,
+        source: row.source_type,
+        confidence: Number(row.confidence),
+        observationKind: row.observation_kind,
+        correlationGroup: row.correlation_group || undefined,
+        provenance: row.provenance || {
+          provider: row.provider || undefined,
+          capturedAt: observedAt,
+        },
+        metadata: {
+          ...metadata,
+          evidenceClass: row.evidence_class || metadata.evidenceClass,
+          subjectMatchConfidence: row.subject_match_confidence == null
+            ? metadata.subjectMatchConfidence
+            : Number(row.subject_match_confidence),
+          timestampConfidence: row.timestamp_confidence == null
+            ? metadata.timestampConfidence
+            : Number(row.timestamp_confidence),
+          acquisitionMethod: row.acquisition_method || metadata.acquisitionMethod,
+          sourceUrl: row.source_url || metadata.sourceUrl,
+          restoredFromPersistence: true,
+        },
+      } as GPSPoint];
+    });
+  } catch (error: any) {
+    if (error?.code === '42P01') return [];
+    throw error;
+  }
+}
+
 export async function persistSpectraAcquisition(input: {
   userId: string;
   sessionId?: string;
