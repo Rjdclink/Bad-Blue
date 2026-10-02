@@ -343,7 +343,7 @@ export function useGeoRuntime(
           credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            sessionId: configuredSessionId || sessionId || undefined,
+            sessionId: configuredSessionId || undefined,
             inputs: points.map(point => ({
               ...point,
               timestamp: new Date(point.timestamp).toISOString(),
@@ -469,7 +469,6 @@ export function useGeoRuntime(
     configuredSessionId,
     predictionPayloadToFrames,
     requestAuthoritativeFuturecast,
-    sessionId,
   ]);
 
 
