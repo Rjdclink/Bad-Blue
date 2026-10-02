@@ -127,8 +127,8 @@ const telemetryAbsoluteSchema = z.object({
   source: z.enum([
     'device_gps', 'gnss_fix', 'gnss_raw', 'browser_geolocation',
     'vehicle_telemetry', 'exif_photo', 'exif_video', 'xmp_sidecar',
-    'json_sidecar', 'social_geotag', 'public_camera', 'traffic_cam',
-    'satellite_imagery', 'historical_location', 'public_record',
+    'json_sidecar', 'social_geotag', 'visual_detection', 'network_region',
+    'public_camera', 'traffic_cam', 'satellite_imagery', 'historical_location', 'public_record',
   ]),
   timestamp: validDateString,
   latitude: z.number().min(-90).max(90),
@@ -1335,7 +1335,8 @@ router.get('/telemetry-capabilities', (_req: Request, res: Response) => {
       positionSources: [
         'browser_geolocation', 'device_gps', 'gnss_fix', 'gnss_raw',
         'vehicle_telemetry', 'exif_photo', 'exif_video', 'social_geotag',
-        'public_camera', 'traffic_cam', 'historical_location', 'public_record',
+        'visual_detection', 'network_region', 'public_camera', 'traffic_cam',
+        'historical_location', 'public_record',
       ],
       radioSources: ['wifi_fingerprint', 'cellular'],
       rangingSources: [
