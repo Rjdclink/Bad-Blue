@@ -527,22 +527,29 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
     const previousMessages = sanitizePreviousMessages((rawContext as any).previousMessages);
     let documentIntent = detectDocumentIntent(prompt, previousMessages);
     const requestedSessionId = cleanOptionalString((rawContext as any).sessionId, 128);
-    const representationContext = await loadRepresentationContext(
-      req,
-      prompt,
-      requestedSessionId,
-      (rawContext as any).representationMatter,
-    );
+    const genericLegalIntake = isLexaraGenericLegalIntake(prompt);
+    const representationContext = genericLegalIntake
+      ? {
+          persistent: hasPersistentMatterAccess(req),
+          activeMatter: null,
+          activeSessionId: requestedSessionId,
+          savedMatters: [] as SavedMatterSummary[],
+        }
+      : await loadRepresentationContext(
+          req,
+          prompt,
+          requestedSessionId,
+          (rawContext as any).representationMatter,
+        );
     const activeSessionId = representationContext.activeSessionId || requestedSessionId || `lexara-${Date.now()}`;
     const effectivePreviousMessages = representationContext.activeMatter
       && requestedSessionId
       && activeSessionId !== requestedSessionId
       ? []
       : previousMessages;
-    const genericLegalIntake = isLexaraGenericLegalIntake(prompt);
     documentIntent = detectDocumentIntent(prompt, effectivePreviousMessages);
     const explicitJurisdiction = cleanOptionalString((rawContext as any).jurisdiction, 80);
-    const locationState = explicitJurisdiction ? null : await resolveBestLocationEstimate(
+    const locationState = genericLegalIntake || explicitJurisdiction ? null : await resolveBestLocationEstimate(
       String(req.headers['x-real-ip'] || req.headers['cf-connecting-ip'] || req.ip || ''),
       cleanDeviceLocation((rawContext as any).deviceLocation),
     );
