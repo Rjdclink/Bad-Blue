@@ -6,7 +6,8 @@
  */
 
 import { Router, Request, Response } from 'express';
-import { createHmac, randomUUID, timingSafeEqual } from 'crypto';
+import { EventEmitter } from 'node:events';
+import { createHash, createHmac, randomUUID, timingSafeEqual } from 'crypto';
 import { z } from 'zod';
 import { hybridGeoconsole } from '../services/geoconsole';
 import { GPSPoint, DataSource } from '../services/geoconsole/types';
