@@ -7,6 +7,7 @@ import {
 import { getLexaraLegalDomainProfile } from './LexaraLegalDomainProfiles';
 import { resolveUSJurisdiction } from './LexaraJurisdictionResolver';
 import { resolveJurisdictionAuthorityProfile } from './LexaraJurisdictionAuthority';
+import { isLexaraGenericLegalIntake, isLexaraRepeatRequest } from './LexaraResearchIntentRouter';
 
 export type RepresentationStage =
   | 'intake'
@@ -340,6 +341,19 @@ function updateMatterTitle(matter: RepresentationMatterState, prompt: string, pr
 function shouldOpenMatter(prompt: string, prior?: RepresentationMatterState | null): boolean {
   if (isSavedMatterListRequest(prompt)) return false;
   return Boolean(prior) || MATTER_SIGNAL.test(prompt);
+}
+
+const NON_MATERIAL_MATTER_TURN = /^(?:ok(?:ay)?|thanks?|thank\s+you|got\s+it|understood|hello|hi|hey|bye|goodbye|who\s+are\s+you|what\s+can\s+you\s+do|are\s+you\s+(?:still\s+)?there|can\s+you\s+hear\s+me|are\s+you\s+listening)[?.! ]*$/i;
+
+export function shouldEnrichRepresentationMatter(
+  prompt: string,
+  response: string,
+  prior?: RepresentationMatterState | null,
+): boolean {
+  if (!sanitizeRepresentationMatter(prior) || !String(response || '').trim()) return false;
+  const text = String(prompt || '').trim();
+  if (!text || isLexaraGenericLegalIntake(text) || isLexaraRepeatRequest(text)) return false;
+  return !NON_MATERIAL_MATTER_TURN.test(text);
 }
 
 function shouldPlanPacket(prompt: string, matter: RepresentationMatterState): boolean {
