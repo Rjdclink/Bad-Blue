@@ -1300,6 +1300,112 @@ router.get('/telemetry-capabilities', (_req: Request, res: Response) => {
   });
 });
 
+type SpectraImportSource =
+  | 'device_gps'
+  | 'gnss_fix'
+  | 'vehicle_telemetry'
+  | 'social_geotag'
+  | 'historical_location'
+  | 'public_record';
+
+async function runStructuredTelemetryImport(input: {
+  format: SpectraTelemetryImportFormat;
+  content: string;
+  sessionId?: string;
+  subjectLabel?: string;
+  source?: SpectraImportSource;
+}, userId: string) {
+  const imported = importSpectraTelemetry(input.format, input.content);
+  const defaultSource: 'gnss_fix' | 'historical_location' =
+    input.format === 'nmea' || input.format === 'gpx'
+      ? 'gnss_fix'
+      : 'historical_location';
+  const source = input.source || defaultSource;
+
+  if (!imported.length) {
+    return {
+      format: input.format,
+      sessionId: input.sessionId,
+      parsedObservationCount: 0,
+      processedObservationCount: 0,
+      persistence: { available: false },
+      fusedLocations: [],
+      futurecast: [],
+      inputQuality: {
+        acceptedCount: 0,
+        rejectedCount: 0,
+        issues: [],
+      },
+      message: 'No timestamped coordinate observations were present in the import.',
+    };
+  }
+
+  const batch = telemetryBatchSchema.parse({
+    sessionId: input.sessionId,
+    subjectLabel: input.subjectLabel,
+    sourceId: `import:${input.format}`,
+    measurements: imported.map(point => ({
+      kind: 'position',
+      source,
+      timestamp: point.timestamp,
+      latitude: point.latitude,
+      longitude: point.longitude,
+      altitude: point.altitude,
+      accuracy: point.accuracy,
+      confidence: point.confidence,
+      provider: `SPECTRA ${input.format.toUpperCase()} import`,
+      recordId: point.recordId,
+      correlationGroup: `import:${input.format}`,
+      metadata: {
+        ...(point.metadata || {}),
+        importedArtifact: true,
+        originalFormat: input.format,
+      },
+    })),
+    metadata: {
+      acquisitionMode: 'structured-telemetry-import',
+      format: input.format,
+      importedObservationCount: imported.length,
+    },
+  });
+
+  const processed = await processTelemetryBatch(
+    batch,
+    true,
+    userId,
+    `import:${input.format}`,
+  );
+
+  return {
+    format: input.format,
+    sessionId: processed.sessionId,
+    parsedObservationCount: imported.length,
+    processedObservationCount: processed.positionCount,
+    persistence: processed.persistence,
+    fusedLocations: processed.result?.fusedLocations.map(location => ({
+      ...location,
+      point: signServerEvidence(location.point),
+    })) || [],
+    futurecast: processed.result?.futurecast.map(signServerEvidence) || [],
+    inputQuality: {
+      acceptedCount: processed.quality.acceptedCount,
+      rejectedCount: processed.quality.rejectedCount,
+      issues: processed.quality.issues,
+    },
+  };
+}
+
+function inferTelemetryImportFormat(fileName: string): SpectraTelemetryImportFormat | null {
+  const extension = fileName.toLowerCase().split('.').pop() || '';
+  if (extension === 'geojson' || extension === 'json') return 'geojson';
+  if (extension === 'gpx') return 'gpx';
+  if (extension === 'kml') return 'kml';
+  if (extension === 'nmea' || extension === 'log' || extension === 'txt') return 'nmea';
+  if (extension === 'csv') return 'csv';
+  if (extension === 'ndjson' || extension === 'jsonl') return 'ndjson';
+  return null;
+}
+
 router.post('/telemetry/import', async (req: Request, res: Response) => {
   const validation = z.object({
     format: z.enum(['geojson', 'gpx', 'kml', 'nmea', 'csv', 'ndjson']),
@@ -1328,84 +1434,11 @@ router.post('/telemetry/import', async (req: Request, res: Response) => {
   if (!userId) return res.status(401).json({ success: false, error: 'Authentication required.' });
 
   try {
-    const imported = importSpectraTelemetry(
-      validation.data.format as SpectraTelemetryImportFormat,
-      validation.data.content,
-    );
-    const defaultSource: 'gnss_fix' | 'historical_location' =
-      validation.data.format === 'nmea' || validation.data.format === 'gpx'
-        ? 'gnss_fix'
-        : 'historical_location';
-    const source = validation.data.source || defaultSource;
-
-    if (!imported.length) {
-      return res.json({
-        success: true,
-        data: {
-          format: validation.data.format,
-          inputCount: 0,
-          positionCount: 0,
-          message: 'No timestamped coordinate observations were present in the import.',
-        },
-      });
-    }
-
-    const batch = telemetryBatchSchema.parse({
-      sessionId: validation.data.sessionId,
-      subjectLabel: validation.data.subjectLabel,
-      sourceId: `import:${validation.data.format}`,
-      measurements: imported.map(point => ({
-        kind: 'position',
-        source,
-        timestamp: point.timestamp,
-        latitude: point.latitude,
-        longitude: point.longitude,
-        altitude: point.altitude,
-        accuracy: point.accuracy,
-        confidence: point.confidence,
-        provider: `SPECTRA ${validation.data.format.toUpperCase()} import`,
-        recordId: point.recordId,
-        correlationGroup: `import:${validation.data.format}`,
-        metadata: {
-          ...(point.metadata || {}),
-          importedArtifact: true,
-          originalFormat: validation.data.format,
-        },
-      })),
-      metadata: {
-        acquisitionMode: 'structured-telemetry-import',
-        format: validation.data.format,
-        importedObservationCount: imported.length,
-      },
-    });
-
-    const processed = await processTelemetryBatch(
-      batch,
-      true,
-      userId,
-      `import:${validation.data.format}`,
-    );
-
-    return res.json({
-      success: true,
-      data: {
-        format: validation.data.format,
-        sessionId: processed.sessionId,
-        parsedObservationCount: imported.length,
-        processedObservationCount: processed.positionCount,
-        persistence: processed.persistence,
-        fusedLocations: processed.result?.fusedLocations.map(location => ({
-          ...location,
-          point: signServerEvidence(location.point),
-        })) || [],
-        futurecast: processed.result?.futurecast.map(signServerEvidence) || [],
-        inputQuality: {
-          acceptedCount: processed.quality.acceptedCount,
-          rejectedCount: processed.quality.rejectedCount,
-          issues: processed.quality.issues,
-        },
-      },
-    });
+    const data = await runStructuredTelemetryImport({
+      ...validation.data,
+      format: validation.data.format as SpectraTelemetryImportFormat,
+    }, userId);
+    return res.json({ success: true, data });
   } catch (error) {
     log.warn('SPECTRA telemetry import failed', {
       error: error instanceof Error ? error.message : String(error),
@@ -1413,6 +1446,69 @@ router.post('/telemetry/import', async (req: Request, res: Response) => {
     return res.status(400).json({ success: false, error: 'Telemetry import could not be parsed.' });
   }
 });
+
+router.post(
+  '/telemetry/import-file',
+  telemetryImportUpload.single('file'),
+  async (req: Request, res: Response) => {
+    const userId = getPlatformUserId(req.user as any);
+    if (!userId) return res.status(401).json({ success: false, error: 'Authentication required.' });
+    if (!req.file?.buffer?.length) {
+      return res.status(400).json({ success: false, error: 'A telemetry file is required.' });
+    }
+
+    const requestedFormat = typeof req.body?.format === 'string'
+      ? req.body.format.trim().toLowerCase()
+      : '';
+    const inferredFormat = inferTelemetryImportFormat(req.file.originalname);
+    const format = (
+      ['geojson', 'gpx', 'kml', 'nmea', 'csv', 'ndjson'] as const
+    ).includes(requestedFormat as any)
+      ? requestedFormat as SpectraTelemetryImportFormat
+      : inferredFormat;
+
+    if (!format) {
+      return res.status(400).json({ success: false, error: 'Unsupported telemetry file format.' });
+    }
+
+    const sessionId = typeof req.body?.sessionId === 'string' && req.body.sessionId.trim()
+      ? req.body.sessionId.trim().slice(0, 200)
+      : undefined;
+    const subjectLabel = typeof req.body?.subjectLabel === 'string' && req.body.subjectLabel.trim()
+      ? req.body.subjectLabel.trim().slice(0, 500)
+      : undefined;
+    const sourceRaw = typeof req.body?.source === 'string' ? req.body.source.trim() : '';
+    const allowedSources = new Set<SpectraImportSource>([
+      'device_gps',
+      'gnss_fix',
+      'vehicle_telemetry',
+      'social_geotag',
+      'historical_location',
+      'public_record',
+    ]);
+    const source = allowedSources.has(sourceRaw as SpectraImportSource)
+      ? sourceRaw as SpectraImportSource
+      : undefined;
+
+    try {
+      const data = await runStructuredTelemetryImport({
+        format,
+        content: req.file.buffer.toString('utf8'),
+        sessionId,
+        subjectLabel,
+        source,
+      }, userId);
+      return res.json({ success: true, data });
+    } catch (error) {
+      log.warn('SPECTRA telemetry file import failed', {
+        format,
+        fileName: req.file.originalname,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return res.status(400).json({ success: false, error: 'Telemetry file could not be parsed.' });
+    }
+  },
+);
 
 router.post('/telemetry/pull/:adapterId', async (req: Request, res: Response) => {
   const userId = getPlatformUserId(req.user as any);
