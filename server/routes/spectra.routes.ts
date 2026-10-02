@@ -5,6 +5,7 @@ import { getPlatformUserId } from '../authIdentity';
 import { callClaudeWebSearch } from '../claude';
 import {
   discoverLegalMeshTier3,
+  discoverLegalMeshSupplemental,
   type LegalMeshCandidate,
 } from '../lexara/LegalProviderMesh';
 import { resolveLexaraBackgroundSubject } from '../lexara/LexaraBackgroundSubject';
@@ -330,6 +331,22 @@ async function runDiscoveryPass(
       }
     } else {
       failed += uniqueQueries.length;
+    }
+
+    const existingUrls = [...new Set(results.map(result => result.url).filter(Boolean))];
+    if (existingUrls.length > 0 && uniqueQueries[0]) {
+      const supplemental = await discoverLegalMeshSupplemental(
+        uniqueQueries[0],
+        existingUrls,
+        controller.signal,
+        {
+          categories: ['news-history', 'contacts-addresses', 'social-online', 'public-images', 'property'],
+          jurisdiction: context.location,
+          subject: context.subject,
+          requestedFact: 'contact-address',
+        },
+      ).catch(() => []);
+      results.push(...supplemental.map(discoveryResultFromCandidate));
     }
 
     const claudeNotes: string[] = [];
