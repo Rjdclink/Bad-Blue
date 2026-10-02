@@ -106,7 +106,7 @@ ALTER TABLE public.spectra_clues ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.spectra_telemetry_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.spectra_location_observations ENABLE ROW LEVEL SECURITY;
 
-DO $
+DO $$
 BEGIN
   IF EXISTS (
     SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime'
