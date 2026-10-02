@@ -22,6 +22,10 @@ import {
   signServerEvidence,
 } from '../services/geoconsole/evidence-proof';
 import { getSpectraAdapterCapabilities } from '../services/spectra/SpectraAdapterRegistry';
+import {
+  getSpectraGenericPullAdapters,
+  pullSpectraGenericAdapter,
+} from '../services/spectra/SpectraGenericPullAdapters';
 
 const router = Router();
 const log = createLogger('GeoconsoleRoutes');
@@ -991,8 +995,85 @@ router.get('/telemetry-capabilities', (_req: Request, res: Response) => {
       ),
       providerWebhookConfigured: Boolean(process.env.SPECTRA_TELEMETRY_HMAC_SECRET),
       adapters: getSpectraAdapterCapabilities(),
+      genericPullAdapters: getSpectraGenericPullAdapters(),
     },
   });
+});
+
+router.post('/telemetry/pull/:adapterId', async (req: Request, res: Response) => {
+  const userId = getPlatformUserId(req.user as any);
+  if (!userId) return res.status(401).json({ success: false, error: 'Authentication required.' });
+
+  const adapterId = String(req.params.adapterId || '').trim();
+  if (!/^[a-z0-9][a-z0-9._-]{0,119}$/i.test(adapterId)) {
+    return res.status(400).json({ success: false, error: 'Invalid telemetry adapter.' });
+  }
+
+  try {
+    const points = await pullSpectraGenericAdapter(adapterId);
+    if (!points.length) {
+      return res.json({
+        success: true,
+        data: {
+          adapterId,
+          inputCount: 0,
+          positionCount: 0,
+          message: 'The configured provider returned no usable location observations.',
+        },
+      });
+    }
+
+    const batch = telemetryBatchSchema.parse({
+      sessionId: typeof req.body?.sessionId === 'string' ? req.body.sessionId : undefined,
+      subjectLabel: typeof req.body?.subjectLabel === 'string' ? req.body.subjectLabel : undefined,
+      sourceId: adapterId,
+      measurements: points.map(point => ({
+        kind: 'position',
+        source: point.source,
+        timestamp: point.timestamp.toISOString(),
+        latitude: point.latitude,
+        longitude: point.longitude,
+        altitude: point.altitude,
+        accuracy: point.accuracy,
+        verticalAccuracy: point.verticalAccuracy,
+        confidence: point.confidence,
+        provider: point.provenance?.provider || adapterId,
+        recordId: point.provenance?.recordId,
+        correlationGroup: point.correlationGroup,
+        metadata: point.metadata,
+      })),
+      metadata: { acquisitionMode: 'configured-https-pull' },
+    });
+
+    const processed = await processTelemetryBatch(batch, true, userId, adapterId);
+    return res.json({
+      success: true,
+      data: {
+        adapterId,
+        sessionId: processed.sessionId,
+        inputCount: processed.inputCount,
+        positionCount: processed.positionCount,
+        contextOnlyCount: processed.contextOnlyCount,
+        persistence: processed.persistence,
+        fusedLocations: processed.result?.fusedLocations.map(location => ({
+          ...location,
+          point: signServerEvidence(location.point),
+        })) || [],
+        futurecast: processed.result?.futurecast.map(signServerEvidence) || [],
+        inputQuality: {
+          acceptedCount: processed.quality.acceptedCount,
+          rejectedCount: processed.quality.rejectedCount,
+          issues: processed.quality.issues,
+        },
+      },
+    });
+  } catch (error) {
+    log.warn('Configured SPECTRA telemetry pull failed', {
+      adapterId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return res.status(502).json({ success: false, error: 'Configured telemetry source was unavailable.' });
+  }
 });
 
 router.post('/telemetry-ingest', async (req: Request, res: Response) => {
