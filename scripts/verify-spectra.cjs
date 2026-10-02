@@ -33,6 +33,13 @@ const spectraSources = read('server/services/spectra/SpectraSourceRegistry.ts');
 const pantheonSources = read('server/services/pantheon/PantheonSovereignSourceRegistry.ts');
 const geocoder = read('server/services/geoconsole/city-state-geocoder.ts');
 const geoconsoleRoutes = read('server/routes/geoconsole.routes.ts');
+const adapterRegistry = read('server/services/spectra/SpectraAdapterRegistry.ts');
+const genericPull = read('server/services/spectra/SpectraGenericPullAdapters.ts');
+const realtimeBridge = read('server/services/spectra/SpectraRealtimeBridge.ts');
+const telemetryImport = read('server/services/spectra/SpectraTelemetryImport.ts');
+const acquisitionPersistence = read('server/services/spectra/SpectraAcquisitionPersistence.ts');
+const placeContext = read('server/services/spectra/SpectraPlaceContext.ts');
+const spectraMigration = read('server/migrations/064_spectra_durable_observations.sql');
 const landing = read('client/src/pages/landing.tsx');
 const login = read('client/src/pages/login.tsx');
 
@@ -275,6 +282,55 @@ test('SPECTRA has weather and earth-observation context adapters',
 test('US address geocoding has an independent Census fallback',
   geocoder.includes('geocoding.geo.census.gov/geocoder/locations/onelineaddress') &&
   geocoder.includes('queryCensusAddressGeocoder(address)'));
+test('SPECTRA universal telemetry gateway accepts browser, provider, radio and ranging evidence',
+  geoconsoleRoutes.includes("router.post('/telemetry-ingest'") &&
+  geoconsoleRoutes.includes("router.post('/telemetry/provider/:providerId'") &&
+  geoconsoleRoutes.includes('googleRadioPoint') &&
+  geoconsoleRoutes.includes('openCellIdPoint') &&
+  geoconsoleRoutes.includes('rangingPoint'));
+test('Structured telemetry imports cover the supported interchange formats',
+  geoconsoleRoutes.includes("router.post('/telemetry/import'") &&
+  ['geojson','gpx','kml','nmea','csv','ndjson'].every(format => telemetryImport.includes(`'${format}'`)));
+test('Configured HTTPS pull adapters are bounded and enter the canonical telemetry pipeline',
+  geoconsoleRoutes.includes("router.post('/telemetry/pull/:adapterId'") &&
+  genericPull.includes("Generic SPECTRA pull adapters require HTTPS.") &&
+  genericPull.includes('rows.slice(0, 500)') &&
+  geoconsoleRoutes.includes('processTelemetryBatch(batch, true, userId, adapterId)'));
+test('Durable SPECTRA persistence stores investigations, clues and deduplicated observations',
+  acquisitionPersistence.includes('spectra_investigations') &&
+  acquisitionPersistence.includes('spectra_clues') &&
+  acquisitionPersistence.includes('spectra_location_observations') &&
+  acquisitionPersistence.includes('evidence_fingerprint') &&
+  routes.includes('persistSpectraAcquisition'));
+test('SPECTRA migration enables PostGIS, RLS and guarded Realtime publication',
+  spectraMigration.includes('CREATE EXTENSION IF NOT EXISTS postgis WITH SCHEMA extensions') &&
+  spectraMigration.includes('DO $') &&
+  spectraMigration.includes('ADD TABLE public.spectra_location_observations') &&
+  (spectraMigration.match(/ENABLE ROW LEVEL SECURITY/g) || []).length === 4);
+test('Realtime observations work locally and across replicas when Supabase Realtime is configured',
+  geoconsoleRoutes.includes("router.get('/telemetry-stream/:sessionId'") &&
+  geoconsoleRoutes.includes('telemetryPushEmitter') &&
+  geoconsoleRoutes.includes('subscribeSpectraDatabaseObservations') &&
+  realtimeBridge.includes("table: 'spectra_location_observations'"));
+test('SPECTRA acquisition session stays attached to GeoRuntime and telemetry updates',
+  spectra.includes('sessionId={spectraSessionId}') &&
+  spectra.includes('sessionId: spectraSessionId || undefined') &&
+  dashboard.includes('sessionId?: string | null') &&
+  dashboard.includes('sessionId: sessionId || undefined') &&
+  runtime.includes("sessionId: configuredSessionId || undefined") &&
+  runtime.includes('/api/geoconsole/telemetry-stream/'));
+test('SPECTRA adapter capability registry truthfully exposes optional and built-in lanes',
+  adapterRegistry.includes("id: 'browser-geolocation'") &&
+  adapterRegistry.includes("id: 'signed-provider-webhook'") &&
+  adapterRegistry.includes("id: 'structured-telemetry-import'") &&
+  adapterRegistry.includes("id: 'trafficland'") &&
+  adapterRegistry.includes("id: 'overpass-place-context'") &&
+  adapterRegistry.includes("id: 'geonames-place-context'"));
+test('Place context uses independent OpenStreetMap and GeoNames lanes',
+  geoconsoleRoutes.includes("router.get('/place-context'") &&
+  placeContext.includes('overpass-api.de/api/interpreter') &&
+  placeContext.includes('secure.geonames.org/findNearbyJSON') &&
+  placeContext.includes('Promise.allSettled'));
 test('SPECTRA API is mounted',
   serverRoutes.includes("app.use('/api/spectra', spectraRoutes.default)"));
 
