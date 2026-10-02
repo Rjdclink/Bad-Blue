@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { isAuthenticated } from '../auth';
+import { getPlatformUserId } from '../authIdentity';
 import { callClaudeWebSearch } from '../claude';
 import {
   discoverLegalMeshTier3,
@@ -33,6 +34,12 @@ import {
   normalizeAbsoluteDeviceObservation,
 } from '../services/spectra/SpectraDeviceAcquisitionAdapters';
 import { acquireNearbyTrafficCameras } from '../services/spectra/SpectraCameraAcquisitionAdapter';
+import {
+  createSpectraInvestigation,
+  getSpectraInvestigation,
+  loadSpectraObservations,
+} from '../services/spectra/SpectraPersistence';
+import { subscribeSpectraInvestigation } from '../services/spectra/SpectraRealtimeHub';
 
 const router = Router();
 router.use(isAuthenticated);
@@ -133,6 +140,12 @@ const deviceObservationSchema = z.discriminatedUnion('kind', [
   radioDeviceObservationSchema,
   rangingDeviceObservationSchema,
 ]);
+
+const createInvestigationSchema = z.object({
+  subjectLabel: z.string().trim().min(1).max(500),
+  clues: z.array(z.unknown()).max(100).default([]),
+  state: z.record(z.unknown()).optional(),
+});
 
 const PHONE_CANDIDATE_RE = /(?:\+\d{1,3}[\s().-]*)?(?:\d[\s().-]*){7,15}/;
 
@@ -659,6 +672,95 @@ function dedupeObservations(points: any[]): any[] {
     return true;
   });
 }
+
+router.post('/investigations', async (req: Request, res: Response) => {
+  const userId = getPlatformUserId(req.user as any);
+  if (!userId) return res.status(401).json({ success: false, error: 'Authentication required.' });
+
+  const parsed = createInvestigationSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ success: false, error: 'Invalid SPECTRA investigation.' });
+  }
+
+  try {
+    const investigation = await createSpectraInvestigation({
+      userId,
+      subjectLabel: parsed.data.subjectLabel,
+      clues: parsed.data.clues,
+      state: parsed.data.state,
+    });
+    return res.status(201).json({ success: true, investigation });
+  } catch (error) {
+    console.error('[SPECTRA] Investigation creation failed', error);
+    return res.status(503).json({ success: false, error: 'SPECTRA persistence is unavailable.' });
+  }
+});
+
+router.get('/investigations/:investigationId/observations', async (req: Request, res: Response) => {
+  const userId = getPlatformUserId(req.user as any);
+  if (!userId) return res.status(401).json({ success: false, error: 'Authentication required.' });
+
+  const investigationId = z.string().uuid().safeParse(req.params.investigationId);
+  if (!investigationId.success) {
+    return res.status(400).json({ success: false, error: 'Invalid investigation ID.' });
+  }
+
+  try {
+    const investigation = await getSpectraInvestigation(investigationId.data, userId);
+    if (!investigation) return res.status(404).json({ success: false, error: 'Investigation not found.' });
+    const since = typeof req.query.since === 'string' && Number.isFinite(Date.parse(req.query.since))
+      ? new Date(req.query.since)
+      : undefined;
+    const observations = await loadSpectraObservations({
+      investigationId: investigationId.data,
+      userId,
+      since,
+      limit: 2_000,
+    });
+    return res.json({ success: true, investigationId: investigationId.data, observations });
+  } catch (error) {
+    console.error('[SPECTRA] Observation load failed', error);
+    return res.status(503).json({ success: false, error: 'SPECTRA persistence is unavailable.' });
+  }
+});
+
+router.get('/investigations/:investigationId/stream', async (req: Request, res: Response) => {
+  const userId = getPlatformUserId(req.user as any);
+  if (!userId) return res.status(401).end();
+
+  const investigationId = z.string().uuid().safeParse(req.params.investigationId);
+  if (!investigationId.success) return res.status(400).end();
+
+  try {
+    const investigation = await getSpectraInvestigation(investigationId.data, userId);
+    if (!investigation) return res.status(404).end();
+  } catch (error) {
+    console.error('[SPECTRA] Stream ownership check failed', error);
+    return res.status(503).end();
+  }
+
+  res.status(200);
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders?.();
+  res.write(`event: ready\ndata: ${JSON.stringify({ investigationId: investigationId.data })}\n\n`);
+
+  const unsubscribe = subscribeSpectraInvestigation(investigationId.data, event => {
+    if (event.userId !== userId || res.writableEnded) return;
+    res.write(`event: observation\ndata: ${JSON.stringify(event)}\n\n`);
+  });
+  const heartbeat = setInterval(() => {
+    if (!res.writableEnded) res.write(': heartbeat\n\n');
+  }, 25_000);
+
+  const cleanup = () => {
+    clearInterval(heartbeat);
+    unsubscribe();
+  };
+  req.once('close', cleanup);
+  res.once('close', cleanup);
+});
 
 router.post('/device-observation', async (req: Request, res: Response) => {
   const parsed = deviceObservationSchema.safeParse(req.body);
