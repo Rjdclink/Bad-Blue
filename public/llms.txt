@@ -8,6 +8,12 @@ Legal What? provides legal information and AI-assisted tools. It does not consti
 - [Homepage](https://legalwhat.com/): Overview of LegalWhat and its affordable legal guidance, research, file analysis, and document tools.
 - [Affordable legal guidance](https://legalwhat.com/affordable-legal-guidance/): Flagship resource for affordable legal guidance across 40 legal areas.
 - [Affordable answers to legal questions](https://legalwhat.com/guides/affordable-answers-to-legal-questions/): Practical guide to asking legal questions online and understanding when professional representation may still be needed.
+- [Capabilities](https://legalwhat.com/capabilities/): Hub for LegalWhat’s live conversation, affordability, document generation, background research, legal research, and file-analysis capabilities.
+- [Live two-way legal conversation](https://legalwhat.com/live-legal-conversation/): Voice and text conversation with follow-up questions and jurisdiction awareness.
+- [Legal document generator](https://legalwhat.com/legal-document-generator/): Conversational legal document preparation with jurisdiction-aware drafting and supported PDF/DOCX output.
+- [Background and public-record search](https://legalwhat.com/background-search/): Public-source court, incarceration, licensing, business, and employment research.
+- [Legal research assistant](https://legalwhat.com/legal-research-assistant/): Case-law, statute, rule, jurisdiction, and legal-issue research.
+- [Legal file analysis](https://legalwhat.com/file-analysis/): Court-document, contract, notice, evidence, and revision analysis.
 - [Legal consultation](https://legalwhat.com/legal-consultation): AI-assisted legal consultation.
 - [Practice areas](https://legalwhat.com/areas/): Legal information and research coverage across 40 practice areas.
 - [Services](https://legalwhat.com/services/): Legal What? service overview.
