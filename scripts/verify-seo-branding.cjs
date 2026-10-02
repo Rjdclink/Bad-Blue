@@ -28,7 +28,7 @@ const routes = read('server/routes.ts');
 const viteServer = read('server/vite.ts');
 
 must(fs.existsSync('public/images/Legal What Icon.png'), 'Legal What brand icon must exist');
-must(index.includes('<title>Legal What? |'), 'root title must use Legal What?');
+must(index.includes('<title>Affordable Legal Guidance & Legal Answers | LegalWhat</title>'), 'root title must lead with affordable legal guidance');
 must(index.includes('https://legalwhat.com/'), 'root canonical must use legalwhat.com');
 must(index.includes('/images/Legal%20What%20Icon.png'), 'root favicon/social image must use Legal What icon');
 mustNot(index, 'https://example.com', 'root metadata must not use example.com');
@@ -37,11 +37,11 @@ mustNot(index, 'Bad Blue', 'root metadata must not use Bad Blue');
 mustNot(index, '<meta name="keywords"', 'root must not emit meta-keywords');
 mustNot(index, '"aggregateRating"', 'root must not emit unverified aggregate rating markup');
 must(index.includes('"email": "contact.badblue@gmail.com"'), 'organization schema must expose the support email');
-must(index.includes('Talk with Lexara, a jurisdiction-aware legal AI for 40+ areas of law.'), 'root metadata must expose concise current Lexara positioning');
+must(index.includes('Affordable legal guidance and answers to legal questions.'), 'root metadata must expose current affordability positioning');
 must(index.includes('3-day free trial, then $19.99/month'), 'root schema must preserve canonical trial and subscription positioning');
 must(index.includes('"price": "19.99"') && index.includes('"priceCurrency": "USD"'), 'root application schema must expose the canonical monthly offer price');
 must(index.includes('id="initial-seo-content"') && index.includes('data-seo-shell-title') && index.includes('data-seo-shell-description'), 'root must expose crawlable initial SEO content before React');
-for (const publicHref of ['/areas/', '/services/', '/guides/', '/documents/', '/sources-accuracy/', '/faq', '/reviews', '/contact']) {
+for (const publicHref of ['/affordable-legal-guidance/', '/areas/', '/services/', '/guides/', '/documents/', '/sources-accuracy/', '/faq', '/reviews', '/contact']) {
   must(index.includes(`href="${publicHref}"`), `root initial SEO shell must link public resource: ${publicHref}`);
 }
 for (const capability of ['Visible animated AI', 'DOCX and PDF', 'Uploaded document, evidence, image, and media analysis', 'Intuitive legal-document recognition and preparation']) {
@@ -52,6 +52,14 @@ for (const capability of ['animated conversational legal AI', '40+ areas of law'
   must(lexaraSeoPage.includes(capability), `Lexara crawlable page must expose capability: ${capability}`);
 }
 must((lexaraSeoPage.match(/How people search for this capability/g) || []).length === 1, 'Lexara crawlable service page must not duplicate its search-intent section');
+const affordableGuidancePage = read('public/affordable-legal-guidance/index.html');
+const affordableAnswersPage = read('public/guides/affordable-answers-to-legal-questions/index.html');
+for (const phrase of ['<h1>Affordable Legal Guidance</h1>', '3 days', '$19.99/month', 'https://legalwhat.com/affordable-legal-guidance/']) {
+  must(affordableGuidancePage.includes(phrase), `affordable guidance page missing: ${phrase}`);
+}
+for (const phrase of ['<h1>Affordable Answers to Legal Questions Online</h1>', '3-day free trial', '$19.99/month', 'https://legalwhat.com/guides/affordable-answers-to-legal-questions/']) {
+  must(affordableAnswersPage.includes(phrase), `affordable answers guide missing: ${phrase}`);
+}
 
 must(seoHead.includes('const BASE_URL = "https://legalwhat.com"'), 'SEOHead base URL must be legalwhat.com');
 must(seoHead.includes('const SITE_NAME = "Legal What?"'), 'SEOHead site name must be Legal What?');
@@ -89,7 +97,7 @@ mustNot(robots, 'BadBlue', 'robots must not use legacy brand');
 mustNot(robots, 'Bad Blue', 'robots must not use legacy brand');
 mustNot(robots, 'example.com', 'robots must not use example.com');
 
-for (const publicPath of ['https://legalwhat.com/', 'https://legalwhat.com/legal-consultation', 'https://legalwhat.com/faq', 'https://legalwhat.com/contact', 'https://legalwhat.com/privacy', 'https://legalwhat.com/terms']) {
+for (const publicPath of ['https://legalwhat.com/', 'https://legalwhat.com/affordable-legal-guidance/', 'https://legalwhat.com/guides/affordable-answers-to-legal-questions/', 'https://legalwhat.com/legal-consultation', 'https://legalwhat.com/faq', 'https://legalwhat.com/contact', 'https://legalwhat.com/privacy', 'https://legalwhat.com/terms']) {
   must(sitemap.includes(`<loc>${publicPath}</loc>`), `static sitemap missing ${publicPath}`);
 }
 mustNot(sitemap, 'https://legalwhat.com/landing', 'duplicate /landing URL must stay out of sitemap');
@@ -131,14 +139,14 @@ mustNot(routes, "app.get('*'", 'server/routes.ts must not own a competing catch-
 must(routes.includes('Public static pages and the SPA fallback are owned by server/vite.ts.'), 'routes must document single non-API page-serving authority');
 
 for (const phrase of [
-  'Legal What? — AI Legal Tools for 40 Practice Areas',
-  'Lexara is a jurisdiction-aware conversational legal AI with extensive knowledge across 40+ areas of law.',
+  'Affordable Legal Guidance Across 40 Practice Areas',
+  'LegalWhat provides affordable legal guidance and answers to legal questions across 40+ areas of law.',
 ]) {
   must(landing.includes(phrase), `landing must describe capability: ${phrase}`);
 }
 must(landing.includes('/images/Legal%20What%20Icon.png'), 'landing must use Legal What icon');
 must(landing.includes('LAW_TYPE_DATA.map((area)'), 'landing must expose the 40 legal practice areas as crawlable content');
-for (const publicHub of ['/how-lexara-works/', '/services/', '/areas/', '/guides/', '/documents/']) {
+for (const publicHub of ['/affordable-legal-guidance/', '/how-lexara-works/', '/services/', '/areas/', '/guides/', '/documents/']) {
   must(landing.includes(`href="${publicHub}"`), `landing must expose crawlable public hub link: ${publicHub}`);
 }
 mustNot(landing, 'facebook.com/badblue', 'landing must not link legacy social profiles');

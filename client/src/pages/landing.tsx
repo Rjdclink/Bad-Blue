@@ -59,7 +59,7 @@ export default function Landing() {
     "@type": "WebApplication",
     "name": "Legal What?",
     "alternateName": ["LegalWhat", "Legal What"],
-    "description": "Lexara is a jurisdiction-aware conversational legal AI with extensive knowledge across 40+ areas of law. Talk live by voice or text, analyze and revise uploaded documents and media, identify jurisdiction-specific requirements, find and use appropriate local legal forms, and create legal documents. Try LegalWhat free for 3 days, then only $19.99/month.",
+    "description": "Affordable legal guidance and answers to legal questions. Ask by voice or text across 40+ legal areas, analyze files, and create documents. $19.99/month after 3 days free.",
     "url": baseUrl,
     "applicationCategory": "LegalApplication",
     "operatingSystem": "Web Browser",
@@ -80,10 +80,10 @@ export default function Landing() {
   return (
     <div className="min-h-screen">
       <SEOHead
-        title="Legal What? | Lexara Conversational Legal AI"
-        description="Lexara is a jurisdiction-aware conversational legal AI with extensive knowledge across 40+ areas of law. Talk live by voice or text, analyze and revise uploaded documents and media, identify jurisdiction-specific requirements, find and use appropriate local legal forms, and create legal documents. Try LegalWhat free for 3 days, then only $19.99/month."
-        ogTitle="Legal What? | Lexara Conversational Legal AI"
-        ogDescription="Lexara is a jurisdiction-aware conversational legal AI with extensive knowledge across 40+ areas of law. Talk live by voice or text, analyze and revise uploaded documents and media, identify jurisdiction-specific requirements, find and use appropriate local legal forms, and create legal documents. Try LegalWhat free for 3 days, then only $19.99/month."
+        title="Affordable Legal Guidance & Legal Answers | LegalWhat"
+        description="Affordable legal guidance and answers to legal questions. Ask by voice or text across 40+ legal areas, analyze files, and create documents. $19.99/month after 3 days free."
+        ogTitle="Affordable Legal Guidance & Legal Answers | LegalWhat"
+        ogDescription="Affordable legal guidance and answers to legal questions. Ask by voice or text across 40+ legal areas, analyze files, and create documents. $19.99/month after 3 days free."
         canonicalUrl="https://legalwhat.com/"
         ogImage="https://legalwhat.com/images/Legal%20What%20Icon.png"
         ogImageAlt="Legal What? legal technology platform logo"
@@ -149,11 +149,11 @@ export default function Landing() {
 
           <div className="rounded-3xl border border-white/20 bg-black/30 backdrop-blur-sm p-6 md:p-10">
             <h2 id="lexara-overview" className="text-3xl md:text-4xl font-bold text-center mb-6">
-              AI Legal Consultation, Document Creation &amp; Media Analysis
+              Affordable Legal Guidance, Legal Answers &amp; Document Help
             </h2>
             <div className="space-y-5 text-white/90 leading-relaxed">
               <p>
-                Lexara is a jurisdiction-aware conversational legal AI with extensive knowledge across 40+ areas of law. Talk live by voice or text, analyze and revise uploaded documents and media, identify jurisdiction-specific requirements, find and use appropriate local legal forms, and create legal documents.
+                LegalWhat provides affordable legal guidance and answers to legal questions across 40+ areas of law. Talk with Lexara by voice or text, analyze and revise uploaded documents and media, identify jurisdiction-specific requirements, find appropriate local legal forms, and create legal documents.
               </p>
               <p>
                 LEXARA provides legal guidance, research, analysis, and explanations based on the facts you provide. She can ask relevant follow-up questions, identify legal issues, apply jurisdiction-specific statutes, rules, and precedent, and connect your matter with deeper legal research and case-analysis tools.
@@ -237,7 +237,7 @@ export default function Landing() {
           </div>
           
           <h1 className="text-white text-4xl md:text-5xl lg:text-6xl font-bold leading-tight mb-8 animate-in fade-in slide-in-from-bottom-4 duration-700 delay-300 drop-shadow-2xl">
-            Legal What? — AI Legal Tools for 40 Practice Areas
+            Affordable Legal Guidance Across 40 Practice Areas
           </h1>
 
         </div>
@@ -258,7 +258,7 @@ export default function Landing() {
               40 Legal Practice Areas
             </h2>
             <p className="text-muted-foreground max-w-3xl mx-auto leading-relaxed">
-              Legal What? supports AI-assisted legal information, research, issue spotting, and document workflows across the following 40 practice areas.
+              Legal What? supports affordable legal guidance, legal information, research, issue spotting, and document workflows across the following 40 practice areas.
             </p>
           </div>
           <div className="flex flex-wrap justify-center gap-2 max-w-6xl mx-auto">
@@ -329,6 +329,7 @@ export default function Landing() {
             <div>
               <h4 className="font-medium mb-4">Product</h4>
               <ul className="space-y-2 text-sm text-muted-foreground">
+                <li><a href="/affordable-legal-guidance/" className="hover:text-foreground">Affordable Legal Guidance</a></li>
                 <li><a href="/how-lexara-works/" className="hover:text-foreground">How Lexara Works</a></li>
                 <li><a href="/services/" className="hover:text-foreground">Services</a></li>
                 <li><a href="/areas/" className="hover:text-foreground">40 Legal Areas</a></li>
