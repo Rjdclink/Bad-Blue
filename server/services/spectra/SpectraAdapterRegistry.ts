@@ -189,16 +189,6 @@ export const SPECTRA_ADAPTER_CAPABILITIES: SpectraAdapterCapability[] = [
     notes: 'Independent U.S. address fallback.',
   },
   {
-    id: 'geonames',
-    label: 'GeoNames place context',
-    mode: 'place-context',
-    sourceTypes: ['historical_location','public_record'],
-    configured: () => anyEnv('GEONAMES_USERNAME'),
-    priority: 'supporting',
-    supportsRealtime: false,
-    notes: 'Nearby place, administrative, timezone and elevation context.',
-  },
-  {
     id: 'nws',
     label: 'National Weather Service observations',
     mode: 'weather',
