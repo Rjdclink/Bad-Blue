@@ -347,7 +347,98 @@ function rangingPoint(
   });
 }
 
-async function radioPoint(
+function openCellIdRadioName(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  if (value === 'wcdma') return 'UMTS';
+  return value.toUpperCase();
+}
+
+async function openCellIdPoint(
+  measurement: z.infer<typeof telemetryRadioSchema>,
+): Promise<GPSPoint | null> {
+  const key = String(process.env.OPENCELLID_API_KEY || '').trim();
+  if (!key || !measurement.cellTowers?.length) return null;
+
+  for (const tower of measurement.cellTowers.slice(0, 4)) {
+    const mcc = tower.mobileCountryCode ?? measurement.homeMobileCountryCode;
+    const mnc = tower.mobileNetworkCode ?? measurement.homeMobileNetworkCode;
+    const lac = tower.locationAreaCode;
+    const cellId = tower.newRadioCellId ?? tower.cellId;
+    if (
+      !Number.isFinite(mcc)
+      || !Number.isFinite(mnc)
+      || !Number.isFinite(lac)
+      || !Number.isFinite(cellId)
+    ) continue;
+
+    const endpoint = new URL('https://opencellid.org/cell/get');
+    endpoint.searchParams.set('key', key);
+    endpoint.searchParams.set('mcc', String(mcc));
+    endpoint.searchParams.set('mnc', String(mnc));
+    endpoint.searchParams.set('lac', String(lac));
+    endpoint.searchParams.set('cellid', String(cellId));
+    endpoint.searchParams.set('format', 'json');
+    const radio = openCellIdRadioName(measurement.radioType);
+    if (radio) endpoint.searchParams.set('radio', radio);
+
+    try {
+      const response = await fetch(endpoint, {
+        headers: {
+          Accept: 'application/json',
+          'User-Agent': 'LegalWhat-SPECTRA/1.0',
+        },
+        signal: AbortSignal.timeout(5_000),
+      });
+      if (!response.ok) continue;
+      const payload: any = await response.json();
+      const latitude = Number(payload?.lat);
+      const longitude = Number(payload?.lon);
+      const range = Number(payload?.range);
+      const samples = Number(payload?.samples);
+      if (
+        !Number.isFinite(latitude) || !Number.isFinite(longitude)
+        || latitude < -90 || latitude > 90
+        || longitude < -180 || longitude > 180
+      ) continue;
+
+      const accuracy = Number.isFinite(range) && range > 0 ? Math.max(100, range) : 5_000;
+      return signServerEvidence({
+        latitude,
+        longitude,
+        accuracy,
+        timestamp: measurement.timestamp,
+        receivedAt: new Date(),
+        source: 'cellular',
+        confidence: Math.min(
+          0.72,
+          confidenceForAccuracy(accuracy, 0.68)
+            + (Number.isFinite(samples) ? Math.min(0.08, Math.log10(Math.max(1, samples)) * 0.03) : 0),
+        ),
+        observationKind: 'inferred',
+        correlationGroup: `radio:${measurement.provider || 'opencellid'}`,
+        provenance: {
+          provider: 'OpenCellID',
+          recordId: `${mcc}:${mnc}:${lac}:${cellId}`,
+          capturedAt: measurement.timestamp,
+          transformedBy: ['spectra_cell_position_lookup'],
+        },
+        metadata: {
+          ...(measurement.metadata || {}),
+          radioType: measurement.radioType,
+          cellRangeMeters: Number.isFinite(range) ? range : undefined,
+          cellSamples: Number.isFinite(samples) ? samples : undefined,
+          attribution: 'OpenCellID (CC BY-SA 4.0)',
+        },
+      });
+    } catch {
+      // One tower/provider failure never suppresses the remaining radio evidence.
+    }
+  }
+
+  return null;
+}
+
+async function googleRadioPoint(
   measurement: z.infer<typeof telemetryRadioSchema>,
 ): Promise<GPSPoint | null> {
   const key = String(
@@ -420,6 +511,33 @@ async function radioPoint(
   } catch {
     return null;
   }
+}
+
+async function radioPoint(
+  measurement: z.infer<typeof telemetryRadioSchema>,
+): Promise<GPSPoint | null> {
+  const [googleOutcome, openCellOutcome] = await Promise.allSettled([
+    googleRadioPoint(measurement),
+    openCellIdPoint(measurement),
+  ]);
+
+  const googlePoint = googleOutcome.status === 'fulfilled' ? googleOutcome.value : null;
+  const openCellPoint = openCellOutcome.status === 'fulfilled' ? openCellOutcome.value : null;
+  if (googlePoint && openCellPoint) {
+    const distance = Math.hypot(
+      (googlePoint.latitude - openCellPoint.latitude) * 111_320,
+      (googlePoint.longitude - openCellPoint.longitude)
+        * 111_320
+        * Math.max(0.15, Math.cos(googlePoint.latitude * Math.PI / 180)),
+    );
+    googlePoint.metadata = {
+      ...(googlePoint.metadata || {}),
+      independentCellCorroborationMeters: Math.round(distance),
+      independentCellProvider: 'OpenCellID',
+    };
+  }
+
+  return googlePoint || openCellPoint;
 }
 
 async function telemetryPoint(
