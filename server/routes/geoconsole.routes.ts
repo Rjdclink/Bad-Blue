@@ -26,6 +26,10 @@ import {
   getSpectraGenericPullAdapters,
   pullSpectraGenericAdapter,
 } from '../services/spectra/SpectraGenericPullAdapters';
+import {
+  spectraRealtimeBridgeConfigured,
+  subscribeSpectraDatabaseObservations,
+} from '../services/spectra/SpectraRealtimeBridge';
 
 const router = Router();
 const log = createLogger('GeoconsoleRoutes');
@@ -957,6 +961,34 @@ router.get('/telemetry-stream/:sessionId', async (req: Request, res: Response) =
   };
   telemetryPushEmitter.on(sessionId, listener);
 
+  const unsubscribeDatabase = subscribeSpectraDatabaseObservations(sessionId, row => {
+    if (String(row.user_id || '') !== userId || res.writableEnded) return;
+    const event: TelemetryPushEvent = {
+      sessionId,
+      userId,
+      receivedAt: row.received_at || new Date().toISOString(),
+      points: [{
+        latitude: Number(row.latitude),
+        longitude: Number(row.longitude),
+        altitude: row.altitude == null ? undefined : Number(row.altitude),
+        accuracy: row.accuracy_meters == null ? undefined : Number(row.accuracy_meters),
+        timestamp: new Date(row.observed_at).toISOString(),
+        receivedAt: new Date(row.received_at).toISOString(),
+        source: row.source_type,
+        confidence: Number(row.confidence),
+        observationKind: row.observation_kind,
+        correlationGroup: row.correlation_group || undefined,
+        provenance: row.provenance || undefined,
+        metadata: {
+          ...(row.metadata || {}),
+          databaseObservationId: row.id,
+          crossReplicaRealtime: true,
+        },
+      }],
+    };
+    res.write(`event: observation-batch\ndata: ${JSON.stringify(event)}\n\n`);
+  });
+
   const heartbeat = setInterval(() => {
     if (!res.writableEnded) res.write(': heartbeat\n\n');
   }, 25_000);
@@ -967,6 +999,7 @@ router.get('/telemetry-stream/:sessionId', async (req: Request, res: Response) =
     cleaned = true;
     clearInterval(heartbeat);
     telemetryPushEmitter.off(sessionId, listener);
+    unsubscribeDatabase();
   };
   req.once('close', cleanup);
   res.once('close', cleanup);
@@ -994,6 +1027,7 @@ router.get('/telemetry-capabilities', (_req: Request, res: Response) => {
         || process.env.GOOGLE_MAPS_API_KEY
       ),
       providerWebhookConfigured: Boolean(process.env.SPECTRA_TELEMETRY_HMAC_SECRET),
+      crossReplicaRealtimeConfigured: spectraRealtimeBridgeConfigured(),
       adapters: getSpectraAdapterCapabilities(),
       genericPullAdapters: getSpectraGenericPullAdapters(),
     },
