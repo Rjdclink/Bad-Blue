@@ -625,6 +625,7 @@ export default function SpectraPage() {
             initialData={observations}
             candidateLocations={candidateLocations}
             subject={target || 'SPECTRA target'}
+            sessionId={spectraSessionId}
             spectraShell
           />
 
