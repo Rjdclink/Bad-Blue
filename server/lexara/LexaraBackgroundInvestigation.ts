@@ -426,19 +426,34 @@ export async function investigateLexaraBackgroundQuestion(
   const decision = context.researchDecision || decideLexaraResearchNeed(prompt, priorTurns);
   if (!decision.needed || (decision.intent !== 'factual' && decision.intent !== 'mixed')) return null;
 
-  // Lexara resolves the subject once. Downstream background research must not
-  // second-guess that decision by reparsing conversational filler in the raw turn.
+  // Lexara's resolved subject remains authoritative. When a caller supplies only
+  // the locked subject name, enrich it from the raw turn only if the normalized
+  // prompt subject is the same identity; never let conversational filler replace it.
+  const decisionResolved = decision.subject
+    ? cleanSubject(resolveLexaraBackgroundSubject(decision.subject, priorTurns, context.jurisdiction)
+      || {
+        name: decision.subject,
+        kind: decision.subjectKind || 'person' as const,
+        identifiable: decision.subjectKind === 'organization' || decision.subjectKind === 'entity',
+        location: context.jurisdiction,
+      })
+    : null;
+  const promptResolved = resolveLexaraBackgroundSubject(prompt, priorTurns, context.jurisdiction);
+  const promptNormalized = promptResolved ? cleanSubject(promptResolved) : null;
+  const sameSubject = Boolean(
+    decisionResolved?.name && promptNormalized?.name
+    && normalize(decisionResolved.name) === normalize(promptNormalized.name)
+  );
   const resolved = context.resolvedSubject
-    || (decision.subject
-      ? resolveLexaraBackgroundSubject(decision.subject, priorTurns, context.jurisdiction)
-        || {
-          name: decision.subject,
-          kind: decision.subjectKind || 'person' as const,
-          identifiable: decision.subjectKind === 'organization' || decision.subjectKind === 'entity',
-          location: context.jurisdiction,
+    || (sameSubject && decisionResolved && promptNormalized
+      ? {
+          ...decisionResolved,
+          kind: decision.subjectKind || decisionResolved.kind,
+          location: promptNormalized.location || decisionResolved.location,
+          identifiable: decisionResolved.identifiable || promptNormalized.identifiable,
         }
-      : null)
-    || resolveLexaraBackgroundSubject(prompt, priorTurns, context.jurisdiction);
+      : decisionResolved)
+    || promptResolved;
   if (!resolved) {
     const categories = backgroundCategories(prompt, decision);
     const initialQuery = decision.standaloneQuery || decision.objective || prompt;
