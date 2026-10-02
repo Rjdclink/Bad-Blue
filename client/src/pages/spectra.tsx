@@ -480,6 +480,135 @@ export default function SpectraPage() {
     target,
   ]);
 
+  const handleTelemetryEvidence = useCallback(async (file: File) => {
+    if (phase === 'awaiting_target') {
+      const response = 'Tell me what you want to locate first. Then I can attach that telemetry to the target.';
+      addMessage('spectra', response);
+      speakIfEnabled(response);
+      return;
+    }
+    if (phase === 'acquiring') return;
+
+    addMessage('user', `Shared target telemetry: ${file.name}`);
+    setLastError(null);
+
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      form.append('subjectLabel', target);
+      if (spectraSessionId) form.append('sessionId', spectraSessionId);
+
+      const response = await fetch('/api/geoconsole/telemetry/import-file', {
+        method: 'POST',
+        credentials: 'include',
+        body: form,
+      });
+      const payload = await response.json() as TelemetryImportResponse;
+      if (!response.ok || payload.success !== true) {
+        throw new Error(payload.error || 'Telemetry import failed.');
+      }
+
+      const importedSessionId = String(payload.data?.sessionId || spectraSessionId || '').trim();
+      if (importedSessionId) setSpectraSessionId(importedSessionId);
+
+      if (importedSessionId) {
+        const historyResponse = await fetch(
+          `/api/geoconsole/telemetry-history/${encodeURIComponent(importedSessionId)}`,
+          { credentials: 'include' },
+        );
+        if (historyResponse.ok) {
+          const historyPayload = await historyResponse.json().catch(() => ({}));
+          const history = Array.isArray(historyPayload?.data) ? historyPayload.data : [];
+          const importedPoints: GPSPoint[] = history.flatMap((point: any) => {
+            const timestamp = new Date(point?.timestamp);
+            if (
+              !Number.isFinite(Number(point?.latitude))
+              || !Number.isFinite(Number(point?.longitude))
+              || !Number.isFinite(timestamp.getTime())
+            ) return [];
+            return [{
+              ...point,
+              latitude: Number(point.latitude),
+              longitude: Number(point.longitude),
+              timestamp,
+              receivedAt: point.receivedAt ? new Date(point.receivedAt) : undefined,
+              provenance: point.provenance
+                ? {
+                    ...point.provenance,
+                    capturedAt: point.provenance.capturedAt
+                      ? new Date(point.provenance.capturedAt)
+                      : undefined,
+                  }
+                : undefined,
+            } as GPSPoint];
+          });
+
+          if (importedPoints.length) {
+            setObservations(previous => {
+              const merged = new Map<string, GPSPoint>();
+              for (const point of [...previous, ...importedPoints]) {
+                const evidenceGroup =
+                  point.correlationGroup
+                  || point.provenance?.recordId
+                  || `${point.source}:${point.provenance?.provider || 'unknown'}`;
+                const key = [
+                  Number(point.latitude).toFixed(7),
+                  Number(point.longitude).toFixed(7),
+                  new Date(point.timestamp).toISOString(),
+                  point.source,
+                  evidenceGroup,
+                ].join('|');
+                merged.set(key, point);
+              }
+              return [...merged.values()].sort(
+                (left, right) =>
+                  new Date(left.timestamp).getTime() - new Date(right.timestamp).getTime(),
+              );
+            });
+          }
+        }
+      }
+
+      const parsedCount = Number(payload.data?.parsedObservationCount || 0);
+      const processedCount = Number(payload.data?.processedObservationCount || 0);
+      const evidenceDescription = [
+        `Imported target telemetry: ${file.name}`,
+        `Parsed timestamped observations: ${parsedCount}`,
+        `Accepted location observations: ${processedCount}`,
+      ].join('. ');
+      const expandedDetails = [details, evidenceDescription].filter(Boolean).join('\n');
+      setDetails(expandedDetails);
+
+      const responseText = processedCount > 0
+        ? `I imported ${processedCount} usable location observation${processedCount === 1 ? '' : 's'} from that telemetry and added them to the investigation.`
+        : 'I parsed that telemetry, but it did not contain a usable timestamped location observation.';
+      addMessage('spectra', responseText);
+      speakIfEnabled(responseText);
+
+      await acquireTarget(
+        target,
+        expandedDetails,
+        directEvidence,
+        importedSessionId || undefined,
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Telemetry import failed.';
+      setLastError(message);
+      addMessage('spectra', 'I could not import that telemetry file. You can continue with the target information already supplied.');
+    } finally {
+      if (mediaInputRef.current) mediaInputRef.current.value = '';
+    }
+  }, [
+    acquireTarget,
+    addMessage,
+    details,
+    directEvidence,
+    phase,
+    speakIfEnabled,
+    spectraSessionId,
+    target,
+  ]);
+
   const handleUserMessage = useCallback(async (rawMessage: string) => {
     const message = rawMessage.trim();
     if (!message || phase === 'acquiring') return;
