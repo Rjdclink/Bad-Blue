@@ -216,6 +216,11 @@ const investigator = execute('server/lexara/LexaraBackgroundInvestigation.ts', {
   './LexaraAuthoritativeLookup': {
     async lookupLexaraAuthoritativeSources() { return []; },
   },
+  './LexaraPeopleToolLanes': {
+    async runLexaraPeopleToolLanes() {
+      return { candidates: [], evidence: [], lanesAttempted: [] };
+    },
+  },
 });
 
 function reset(mode) {
