@@ -73,6 +73,29 @@ const LIVE_BACKGROUND_FACT_BUDGET_MS = 16_000;
 // superseded/disconnected turn; evidence-correction retries remain locally bounded.
 const LIVE_REASONING_PROVIDER_ATTEMPT_MS = 15_000;
 
+
+function formatBackgroundFactsForDocument(
+  result: LexaraBackgroundResearchResult | null | undefined,
+): string | undefined {
+  if (!result?.evidenceSummary || result.endpoint !== 'evidence-sufficient') return undefined;
+
+  const directFacts = result.evidenceSummary
+    .split(/\n\s*\n/)
+    .filter(block => /\bASSESSMENT:\s*DIRECT\b/i.test(block))
+    .map(block => block.match(/\bEVIDENCE:\s*([\s\S]*)$/i)?.[1] || '')
+    .map(value => value
+      .replace(/\bhttps?:\/\/\S+/gi, '')
+      .replace(/\bwww\.\S+/gi, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+    )
+    .filter(Boolean)
+    .slice(0, 3)
+    .map(value => value.slice(0, 500).trim());
+
+  return directFacts.length ? directFacts.join('\n') : undefined;
+}
+
 export type LexaraAcknowledgementKind =
   | 'presence'
   | 'added-facts'
@@ -385,7 +408,7 @@ function extractVerifiedBackgroundSourceExcerpt(
 
   const quote = excerpt.replace(/["“”]/g, "'").slice(0, 700);
   return {
-    text: `Lexara retrieved verified, subject-matched source material. The source says: “${quote}” Source: ${parsedUrl.toString()}. This is the retrieved evidence, not a separate conclusion.`,
+    text: quote,
     sourceUrl: parsedUrl.toString(),
     excerpt,
   };
@@ -861,6 +884,9 @@ export async function generateLexaraConversationResponse(
   const jurisdictionCorrectionPrompt = jurisdictionCorrectionOnly
     ? '\n\nJURISDICTION CORRECTION TURN\nThe user has supplied or corrected the location for the ongoing matter. Adopt it silently as controlling context. Do not explain jurisdictional background or repeat the correction. Continue directly with the single next necessary question or answer from the existing matter.'
     : '';
+  const backgroundPresentationPrompt = backgroundResearchRequested
+    ? '\n\nBACKGROUND USER-PRESENTATION RULE\nBackground research provenance and scoring are internal reasoning metadata. When background facts affect legal guidance, incorporate only the relevant factual substance naturally. Do not expose background source names or URLs, confidence percentages, assessment labels, retrieval timestamps, search lanes, or research-process details unless the user explicitly asks for sources or research details. Preserve uncertainty in ordinary language when a fact is not verified. This rule controls over any source-display wording inside the background research context and does not alter legal-authority citation requirements.'
+    : '';
   const systemPrompt = buildLegalSystemPrompt(context, mappedLawType, promptJurisdiction)
     + silentLocationContext
     + jurisdictionCorrectionPrompt
@@ -869,7 +895,8 @@ export async function generateLexaraConversationResponse(
     + formatDeadlineCalculationForSystem(verifiedDeterministicDeadline)
     + resolvedBackgroundSubjectPrompt
     + researchStatusPrompt
-    + formatLexaraBackgroundResearchForSystem(backgroundInvestigation);
+    + formatLexaraBackgroundResearchForSystem(backgroundInvestigation)
+    + backgroundPresentationPrompt;
   const userPrompt = `${history ? `CONVERSATION SO FAR:\n${history}\n\n` : ''}CURRENT USER TURN:\n${cleanPrompt}`;
   const claudeModel = context.allowClaudeOpus !== true
     ? CURRENT_AI_MODELS.claudeFast
@@ -1097,13 +1124,7 @@ export async function generateLexaraConversationResponse(
     jurisdiction: publicJurisdiction,
     mappedLawType,
     backgroundEndpoint,
-    backgroundDocumentContext: backgroundResearchRequested && backgroundInvestigation?.evidenceSummary
-      ? [
-          `BACKGROUND RESEARCH STATUS: ${backgroundInvestigation.endpoint}`,
-          backgroundInvestigation.coverageNote ? `COVERAGE: ${backgroundInvestigation.coverageNote}` : '',
-          backgroundInvestigation.evidenceSummary,
-        ].filter(Boolean).join('\n\n').slice(0, 12_000)
-      : undefined,
+    backgroundDocumentContext: formatBackgroundFactsForDocument(backgroundInvestigation),
     deadline: verifiedDeterministicDeadline || undefined,
     backgroundStatus: permissionRefusalUnverified ? 'partial'
       : usedBackgroundSourceExcerptFallback && backgroundInvestigation?.endpoint === 'evidence-sufficient'
