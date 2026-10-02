@@ -1,8 +1,12 @@
 import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { isAuthenticated } from '../auth';
-import { conductFullOSINT } from '../peopleSearch';
-import { unifiedSearch } from '../webSearchService';
+import { callClaudeWebSearch } from '../claude';
+import {
+  discoverLegalMeshTier3,
+  type LegalMeshCandidate,
+} from '../lexara/LegalProviderMesh';
+import { resolveLexaraBackgroundSubject } from '../lexara/LexaraBackgroundSubject';
 import {
   extractCityStateHint,
   extractFreeformLocationHint,
@@ -17,7 +21,11 @@ import {
 import type { GPSPoint } from '../services/geoconsole/types';
 import { inputFusionEngine } from '../services/geoconsole/inputFusionEngine';
 import { assessLocationQuality } from '../services/geoconsole/location-quality';
-import { buildSpectraDiscoveryWaves } from '../services/spectra/SpectraSourceRegistry';
+import {
+  buildSpectraAdaptiveQuery,
+  buildSpectraDiscoveryWaves,
+  SPECTRA_DISCOVERY_POLICY,
+} from '../services/spectra/SpectraSourceRegistry';
 
 const router = Router();
 router.use(isAuthenticated);
@@ -209,34 +217,161 @@ function buildDiscoveryQueries(args: {
   };
 }
 
-async function runDiscoveryPass(queries: string[]): Promise<{
-  results: any[];
+interface SpectraDiscoveryResult {
+  title: string;
+  url: string;
+  snippet?: string;
+  provider: string;
+  reliability: 'high' | 'medium' | 'low';
+  relevanceScore: number;
+  metadata?: Record<string, unknown>;
+}
+
+function reliabilityForUrl(rawUrl: string): SpectraDiscoveryResult['reliability'] {
+  try {
+    const host = new URL(rawUrl).hostname.toLowerCase();
+    if (host.endsWith('.gov') || host.endsWith('.mil') || host.endsWith('.uscourts.gov')) return 'high';
+    if (host.includes('courtlistener.com') || host.includes('nursys.com') || host.includes('finra.org')) return 'high';
+    if (host.endsWith('.edu') || host.endsWith('.org')) return 'medium';
+  } catch {
+    return 'low';
+  }
+  return 'medium';
+}
+
+function discoveryResultFromCandidate(candidate: LegalMeshCandidate): SpectraDiscoveryResult {
+  const reliability = reliabilityForUrl(candidate.url);
+  return {
+    title: candidate.title || 'SPECTRA discovery result',
+    url: candidate.url,
+    snippet: candidate.excerpt,
+    provider: candidate.provider || 'native-search',
+    reliability,
+    relevanceScore: reliability === 'high' ? 92 : reliability === 'medium' ? 78 : 62,
+    metadata: {
+      discoveryProvider: candidate.provider || 'native-search',
+      sourceCategory: candidate.sourceCategory,
+    },
+  };
+}
+
+async function runDiscoveryPass(
+  queries: string[],
+  context: {
+    subject?: string;
+    location?: string;
+  } = {},
+): Promise<{
+  results: SpectraDiscoveryResult[];
   attempted: number;
   failed: number;
+  claudeNotes: string[];
 }> {
-  const settled = await Promise.allSettled(
-    queries.map(query =>
-      unifiedSearch(query, {
-        limit: 25,
-        category: 'general',
-        freshness: 'all',
-        timeout: 20_000,
-      })
-    )
-  );
-
-  const results: any[] = [];
-  let failed = 0;
-  for (const result of settled) {
-    if (result.status === 'fulfilled') results.push(...result.value);
-    else failed += 1;
+  const uniqueQueries = [...new Set(queries.map(query => query.replace(/\s+/g, ' ').trim()).filter(Boolean))]
+    .slice(0, 6);
+  if (!uniqueQueries.length) {
+    return { results: [], attempted: 0, failed: 0, claudeNotes: [] };
   }
 
-  return {
-    results: dedupeDiscoveryResults(results),
-    attempted: queries.length,
-    failed,
-  };
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(new Error('SPECTRA discovery pass timeout')), 15_000);
+  try {
+    const nativePromise = Promise.allSettled(uniqueQueries.map(query =>
+      discoverLegalMeshTier3(query, controller.signal, {
+        categories: [
+          'identity',
+          'contacts-addresses',
+          'relationships',
+          'social-online',
+          'public-images',
+          'employment',
+          'property',
+          'transportation',
+          'business',
+          'news-history',
+          'relationship-timeline',
+          'general-public-records',
+        ],
+        jurisdiction: context.location,
+        subject: context.subject,
+        requestedFact: 'contact-address',
+      })
+    ));
+
+    const claudePrompt = [
+      'Use web search and fetch the strongest underlying pages when useful.',
+      'This is an internal SPECTRA location-research pass.',
+      'Resolve the named subject from every supplied clue and look specifically for current, recent, historical, or location-bearing records.',
+      'Keep source distinctions intact. Do not turn an old address, broad regional clue, or prediction into a current observation.',
+      context.subject ? `Subject: ${context.subject}` : '',
+      context.location ? `Location clue: ${context.location}` : '',
+      'Search objectives:',
+      ...uniqueQueries.map((query, index) => `${index + 1}. ${query}`),
+    ].filter(Boolean).join('\n');
+
+    const claudePromise = callClaudeWebSearch(claudePrompt, {
+      maxTokens: 1_200,
+      maxUses: 6,
+      allowFetch: true,
+      signal: controller.signal,
+      systemPrompt: [
+        'You are SPECTRA\'s internal location-research planner and researcher.',
+        'Use search rather than model memory for external facts.',
+        'Prefer direct records and source pages, fetch promising pages when useful, preserve dates and uncertainty, and stay focused on the supplied subject and location clues.',
+      ].join(' '),
+    });
+
+    const [nativeSettled, claudeSettled] = await Promise.allSettled([
+      nativePromise,
+      claudePromise,
+    ]);
+
+    const results: SpectraDiscoveryResult[] = [];
+    let failed = 0;
+
+    if (nativeSettled.status === 'fulfilled') {
+      for (const queryResult of nativeSettled.value) {
+        if (queryResult.status === 'fulfilled') {
+          results.push(...queryResult.value.map(discoveryResultFromCandidate));
+        } else {
+          failed += 1;
+        }
+      }
+    } else {
+      failed += uniqueQueries.length;
+    }
+
+    const claudeNotes: string[] = [];
+    if (claudeSettled.status === 'fulfilled') {
+      claudeNotes.push(claudeSettled.value.content);
+      for (const source of claudeSettled.value.sources) {
+        const reliability = reliabilityForUrl(source.url);
+        results.push({
+          title: source.title || 'Claude research source',
+          url: source.url,
+          snippet: source.citedText,
+          provider: 'claude-web-research',
+          reliability,
+          relevanceScore: reliability === 'high' ? 94 : reliability === 'medium' ? 80 : 64,
+          metadata: {
+            discoveryProvider: 'claude-web-research',
+            fetchedOrCitedText: source.citedText,
+          },
+        });
+      }
+    } else {
+      failed += 1;
+    }
+
+    return {
+      results: dedupeDiscoveryResults(results),
+      attempted: uniqueQueries.length + 1,
+      failed,
+      claudeNotes,
+    };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function normalizeConfidence(value: unknown): number {
