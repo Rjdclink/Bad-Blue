@@ -11,6 +11,7 @@ const sourceRegistry = fs.readFileSync('server/lexara/LexaraPublicSourceRegistry
 const semanticIntent = fs.readFileSync('server/lexara/LexaraSemanticIntentInterpreter.ts','utf8');
 const claudeBackground = fs.readFileSync('server/lexara/LexaraClaudeBackgroundSearch.ts','utf8');
 const claudeTransport = fs.readFileSync('server/claude.ts','utf8');
+const representationEngine = fs.readFileSync('server/lexara/LexaraRepresentationEngine.ts','utf8');
 
 for (const id of [
   "'simple-factual'",
@@ -43,6 +44,21 @@ if (!orchestrator.includes('const semanticResearchDecisionPromise = resolveLexar
   || orchestrator.indexOf('semanticResearchDecisionPromise') > orchestrator.indexOf('await resolveUSJurisdiction(')
   || !orchestrator.includes('const semanticResearchDecision = await semanticResearchDecisionPromise')) {
   throw new Error('Semantic background inference is not overlapped with existing turn preparation');
+}
+if (!planner.includes('export function isLexaraGenericLegalIntake')
+  || !planner.includes('isLexaraGenericLegalIntake(text)')
+  || !orchestrator.includes("text: 'Yes. Tell me what happened.'")
+  || orchestrator.indexOf('if (isLexaraGenericLegalIntake(cleanPrompt))')
+    > orchestrator.indexOf('const semanticResearchDecisionPromise = resolveLexaraResearchDecisionSemantic(')) {
+  throw new Error('Generic legal intake can still launch semantic research or Claude before the immediate intake response');
+}
+if (!routes.includes("res.once('finish', () => enqueueMatterEnrichment(enrichmentTask))")
+  || !routes.includes('const representationMatter = preRepresentationMatter || representationContext.activeMatter;')
+  || routes.includes('const representationMatter = await advanceRepresentationMatter({')
+  || !representationEngine.includes('export function shouldEnrichRepresentationMatter')
+  || !representationEngine.includes('skipPacketPlanning?: boolean')
+  || !representationEngine.includes('!input.skipPacketPlanning && shouldPlanPacket')) {
+  throw new Error('Post-response matter enrichment can still block the user-facing response or duplicate packet planning');
 }
 if (!orchestrator.includes("const backgroundResearchRequested = sequencePlan.useBackgroundResearch")) {
   throw new Error('Lexara factual/mixed turns do not follow the sequence router into the native background investigator');
