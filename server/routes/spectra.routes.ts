@@ -1,8 +1,13 @@
 import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { isAuthenticated } from '../auth';
-import { conductFullOSINT } from '../peopleSearch';
-import { unifiedSearch } from '../webSearchService';
+import { callClaudeWebSearch } from '../claude';
+import {
+  discoverLegalMeshTier3,
+  type LegalMeshCandidate,
+} from '../lexara/LegalProviderMesh';
+import { resolveLexaraBackgroundSubject } from '../lexara/LexaraBackgroundSubject';
+import { investigateLexaraBackgroundQuestion } from '../lexara/LexaraBackgroundInvestigation';
 import {
   extractCityStateHint,
   extractFreeformLocationHint,
@@ -17,7 +22,11 @@ import {
 import type { GPSPoint } from '../services/geoconsole/types';
 import { inputFusionEngine } from '../services/geoconsole/inputFusionEngine';
 import { assessLocationQuality } from '../services/geoconsole/location-quality';
-import { buildSpectraDiscoveryWaves } from '../services/spectra/SpectraSourceRegistry';
+import {
+  buildSpectraAdaptiveQuery,
+  buildSpectraDiscoveryWaves,
+  SPECTRA_DISCOVERY_POLICY,
+} from '../services/spectra/SpectraSourceRegistry';
 
 const router = Router();
 router.use(isAuthenticated);
