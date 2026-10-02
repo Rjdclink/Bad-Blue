@@ -595,7 +595,6 @@ router.post('/acquire', async (req: Request, res: Response) => {
   const resolvedName = genericTarget || targetIsPhone
     ? suppliedName || ''
     : subject;
-  const searchQuery = resolvedName || details;
   const resolvedTargetLabel = resolvedName || phone || normalizedTarget;
 
   try {
