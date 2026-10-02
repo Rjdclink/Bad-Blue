@@ -91,7 +91,7 @@ function formatBackgroundFactsForDocument(
     )
     .filter(Boolean)
     .slice(0, 3)
-    .map(value => value.slice(0, 700).trim());
+    .map(value => value.slice(0, 500).trim());
 
   return directFacts.length ? directFacts.join('\n') : undefined;
 }
