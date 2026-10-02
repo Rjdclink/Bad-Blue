@@ -599,99 +599,161 @@ router.post('/acquire', async (req: Request, res: Response) => {
   const resolvedTargetLabel = resolvedName || phone || normalizedTarget;
 
   try {
+    const semanticSubject = resolveLexaraBackgroundSubject(
+      [target, details].filter(Boolean).join('. '),
+      [],
+    );
+    const resolvedSubjectName = semanticSubject?.name || resolvedName || resolvedTargetLabel;
     const discoveryQueries = buildDiscoveryQueries({
-      resolvedName: resolvedName || '',
+      resolvedName: resolvedSubjectName,
       normalizedTarget,
       details,
       phone,
     });
-    // Catalog broadening requires a concrete identity anchor. This preserves
-    // the generic-target noise guard while still allowing any supplied clue to
-    // participate once a name or phone identifies the subject.
-    const strongIdentityAnchor = Boolean(resolvedName || phone);
-    const sourceWaves = strongIdentityAnchor
-      ? buildSpectraDiscoveryWaves(resolvedTargetLabel, details)
-      : [];
-    const criticalSourceQueries = sourceWaves.find(wave => wave.priority === 'critical')
-      ?.targets.slice(0, 36).map(source => source.query) || [];
-    const highSourceQueries = sourceWaves.find(wave => wave.priority === 'high')
-      ?.targets.slice(0, 24).map(source => source.query) || [];
-    const supportingSourceQueries = sourceWaves.find(wave => wave.priority === 'supporting')
-      ?.targets.slice(0, 12).map(source => source.query) || [];
-    // SPECTRA treats discovery systems as parallel evidence sources. A failure
-    // in one adapter is local and never prevents other acquisition paths.
-    const [osintResult, firstPass] = await Promise.all([
-      settleWithin(
-        conductFullOSINT(searchQuery, {
-          location: details,
-          phone,
-          searchDepth: 4,
-        }),
-        SPECTRA_OSINT_TIMEOUT_MS,
-        'Deep OSINT acquisition',
+    const sourceWaves = buildSpectraDiscoveryWaves(resolvedTargetLabel, details);
+    const waveQueries = sourceWaves.flatMap(wave => wave.targets.map(source => source.query));
+    const initialQueries = [...new Set([
+      ...discoveryQueries.firstPass,
+      ...waveQueries.slice(0, 4),
+    ])];
+
+    const backgroundPromise = settleWithin(
+      investigateLexaraBackgroundQuestion(
+        `Where is ${resolvedTargetLabel}? ${details}`,
+        {
+          previousMessages: [{ role: 'user', content: details }],
+          delegatedByLexara: true,
+          resolvedSubject: semanticSubject || undefined,
+        },
       ),
-      runDiscoveryPass([...new Set([...discoveryQueries.firstPass, ...criticalSourceQueries])]),
+      Math.min(SPECTRA_OSINT_TIMEOUT_MS, 20_000),
+      'SPECTRA background research',
+    );
+
+    const firstPassPromise = runDiscoveryPass(initialQueries, {
+      subject: resolvedSubjectName,
+      location: semanticSubject?.location || details,
+    });
+
+    const [backgroundOutcome, firstPass] = await Promise.all([
+      backgroundPromise,
+      firstPassPromise,
     ]);
 
-    const report = osintResult.status === 'fulfilled'
-      ? osintResult.value
-      : {
-          identitySummary: { verificationStatus: 'Unknown' },
-          contactInformation: [],
-          locationHistory: [],
-          employmentAndEducation: [],
-          publicRecords: [],
-          onlineMentions: [],
-          socialMediaPresence: [],
-          sources: [],
-          confidenceScore: 0,
-          summary: '',
-        } as any;
+    const background = backgroundOutcome.status === 'fulfilled'
+      ? backgroundOutcome.value
+      : null;
+    const backgroundSources = background?.sources || [];
+    const backgroundConfidence = background?.endpoint === 'evidence-sufficient'
+      ? 0.82
+      : background?.endpoint === 'best-available-evidence'
+        ? 0.68
+        : background?.endpoint === 'partial-evidence'
+          ? 0.52
+          : backgroundSources.length > 0
+            ? 0.42
+            : 0;
+
+    const report = {
+      identitySummary: {
+        verificationStatus: backgroundConfidence >= 0.8
+          ? 'Verified'
+          : backgroundConfidence > 0
+            ? 'Partial'
+            : 'Unknown',
+      },
+      contactInformation: [] as any[],
+      locationHistory: [] as string[],
+      employmentAndEducation: [] as any[],
+      publicRecords: [] as any[],
+      onlineMentions: backgroundSources.map(url => ({
+        title: 'SPECTRA background source',
+        url,
+        snippet: background?.evidenceSummary?.slice(0, 1_200),
+      })),
+      socialMediaPresence: [] as any[],
+      sources: [] as any[],
+      confidenceScore: backgroundConfidence,
+      summary: background?.evidenceSummary || '',
+    };
 
     let discoveryResults = firstPass.results;
     let discoveryQueriesAttempted = firstPass.attempted;
     let discoveryQueriesFailed = firstPass.failed;
-    let discoveryPasses = 1;
+    let discoveryPasses = firstPass.attempted > 0 ? 1 : 0;
+    let stagnationPasses = 0;
 
-    // Broaden automatically when the first discovery wave is still narrow.
-    // Each query is isolated: one failed provider/query never suppresses the
-    // evidence already returned by the other branches.
-    const firstPassSourceCount = new Set(
-      discoveryResults.map(discoverySourceKey).filter(Boolean)
-    ).size;
-    if (
-      discoveryResults.length < 40 ||
-      firstPassSourceCount < 12 ||
-      (Array.isArray(report.sources) ? report.sources.length : 0) < 8
-    ) {
-      const secondPass = await runDiscoveryPass([...new Set([...discoveryQueries.secondPass, ...highSourceQueries])]);
+    for (let pass = 1; pass < SPECTRA_DISCOVERY_POLICY.maxPasses; pass += 1) {
+      const independentSources = new Set(discoveryResults.map(discoverySourceKey).filter(Boolean));
+      const highReliability = discoveryResults.filter(result => result.reliability === 'high').length;
+      const evidenceConfidence = Math.min(
+        0.95,
+        backgroundConfidence
+          + Math.min(0.42, independentSources.size * 0.055)
+          + Math.min(0.18, highReliability * 0.03),
+      );
+
+      if (
+        independentSources.size >= SPECTRA_DISCOVERY_POLICY.minIndependentSources
+        && evidenceConfidence >= SPECTRA_DISCOVERY_POLICY.sufficientConfidence
+      ) {
+        break;
+      }
+      if (
+        discoveryQueriesAttempted >= SPECTRA_DISCOVERY_POLICY.maxQueries
+        || discoveryResults.length >= SPECTRA_DISCOVERY_POLICY.maxCandidates
+      ) {
+        break;
+      }
+
+      const waveOffset = pass * 4;
+      const recursiveQuery = buildSpectraAdaptiveQuery(
+        resolvedTargetLabel,
+        details,
+        pass,
+        [
+          independentSources.size < SPECTRA_DISCOVERY_POLICY.minIndependentSources
+            ? 'independent source'
+            : '',
+          highReliability < 2 ? 'direct source record' : '',
+        ].filter(Boolean),
+      );
+      const nextQueries = [...new Set([
+        recursiveQuery,
+        ...discoveryQueries.secondPass.slice(Math.max(0, pass - 1), pass + 1),
+        ...waveQueries.slice(waveOffset, waveOffset + 4),
+      ])].filter(Boolean);
+
+      if (!nextQueries.length) break;
+
+      const beforeCount = discoveryResults.length;
+      const nextPass = await runDiscoveryPass(nextQueries, {
+        subject: resolvedSubjectName,
+        location: semanticSubject?.location || details,
+      });
+      discoveryQueriesAttempted += nextPass.attempted;
+      discoveryQueriesFailed += nextPass.failed;
+      discoveryPasses += nextPass.attempted > 0 ? 1 : 0;
       discoveryResults = dedupeDiscoveryResults([
         ...discoveryResults,
-        ...secondPass.results,
-      ]);
-      discoveryQueriesAttempted += secondPass.attempted;
-      discoveryQueriesFailed += secondPass.failed;
-      discoveryPasses += 1;
-    }
+        ...nextPass.results,
+      ]).slice(0, SPECTRA_DISCOVERY_POLICY.maxCandidates);
 
-    const broadenedSourceCount = new Set(discoveryResults.map(discoverySourceKey).filter(Boolean)).size;
-    if (
-      supportingSourceQueries.length > 0 &&
-      (discoveryResults.length < 80 || broadenedSourceCount < 24)
-    ) {
-      const supportingPass = await runDiscoveryPass(supportingSourceQueries);
-      discoveryResults = dedupeDiscoveryResults([...discoveryResults, ...supportingPass.results]);
-      discoveryQueriesAttempted += supportingPass.attempted;
-      discoveryQueriesFailed += supportingPass.failed;
-      discoveryPasses += 1;
+      const gained = Math.max(0, discoveryResults.length - beforeCount);
+      const gainRatio = gained / Math.max(1, beforeCount);
+      stagnationPasses = gainRatio < SPECTRA_DISCOVERY_POLICY.diminishingReturnFloor
+        ? stagnationPasses + 1
+        : 0;
+      if (stagnationPasses >= 2) break;
     }
 
     if (
-      osintResult.status === 'rejected' &&
-      discoveryResults.length === 0 &&
-      discoveryQueriesFailed >= discoveryQueriesAttempted
+      discoveryResults.length === 0
+      && backgroundSources.length === 0
+      && discoveryQueriesAttempted > 0
+      && discoveryQueriesFailed >= discoveryQueriesAttempted
     ) {
-      throw osintResult.reason || new Error('All discovery paths failed');
+      throw new Error('All SPECTRA discovery paths failed');
     }
 
     const observations: any[] = directEvidence.map(point => {
@@ -850,6 +912,9 @@ router.post('/acquire', async (req: Request, res: Response) => {
     for (const result of discoveryResults) {
       sourceKeys.add(discoverySourceKey(result));
     }
+    for (const url of backgroundSources) {
+      sourceKeys.add(discoverySourceKey({ url }));
+    }
 
     return res.json({
       success: true,
@@ -862,7 +927,7 @@ router.post('/acquire', async (req: Request, res: Response) => {
         sourceCount: sourceKeys.size,
         evidenceItemCount:
           directEvidence.length +
-          (Array.isArray(report.sources) ? report.sources.length : 0) +
+          backgroundSources.length +
           discoveryResults.length,
         observationCount: locationObservations.length,
         rejectedObservationCount: locationQuality.rejectedCount,
