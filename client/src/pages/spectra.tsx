@@ -609,6 +609,22 @@ export default function SpectraPage() {
     target,
   ]);
 
+  const handleTargetFile = useCallback((file: File) => {
+    if (isSpectraTelemetryFile(file)) {
+      void handleTelemetryEvidence(file);
+      return;
+    }
+    if (file.type.startsWith('image/') || file.type.startsWith('video/')) {
+      void handleMediaEvidence(file);
+      return;
+    }
+
+    const response = 'That file type is not a supported SPECTRA media or telemetry format.';
+    addMessage('spectra', response);
+    speakIfEnabled(response);
+    if (mediaInputRef.current) mediaInputRef.current.value = '';
+  }, [addMessage, handleMediaEvidence, handleTelemetryEvidence, speakIfEnabled]);
+
   const handleUserMessage = useCallback(async (rawMessage: string) => {
     const message = rawMessage.trim();
     if (!message || phase === 'acquiring') return;
@@ -874,11 +890,11 @@ export default function SpectraPage() {
             <input
               ref={mediaInputRef}
               type="file"
-              accept="image/*,video/*"
+              accept="image/*,video/*,.geojson,.gpx,.kml,.nmea,.csv,.ndjson,.jsonl,.log,.txt"
               className="hidden"
               onChange={event => {
                 const file = event.target.files?.[0];
-                if (file) void handleMediaEvidence(file);
+                if (file) handleTargetFile(file);
               }}
             />
             <div
@@ -892,7 +908,7 @@ export default function SpectraPage() {
                 if (phase === 'awaiting_target' || phase === 'acquiring') return;
                 event.preventDefault();
                 const file = event.dataTransfer.files?.[0];
-                if (file) void handleMediaEvidence(file);
+                if (file) handleTargetFile(file);
               }}
             >
               <Button
@@ -902,7 +918,7 @@ export default function SpectraPage() {
                 disabled={phase === 'awaiting_target' || phase === 'acquiring'}
                 onClick={() => mediaInputRef.current?.click()}
                 className="h-11 w-11 shrink-0 rounded-full text-slate-400 hover:text-cyan-300"
-                title="Add target photo or video"
+                title="Add target media or telemetry"
                 aria-label="Add target photo or video"
               >
                 <Paperclip className="h-4 w-4" />
