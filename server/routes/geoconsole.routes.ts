@@ -176,25 +176,37 @@ const telemetryRadioSchema = z.object({
   { message: 'Radio telemetry requires Wi-Fi access points or cell towers.' },
 );
 
+const telemetryRangingAnchorSchema = z.object({
+  id: z.string().max(200).optional(),
+  latitude: z.number().min(-90).max(90),
+  longitude: z.number().min(-180).max(180),
+  distanceMeters: z.number().nonnegative().max(1_000_000).optional(),
+  rssiDbm: z.number().min(-127).max(0).optional(),
+  txPowerAtOneMeterDbm: z.number().min(-127).max(0).optional(),
+  pathLossExponent: z.number().min(1).max(6).optional(),
+  uncertaintyMeters: z.number().positive().max(1_000_000).optional(),
+  bearingDegrees: z.number().min(0).max(360).optional(),
+  bearingUncertaintyDegrees: z.number().positive().max(180).optional(),
+  bearingReference: z.enum(['true_north', 'magnetic_north', 'device']).optional(),
+}).refine(anchor =>
+  anchor.distanceMeters !== undefined
+  || (
+    anchor.rssiDbm !== undefined
+    && anchor.txPowerAtOneMeterDbm !== undefined
+  ),
+  { message: 'Ranging anchor requires distance or RSSI plus one-meter transmit power.' },
+);
+
 const telemetryRangingSchema = z.object({
   kind: z.literal('ranging'),
   source: z.enum([
-    'wifi_rtt', 'uwb_range', 'uwb_direction',
+    'wifi_rtt', 'wifi_rssi', 'uwb_range', 'uwb_direction',
     'bluetooth_proximity', 'ble_rssi', 'ble_aoa',
   ]),
   timestamp: validDateString,
   provider: z.string().max(200).optional(),
   correlationGroup: z.string().max(300).optional(),
-  anchors: z.array(z.object({
-    id: z.string().max(200).optional(),
-    latitude: z.number().min(-90).max(90),
-    longitude: z.number().min(-180).max(180),
-    distanceMeters: z.number().nonnegative().max(1_000_000),
-    uncertaintyMeters: z.number().positive().max(1_000_000).optional(),
-    bearingDegrees: z.number().min(0).max(360).optional(),
-    bearingUncertaintyDegrees: z.number().positive().max(180).optional(),
-    bearingReference: z.enum(['true_north', 'magnetic_north', 'device']).optional(),
-  })).min(1).max(64),
+  anchors: z.array(telemetryRangingAnchorSchema).min(1).max(64),
   metadata: z.record(z.unknown()).optional(),
 });
 
@@ -291,25 +303,58 @@ function geoFromLocalMeters(
   };
 }
 
+function rangingDistanceMeters(
+  anchor: z.infer<typeof telemetryRangingAnchorSchema>,
+): { distance: number; rssDerived: boolean } | null {
+  if (Number.isFinite(anchor.distanceMeters)) {
+    return {
+      distance: Math.max(0.1, Math.min(1_000_000, Number(anchor.distanceMeters))),
+      rssDerived: false,
+    };
+  }
+  if (
+    !Number.isFinite(anchor.rssiDbm)
+    || !Number.isFinite(anchor.txPowerAtOneMeterDbm)
+  ) return null;
+
+  const exponent = Number(anchor.pathLossExponent ?? 2.2);
+  const estimated = Math.pow(
+    10,
+    (Number(anchor.txPowerAtOneMeterDbm) - Number(anchor.rssiDbm)) / (10 * exponent),
+  );
+  if (!Number.isFinite(estimated)) return null;
+  return {
+    distance: Math.max(0.1, Math.min(1_000_000, estimated)),
+    rssDerived: true,
+  };
+}
+
 function directionalAnchorCandidate(
-  anchor: z.infer<typeof telemetryRangingSchema>['anchors'][number],
+  anchor: z.infer<typeof telemetryRangingAnchorSchema>,
 ): { x: number; y: number; accuracy: number } | null {
+  const resolvedRange = rangingDistanceMeters(anchor);
   if (
     anchor.bearingReference !== 'true_north'
     || !Number.isFinite(anchor.bearingDegrees)
-    || !Number.isFinite(anchor.distanceMeters)
+    || !resolvedRange
   ) return null;
 
   const bearingRadians = Number(anchor.bearingDegrees) * Math.PI / 180;
   const angularUncertaintyRadians =
     Number(anchor.bearingUncertaintyDegrees ?? 12) * Math.PI / 180;
-  const distanceUncertainty = Math.max(0.1, Number(anchor.uncertaintyMeters ?? 2));
+  const distanceUncertainty = Math.max(
+    0.1,
+    Number(
+      anchor.uncertaintyMeters
+      ?? (resolvedRange.rssDerived ? Math.max(3, resolvedRange.distance * 0.6) : 2),
+    ),
+  );
   const lateralUncertainty =
-    Math.abs(Math.sin(angularUncertaintyRadians) * Number(anchor.distanceMeters));
+    Math.abs(Math.sin(angularUncertaintyRadians) * resolvedRange.distance);
 
   return {
-    x: Math.sin(bearingRadians) * Number(anchor.distanceMeters),
-    y: Math.cos(bearingRadians) * Number(anchor.distanceMeters),
+    x: Math.sin(bearingRadians) * resolvedRange.distance,
+    y: Math.cos(bearingRadians) * resolvedRange.distance,
     accuracy: Math.max(0.5, distanceUncertainty, lateralUncertainty),
   };
 }
@@ -321,12 +366,22 @@ function rangingPoint(
     / measurement.anchors.length;
   const originLongitude = measurement.anchors.reduce((sum, anchor) => sum + anchor.longitude, 0)
     / measurement.anchors.length;
-  const anchors = measurement.anchors.map(anchor => ({
-    ...localMeters(anchor.latitude, anchor.longitude, originLatitude, originLongitude),
-    distance: anchor.distanceMeters,
-    uncertainty: Math.max(0.1, anchor.uncertaintyMeters ?? 2),
-    raw: anchor,
-  }));
+  const anchors = measurement.anchors.flatMap(anchor => {
+    const resolvedRange = rangingDistanceMeters(anchor);
+    if (!resolvedRange) return [];
+    return [{
+      ...localMeters(anchor.latitude, anchor.longitude, originLatitude, originLongitude),
+      distance: resolvedRange.distance,
+      uncertainty: Math.max(
+        0.1,
+        anchor.uncertaintyMeters
+          ?? (resolvedRange.rssDerived ? Math.max(3, resolvedRange.distance * 0.6) : 2),
+      ),
+      rssDerived: resolvedRange.rssDerived,
+      raw: anchor,
+    }];
+  });
+  if (!anchors.length) return null;
 
   const directionalEstimates = anchors.flatMap(anchor => {
     const relative = directionalAnchorCandidate(anchor.raw);
@@ -463,6 +518,7 @@ function rangingPoint(
     metadata: {
       ...(measurement.metadata || {}),
       anchorCount: anchors.length,
+      rssDerivedAnchorCount: anchors.filter(anchor => anchor.rssDerived).length,
       directionalAnchorCount: directionalEstimates.length,
       residualRmsMeters: Number.isFinite(residualRms) ? residualRms : undefined,
       bearingReferencePolicy: 'only_true_north_bearings_used_for_absolute_position',
@@ -1283,7 +1339,7 @@ router.get('/telemetry-capabilities', (_req: Request, res: Response) => {
       ],
       radioSources: ['wifi_fingerprint', 'cellular'],
       rangingSources: [
-        'wifi_rtt', 'uwb_range', 'uwb_direction',
+        'wifi_rtt', 'wifi_rssi', 'uwb_range', 'uwb_direction',
         'bluetooth_proximity', 'ble_rssi', 'ble_aoa',
       ],
       contextSources: ['accelerometer', 'imu_gyro', 'magnetometer', 'barometer'],
