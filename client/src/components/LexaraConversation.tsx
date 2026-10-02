@@ -1273,15 +1273,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
           }
 
           if (event === 'research' && (payload?.type === 'evidence' || payload?.type === 'checkpoint')) {
-            const confidence = Math.max(0, Math.min(100, Math.round(Number(payload?.confidence || 0) * 100)));
-            const evidenceText = String(payload?.evidence || '').trim();
-            if (!evidenceText) return;
-            const progressiveText = confidence >= 80
-              ? `${evidenceText.slice(0, 500)}`
-              : `${evidenceText.slice(0, 500)} I'm continuing to verify this.`;
-            const progressiveId = appendMessage('lexara', progressiveText);
-            nonSemanticLexaraMessageIdsRef.current.add(progressiveId);
-            void speakLexara(progressiveText, generation).catch(() => undefined);
+            return;
           }
         });
       }
