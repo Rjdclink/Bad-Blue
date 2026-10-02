@@ -191,26 +191,24 @@ function buildDiscoveryQueries(args: {
   const quotedPhone = phone ? `"${phone}"` : '';
   const phoneDigits = phone?.replace(/\D/g, '') || '';
   const compactDetails = details.replace(/\s+/g, ' ').trim();
-  const strongIdentityAnchor = quotedName || quotedPhone;
   const genericTarget = GENERIC_TARGET_RE.test(normalizedTarget);
+  const identityAnchor = quotedName || quotedPhone || (!genericTarget ? normalizedTarget : '');
 
   const firstPass = [
     [quotedName, quotedPhone].filter(Boolean).join(' '),
-    [strongIdentityAnchor, compactDetails].filter(Boolean).join(' '),
-    !genericTarget ? [normalizedTarget, compactDetails].filter(Boolean).join(' ') : compactDetails,
+    [identityAnchor, compactDetails].filter(Boolean).join(' '),
+    [normalizedTarget, compactDetails].filter(Boolean).join(' '),
+    compactDetails,
     phoneDigits.length >= 7 ? `"${phoneDigits}"` : '',
   ].filter(Boolean);
 
-  // Do not launch generic internet-wide "public records" searches when the
-  // operator supplied only a category such as "person" plus a location. Those
-  // queries create noise rather than target evidence. Broadening resumes once
-  // a name or phone anchor exists.
-  const secondPass = strongIdentityAnchor ? [
-    [strongIdentityAnchor, 'public records address location'].join(' '),
-    [strongIdentityAnchor, 'social profile biography location'].join(' '),
-    [strongIdentityAnchor, 'contact directory'].join(' '),
-    [strongIdentityAnchor, 'property court business records'].join(' '),
-  ] : [];
+  const secondPass = [
+    [identityAnchor, compactDetails, 'address location'].filter(Boolean).join(' '),
+    [identityAnchor, compactDetails, 'employment property profile'].filter(Boolean).join(' '),
+    [identityAnchor, compactDetails, 'historical record archive'].filter(Boolean).join(' '),
+    [identityAnchor, compactDetails, 'media geotag timestamp'].filter(Boolean).join(' '),
+    [identityAnchor, compactDetails, 'independent corroboration'].filter(Boolean).join(' '),
+  ].filter(Boolean);
 
   return {
     firstPass: [...new Set(firstPass)],
@@ -218,34 +216,150 @@ function buildDiscoveryQueries(args: {
   };
 }
 
-async function runDiscoveryPass(queries: string[]): Promise<{
-  results: any[];
+interface SpectraDiscoveryResult {
+  title: string;
+  url: string;
+  snippet?: string;
+  provider: string;
+  reliability: 'high' | 'medium' | 'low';
+  relevanceScore: number;
+  metadata?: Record<string, unknown>;
+}
+
+function reliabilityForUrl(rawUrl: string): SpectraDiscoveryResult['reliability'] {
+  try {
+    const host = new URL(rawUrl).hostname.toLowerCase();
+    if (host.endsWith('.gov') || host.endsWith('.mil') || host.endsWith('.uscourts.gov')) return 'high';
+    if (host.includes('courtlistener.com') || host.includes('nursys.com') || host.includes('finra.org')) return 'high';
+    if (host.endsWith('.edu') || host.endsWith('.org')) return 'medium';
+  } catch {
+    return 'low';
+  }
+  return 'medium';
+}
+
+function discoveryResultFromCandidate(candidate: LegalMeshCandidate): SpectraDiscoveryResult {
+  const reliability = reliabilityForUrl(candidate.url);
+  return {
+    title: candidate.title || 'SPECTRA discovery result',
+    url: candidate.url,
+    snippet: candidate.excerpt,
+    provider: candidate.provider || 'native-search',
+    reliability,
+    relevanceScore: reliability === 'high' ? 92 : reliability === 'medium' ? 78 : 62,
+    metadata: {
+      discoveryProvider: candidate.provider || 'native-search',
+      sourceCategory: candidate.sourceCategory,
+    },
+  };
+}
+
+async function runDiscoveryPass(
+  queries: string[],
+  context: { subject?: string; location?: string } = {},
+): Promise<{
+  results: SpectraDiscoveryResult[];
   attempted: number;
   failed: number;
+  claudeNotes: string[];
 }> {
-  const settled = await Promise.allSettled(
-    queries.map(query =>
-      unifiedSearch(query, {
-        limit: 25,
-        category: 'general',
-        freshness: 'all',
-        timeout: 20_000,
-      })
-    )
-  );
-
-  const results: any[] = [];
-  let failed = 0;
-  for (const result of settled) {
-    if (result.status === 'fulfilled') results.push(...result.value);
-    else failed += 1;
+  const uniqueQueries = [...new Set(queries.map(query => query.replace(/\s+/g, ' ').trim()).filter(Boolean))]
+    .slice(0, 6);
+  if (!uniqueQueries.length) {
+    return { results: [], attempted: 0, failed: 0, claudeNotes: [] };
   }
 
-  return {
-    results: dedupeDiscoveryResults(results),
-    attempted: queries.length,
-    failed,
-  };
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(new Error('SPECTRA discovery pass timeout')), 15_000);
+  try {
+    const nativePromise = Promise.allSettled(uniqueQueries.map(query =>
+      discoverLegalMeshTier3(query, controller.signal, {
+        categories: [
+          'identity',
+          'contacts-addresses',
+          'relationships',
+          'social-online',
+          'public-images',
+          'employment',
+          'property',
+          'transportation',
+          'business',
+          'news-history',
+          'relationship-timeline',
+          'general-public-records',
+        ],
+        jurisdiction: context.location,
+        subject: context.subject,
+        requestedFact: 'contact-address',
+      })
+    ));
+
+    const claudePrompt = [
+      'Use web search and fetch strong underlying pages when useful.',
+      'This is an internal SPECTRA location-research pass.',
+      'Resolve the supplied subject and clues, and preserve dates, source distinctions, and uncertainty.',
+      context.subject ? `Subject: ${context.subject}` : '',
+      context.location ? `Location clue: ${context.location}` : '',
+      'Search objectives:',
+      ...uniqueQueries.map((query, index) => `${index + 1}. ${query}`),
+    ].filter(Boolean).join('\n');
+
+    const claudePromise = callClaudeWebSearch(claudePrompt, {
+      maxTokens: 1_200,
+      maxUses: 6,
+      allowFetch: true,
+      signal: controller.signal,
+      systemPrompt: [
+        'You are SPECTRA\'s internal location-research planner.',
+        'Use search rather than model memory for external facts.',
+        'Prefer direct source pages, preserve dates and uncertainty, and keep source families distinct.',
+      ].join(' '),
+    });
+
+    const [nativeSettled, claudeSettled] = await Promise.allSettled([nativePromise, claudePromise]);
+    const results: SpectraDiscoveryResult[] = [];
+    let failed = 0;
+
+    if (nativeSettled.status === 'fulfilled') {
+      for (const queryResult of nativeSettled.value) {
+        if (queryResult.status === 'fulfilled') results.push(...queryResult.value.map(discoveryResultFromCandidate));
+        else failed += 1;
+      }
+    } else {
+      failed += uniqueQueries.length;
+    }
+
+    const claudeNotes: string[] = [];
+    if (claudeSettled.status === 'fulfilled') {
+      claudeNotes.push(claudeSettled.value.content);
+      for (const source of claudeSettled.value.sources) {
+        const reliability = reliabilityForUrl(source.url);
+        results.push({
+          title: source.title || 'Claude research source',
+          url: source.url,
+          snippet: source.citedText,
+          provider: 'claude-web-research',
+          reliability,
+          relevanceScore: reliability === 'high' ? 94 : reliability === 'medium' ? 80 : 64,
+          metadata: {
+            discoveryProvider: 'claude-web-research',
+            fetchedOrCitedText: source.citedText,
+          },
+        });
+      }
+    } else {
+      failed += 1;
+    }
+
+    return {
+      results: dedupeDiscoveryResults(results),
+      attempted: uniqueQueries.length + 1,
+      failed,
+      claudeNotes,
+    };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function normalizeConfidence(value: unknown): number {
