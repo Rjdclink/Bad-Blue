@@ -57,6 +57,7 @@ export function resolveLexaraBackgroundSubject(
   const followsPrior = refersToPriorSubject(current);
   const explicitPlace = current.match(/\b(?:city|town|county|village|state|place|location)\s+of\s+([A-Z][\p{L}.'’-]+)(?:,\s*([A-Z][\p{L}.'’-]+))?/u)
     || current.match(/\b([A-Z][\p{L}.'’-]+),\s*([A-Z][\p{L}.'’-]+)\b/u);
+  const explicitSubjectLocation = current.match(/\b(?:of|in|from|near)\s+([A-Z][\p{L}.'’-]+(?:\s+[A-Z][\p{L}.'’-]+){0,2})[\s,]+([A-Z]{2}|[A-Z][\p{L}.'’-]+(?:\s+[A-Z][\p{L}.'’-]+){0,2})\b/u);
   const explicitEntity = current.match(/\b([Cc]ompany|[Bb]usiness|[Oo]rganization|[Cc]orporation|[Ff]irm|[Nn]onprofit|[Ww]ebsite|[Dd]omain|[Ee]ntity)\s+(?:(?:named|called)\s+)?["“]?([A-Z][\p{L}\p{N}.'’&-]*(?:\s+[A-Z][\p{L}\p{N}.'’&-]*){0,5})["”]?/u);
   const standaloneSubject = current.trim().match(/^[A-Z][\p{L}\p{N}.'’&-]{1,120}$/u)?.[0];
   const name = explicitEntity?.[2]
@@ -69,7 +70,9 @@ export function resolveLexaraBackgroundSubject(
   const kind = explicitEntity?.[2] === name
     ? /^(?:website|domain|entity)$/i.test(explicitEntity[1]) ? 'entity' : 'organization'
     : explicitPlace?.[1] === name ? 'place' : classify(name, context);
-  const location = jurisdiction || explicitPlace?.[2] || context.match(/\b(?:in|from|near)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?(?:,\s*[A-Z]{2})?)\b/)?.[1];
+  const location = explicitSubjectLocation
+    ? `${explicitSubjectLocation[1]}, ${explicitSubjectLocation[2]}`
+    : jurisdiction || explicitPlace?.[2] || context.match(/\b(?:in|from|near)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?(?:,\s*[A-Z]{2})?)\b/)?.[1];
   return {
     name,
     kind,
