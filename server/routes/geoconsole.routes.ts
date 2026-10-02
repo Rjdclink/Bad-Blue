@@ -739,6 +739,115 @@ router.post('/telemetry/provider/:providerId', async (req: Request, res: Respons
 // Every ordinary GeoConsole/SPECTRA endpoint below remains authenticated.
 router.use(isAuthenticated);
 
+router.get('/telemetry-history/:sessionId', async (req: Request, res: Response) => {
+  const userId = getPlatformUserId(req.user as any);
+  if (!userId) return res.status(401).json({ success: false, error: 'Authentication required.' });
+
+  const sessionId = String(req.params.sessionId || '').trim();
+  if (!sessionId || sessionId.length > 200) {
+    return res.status(400).json({ success: false, error: 'Invalid telemetry session.' });
+  }
+
+  try {
+    const owner = await pool.query(
+      `SELECT id
+       FROM public.spectra_investigations
+       WHERE session_id = $1 AND user_id = $2
+       LIMIT 1`,
+      [sessionId, userId],
+    );
+    if (!owner.rows.length) {
+      return res.status(404).json({ success: false, error: 'Telemetry session not found.' });
+    }
+
+    const history = await pool.query(
+      `SELECT
+         source_type, provider, latitude, longitude, altitude, accuracy_meters,
+         confidence, observation_kind, observed_at, received_at,
+         correlation_group, provenance, metadata
+       FROM public.spectra_location_observations
+       WHERE session_id = $1 AND user_id = $2
+       ORDER BY observed_at ASC
+       LIMIT 2000`,
+      [sessionId, userId],
+    );
+
+    return res.json({
+      success: true,
+      data: history.rows.map((row: any) => ({
+        latitude: Number(row.latitude),
+        longitude: Number(row.longitude),
+        altitude: row.altitude == null ? undefined : Number(row.altitude),
+        accuracy: row.accuracy_meters == null ? undefined : Number(row.accuracy_meters),
+        timestamp: new Date(row.observed_at).toISOString(),
+        receivedAt: new Date(row.received_at).toISOString(),
+        source: row.source_type,
+        confidence: Number(row.confidence),
+        observationKind: row.observation_kind,
+        correlationGroup: row.correlation_group || undefined,
+        provenance: row.provenance || undefined,
+        metadata: row.metadata || {},
+      })),
+    });
+  } catch (error: any) {
+    if (error?.code === '42P01') {
+      return res.status(503).json({ success: false, error: 'SPECTRA persistence is not initialized.' });
+    }
+    log.error('Telemetry history load failed', { error, userId, sessionId });
+    return res.status(500).json({ success: false, error: 'Telemetry history could not be loaded.' });
+  }
+});
+
+router.get('/telemetry-stream/:sessionId', async (req: Request, res: Response) => {
+  const userId = getPlatformUserId(req.user as any);
+  if (!userId) return res.status(401).end();
+
+  const sessionId = String(req.params.sessionId || '').trim();
+  if (!sessionId || sessionId.length > 200) return res.status(400).end();
+
+  try {
+    const owner = await pool.query(
+      `SELECT id
+       FROM public.spectra_investigations
+       WHERE session_id = $1 AND user_id = $2
+       LIMIT 1`,
+      [sessionId, userId],
+    );
+    if (!owner.rows.length) return res.status(404).end();
+  } catch (error: any) {
+    if (error?.code === '42P01') return res.status(503).end();
+    log.error('Telemetry stream ownership check failed', { error, userId, sessionId });
+    return res.status(500).end();
+  }
+
+  res.status(200);
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders?.();
+  res.write(`event: ready\ndata: ${JSON.stringify({ sessionId })}\n\n`);
+
+  const listener = (event: TelemetryPushEvent) => {
+    if (event.userId !== userId || res.writableEnded) return;
+    res.write(`event: observation-batch\ndata: ${JSON.stringify(event)}\n\n`);
+  };
+  telemetryPushEmitter.on(sessionId, listener);
+
+  const heartbeat = setInterval(() => {
+    if (!res.writableEnded) res.write(': heartbeat\n\n');
+  }, 25_000);
+
+  let cleaned = false;
+  const cleanup = () => {
+    if (cleaned) return;
+    cleaned = true;
+    clearInterval(heartbeat);
+    telemetryPushEmitter.off(sessionId, listener);
+  };
+  req.once('close', cleanup);
+  res.once('close', cleanup);
+});
+
 router.get('/telemetry-capabilities', (_req: Request, res: Response) => {
   return res.json({
     success: true,
