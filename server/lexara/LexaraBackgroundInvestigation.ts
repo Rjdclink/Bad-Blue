@@ -663,7 +663,46 @@ export async function investigateLexaraBackgroundQuestion(
         sourceUrl: evaluation.url,
       });
     }
-    candidates = uniqueCandidates([...nativeCandidates, ...peopleTools.candidates]).slice(0, maxCandidates);
+
+    // Preserve the native candidate budget exactly. Specialized people tools get
+    // a small, separate retrieval allowance so they cannot crowd out sources
+    // that already worked before this lane was added.
+    const peopleTargets = peopleTools.candidates.slice(0, 3);
+    if (peopleTargets.length) {
+      peopleTargets.forEach(item => {
+        discoveryLanes.add(item.provider);
+        seenUrls.add(item.url);
+      });
+      const peopleRetrieval = await lexaraRetrievalAdapter.retrieve({
+        purpose: 'lexara_legal_research',
+        targets: peopleTargets.map(item => item.url),
+        signal: laneSignal,
+      }).catch(() => ({ evidence: [] }));
+      const peopleEvidenceByTarget = new Map(peopleRetrieval.evidence.map(item => [item.target, item]));
+      for (const candidate of peopleTargets) {
+        const evidence = peopleEvidenceByTarget.get(candidate.url);
+        if (!evidence) continue;
+        const evaluation = assessEvidence(
+          evidence.content,
+          candidate.url,
+          evidence.retrievedAt,
+          subject,
+          decision,
+          prompt,
+        );
+        if (!evaluation) continue;
+        const existing = assessed.get(candidate.url);
+        if (!existing || evaluation.confidence > existing.confidence) assessed.set(candidate.url, evaluation);
+        context.onProgress?.({
+          type: 'evidence',
+          pass: 0,
+          confidence: evaluation.confidence,
+          sourceUrl: evaluation.url,
+        });
+      }
+    }
+
+    candidates = uniqueCandidates(nativeCandidates).slice(0, maxCandidates);
     candidates.forEach(item => discoveryLanes.add(item.provider));
 
     const integrateClaudeParallel = () => {
