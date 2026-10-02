@@ -32,6 +32,7 @@ const exifTool = read('server/services/locationIntelligence/ExifToolExtractor.ts
 const spectraSources = read('server/services/spectra/SpectraSourceRegistry.ts');
 const pantheonSources = read('server/services/pantheon/PantheonSovereignSourceRegistry.ts');
 const geocoder = read('server/services/geoconsole/city-state-geocoder.ts');
+const geoconsoleRoutes = read('server/routes/geoconsole.routes.ts');
 const landing = read('client/src/pages/landing.tsx');
 const login = read('client/src/pages/login.tsx');
 
@@ -157,19 +158,21 @@ test('Folded geospatial tools are not separate master tabs',
 
 test('SPECTRA acquisition API requires authentication',
   routes.includes('router.use(isAuthenticated)'));
-test('SPECTRA acquisition uses existing OSINT engine with a route-local timeout',
-  routes.includes('conductFullOSINT') &&
+test('SPECTRA uses a route-local research budget and Lexara-native background lane',
+  routes.includes('investigateLexaraBackgroundQuestion') &&
   routes.includes('settleWithin(') &&
   routes.includes('SPECTRA_OSINT_TIMEOUT_MS'));
-test('SPECTRA broad discovery runs independently of deep OSINT',
+test('SPECTRA broad discovery runs through independent native and Claude research lanes',
   routes.includes('runDiscoveryPass') &&
   routes.includes('Promise.allSettled') &&
-  routes.includes('unifiedSearch') &&
-  routes.includes("category: 'general'"));
-test('SPECTRA automatically broadens when the first discovery pass is narrow',
-  routes.includes('firstPassSourceCount < 12') &&
-  routes.includes('discoveryQueries.secondPass') &&
-  routes.includes('discoveryPasses += 1'));
+  routes.includes('discoverLegalMeshTier3') &&
+  routes.includes('callClaudeWebSearch') &&
+  routes.includes('allowFetch: true'));
+test('SPECTRA recursively broadens until evidence sufficiency or diminishing returns',
+  routes.includes('SPECTRA_DISCOVERY_POLICY.maxPasses') &&
+  routes.includes('SPECTRA_DISCOVERY_POLICY.sufficientConfidence') &&
+  routes.includes('SPECTRA_DISCOVERY_POLICY.diminishingReturnFloor') &&
+  routes.includes('buildSpectraAdaptiveQuery'));
 test('Generic target classes resolve identity without treating city/state as a person name',
   routes.includes('const genericTarget = GENERIC_TARGET_RE.test(normalizedTarget)') &&
   routes.includes('extractLikelyName(details)') &&
@@ -200,10 +203,10 @@ test('Unsigned client location claims cannot manufacture precision',
   evidenceProof.includes('Math.max(5_000, reportedAccuracy)') &&
   evidenceProof.includes("source: 'manual_input'") &&
   evidenceProof.includes('claimedAccuracy: point.accuracy'));
-test('Generic targets do not launch untethered broad discovery',
-  routes.includes('const strongIdentityAnchor = quotedName || quotedPhone') &&
-  routes.includes('const secondPass = strongIdentityAnchor ?') &&
-  routes.includes("? suppliedName || ''"));
+test('All supplied clues may seed discovery without a mandatory name-or-phone gate',
+  routes.includes('const identityAnchor = quotedName || quotedPhone ||') &&
+  routes.includes("[identityAnchor, compactDetails, 'media geotag timestamp']") &&
+  !routes.includes('const secondPass = strongIdentityAnchor ?'));
 test('Failed map providers stay locally disabled across UI updates',
   intelligenceMap.includes("providerStatus.terrain !== 'unavailable'") &&
   intelligenceMap.includes("providerStatus.weather !== 'unavailable'") &&
@@ -239,16 +242,40 @@ test('Independent evidence is preserved while duplicate source counting is preve
 test('Regional geocoder uncertainty is preserved',
   read('server/services/geoconsole/city-state-geocoder.ts').includes('accuracyMeters') &&
   read('client/src/components/geoconsole/MapLibreIntelligenceMap.tsx').includes('spectra-candidate-area'));
-test('SPECTRA is detached from the removed legacy Pantheon inventory', !pantheonSources.includes('PANTHEON_VERIFIED_SOURCE_INVENTORY') && !spectraSources.includes('PANTHEON_VERIFIED_SOURCE_INVENTORY') && spectraSources.includes('buildPantheonBackgroundRegistryTargets'));
-test('SPECTRA source catalog is priority compiled and directly retrievable',
+test('SPECTRA is independent of Pantheon discovery and search routing',
+  !spectraSources.includes('Pantheon') &&
+  !spectraSources.includes('pantheon') &&
+  !routes.includes('conductFullOSINT') &&
+  !routes.includes('unifiedSearch'));
+test('SPECTRA source registry includes the major geospatial evidence families',
   spectraSources.includes("'critical' | 'high' | 'supporting'") &&
-  spectraSources.includes('SPECTRA_SOURCE_CATALOG_BY_ID') &&
-  spectraSources.includes('buildPantheonBackgroundRegistryTargets'));
-test('SPECTRA acquisition pipes prioritized source waves into discovery',
+  spectraSources.includes("'media-location'") &&
+  spectraSources.includes("'camera-context'") &&
+  spectraSources.includes("'map-context'") &&
+  spectraSources.includes("'weather-context'") &&
+  spectraSources.includes("'earth-observation'"));
+test('SPECTRA acquisition uses adaptive prioritized source waves without fixed 36/24/12 caps',
   routes.includes('buildSpectraDiscoveryWaves') &&
-  routes.includes('criticalSourceQueries') &&
-  routes.includes('highSourceQueries') &&
-  routes.includes('supportingSourceQueries'));
+  routes.includes('buildSpectraAdaptiveQuery') &&
+  routes.includes('SPECTRA_DISCOVERY_POLICY') &&
+  !routes.includes('.slice(0, 36)') &&
+  !routes.includes('.slice(0, 24)') &&
+  !routes.includes('.slice(0, 12)'));
+test('SPECTRA has nationwide public camera adapters with optional provider expansion',
+  geoconsoleRoutes.includes("router.get('/public-cameras'") &&
+  geoconsoleRoutes.includes('api.trafficland.com/v2.2/json/video_feeds/poi') &&
+  geoconsoleRoutes.includes('SPECTRA_CAMERA_ARCGIS_FEEDS'));
+test('SPECTRA has geotagged public-media context adapters',
+  geoconsoleRoutes.includes("router.get('/public-geotagged-media'") &&
+  geoconsoleRoutes.includes('commons.wikimedia.org/w/api.php') &&
+  geoconsoleRoutes.includes('FLICKR_API_KEY'));
+test('SPECTRA has weather and earth-observation context adapters',
+  geoconsoleRoutes.includes("router.get('/environment-context'") &&
+  geoconsoleRoutes.includes('api.weather.gov/stations/') &&
+  geoconsoleRoutes.includes('stac.dataspace.copernicus.eu/v1/search'));
+test('US address geocoding has an independent Census fallback',
+  geocoder.includes('geocoding.geo.census.gov/geocoder/locations/onelineaddress') &&
+  geocoder.includes('queryCensusAddressGeocoder(address)'));
 test('SPECTRA API is mounted',
   serverRoutes.includes("app.use('/api/spectra', spectraRoutes.default)"));
 
