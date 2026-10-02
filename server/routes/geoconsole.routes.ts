@@ -9,6 +9,7 @@ import { Router, Request, Response } from 'express';
 import { EventEmitter } from 'node:events';
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'crypto';
 import { z } from 'zod';
+import multer from 'multer';
 import { hybridGeoconsole } from '../services/geoconsole';
 import { GPSPoint, DataSource } from '../services/geoconsole/types';
 import { assessLocationQuality } from '../services/geoconsole/location-quality';
@@ -38,6 +39,10 @@ import { acquireSpectraPlaceContext } from '../services/spectra/SpectraPlaceCont
 
 const router = Router();
 const log = createLogger('GeoconsoleRoutes');
+const telemetryImportUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5_000_000, files: 1 },
+});
 
 const validDateString = z.string()
   .min(1)
