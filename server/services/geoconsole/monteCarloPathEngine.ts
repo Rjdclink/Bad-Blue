@@ -862,6 +862,56 @@ export class MonteCarloPathEngine {
     const evidenceHeading = (Math.atan2(headingY, headingX) * 180 / Math.PI + 360) % 360;
     const latest = usable[usable.length - 1];
 
+    // When the canonical hidden-state estimator has already solved velocity,
+    // preserve that posterior as an additional motion constraint instead of
+    // throwing it away and reconstructing velocity only from point-to-point
+    // deltas. The blend remains bounded so raw temporal evidence still matters.
+    const latestStateEstimator = latest.metadata?.stateEstimator;
+    const stateRecord = latestStateEstimator && typeof latestStateEstimator === 'object'
+      ? latestStateEstimator as Record<string, unknown>
+      : null;
+    const stateSpeedRaw = Number(stateRecord?.speedMps);
+    const stateHeadingRaw = Number(stateRecord?.headingDegrees);
+    const stateRadius95 = Number(stateRecord?.confidenceRadius95Meters);
+    const hasStateVelocity =
+      Number.isFinite(stateSpeedRaw)
+      && stateSpeedRaw >= 0
+      && stateSpeedRaw <= maxPlausibleSpeed
+      && Number.isFinite(stateHeadingRaw)
+      && stateHeadingRaw >= 0
+      && stateHeadingRaw <= 360;
+
+    const radiusTrust = Number.isFinite(stateRadius95) && stateRadius95 > 0
+      ? Math.max(0, Math.min(1, 1 - Math.log10(Math.max(1, stateRadius95)) / 5))
+      : 0.5;
+    const stateEstimatorInfluence = hasStateVelocity
+      ? Math.max(0.2, Math.min(0.7, 0.25 + 0.45 * radiusTrust))
+      : 0;
+
+    let avgSpeed = evidenceSpeed;
+    let avgHeading = evidenceHeading;
+    if (hasStateVelocity) {
+      avgSpeed = Math.max(
+        0,
+        Math.min(
+          maxPlausibleSpeed,
+          evidenceSpeed * (1 - stateEstimatorInfluence)
+            + stateSpeedRaw * stateEstimatorInfluence,
+        ),
+      );
+
+      const evidenceRadians = evidenceHeading * DEG_TO_RAD;
+      const stateRadians = stateHeadingRaw * DEG_TO_RAD;
+      avgHeading = (
+        Math.atan2(
+          Math.sin(evidenceRadians) * (1 - stateEstimatorInfluence)
+            + Math.sin(stateRadians) * stateEstimatorInfluence,
+          Math.cos(evidenceRadians) * (1 - stateEstimatorInfluence)
+            + Math.cos(stateRadians) * stateEstimatorInfluence,
+        ) * 180 / Math.PI + 360
+      ) % 360;
+    }
+
     const vehicleClass = (point: GPSPoint): boolean => {
       if (point.source === 'vehicle_telemetry') return true;
       const objectClass = String(
@@ -885,8 +935,6 @@ export class MonteCarloPathEngine {
         )
       : [];
 
-    let avgSpeed = evidenceSpeed;
-    let avgHeading = evidenceHeading;
     let motionContextInfluence = 0;
     let motionContextSpeed: number | undefined;
     let motionContextHeading: number | undefined;
@@ -1010,6 +1058,12 @@ export class MonteCarloPathEngine {
           averageSpeedMps: avgSpeed,
           averageHeadingDegrees: avgHeading,
           weightedTransitions: totalWeight,
+          stateEstimatorSeeded: hasStateVelocity,
+          stateEstimatorInfluence,
+          stateEstimatorSpeedMps: hasStateVelocity ? stateSpeedRaw : undefined,
+          stateEstimatorHeadingDegrees: hasStateVelocity ? stateHeadingRaw : undefined,
+          stateEstimatorRadius95Meters:
+            Number.isFinite(stateRadius95) ? stateRadius95 : undefined,
           motionContextApplied: motionContextInfluence > 0,
           motionContextInfluence,
           motionContextSpeedMps: motionContextSpeed,
