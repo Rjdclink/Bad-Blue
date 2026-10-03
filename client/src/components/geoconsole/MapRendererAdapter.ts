@@ -6,7 +6,7 @@ import maplibregl, {
   type MapOptions as MapLibreMapOptions,
 } from 'maplibre-gl';
 
-export type GeoconsoleRendererId = 'maplibre' | 'mapbox-global';
+export type GeoconsoleRendererId = 'maplibre' | 'mapbox-global' | (string & {});
 
 export interface GeoconsoleMapRendererAdapter {
   id: GeoconsoleRendererId;
@@ -64,19 +64,30 @@ const mapboxGlobalAdapter: GeoconsoleMapRendererAdapter = {
   },
 };
 
-const adapters: Record<GeoconsoleRendererId, GeoconsoleMapRendererAdapter> = {
-  maplibre: mapLibreAdapter,
-  'mapbox-global': mapboxGlobalAdapter,
-};
+const adapters = new Map<string, GeoconsoleMapRendererAdapter>([
+  ['maplibre', mapLibreAdapter],
+  ['mapbox-global', mapboxGlobalAdapter],
+]);
+
+export function registerGeoconsoleMapRenderer(
+  adapter: GeoconsoleMapRendererAdapter,
+): () => void {
+  const id = String(adapter.id || '').trim();
+  if (!id) throw new Error('Map renderer adapter ID is required.');
+  if (id === 'maplibre') throw new Error('The canonical MapLibre adapter cannot be replaced.');
+  adapters.set(id, adapter);
+  return () => {
+    if (adapters.get(id) === adapter) adapters.delete(id);
+  };
+}
 
 export function getConfiguredGeoconsoleRendererId(): GeoconsoleRendererId {
   const configured = String(import.meta.env?.VITE_MAP_RENDERER || 'maplibre')
     .trim()
     .toLowerCase();
 
-  return configured === 'mapbox' || configured === 'mapbox-global'
-    ? 'mapbox-global'
-    : 'maplibre';
+  if (configured === 'mapbox') return 'mapbox-global';
+  return adapters.has(configured) ? configured : 'maplibre';
 }
 
 export function resolveGeoconsoleMapRenderer(): {
@@ -86,7 +97,7 @@ export function resolveGeoconsoleMapRenderer(): {
   fallbackApplied: boolean;
 } {
   const requested = getConfiguredGeoconsoleRendererId();
-  const requestedAdapter = adapters[requested];
+  const requestedAdapter = adapters.get(requested) || mapLibreAdapter;
   if (requestedAdapter.available()) {
     return {
       requested,
@@ -105,7 +116,7 @@ export function resolveGeoconsoleMapRenderer(): {
 }
 
 export function getGeoconsoleRendererCapabilities() {
-  return Object.values(adapters).map(adapter => ({
+  return [...adapters.values()].map(adapter => ({
     id: adapter.id,
     label: adapter.label,
     available: adapter.available(),
