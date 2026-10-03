@@ -46,6 +46,11 @@ import {
   persistSpectraMotionContext,
   type SpectraMotionContext,
 } from '../services/spectra/SpectraMotionContext';
+import {
+  normalizeSpectraProviderPayload,
+  SPECTRA_PROVIDER_NORMALIZER_KINDS,
+  type SpectraProviderNormalizerKind,
+} from '../services/spectra/SpectraProviderTelemetryNormalizer';
 
 const router = Router();
 const log = createLogger('GeoconsoleRoutes');
@@ -1252,6 +1257,67 @@ router.post('/traffic-context/provider/:providerId', async (req: Request, res: R
       attempted: validation.data.contexts.length,
     },
   });
+});
+
+router.post('/telemetry/provider/:providerId/normalize/:kind', async (req: Request, res: Response) => {
+  if (!providerTelemetryAuthorized(req)) {
+    return res.status(401).json({ success: false, error: 'Invalid telemetry provider signature.' });
+  }
+
+  const providerId = String(req.params.providerId || '').trim().slice(0, 200);
+  const kind = String(req.params.kind || '').trim() as SpectraProviderNormalizerKind;
+  if (!providerId || !SPECTRA_PROVIDER_NORMALIZER_KINDS.includes(kind)) {
+    return res.status(400).json({ success: false, error: 'Unsupported telemetry provider normalizer.' });
+  }
+
+  let normalized;
+  try {
+    normalized = normalizeSpectraProviderPayload(kind, providerId, req.body);
+  } catch (error) {
+    return res.status(400).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Provider telemetry could not be normalized.',
+    });
+  }
+
+  const validation = telemetryBatchSchema.safeParse(normalized);
+  if (!validation.success) {
+    return res.status(400).json({
+      success: false,
+      error: 'Normalized provider telemetry did not match the canonical SPECTRA schema.',
+      details: validation.error.errors,
+    });
+  }
+
+  try {
+    const processed = await processTelemetryBatch(validation.data, true, undefined, providerId);
+    return res.json({
+      success: true,
+      data: {
+        normalizer: kind,
+        providerId,
+        sessionId: processed.sessionId,
+        inputCount: processed.inputCount,
+        positionCount: processed.positionCount,
+        persistence: processed.persistence,
+        contextOnlyCount: processed.contextOnlyCount,
+        fusedLocations: processed.result?.fusedLocations.map(location => ({
+          ...location,
+          point: signServerEvidence(location.point),
+        })) || [],
+        trail: processed.result?.trail || null,
+        futurecast: processed.result?.futurecast.map(signServerEvidence) || [],
+        inputQuality: {
+          acceptedCount: processed.quality.acceptedCount,
+          rejectedCount: processed.quality.rejectedCount,
+          issues: processed.quality.issues,
+        },
+      },
+    });
+  } catch (error) {
+    log.error('Normalized provider telemetry ingest failed', { error, providerId, kind });
+    return res.status(500).json({ success: false, error: 'Telemetry processing failed.' });
+  }
 });
 
 router.post('/telemetry/provider/:providerId', async (req: Request, res: Response) => {
