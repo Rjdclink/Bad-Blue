@@ -92,6 +92,7 @@ import {
 } from '../services/spectra/SpectraMqttProviderCoordinator';
 import { getSpectraAdapterCapabilities } from '../services/spectra/SpectraAdapterRegistry';
 import { spectraRealtimeBridgeConfigured } from '../services/spectra/SpectraRealtimeBridge';
+import { getConfiguredSpectraProviderSessionBindings } from '../services/spectra/SpectraProviderSessionAccess';
 
 const router = Router();
 router.use(spectraApiVersionHeaders);
@@ -895,6 +896,10 @@ router.get('/health', async (_req: Request, res: Response) => {
       apiVersion: SPECTRA_API_VERSION,
       schemaVersion: SPECTRA_SCHEMA_VERSION,
       tenantModel: 'user-v1',
+      tenantIsolation: {
+        routeScopedByAuthenticatedUser: true,
+        providerOwnedSessionBindings: getConfiguredSpectraProviderSessionBindings(),
+      },
       persistence: {
         status: persistence,
         error: persistenceError,
