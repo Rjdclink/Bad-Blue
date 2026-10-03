@@ -139,6 +139,7 @@ export function useGeoRuntime(
   const [frames, setFrames] = useState<GeoFrame[]>([]);
   const [futurecastFrames, setFuturecastFrames] = useState<GeoFrame[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(configuredSessionId);
+  const sessionIdRef = useRef<string | null>(configuredSessionId);
   
   // Index state - this is what drives frame selection
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -164,7 +165,14 @@ export function useGeoRuntime(
   }, [frames]);
 
   useEffect(() => {
-    if (configuredSessionId) setSessionId(configuredSessionId);
+    sessionIdRef.current = sessionId;
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (configuredSessionId) {
+      sessionIdRef.current = configuredSessionId;
+      setSessionId(configuredSessionId);
+    }
   }, [configuredSessionId]);
 
   // Convert GPS points to frames
@@ -281,7 +289,7 @@ export function useGeoRuntime(
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           hours: FUTURECAST_HOURS,
-          sessionId: sessionId || configuredSessionId || undefined,
+          sessionId: sessionIdRef.current || configuredSessionId || undefined,
           recentPoints: recent.map(frame => ({
             latitude: frame.position.latitude,
             longitude: frame.position.longitude,
@@ -317,7 +325,6 @@ export function useGeoRuntime(
     cfg.predictiveEnabled,
     configuredSessionId,
     predictionPayloadToFrames,
-    sessionId,
   ]);
 
   // Load data through the canonical server fusion pipeline automatically.
@@ -341,7 +348,10 @@ export function useGeoRuntime(
 
       let canonicalPoints = points;
       let canonicalFuturecast: GeoFrame[] | null = null;
-      if (!configuredSessionId) setSessionId(null);
+      if (!configuredSessionId) {
+        sessionIdRef.current = null;
+        setSessionId(null);
+      }
 
       try {
         const response = await fetch('/api/geoconsole/process', {
@@ -372,6 +382,7 @@ export function useGeoRuntime(
             typeof payload?.data?.sessionId === 'string' && payload.data.sessionId.trim()
               ? payload.data.sessionId
               : null;
+          sessionIdRef.current = canonicalSessionId;
           setSessionId(canonicalSessionId);
 
           const processedTrail = Array.isArray(payload?.data?.trail?.points)
@@ -466,7 +477,7 @@ export function useGeoRuntime(
       // prediction without becoming target evidence.
       if (
         configuredSessionId
-        || sessionId
+        || sessionIdRef.current
         || !canonicalFuturecast
         || canonicalFuturecast.length === 0
       ) {
@@ -484,7 +495,6 @@ export function useGeoRuntime(
     configuredSessionId,
     predictionPayloadToFrames,
     requestAuthoritativeFuturecast,
-    sessionId,
   ]);
 
 
