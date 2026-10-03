@@ -451,7 +451,13 @@ test('GNSS integrity evaluates ADR continuity multipath authentication and inter
   gnssIntegrity.includes('multiConstellationReady') &&
   gnssIntegrity.includes('navigationAuthenticationStatus') &&
   gnssIntegrity.includes('spoofingSuspected') &&
-  gnssIntegrity.includes('jammingSuspected'));
+  gnssIntegrity.includes('jammingSuspected') &&
+  gnssIntegrity.includes('lineOfSightProbability') &&
+  gnssIntegrity.includes('excessPathLengthMeters') &&
+  gnssIntegrity.includes('measurementCorrectionCoverage') &&
+  gnssIntegrity.includes('correlationVectorSatelliteCount') &&
+  advancedRadioNormalizer.includes('probabilityLineOfSight') &&
+  advancedRadioNormalizer.includes('phaseCenterVariationCorrectionCount'));
 test('Precision GNSS adapter preserves RTK PPP NTRIP RTCM covariance and protection levels',
   advancedRadioNormalizer.includes("'gnss-precision-solution'") &&
   advancedRadioNormalizer.includes("'rtk-fixed'") &&
