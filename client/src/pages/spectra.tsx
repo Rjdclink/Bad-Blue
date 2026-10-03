@@ -89,7 +89,6 @@ function launchDetails(launch: SpectraLaunchPayload): string {
 
   return [
     launch.clues,
-    launch.lexaraSessionId ? `LEXARA session reference: ${launch.lexaraSessionId}` : '',
     conversation ? `LEXARA conversation context:\n${conversation}` : '',
   ].filter(Boolean).join('\n\n').slice(-10_000);
 }
@@ -134,6 +133,9 @@ export default function SpectraPage() {
   const lexaraLaunchRef = useRef<SpectraLaunchPayload | null>(readLexaraSpectraLaunch());
   const initialLexaraLaunch = lexaraLaunchRef.current;
   const launchedFromLexaraRef = useRef(Boolean(initialLexaraLaunch));
+  const originLexaraSessionIdRef = useRef<string | null>(
+    initialLexaraLaunch?.lexaraSessionId || null
+  );
   const [phase, setPhase] = useState<Phase>(
     initialLexaraLaunch ? 'acquiring' : 'awaiting_target'
   );
@@ -379,6 +381,7 @@ export default function SpectraPage() {
           target: targetValue,
           details: detailsValue,
           sessionId: sessionOverride || spectraSessionId || undefined,
+          originSessionId: originLexaraSessionIdRef.current || undefined,
           directEvidence: extraEvidence.map(point => ({
             ...point,
             timestamp: new Date(point.timestamp).toISOString(),
