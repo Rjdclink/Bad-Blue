@@ -4,6 +4,7 @@ import {
   type LexaraResearchDecision,
 } from './LexaraResearchIntentRouter';
 import {
+  mergeCompatibleLexaraBackgroundSubjects,
   resolveLexaraBackgroundSubject,
   type LexaraBackgroundSubject,
 } from './LexaraBackgroundSubject';
@@ -441,28 +442,11 @@ export async function investigateLexaraBackgroundQuestion(
     : null;
   const promptResolved = resolveLexaraBackgroundSubject(prompt, priorTurns, context.jurisdiction);
   const promptNormalized = promptResolved ? cleanSubject(promptResolved) : null;
-  const sameSubject = Boolean(
-    decisionResolved?.name && promptNormalized?.name
-    && (() => {
-      const decisionTokens = normalize(decisionResolved.name).split(' ').filter(Boolean);
-      const promptTokens = normalize(promptNormalized.name).split(' ').filter(Boolean);
-      const exact = decisionTokens.join(' ') === promptTokens.join(' ');
-      const sameFirstLast = decisionTokens.length >= 2 && promptTokens.length >= 2
-        && decisionTokens[0] === promptTokens[0]
-        && decisionTokens[decisionTokens.length - 1] === promptTokens[promptTokens.length - 1];
-      return exact || sameFirstLast;
-    })()
-  );
-  const resolved = context.resolvedSubject
-    || (sameSubject && decisionResolved && promptNormalized
-      ? {
-          ...decisionResolved,
-          kind: decision.subjectKind || decisionResolved.kind,
-          location: promptNormalized.location || decisionResolved.location,
-          identifiable: decisionResolved.identifiable || promptNormalized.identifiable,
-        }
-      : decisionResolved)
-    || promptResolved;
+  const lockedResolved = context.resolvedSubject ? cleanSubject(context.resolvedSubject) : null;
+  const resolved = mergeCompatibleLexaraBackgroundSubjects(
+    lockedResolved || decisionResolved,
+    promptNormalized,
+  ) || decisionResolved || promptNormalized;
   if (!resolved) {
     const categories = backgroundCategories(prompt, decision);
     const initialQuery = decision.standaloneQuery || decision.objective || prompt;
@@ -507,10 +491,17 @@ export async function investigateLexaraBackgroundQuestion(
   const initiallyAmbiguousSubject = subject.kind === 'person' && !subject.identifiable;
 
   const deepAcquisitionRequested = /\b(?:deep|thorough|recursive|broaden|look harder)\b/i.test(prompt);
+  const broadPersonBackground = subject.kind === 'person' && decision.requestedFact === 'general-public-record';
   const researchBudgetMs = deepAcquisitionRequested ? TOTAL_RESEARCH_BUDGET_MS : LIVE_RESEARCH_BUDGET_MS;
   const maxPasses = deepAcquisitionRequested ? MAX_RECURSIVE_PASSES : LIVE_RECURSIVE_PASSES;
-  const maxCandidates = deepAcquisitionRequested ? MAX_TOTAL_CANDIDATES : LIVE_TOTAL_CANDIDATES;
-  const targetsPerPass = deepAcquisitionRequested ? TARGETS_PER_PASS : LIVE_TARGETS_PER_PASS;
+  // Broad "what do you know about this person?" turns keep the last-known-good
+  // live breadth. Targeted facts retain the newer higher-throughput limits.
+  const maxCandidates = deepAcquisitionRequested
+    ? MAX_TOTAL_CANDIDATES
+    : broadPersonBackground ? 12 : LIVE_TOTAL_CANDIDATES;
+  const targetsPerPass = deepAcquisitionRequested
+    ? TARGETS_PER_PASS
+    : broadPersonBackground ? 4 : LIVE_TARGETS_PER_PASS;
   const startedAt = Date.now();
   const deadlineAt = startedAt + researchBudgetMs;
   const assessed = new Map<string, AssessedEvidence>();
@@ -862,6 +853,49 @@ export async function investigateLexaraBackgroundQuestion(
       exhausted = merged.every(item => seenUrls.has(item.url));
       candidates = merged;
       if (exhausted) break;
+    }
+
+    // Broad person lookups used to succeed because Claude's parallel web lane
+    // had enough of the live window to finish. If faster native broadening
+    // exhausts first, reserve the remaining live budget for that already-running
+    // lane instead of aborting it and converting a timing race into zero evidence.
+    if (broadPersonBackground && !deepAcquisitionRequested) {
+      integrateClaudeParallel();
+      const usefulBeforeClaude = [...assessed.values()]
+        .filter(item => item.confidence >= PARTIAL_EVIDENCE_THRESHOLD);
+      if (!usefulBeforeClaude.length && !claudeIntegrated && Date.now() < deadlineAt) {
+        const remainingMs = Math.max(0, deadlineAt - Date.now());
+        if (remainingMs > 0) {
+          await Promise.race([
+            claudeSearchPromise.catch(() => claudeParallel),
+            new Promise(resolve => setTimeout(resolve, remainingMs)),
+          ]);
+          integrateClaudeParallel();
+        }
+      }
+
+      if (![...assessed.values()].some(item => item.confidence >= PARTIAL_EVIDENCE_THRESHOLD)
+        && claudeCitationEvidence.size) {
+        for (const [url, cited] of claudeCitationEvidence) {
+          const evaluation = assessEvidence(
+            cited.content,
+            url,
+            cited.retrievedAt,
+            subject,
+            decision,
+            prompt,
+          );
+          if (!evaluation) continue;
+          const existing = assessed.get(url);
+          if (!existing || evaluation.confidence > existing.confidence) assessed.set(url, evaluation);
+          context.onProgress?.({
+            type: 'evidence',
+            pass: recursionPasses,
+            confidence: evaluation.confidence,
+            sourceUrl: evaluation.url,
+          });
+        }
+      }
     }
 
     const ranked = [...assessed.values()].sort((a, b) => b.confidence - a.confidence);
