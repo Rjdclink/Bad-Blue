@@ -74,6 +74,11 @@ import {
 } from '../services/spectra/SpectraPublicFeedRegistry';
 import { spectraApiVersionHeaders } from '../services/spectra/SpectraApiContract';
 import {
+  acquireSpectraResourcePermit,
+  SpectraResourceBusyError,
+} from '../services/spectra/SpectraResourceGovernor';
+import { createSpectraTenantScope } from '../services/spectra/SpectraTenantScope';
+import {
   providerMayWriteOwnedSpectraSession,
   resolveSpectraProviderSessionBinding,
 } from '../services/spectra/SpectraProviderSessionAccess';
@@ -81,6 +86,52 @@ import {
 const router = Router();
 router.use(spectraApiVersionHeaders);
 const log = createLogger('GeoconsoleRoutes');
+
+const spectraResourceMiddleware = async (
+  req: Request,
+  res: Response,
+  next: () => void,
+) => {
+  const userId = getPlatformUserId(req.user as any);
+  if (!userId) {
+    return res.status(401).json({ success: false, error: 'Authentication required.' });
+  }
+
+  const tenantScope = createSpectraTenantScope(userId);
+  try {
+    const permit = await acquireSpectraResourcePermit(tenantScope.tenantId);
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      void permit.release().catch(error => {
+        log.warn('SPECTRA route permit release failed', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+    };
+    res.once('finish', release);
+    res.once('close', release);
+    return next();
+  } catch (error) {
+    if (error instanceof SpectraResourceBusyError) {
+      res.setHeader('Retry-After', String(Math.max(1, Math.ceil(error.retryAfterMs / 1000))));
+      return res.status(429).json({
+        success: false,
+        error: error.message,
+        retryAfterMs: error.retryAfterMs,
+      });
+    }
+
+    log.warn('SPECTRA route resource governor unavailable', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return res.status(503).json({
+      success: false,
+      error: 'SPECTRA resource governor is unavailable.',
+    });
+  }
+};
 const telemetryImportUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 5_000_000, files: 1 },
@@ -3182,7 +3233,7 @@ router.get('/environment-context', async (req: Request, res: Response) => {
  * POST /api/geoconsole/process
  * Process raw location inputs through the full pipeline
  */
-router.post('/process', async (req: Request, res: Response) => {
+router.post('/process', spectraResourceMiddleware, async (req: Request, res: Response) => {
   const startTime = Date.now();
   
   try {
@@ -3281,7 +3332,7 @@ router.post('/process', async (req: Request, res: Response) => {
  * POST /api/geoconsole/report
  * Generate comprehensive intelligence report
  */
-router.post('/report', async (req: Request, res: Response) => {
+router.post('/report', spectraResourceMiddleware, async (req: Request, res: Response) => {
   const startTime = Date.now();
 
   try {
@@ -3437,7 +3488,7 @@ router.post('/clear-cache', adminAuthMiddleware, async (req: Request, res: Respo
  * POST /api/geoconsole/interpolate
  * Interpolate path between two points
  */
-router.post('/interpolate', async (req: Request, res: Response) => {
+router.post('/interpolate', spectraResourceMiddleware, async (req: Request, res: Response) => {
   const startTime = Date.now();
 
   try {
@@ -3517,7 +3568,7 @@ router.post('/interpolate', async (req: Request, res: Response) => {
  * POST /api/geoconsole/futurecast
  * Generate future position predictions
  */
-router.post('/futurecast', async (req: Request, res: Response) => {
+router.post('/futurecast', spectraResourceMiddleware, async (req: Request, res: Response) => {
   const startTime = Date.now();
 
   try {
