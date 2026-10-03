@@ -371,6 +371,7 @@ test('Advanced radio normalizers stay on the signed canonical provider bridge',
   advancedRadioNormalizer.includes("'bluetooth-channel-sounding'") &&
   advancedRadioNormalizer.includes("'ble-direction-finding'") &&
   advancedRadioNormalizer.includes("'android-wifi-ranging'") &&
+  advancedRadioNormalizer.includes("'android-ranging-manager'") &&
   advancedRadioNormalizer.includes("'android-cellular'") &&
   advancedRadioNormalizer.includes("'android-raw-gnss'") &&
   advancedRadioNormalizer.includes("'apple-nearby-interaction'") &&
@@ -391,6 +392,14 @@ test('Android Wi-Fi adapter preserves 802.11az NTB, responder location and Wi-Fi
   advancedRadioNormalizer.includes('responderLocation') &&
   advancedRadioNormalizer.includes('wifiAwarePeer') &&
   advancedRadioNormalizer.includes("source: 'wifi_rtt'"));
+test('Android RangingManager adapter unifies UWB, Channel Sounding, Wi-Fi NAN RTT and BLE RSSI',
+  advancedRadioNormalizer.includes("'android-ranging-manager'") &&
+  advancedRadioNormalizer.includes("providerKind: 'android-ranging-manager'") &&
+  advancedRadioNormalizer.includes("'wifi-nan-rtt'") &&
+  advancedRadioNormalizer.includes("'bluetooth_channel_sounding'") &&
+  advancedRadioNormalizer.includes("'uwb_direction'") &&
+  advancedRadioNormalizer.includes("'ble_rssi'") &&
+  adapterRegistry.includes("id: 'android-ranging-manager-ingest'"));
 test('Rich cellular schema preserves radio generation, PCI/ARFCN and NR/legacy signal metrics',
   geoconsoleRoutes.includes('physicalCellId: z.number()') &&
   geoconsoleRoutes.includes('arfcn: z.number()') &&
@@ -478,6 +487,7 @@ test('Advanced adapter registry exposes all requested radio families',
   adapterRegistry.includes("id: 'bluetooth-channel-sounding-ingest'") &&
   adapterRegistry.includes("id: 'ble-direction-finding-ingest'") &&
   adapterRegistry.includes("id: 'android-wifi-ranging-ingest'") &&
+  adapterRegistry.includes("id: 'android-ranging-manager-ingest'") &&
   adapterRegistry.includes("id: 'android-cellular-measurements-ingest'") &&
   adapterRegistry.includes("id: 'android-raw-gnss-ingest'") &&
   adapterRegistry.includes("id: 'apple-nearby-interaction-ingest'") &&
