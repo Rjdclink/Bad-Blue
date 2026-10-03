@@ -1,4 +1,4 @@
-import tls, { type TLSSocket } from 'node:tls';
+import { connect as tlsConnect, type TLSSocket } from 'node:tls';
 import {
   normalizeSpectraProviderPayload,
   SPECTRA_PROVIDER_NORMALIZER_KINDS,
@@ -374,7 +374,7 @@ function connectRuntime(runtime: Runtime): void {
   const port = Number(url.port || 8883);
   runtime.health.state = 'connecting';
 
-  const socket = tls.connect({
+  const socket = tlsConnect({
     host: url.hostname,
     port,
     servername: url.hostname,
