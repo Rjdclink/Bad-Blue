@@ -270,7 +270,10 @@ export function buildSpectraSpatialConstraints(points: GPSPoint[]): SpectraSpati
     }
 
     const roadRaw = Array.isArray(metadata.roadPolyline) ? metadata.roadPolyline : [];
-    const roadPolyline = roadRaw.flatMap(parseLatLng);
+    const roadPolyline = roadRaw.flatMap(value => {
+      const parsed = parseLatLng(value);
+      return parsed ? [parsed] : [];
+    });
     if (roadPolyline.length >= 2) {
       constraints.push({
         id: `p:${sourcePointIndex}:road`,
@@ -464,6 +467,12 @@ function solveOnePoint(
     : finite(initial.accuracy) ?? 250;
   const informationSigma = information > 0 ? Math.sqrt(1 / information) : finite(initial.accuracy) ?? 250;
   const solvedAccuracy = Math.max(0.25, informationSigma, residualRms * 0.5);
+  const initialAccuracy = Math.max(0.25, finite(initial.accuracy) ?? solvedAccuracy);
+  const finalAccuracy = contradictions > 0
+    ? Math.max(initialAccuracy, solvedAccuracy)
+    : independentKeys.size >= 2
+      ? Math.min(initialAccuracy, solvedAccuracy)
+      : Math.max(initialAccuracy, solvedAccuracy);
   const consistencyPenalty = 1 / (1 + contradictions);
 
   return {
@@ -471,10 +480,7 @@ function solveOnePoint(
       ...initial,
       latitude: solvedGeo.latitude,
       longitude: solvedGeo.longitude,
-      accuracy: Math.max(0.25, Math.min(
-        Math.max(finite(initial.accuracy) ?? solvedAccuracy, 0.25),
-        Math.max(solvedAccuracy, 0.25),
-      )),
+      accuracy: finalAccuracy,
       confidence: Math.min(initial.confidence, clamp(initial.confidence * consistencyPenalty, 0, 1)),
       provenance: {
         ...(initial.provenance || {}),
