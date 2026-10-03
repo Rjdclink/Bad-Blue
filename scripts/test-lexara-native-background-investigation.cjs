@@ -327,8 +327,8 @@ function reset(mode) {
       },
     },
   );
-  assert.equal(state.retrievalCalls[0].length, 4,
-    'broad live person background restores the last-known-good four-target first pass');
+  assert.equal(state.retrievalCalls[0].length, 6,
+    'broad live person background keeps the optimized six-target first pass');
   assert.equal(state.claudeCalls[0].subject.name, 'Avery Loretta Example',
     'the full compatible identity reaches the Claude background lane after location cleanup');
   assert.equal(broadBackground.endpoint, 'evidence-sufficient',
