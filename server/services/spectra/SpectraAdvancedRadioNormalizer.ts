@@ -1632,6 +1632,36 @@ function normalizeAndroidRawGnss(
       previousHardwareClockDiscontinuityCount: finite(
         epoch.previousHardwareClockDiscontinuityCount
       ),
+      navigationAuthentication: {
+        status: stringValue(
+          epoch.navigationAuthenticationStatus
+          || epoch.osnmaStatus
+          || wrapped.body.navigationAuthenticationStatus,
+          80,
+        ),
+        authenticatedSatelliteCount: finite(
+          epoch.authenticatedSatelliteCount
+          ?? epoch.osnmaAuthenticatedSatelliteCount
+        ),
+        failedSatelliteCount: finite(
+          epoch.failedAuthenticationCount
+          ?? epoch.osnmaFailedSatelliteCount
+        ),
+      },
+      spoofJamIndicators: {
+        spoofingSuspected:
+          epoch.spoofingSuspected === true
+          || wrapped.body.spoofingSuspected === true,
+        jammingSuspected:
+          epoch.jammingSuspected === true
+          || wrapped.body.jammingSuspected === true,
+        cn0AnomalyScore: finite(
+          epoch.cn0AnomalyScore ?? wrapped.body.cn0AnomalyScore
+        ),
+        agcAnomalyScore: finite(
+          epoch.agcAnomalyScore ?? wrapped.body.agcAnomalyScore
+        ),
+      },
     });
 
     const solution = record(epoch.solution || epoch.fix);
@@ -1672,6 +1702,22 @@ function normalizeAndroidRawGnss(
       satelliteCount: satellites.length,
       automaticGainControls,
       antennaInfo,
+      navigationAuthentication: {
+        status: stringValue(
+          epoch.navigationAuthenticationStatus
+          || epoch.osnmaStatus
+          || wrapped.body.navigationAuthenticationStatus,
+          80,
+        ),
+        authenticatedSatelliteCount: finite(
+          epoch.authenticatedSatelliteCount
+          ?? epoch.osnmaAuthenticatedSatelliteCount
+        ),
+        failedSatelliteCount: finite(
+          epoch.failedAuthenticationCount
+          ?? epoch.osnmaFailedSatelliteCount
+        ),
+      },
       integrity,
     };
 
