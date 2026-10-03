@@ -87,6 +87,7 @@ export type DataSource =
   | 'social_geotag'
   | 'visual_detection'
   | 'vehicle_telemetry'
+  | 'visual_positioning'
   | 'public_camera'
   | 'traffic_cam'
   | 'satellite_imagery'
