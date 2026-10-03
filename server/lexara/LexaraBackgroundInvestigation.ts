@@ -82,8 +82,10 @@ const MAX_RECURSIVE_PASSES = 30;
 const LIVE_RECURSIVE_PASSES = 6;
 const MAX_TOTAL_CANDIDATES = 30;
 const LIVE_TOTAL_CANDIDATES = 18;
+const BROAD_PERSON_LIVE_TOTAL_CANDIDATES = 12;
 const TARGETS_PER_PASS = 10;
 const LIVE_TARGETS_PER_PASS = 6;
+const BROAD_PERSON_LIVE_TARGETS_PER_PASS = 4;
 const TOTAL_RESEARCH_BUDGET_MS = 10 * 60_000;
 const LIVE_RESEARCH_BUDGET_MS = 15_000;
 const PARTIAL_EVIDENCE_THRESHOLD = 0.52;
@@ -496,10 +498,10 @@ export async function investigateLexaraBackgroundQuestion(
   // live breadth. Targeted facts retain the newer higher-throughput limits.
   const maxCandidates = deepAcquisitionRequested
     ? MAX_TOTAL_CANDIDATES
-    : broadPersonBackground ? 12 : LIVE_TOTAL_CANDIDATES;
+    : broadPersonBackground ? BROAD_PERSON_LIVE_TOTAL_CANDIDATES : LIVE_TOTAL_CANDIDATES;
   const targetsPerPass = deepAcquisitionRequested
     ? TARGETS_PER_PASS
-    : broadPersonBackground ? 4 : LIVE_TARGETS_PER_PASS;
+    : broadPersonBackground ? BROAD_PERSON_LIVE_TARGETS_PER_PASS : LIVE_TARGETS_PER_PASS;
   const startedAt = Date.now();
   const deadlineAt = startedAt + researchBudgetMs;
   const assessed = new Map<string, AssessedEvidence>();
