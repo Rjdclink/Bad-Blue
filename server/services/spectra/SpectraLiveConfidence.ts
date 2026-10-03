@@ -27,6 +27,8 @@ export interface SpectraLiveSourceAssessment {
   robustWeight: number;
   residualMeters: number;
   normalizedResidual: number;
+  temporalSkewMs: number;
+  temporalInflationMeters: number;
   latitude: number;
   longitude: number;
 }
@@ -64,6 +66,8 @@ interface PreparedMeasurement {
   reliabilityWeight: number;
   baseWeight: number;
   robustWeight: number;
+  temporalSkewMs: number;
+  temporalInflationMeters: number;
   correlationKey: string;
   correlationWeight: number;
   protectionLevelMeters?: number;
@@ -344,6 +348,71 @@ function freshnessWeight(
   return clamp(Math.pow(0.5, ageMs / halfLife), MIN_EVIDENCE_WEIGHT, 1);
 }
 
+function velocityVector(point: GPSPoint): { eastMps: number; northMps: number } | null {
+  const velocity = point.metadata?.velocity;
+  if (!velocity || typeof velocity !== 'object') return null;
+  const record = velocity as Record<string, unknown>;
+  const speed = Number(record.speed ?? record.speedMetersPerSecond);
+  const heading = Number(record.heading ?? record.headingDegrees);
+  if (
+    !Number.isFinite(speed)
+    || speed < 0
+    || !Number.isFinite(heading)
+  ) return null;
+
+  const headingRadians = toRadians((heading % 360 + 360) % 360);
+  return {
+    eastMps: Math.sin(headingRadians) * speed,
+    northMps: Math.cos(headingRadians) * speed,
+  };
+}
+
+function timestampUncertaintySeconds(point: GPSPoint): number {
+  const directMs = Number(point.metadata?.timestampUncertaintyMillis);
+  if (Number.isFinite(directMs) && directMs >= 0) return directMs / 1000;
+
+  const clock = point.metadata?.clock;
+  if (clock && typeof clock === 'object') {
+    const nanos = Number(
+      (clock as Record<string, unknown>).elapsedRealtimeUncertaintyNanos
+    );
+    if (Number.isFinite(nanos) && nanos >= 0) return nanos / 1_000_000_000;
+  }
+
+  const nanos = Number(point.metadata?.elapsedRealtimeUncertaintyNanos);
+  return Number.isFinite(nanos) && nanos >= 0
+    ? nanos / 1_000_000_000
+    : 0;
+}
+
+function accelerationSigmaMetersPerSecondSquared(
+  family: SpectraLiveSourceFamily,
+): number {
+  switch (family) {
+    case 'vehicle': return 3.0;
+    case 'managed-device':
+    case 'gnss':
+    case 'wifi':
+    case 'uwb':
+    case 'bluetooth':
+    case 'enterprise-sensor': return 1.5;
+    case 'cellular':
+    case 'carrier-network':
+    case 'iot-solver': return 2.5;
+  }
+}
+
+function unknownMotionSigmaMetersPerSecond(
+  family: SpectraLiveSourceFamily,
+): number {
+  switch (family) {
+    case 'vehicle': return 8;
+    case 'cellular':
+    case 'carrier-network': return 6;
+    default: return 2.5;
+  }
+}
+
 function localMeters(
   latitude: number,
   longitude: number,
@@ -516,6 +585,10 @@ export function assessSpectraLiveLocation(
     };
   }
 
+  const fusionEpochMs = Math.max(
+    ...representatives.map(item => item.point.timestamp.getTime()),
+  );
+
   const originLatitude = representatives.reduce(
     (sum, item) => sum + item.point.latitude,
     0,
@@ -532,10 +605,35 @@ export function assessSpectraLiveLocation(
       originLatitude,
       originLongitude,
     );
-    const ageMs = Math.max(0, nowMs - point.timestamp.getTime());
+    const pointTimeMs = point.timestamp.getTime();
+    const ageMs = Math.max(0, nowMs - pointTimeMs);
+    const temporalSkewMs = Math.max(0, fusionEpochMs - pointTimeMs);
+    const temporalSkewSeconds = temporalSkewMs / 1000;
     const accuracy = effectiveAccuracy(point, family);
     const level = accuracyConfidenceLevel(point, family);
-    const sigma = radiusToSigma(accuracy, level);
+    const spatialSigma =
+      metadataCovarianceSigma(point)
+      ?? radiusToSigma(accuracy, level);
+    const velocity = velocityVector(point);
+    const timeUncertaintySeconds = timestampUncertaintySeconds(point);
+    const accelerationSigma =
+      accelerationSigmaMetersPerSecondSquared(family);
+    const temporalInflationMeters = velocity
+      ? Math.hypot(
+          Math.hypot(velocity.eastMps, velocity.northMps) * timeUncertaintySeconds,
+          0.5 * accelerationSigma * temporalSkewSeconds ** 2,
+        )
+      : Math.hypot(
+          unknownMotionSigmaMetersPerSecond(family) * temporalSkewSeconds,
+          unknownMotionSigmaMetersPerSecond(family) * timeUncertaintySeconds,
+        );
+    const sigma = Math.hypot(spatialSigma, temporalInflationMeters);
+    const alignedX = velocity
+      ? local.x + velocity.eastMps * temporalSkewSeconds
+      : local.x;
+    const alignedY = velocity
+      ? local.y + velocity.northMps * temporalSkewSeconds
+      : local.y;
     const fresh = freshnessWeight(ageMs, family);
     const reliability = clamp(
       FAMILY_RELIABILITY[family]
@@ -548,8 +646,8 @@ export function assessSpectraLiveLocation(
     return {
       family,
       point,
-      x: local.x,
-      y: local.y,
+      x: alignedX,
+      y: alignedY,
       reportedAccuracyMeters: accuracy,
       accuracyConfidenceLevel: level,
       sigmaMeters: sigma,
@@ -557,6 +655,8 @@ export function assessSpectraLiveLocation(
       reliabilityWeight: reliability,
       baseWeight: reliability / Math.max(0.0025, sigma ** 2),
       robustWeight: 1,
+      temporalSkewMs,
+      temporalInflationMeters,
       correlationKey: correlationKey(point, family),
       correlationWeight: 1,
       protectionLevelMeters: horizontalProtectionLevel(point),
@@ -644,6 +744,8 @@ export function assessSpectraLiveLocation(
       robustWeight: measurement.robustWeight,
       residualMeters: residual,
       normalizedResidual,
+      temporalSkewMs: measurement.temporalSkewMs,
+      temporalInflationMeters: measurement.temporalInflationMeters,
       latitude: measurement.point.latitude,
       longitude: measurement.point.longitude,
     };
@@ -712,6 +814,14 @@ export function assessSpectraLiveLocation(
   }
   if (protectionLevelFloor > 0) {
     reasons.push('The reported 99% radius is not allowed below the supplied horizontal protection level.');
+  }
+  if (
+    prepared.some(measurement =>
+      measurement.temporalInflationMeters
+      > Math.max(0.25, measurement.sigmaMeters * 0.5)
+    )
+  ) {
+    reasons.push('Measurement-time separation materially increased posterior uncertainty.');
   }
 
   const freshestAgeMs = Math.min(
