@@ -1867,6 +1867,17 @@ router.get('/traffic-context/:sessionId', async (req: Request, res: Response) =>
     return res.status(400).json({ success: false, error: 'Invalid SPECTRA session.' });
   }
 
+  const owner = await pool.query(
+    `SELECT 1
+     FROM public.spectra_investigations
+     WHERE session_id = $1 AND user_id = $2
+     LIMIT 1`,
+    [sessionId, userId],
+  ).catch(() => ({ rows: [] as any[] }));
+  if (!owner.rows.length) {
+    return res.status(404).json({ success: false, error: 'SPECTRA session not found.' });
+  }
+
   const data = await loadSpectraMotionContext({
     userId,
     sessionId,
