@@ -73,7 +73,10 @@ import {
   getSpectraPublicFeedCatalogSource,
 } from '../services/spectra/SpectraPublicFeedRegistry';
 import { spectraApiVersionHeaders } from '../services/spectra/SpectraApiContract';
-import { providerMayWriteOwnedSpectraSession } from '../services/spectra/SpectraProviderSessionAccess';
+import {
+  providerMayWriteOwnedSpectraSession,
+  resolveSpectraProviderSessionBinding,
+} from '../services/spectra/SpectraProviderSessionAccess';
 
 const router = Router();
 router.use(spectraApiVersionHeaders);
@@ -1442,6 +1445,19 @@ export async function processSpectraTelemetryBatch(
   liveAssessment: ReturnType<typeof assessSpectraLiveLocation>;
 }> {
   const sessionId = batch.sessionId || randomUUID();
+  let effectiveUserId = userId;
+
+  if (!effectiveUserId && providerId) {
+    const binding = resolveSpectraProviderSessionBinding({
+      providerId,
+      sessionId,
+    });
+    if (!binding?.tenantId) {
+      throw new Error('SPECTRA provider telemetry requires an explicit tenant-scoped session binding.');
+    }
+    effectiveUserId = binding.tenantId;
+  }
+
   const resolved = await resolveSpectraTelemetryBatchPoints(batch, trustedProvider);
   const points = resolved.points;
   const quality = resolved.quality;
@@ -1455,7 +1471,7 @@ export async function processSpectraTelemetryBatch(
   const persistence = await persistTelemetryBatch({
     batch,
     sessionId,
-    userId,
+    userId: effectiveUserId,
     providerId,
     points: constrainedPoints,
   }).catch(error => {
