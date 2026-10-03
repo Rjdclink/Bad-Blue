@@ -1,6 +1,9 @@
 export const SPECTRA_EXTERNAL_LOCATION_NORMALIZER_KINDS = [
   'camara-location-verification',
   'camara-reachability',
+  'camara-number-verification',
+  'camara-device-identifier',
+  'camara-kyc-match',
   'android-managed-lost-mode',
   'apple-managed-lost-mode',
   'meraki-scanning',
@@ -266,6 +269,145 @@ function normalizeCamaraReachability(
         providerKind: 'camara-reachability',
         reachabilityStatus: status || undefined,
         deviceIdentifierReturned: Boolean(body.device && typeof body.device === 'object'),
+      },
+    )],
+  );
+}
+
+function normalizeCamaraNumberVerification(
+  payload: unknown,
+  providerId: string,
+): SpectraExternalNormalizedBatch {
+  const wrapped = envelope(payload, providerId);
+  const body = wrapped.body;
+  const observedAt = timestamp(
+    body.timestamp || body.observedAt || body.verifiedAt
+  ) || new Date().toISOString();
+  const resultRaw =
+    body.devicePhoneNumberVerified
+    ?? body.numberVerified
+    ?? body.verified
+    ?? body.match;
+  const verified =
+    typeof resultRaw === 'boolean'
+      ? resultRaw
+      : /^(?:true|verified|match|yes)$/i.test(String(resultRaw || ''));
+
+  return batch(
+    'camara-number-verification',
+    wrapped.providerId,
+    wrapped,
+    [contextMeasurement(
+      'identity_binding',
+      observedAt,
+      wrapped.providerId,
+      {
+        verified: verified ? 1 : 0,
+      },
+      {
+        providerKind: 'camara-number-verification',
+        verificationResult: resultRaw,
+        phoneNumber:
+          text(body.phoneNumber || body.devicePhoneNumber, 40),
+        bindingType: 'network-number-possession',
+      },
+    )],
+  );
+}
+
+function normalizeCamaraDeviceIdentifier(
+  payload: unknown,
+  providerId: string,
+): SpectraExternalNormalizedBatch {
+  const wrapped = envelope(payload, providerId);
+  const body = wrapped.body;
+  const observedAt = timestamp(
+    body.timestamp || body.observedAt || body.retrievedAt
+  ) || new Date().toISOString();
+  const identifier = record(body.deviceIdentifier || body.identifier || body);
+  const imei = text(
+    identifier.imei || body.imei,
+    32,
+  );
+  const imeiSv = text(
+    identifier.imeiSv || identifier.imeisv || body.imeiSv,
+    32,
+  );
+  const tac = text(
+    identifier.tac || body.tac || imei?.slice(0, 8),
+    16,
+  );
+
+  return batch(
+    'camara-device-identifier',
+    wrapped.providerId,
+    wrapped,
+    [contextMeasurement(
+      'identity_binding',
+      observedAt,
+      wrapped.providerId,
+      {
+        identifierPresent: imei || imeiSv || tac ? 1 : 0,
+      },
+      {
+        providerKind: 'camara-device-identifier',
+        imei,
+        imeiSv,
+        tac,
+        manufacturer: text(
+          identifier.manufacturer || body.manufacturer,
+          120,
+        ),
+        model: text(identifier.model || body.model, 160),
+        bindingType: 'network-subscriber-device',
+      },
+    )],
+  );
+}
+
+function normalizeCamaraKycMatch(
+  payload: unknown,
+  providerId: string,
+): SpectraExternalNormalizedBatch {
+  const wrapped = envelope(payload, providerId);
+  const body = wrapped.body;
+  const observedAt = timestamp(
+    body.timestamp || body.observedAt || body.matchedAt
+  ) || new Date().toISOString();
+
+  const matchValues = Object.entries(body)
+    .filter(([key, value]) =>
+      /match|score|verified/i.test(key)
+      && (typeof value === 'boolean' || Number.isFinite(Number(value)))
+    );
+  let aggregateScore: number | null = null;
+  const numericScores = matchValues.flatMap(([, value]) => {
+    if (typeof value === 'boolean') return [value ? 1 : 0];
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return [];
+    return [numeric > 1 ? numeric / 100 : numeric];
+  }).map(value => Math.max(0, Math.min(1, value)));
+  if (numericScores.length) {
+    aggregateScore =
+      numericScores.reduce((sum, value) => sum + value, 0)
+      / numericScores.length;
+  }
+
+  return batch(
+    'camara-kyc-match',
+    wrapped.providerId,
+    wrapped,
+    [contextMeasurement(
+      'identity_binding',
+      observedAt,
+      wrapped.providerId,
+      {
+        matchScore: aggregateScore,
+      },
+      {
+        providerKind: 'camara-kyc-match',
+        bindingType: 'operator-kyc-match',
+        matchFields: Object.fromEntries(matchValues),
       },
     )],
   );
@@ -755,6 +897,12 @@ export function normalizeSpectraExternalLocationPayload(
       return normalizeCamaraLocationVerification(payload, normalizedProviderId);
     case 'camara-reachability':
       return normalizeCamaraReachability(payload, normalizedProviderId);
+    case 'camara-number-verification':
+      return normalizeCamaraNumberVerification(payload, normalizedProviderId);
+    case 'camara-device-identifier':
+      return normalizeCamaraDeviceIdentifier(payload, normalizedProviderId);
+    case 'camara-kyc-match':
+      return normalizeCamaraKycMatch(payload, normalizedProviderId);
     case 'android-managed-lost-mode':
       return normalizeAndroidManagedLostMode(payload, normalizedProviderId);
     case 'apple-managed-lost-mode':
