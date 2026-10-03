@@ -896,12 +896,12 @@ router.post('/acquire', async (req: Request, res: Response) => {
   const resolvedTargetLabel = resolvedName || phone || normalizedTarget;
 
   try {
-    const persistedObservationsPromise = requestedSessionId
-      ? loadSpectraSessionObservations(userId, requestedSessionId).catch(() => [])
-      : Promise.resolve([] as GPSPoint[]);
-    const identityBindingsPromise = requestedSessionId
-      ? loadSpectraSessionIdentityBindings(userId, requestedSessionId).catch(() => [])
-      : Promise.resolve([]);
+    throwIfAcquisitionStopped(acquisitionLease.signal);
+
+    const persistedObservationsPromise =
+      loadSpectraSessionObservations(userId, acquisitionSessionId).catch(() => []);
+    const identityBindingsPromise =
+      loadSpectraSessionIdentityBindings(userId, acquisitionSessionId).catch(() => []);
 
     const semanticSubject = resolveLexaraBackgroundSubject(
       [target, details].filter(Boolean).join('. '),
@@ -928,20 +928,26 @@ router.post('/acquire', async (req: Request, res: Response) => {
           previousMessages: [{ role: 'user', content: details }],
           delegatedByLexara: true,
           resolvedSubject: semanticSubject || undefined,
+          signal: acquisitionLease.signal,
         },
       ),
       Math.min(SPECTRA_OSINT_TIMEOUT_MS, 20_000),
       'SPECTRA background research',
     );
 
-    const firstPassPromise = runDiscoveryPass(initialQueries, {
-      subject: resolvedSubjectName,
-      location: semanticSubject?.location || details,
-    });
+    const firstPassPromise = runDiscoveryPass(
+      initialQueries,
+      {
+        subject: resolvedSubjectName,
+        location: semanticSubject?.location || details,
+      },
+      acquisitionLease.signal,
+    );
     const activeAcquisitionPromise = acquireSpectraActiveTelemetry({
       deviceRef,
-      sessionId: requestedSessionId,
+      sessionId: acquisitionSessionId,
       subjectLabel: resolvedTargetLabel,
+      signal: acquisitionLease.signal,
     });
 
     const [
@@ -957,6 +963,7 @@ router.post('/acquire', async (req: Request, res: Response) => {
       identityBindingsPromise,
       activeAcquisitionPromise,
     ]);
+    throwIfAcquisitionStopped(acquisitionLease.signal);
 
     const activeBatchOutcomes = await Promise.allSettled(
       activeAcquisition.batches.map(batch =>
@@ -1054,10 +1061,15 @@ router.post('/acquire', async (req: Request, res: Response) => {
       if (!nextQueries.length) break;
 
       const beforeCount = discoveryResults.length;
-      const nextPass = await runDiscoveryPass(nextQueries, {
-        subject: resolvedSubjectName,
-        location: semanticSubject?.location || details,
-      });
+      throwIfAcquisitionStopped(acquisitionLease.signal);
+      const nextPass = await runDiscoveryPass(
+        nextQueries,
+        {
+          subject: resolvedSubjectName,
+          location: semanticSubject?.location || details,
+        },
+        acquisitionLease.signal,
+      );
       discoveryQueriesAttempted += nextPass.attempted;
       discoveryQueriesFailed += nextPass.failed;
       discoveryPasses += nextPass.attempted > 0 ? 1 : 0;
@@ -1348,9 +1360,10 @@ router.post('/acquire', async (req: Request, res: Response) => {
       + contextEvidence.publicFeeds.length
       + (contextEvidence.weather ? 1 : 0);
 
+    throwIfAcquisitionStopped(acquisitionLease.signal);
     const persistence = await persistSpectraAcquisition({
       userId,
-      sessionId: requestedSessionId,
+      sessionId: acquisitionSessionId,
       subjectLabel: resolvedTargetLabel,
       clues: [target, details],
       observations: solvedLocationObservations,
@@ -1384,6 +1397,9 @@ router.post('/acquire', async (req: Request, res: Response) => {
         ).length,
         activeAcquisitionPositionCount: activeLocationPoints.length,
         originSessionId: originSessionId || null,
+        queryStartedAt: queryStartedAt || null,
+        recursivePass,
+        continuousAcquisition: true,
         lastAcquiredAt: new Date().toISOString(),
       },
     }).catch(error => {
@@ -1392,7 +1408,7 @@ router.post('/acquire', async (req: Request, res: Response) => {
       });
       return {
         available: false,
-        sessionId: requestedSessionId || '',
+        sessionId: acquisitionSessionId,
       };
     });
 
@@ -1401,7 +1417,7 @@ router.post('/acquire', async (req: Request, res: Response) => {
       target,
       details,
       resolvedTargetLabel,
-      sessionId: persistence.sessionId || requestedSessionId,
+      sessionId: persistence.sessionId || acquisitionSessionId,
       persistenceAvailable: persistence.available,
       acquisition: {
         identityConfidence,
