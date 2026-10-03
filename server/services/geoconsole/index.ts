@@ -138,12 +138,7 @@ export class HybridGeoconsole extends EventEmitter {
     this.orchestrationState.nextScheduledPass = new Date(now + 60_000);
   }
 
-  private releaseProcessingPermit(): void {
-    this.orchestrationState.activeTasks = Math.max(
-      0,
-      this.orchestrationState.activeTasks - 1,
-    );
-
+  private drainProcessingQueue(): void {
     while (
       this.processingQueue.length > 0
       && this.orchestrationState.activeTasks < this.orchestrationConfig.maxConcurrentOperations
@@ -154,6 +149,14 @@ export class HybridGeoconsole extends EventEmitter {
       this.orchestrationState.queuedTasks = this.processingQueue.length;
       next.grant();
     }
+  }
+
+  private releaseProcessingPermit(): void {
+    this.orchestrationState.activeTasks = Math.max(
+      0,
+      this.orchestrationState.activeTasks - 1,
+    );
+    this.drainProcessingQueue();
   }
 
   private async acquireProcessingPermit(
@@ -198,15 +201,16 @@ export class HybridGeoconsole extends EventEmitter {
     }
 
     return await new Promise<() => void>((resolve, reject) => {
+      const queueId = `${taskId}:${randomUUID()}`;
       const queued = {
-        id: taskId,
+        id: queueId,
         estimatedUnits: units,
         grant: () => {
           try {
             resolve(grant());
           } catch (error) {
             reject(error instanceof Error ? error : new Error(String(error)));
-            this.releaseProcessingPermit();
+            this.drainProcessingQueue();
           }
         },
         reject,
@@ -214,7 +218,7 @@ export class HybridGeoconsole extends EventEmitter {
       };
 
       queued.timer = setTimeout(() => {
-        const index = this.processingQueue.findIndex(item => item.id === taskId);
+        const index = this.processingQueue.findIndex(item => item.id === queueId);
         if (index >= 0) this.processingQueue.splice(index, 1);
         this.orchestrationState.queuedTasks = this.processingQueue.length;
         reject(new Error('GeoConsole processing queue wait timed out.'));
