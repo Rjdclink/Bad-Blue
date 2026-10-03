@@ -182,16 +182,59 @@ export class InputFusionEngine {
     }
   }
 
+  private precisionAccuracyFloorMeters(point: GPSPoint): number {
+    const genericFloor = this.minimumReportedAccuracyMeters(point.source);
+    if (
+      point.source !== 'gnss_fix'
+      || String(point.metadata?.providerKind || '') !== 'gnss-precision-solution'
+    ) {
+      return genericFloor;
+    }
+
+    const protectionLevel = Number(
+      point.metadata?.horizontalProtectionLevelMeters
+      ?? point.metadata?.hpl
+    );
+    if (Number.isFinite(protectionLevel) && protectionLevel > 0) {
+      return Math.max(0.01, Math.min(genericFloor, protectionLevel));
+    }
+
+    const covariance = point.metadata?.covariance;
+    if (covariance && typeof covariance === 'object') {
+      const record = covariance as Record<string, unknown>;
+      const eastVariance = Number(record.eastVariance ?? record.xx);
+      const northVariance = Number(record.northVariance ?? record.yy);
+      if (
+        Number.isFinite(eastVariance)
+        && eastVariance >= 0
+        && Number.isFinite(northVariance)
+        && northVariance >= 0
+      ) {
+        const radialSigma = Math.sqrt(
+          Math.max(0.0001, (eastVariance + northVariance) / 2),
+        );
+        // Conservative 99% radial floor for an isotropic 2D Gaussian.
+        const covarianceRadius99 = radialSigma * Math.sqrt(-2 * Math.log(0.01));
+        return Math.max(0.01, Math.min(genericFloor, covarianceRadius99));
+      }
+    }
+
+    // Signed precision-solution feeds may report centimeter/sub-meter accuracy,
+    // but absent a protection level or covariance we still retain a small
+    // anti-zero floor rather than accepting arbitrarily tiny values.
+    return 0.05;
+  }
+
   private effectiveAccuracyMeters(point: GPSPoint): number {
     const modeled = this.defaultAccuracyMeters(point.source);
     const reported = Number(point.accuracy);
     if (!Number.isFinite(reported) || reported <= 0) return modeled;
 
     // Accuracy supplied by third-party metadata is evidence, not authority.
-    // Preserve honest coarse values while preventing a weak source from
-    // claiming precision its source class cannot substantiate.
+    // Preserve honest coarse values while allowing signed precision-GNSS
+    // solutions to retain covariance/protection-level-backed sub-meter accuracy.
     return Math.max(
-      this.minimumReportedAccuracyMeters(point.source),
+      this.precisionAccuracyFloorMeters(point),
       reported,
     );
   }
