@@ -19,6 +19,10 @@ export interface SpectraProviderStreamConfig {
   decoder: SpectraProviderStreamDecoder;
   normalizerKind: SpectraProviderNormalizerKind;
   authorizationEnv?: string;
+  oauthClientIdEnv?: string;
+  oauthClientSecretEnv?: string;
+  oauthTokenUrl?: string;
+  oauthScope?: string;
   subscriberIdEnv?: string;
   headersFromEnv?: Record<string, string>;
   reconnectMinMs: number;
@@ -56,6 +60,8 @@ interface RuntimeState {
   stopped: boolean;
   reconnectAttempt: number;
   recentKeys: Map<string, number>;
+  accessToken?: string;
+  accessTokenExpiresAt?: number;
 }
 
 const runtimes = new Map<string, RuntimeState>();
@@ -109,6 +115,10 @@ function loadConfigs(): SpectraProviderStreamConfig[] {
         decoder,
         normalizerKind,
         authorizationEnv: String(item?.authorizationEnv || '').trim() || undefined,
+        oauthClientIdEnv: String(item?.oauthClientIdEnv || '').trim() || undefined,
+        oauthClientSecretEnv: String(item?.oauthClientSecretEnv || '').trim() || undefined,
+        oauthTokenUrl: String(item?.oauthTokenUrl || '').trim() || undefined,
+        oauthScope: String(item?.oauthScope || '').trim() || undefined,
         subscriberIdEnv: String(item?.subscriberIdEnv || '').trim() || undefined,
         headersFromEnv:
           item?.headersFromEnv && typeof item.headersFromEnv === 'object'
@@ -128,12 +138,76 @@ function loadConfigs(): SpectraProviderStreamConfig[] {
   }
 }
 
-function headersFor(config: SpectraProviderStreamConfig): Record<string, string> {
+function validHttpsUrl(raw: string): boolean {
+  try {
+    const url = new URL(raw);
+    return url.protocol === 'https:' && !url.username && !url.password;
+  } catch {
+    return false;
+  }
+}
+
+async function oauthAccessToken(runtime: RuntimeState): Promise<string | undefined> {
+  const config = runtime.config;
+  if (!config.oauthClientIdEnv || !config.oauthClientSecretEnv) return undefined;
+
+  const now = Date.now();
+  if (
+    runtime.accessToken
+    && runtime.accessTokenExpiresAt
+    && runtime.accessTokenExpiresAt - now > 60_000
+  ) {
+    return runtime.accessToken;
+  }
+
+  const clientId = String(process.env[config.oauthClientIdEnv] || '').trim();
+  const clientSecret = String(process.env[config.oauthClientSecretEnv] || '').trim();
+  const tokenUrl = String(
+    config.oauthTokenUrl || 'https://sso.common.cloud.hpe.com/as/token.oauth2'
+  ).trim();
+  if (!clientId || !clientSecret || !validHttpsUrl(tokenUrl)) return undefined;
+
+  const form = new URLSearchParams({
+    grant_type: 'client_credentials',
+    client_id: clientId,
+    client_secret: clientSecret,
+  });
+  if (config.oauthScope) form.set('scope', config.oauthScope);
+
+  const response = await fetch(tokenUrl, {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'User-Agent': 'LegalWhat-SPECTRA/1.0',
+    },
+    body: form,
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!response.ok) {
+    throw new Error(`Provider OAuth token request returned HTTP ${response.status}.`);
+  }
+
+  const payload: any = await response.json();
+  const token = String(payload?.access_token || '').trim();
+  const expiresInSeconds = positiveInt(payload?.expires_in, 3_600, 60, 86_400);
+  if (!token) throw new Error('Provider OAuth token response contained no access token.');
+
+  runtime.accessToken = token;
+  runtime.accessTokenExpiresAt = now + expiresInSeconds * 1000;
+  return token;
+}
+
+async function headersFor(runtime: RuntimeState): Promise<Record<string, string>> {
+  const config = runtime.config;
   const headers: Record<string, string> = {
     'User-Agent': 'LegalWhat-SPECTRA/1.0',
   };
 
-  if (config.authorizationEnv) {
+  const oauthToken = await oauthAccessToken(runtime);
+  if (oauthToken) {
+    headers.Authorization = `Bearer ${oauthToken}`;
+  } else if (config.authorizationEnv) {
     const token = String(process.env[config.authorizationEnv] || '').trim();
     if (token) headers.Authorization = /^Bearer\s+/i.test(token) ? token : `Bearer ${token}`;
   }
@@ -249,7 +323,21 @@ async function connectRuntime(runtime: RuntimeState): Promise<void> {
   if (runtime.stopped || runtime.socket) return;
 
   updateHealth(runtime, { state: 'connecting' });
-  const headers = headersFor(runtime.config);
+
+  let headers: Record<string, string>;
+  try {
+    headers = await headersFor(runtime);
+  } catch (error) {
+    runtime.reconnectAttempt += 1;
+    updateHealth(runtime, {
+      state: 'degraded',
+      lastErrorAt: new Date().toISOString(),
+      lastError: (error instanceof Error ? error.message : String(error)).slice(0, 500),
+    });
+    scheduleReconnect(runtime);
+    return;
+  }
+
   const socket = new WebSocket(runtime.config.url, { headers });
   runtime.socket = socket;
 
