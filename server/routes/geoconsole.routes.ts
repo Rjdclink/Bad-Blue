@@ -54,6 +54,7 @@ import {
   type SpectraProviderNormalizerKind,
 } from '../services/spectra/SpectraProviderTelemetryNormalizer';
 import { assessSpectraLiveLocation } from '../services/spectra/SpectraLiveConfidence';
+import { solveSpectraConstraintLayer } from '../services/spectra/SpectraConstraintSolver';
 
 const router = Router();
 const log = createLogger('GeoconsoleRoutes');
@@ -603,6 +604,17 @@ function rangingPoint(
       directionalAnchorCount: directionalEstimates.length,
       residualRmsMeters: Number.isFinite(residualRms) ? residualRms : undefined,
       bearingReferencePolicy: 'only_true_north_bearings_used_for_absolute_position',
+      constraintAnchors: anchors.map(anchor => ({
+        id: anchor.raw.id,
+        latitude: anchor.raw.latitude,
+        longitude: anchor.raw.longitude,
+        distanceMeters: anchor.distance,
+        uncertaintyMeters: anchor.uncertainty,
+        bearingDegrees: anchor.raw.bearingDegrees,
+        bearingUncertaintyDegrees: anchor.raw.bearingUncertaintyDegrees,
+        bearingReference: anchor.raw.bearingReference,
+        rssDerived: anchor.rssDerived,
+      })),
     },
   });
 }
@@ -1348,9 +1360,11 @@ export async function processSpectraTelemetryBatch(
   const resolved = await resolveSpectraTelemetryBatchPoints(batch, trustedProvider);
   const points = resolved.points;
   const quality = resolved.quality;
-  const liveAssessment = assessSpectraLiveLocation(quality.points);
-  const result = quality.points.length
-    ? await hybridGeoconsole.processLocationData(quality.points, sessionId)
+  const constraintSolution = solveSpectraConstraintLayer(quality.points);
+  const constrainedPoints = constraintSolution.points;
+  const liveAssessment = assessSpectraLiveLocation(constrainedPoints);
+  const result = constrainedPoints.length
+    ? await hybridGeoconsole.processLocationData(constrainedPoints, sessionId)
     : null;
 
   const persistence = await persistTelemetryBatch({
