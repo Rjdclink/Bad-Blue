@@ -2098,12 +2098,15 @@ export async function wikimediaNearbyMedia(
       latitude,
       longitude,
       provider: 'Wikimedia Commons',
-      capturedAt: imageInfo?.timestamp ? new Date(imageInfo.timestamp).toISOString() : undefined,
+      capturedAt: undefined,
       imageUrl: typeof imageInfo?.url === 'string' ? imageInfo.url : undefined,
       pageUrl: typeof imageInfo?.descriptionurl === 'string' ? imageInfo.descriptionurl : undefined,
       metadata: {
         namespace: page?.ns,
         mime: imageInfo?.mime,
+        uploadTimestamp: imageInfo?.timestamp
+          ? new Date(imageInfo.timestamp).toISOString()
+          : undefined,
         coordinateType: coordinate?.type,
         coordinateName: coordinate?.name,
       },
