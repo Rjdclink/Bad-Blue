@@ -1,4 +1,5 @@
 import { Router, type Request, type Response } from 'express';
+import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { isAuthenticated } from '../auth';
 import {
@@ -54,6 +55,10 @@ import { solveSpectraConstraintLayer } from '../services/spectra/SpectraConstrai
 import { acquireConfiguredSpectraCameras } from '../services/spectra/SpectraCameraDirectoryAdapters';
 import { acquireSpectraActiveTelemetry } from '../services/spectra/SpectraActiveAcquisition';
 import { findSpectraPublicGtfsRealtimeFeeds } from '../services/spectra/SpectraPublicFeedRegistry';
+import {
+  registerSpectraAcquisitionRequest,
+  stopSpectraAcquisitionSession,
+} from '../services/spectra/SpectraAcquisitionControl';
 
 const router = Router();
 router.use(isAuthenticated);
@@ -84,7 +89,13 @@ const acquireSchema = z.object({
   details: z.string().trim().min(1).max(12_000),
   sessionId: z.string().trim().min(1).max(200).optional(),
   originSessionId: z.string().trim().min(1).max(200).optional(),
+  queryStartedAt: z.string().datetime().optional(),
+  recursivePass: z.number().int().min(0).max(1_000_000).optional(),
   directEvidence: z.array(directEvidenceSchema).max(20).default([]),
+});
+
+const stopAcquisitionSchema = z.object({
+  sessionId: z.string().trim().min(1).max(200),
 });
 
 const PHONE_CANDIDATE_RE = /(?:\+\d{1,3}[\s().-]*)?(?:\d[\s().-]*){7,15}/;
@@ -95,6 +106,13 @@ const configuredOsintTimeout = Number(process.env.SPECTRA_OSINT_TIMEOUT_MS);
 const SPECTRA_OSINT_TIMEOUT_MS = Number.isFinite(configuredOsintTimeout)
   ? Math.max(15_000, configuredOsintTimeout)
   : 90_000;
+
+function throwIfAcquisitionStopped(signal?: AbortSignal): void {
+  if (!signal?.aborted) return;
+  const reason = signal.reason;
+  if (reason instanceof Error) throw reason;
+  throw new Error('SPECTRA acquisition stopped');
+}
 
 async function settleWithin<T>(
   promise: Promise<T>,
