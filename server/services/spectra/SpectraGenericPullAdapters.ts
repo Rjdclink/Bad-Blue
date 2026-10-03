@@ -103,7 +103,7 @@ function parseConfig(): SpectraGenericPullAdapterConfig[] {
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
     const seen = new Set<string>();
-    return parsed.flatMap((item: any) => {
+    return parsed.slice(0, 64).flatMap((item: any) => {
       const id = String(item?.id || '').trim();
       const url = String(item?.url || '').trim();
       const source = String(item?.source || '').trim();
