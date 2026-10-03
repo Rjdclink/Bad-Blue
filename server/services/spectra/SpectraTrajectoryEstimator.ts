@@ -424,11 +424,7 @@ function runAxisFilter(
     SpectraTrajectoryEstimatorOptions,
     'maxSpeedMps' | 'accelerationSigmaMps2'
   >>,
-  sharedDiagnostics: {
-    contradictionCount: number;
-    motionConstraintViolations: number;
-  },
-  peerFilteredPositions?: Array<{ x: number; y: number }>,
+  externalInflations: number[],
 ): AxisRecord[] {
   const records: AxisRecord[] = [];
   const first = measurements[0];
@@ -477,27 +473,12 @@ function runAxisFilter(
     let robustInflation = normalizedResidual <= 3.5
       ? 1
       : Math.min(100, (normalizedResidual / 3.5) ** 2);
+    robustInflation = Math.max(
+      robustInflation,
+      externalInflations[index] ?? 1,
+    );
     const contradiction = normalizedResidual > 5;
-
-    let motionViolation = false;
-    if (axis === 'y' && peerFilteredPositions?.[index - 1]) {
-      const previousPosition = peerFilteredPositions[index - 1];
-      const distance = Math.hypot(
-        measurement.x - previousPosition.x,
-        measurement.y - previousPosition.y,
-      );
-      const impliedSpeed = distance / deltaSeconds;
-      if (impliedSpeed > options.maxSpeedMps) {
-        motionViolation = true;
-        robustInflation = Math.max(
-          robustInflation,
-          Math.min(100, (impliedSpeed / options.maxSpeedMps) ** 2),
-        );
-      }
-    }
-
-    if (axis === 'x' && contradiction) sharedDiagnostics.contradictionCount += 1;
-    if (axis === 'y' && motionViolation) sharedDiagnostics.motionConstraintViolations += 1;
+    const motionViolation = (externalInflations[index] ?? 1) > 1;
 
     const updated = updateAxis(
       predicted.state,
@@ -689,33 +670,7 @@ export function estimateSpectraTrajectory(
     };
   }
 
-  const sharedDiagnostics = {
-    contradictionCount: 0,
-    motionConstraintViolations: 0,
-  };
-
-  const xRecords = runAxisFilter(
-    measurements,
-    'x',
-    { maxSpeedMps, accelerationSigmaMps2 },
-    sharedDiagnostics,
-  );
-  const xFilteredPositions = xRecords.map(record => ({
-    x: record.filteredState[0],
-    y: 0,
-  }));
-  const yRecords = runAxisFilter(
-    measurements,
-    'y',
-    { maxSpeedMps, accelerationSigmaMps2 },
-    sharedDiagnostics,
-    xFilteredPositions.map((position, index) => ({
-      x: position.x,
-      y: index > 0 ? yRecordsPlaceholder(measurements, index - 1) : measurements[0].y,
-    })),
-  );
-
-  // Re-evaluate motion constraints using the actual two-dimensional filtered path.
+  const motionInflations = measurements.map(() => 1);
   let motionConstraintViolations = 0;
   for (let index = 1; index < measurements.length; index += 1) {
     const deltaSeconds = Math.max(
@@ -723,16 +678,35 @@ export function estimateSpectraTrajectory(
       (measurements[index].timestamp.getTime() - measurements[index - 1].timestamp.getTime()) / 1000,
     );
     const distance = Math.hypot(
-      measurements[index].x - xRecords[index - 1].filteredState[0],
-      measurements[index].y - yRecords[index - 1].filteredState[0],
+      measurements[index].x - measurements[index - 1].x,
+      measurements[index].y - measurements[index - 1].y,
     );
-    if (distance / deltaSeconds > maxSpeedMps) motionConstraintViolations += 1;
+    const impliedSpeed = distance / deltaSeconds;
+    if (impliedSpeed > maxSpeedMps) {
+      motionConstraintViolations += 1;
+      motionInflations[index] = Math.min(
+        100,
+        Math.max(1, (impliedSpeed / maxSpeedMps) ** 2),
+      );
+    }
   }
+
+  const xRecords = runAxisFilter(
+    measurements,
+    'x',
+    { maxSpeedMps, accelerationSigmaMps2 },
+    motionInflations,
+  );
+  const yRecords = runAxisFilter(
+    measurements,
+    'y',
+    { maxSpeedMps, accelerationSigmaMps2 },
+    motionInflations,
+  );
 
   const xSmoothed = smoothAxis(xRecords);
   const ySmoothed = smoothAxis(yRecords);
   const contradictionCount = Math.max(
-    sharedDiagnostics.contradictionCount,
     xRecords.filter(record => record.contradiction).length,
     yRecords.filter(record => record.contradiction).length,
   );
@@ -813,6 +787,7 @@ export function estimateSpectraTrajectory(
         ),
         contradiction:
           xRecords[index].contradiction || yRecords[index].contradiction,
+        motionConstraintViolation: motionInflations[index] > 1,
       },
     } satisfies GPSPoint;
   });
@@ -830,14 +805,4 @@ export function estimateSpectraTrajectory(
     latest,
     diagnostics: baseDiagnostics,
   };
-}
-
-// Used only to provide a stable previous-y approximation while the y-axis
-// filter is being initialized. The final two-dimensional motion check below
-// uses the actual x/y filtered states.
-function yRecordsPlaceholder(
-  measurements: LocalMeasurement[],
-  index: number,
-): number {
-  return measurements[Math.max(0, Math.min(measurements.length - 1, index))].y;
 }
