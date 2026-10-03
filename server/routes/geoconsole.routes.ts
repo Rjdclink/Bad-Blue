@@ -2,7 +2,8 @@
  * Hybrid Geoconsole API Routes
  * 
  * RESTful API endpoints for the geoconsole system
- * All data stored in RAM only - no disk writes
+ * Location processing stays in memory while SPECTRA investigation evidence
+ * may also be persisted through the canonical Postgres/PostGIS evidence store.
  */
 
 import { Router, Request, Response } from 'express';
