@@ -2730,6 +2730,59 @@ function parseCsvRecords(text: string): Record<string, any>[] {
   }
 }
 
+function signedSquareRootCovarianceToCovariance(value: number): number | undefined {
+  if (!Number.isFinite(value)) return undefined;
+  return value < 0 ? -(value ** 2) : value ** 2;
+}
+
+function gpsUtcOffsetSeconds(utcLikeMs: number): number {
+  const effectiveOffsets: Array<[number, number]> = [
+    [Date.UTC(1981, 6, 1), 1],
+    [Date.UTC(1982, 6, 1), 2],
+    [Date.UTC(1983, 6, 1), 3],
+    [Date.UTC(1985, 6, 1), 4],
+    [Date.UTC(1988, 0, 1), 5],
+    [Date.UTC(1990, 0, 1), 6],
+    [Date.UTC(1991, 0, 1), 7],
+    [Date.UTC(1992, 6, 1), 8],
+    [Date.UTC(1993, 6, 1), 9],
+    [Date.UTC(1994, 6, 1), 10],
+    [Date.UTC(1996, 0, 1), 11],
+    [Date.UTC(1997, 6, 1), 12],
+    [Date.UTC(1999, 0, 1), 13],
+    [Date.UTC(2006, 0, 1), 14],
+    [Date.UTC(2009, 0, 1), 15],
+    [Date.UTC(2012, 6, 1), 16],
+    [Date.UTC(2015, 6, 1), 17],
+    [Date.UTC(2017, 0, 1), 18],
+  ];
+  let offset = 0;
+  for (const [effectiveMs, value] of effectiveOffsets) {
+    if (utcLikeMs >= effectiveMs) offset = value;
+    else break;
+  }
+  return offset;
+}
+
+function rtklibCalendarTimestamp(
+  year: number,
+  month: number,
+  day: number,
+  hour: number,
+  minute: number,
+  second: number,
+  millisecond: number,
+  timeSystem: 'GPST' | 'UTC' | 'JST',
+): string {
+  let epochMs = Date.UTC(year, month - 1, day, hour, minute, second, millisecond);
+  if (timeSystem === 'JST') {
+    epochMs -= 9 * 60 * 60_000;
+  } else if (timeSystem === 'GPST') {
+    epochMs -= gpsUtcOffsetSeconds(epochMs) * 1000;
+  }
+  return new Date(epochMs).toISOString();
+}
+
 function parseRtklibPosRecords(text: string): Record<string, any>[] {
   const lines = text.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
   const header = lines.find(line =>
@@ -2739,6 +2792,10 @@ function parseRtklibPosRecords(text: string): Record<string, any>[] {
     && /\bQ\b/i.test(line)
   );
   if (!header) return [];
+  const timeSystem: 'GPST' | 'UTC' | 'JST' =
+    /\bUTC\b/i.test(header) ? 'UTC'
+    : /\bJST\b/i.test(header) ? 'JST'
+    : 'GPST';
 
   const qualityName = (quality: number): string => {
     switch (quality) {
@@ -2771,7 +2828,16 @@ function parseRtklibPosRecords(text: string): Record<string, any>[] {
       const secondFloat = Number(timeMatch[3]);
       const second = Math.floor(secondFloat);
       const millisecond = Math.round((secondFloat - second) * 1000);
-      timestamp = new Date(Date.UTC(year, month - 1, day, hour, minute, second, millisecond)).toISOString();
+      timestamp = rtklibCalendarTimestamp(
+        year,
+        month,
+        day,
+        hour,
+        minute,
+        second,
+        millisecond,
+        timeSystem,
+      );
       index = 2;
     } else {
       // Time-of-week-only RTKLIB output cannot be converted to UTC without GPS week;
@@ -2823,6 +2889,7 @@ function parseRtklibPosRecords(text: string): Record<string, any>[] {
       horizontalAccuracyMeters,
       verticalAccuracyMeters: Number.isFinite(sdu) && sdu >= 0 ? sdu : undefined,
       accuracyConfidenceLevel: 0.68,
+      timeSystem,
       ambiguityRatio: Number.isFinite(ambiguityRatio) ? ambiguityRatio : undefined,
       ambiguitiesFixed: quality === 1,
       corrections: {
@@ -2833,9 +2900,9 @@ function parseRtklibPosRecords(text: string): Record<string, any>[] {
       covariance: {
         northVariance: Number.isFinite(sdn) && sdn >= 0 ? sdn ** 2 : undefined,
         eastVariance: Number.isFinite(sde) && sde >= 0 ? sde ** 2 : undefined,
-        eastNorthCovariance: Number.isFinite(sdne) ? sdne : undefined,
-        eastUpCovariance: Number.isFinite(sdeu) ? sdeu : undefined,
-        northUpCovariance: Number.isFinite(sdun) ? sdun : undefined,
+        eastNorthCovariance: signedSquareRootCovarianceToCovariance(sdne),
+        eastUpCovariance: signedSquareRootCovarianceToCovariance(sdeu),
+        northUpCovariance: signedSquareRootCovarianceToCovariance(sdun),
       },
       providerKind: 'rtklib-solution',
     });
