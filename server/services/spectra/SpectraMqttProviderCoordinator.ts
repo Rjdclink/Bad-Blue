@@ -322,10 +322,12 @@ function handleData(runtime: Runtime, chunk: Buffer): void {
 }
 
 function reconnectDelay(runtime: Runtime): number {
-  return Math.min(
+  const ceiling = Math.min(
     runtime.config.reconnectMaxMs,
     runtime.config.reconnectMinMs * Math.pow(2, Math.min(8, runtime.reconnectAttempt)),
   );
+  const floor = Math.min(runtime.config.reconnectMinMs, ceiling);
+  return Math.max(floor, Math.floor(floor + Math.random() * Math.max(1, ceiling - floor)));
 }
 
 function clearRuntimeTimers(runtime: Runtime): void {
