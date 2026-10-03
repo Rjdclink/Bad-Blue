@@ -120,6 +120,18 @@ for (const forbidden of ['discoverPantheonSourcesParallel', 'PantheonDiscoveryCo
 if (!legalMesh.includes('isPreferredOfficialCandidate') || !legalMesh.includes('const preferred=diversify')) {
   throw new Error('Lexara factual discovery does not prioritize matching official registries');
 }
+if (!legalMesh.includes('async function firstUsefulParallelSearch')
+  || !legalMesh.includes('Promise.any(attempts)')
+  || legalMesh.includes('const learnedOutcomes=await Promise.allSettled')
+  || legalMesh.includes('const plannedOutcomes=await Promise.allSettled')) {
+  throw new Error('Lexara supplemental discovery lost optimized parallel first-useful-result behavior');
+}
+if (!background.includes('LIVE_TOTAL_CANDIDATES = 18')
+  || !background.includes('LIVE_TARGETS_PER_PASS = 6')
+  || background.includes('BROAD_PERSON_LIVE_TOTAL_CANDIDATES')
+  || background.includes('BROAD_PERSON_LIVE_TARGETS_PER_PASS')) {
+  throw new Error('Lexara broad-person research no longer keeps optimized live retrieval breadth');
+}
 if (!legalMesh.includes("if (!options.requestedFact || options.requestedFact === 'none') return false;")) {
   throw new Error('Official-source priority can still reorder non-factual legal research');
 }
@@ -150,7 +162,16 @@ if (!background.includes('Promise.allSettled([')
   || !background.includes('claudeCitationEvidence')) {
   throw new Error('Claude web search is not running in parallel with Lexara native background discovery/evidence scoring');
 }
-for (const claudeTransportToken of ['callClaudeWebSearch', "web_search_20260318", "allowed_callers: ['direct']", 'web_search_requests', "stop_reason !== 'pause_turn'"]) {
+for (const claudeTransportToken of [
+  'callClaudeWebSearch',
+  "web_search_20260318",
+  "allowed_callers: ['direct']",
+  'web_search_requests',
+  "response?.stop_reason === 'pause_turn'",
+  "response?.stop_reason === 'max_tokens'",
+  'sourceMap.size === 0',
+  'preserving source evidence after max_tokens stop',
+]) {
   if (!claudeTransport.includes(claudeTransportToken)) throw new Error('Claude web-search transport missing: '+claudeTransportToken);
 }
 if (!orchestrator.includes('const backgroundClaudeModel = context.allowClaudeOpus === true')

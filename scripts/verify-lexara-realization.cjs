@@ -994,6 +994,24 @@ must(
   'Claude web search runs in parallel with Lexara native background discovery and feeds the same evidence gate',
 );
 must(
+  lexaraLegalMesh.includes('async function firstUsefulParallelSearch') &&
+    lexaraLegalMesh.includes('Promise.any(attempts)') &&
+    !lexaraLegalMesh.includes('const learnedOutcomes=await Promise.allSettled') &&
+    !lexaraLegalMesh.includes('const plannedOutcomes=await Promise.allSettled') &&
+    lexaraBackgroundInvestigation.includes('LIVE_TOTAL_CANDIDATES = 18') &&
+    lexaraBackgroundInvestigation.includes('LIVE_TARGETS_PER_PASS = 6') &&
+    !lexaraBackgroundInvestigation.includes('BROAD_PERSON_LIVE_TOTAL_CANDIDATES') &&
+    !lexaraBackgroundInvestigation.includes('BROAD_PERSON_LIVE_TARGETS_PER_PASS'),
+  'Lexara keeps optimized breadth while supplemental parallel search returns on the first useful result',
+);
+must(
+  claudeService.includes("response?.stop_reason === 'max_tokens'") &&
+    claudeService.includes('sourceMap.size === 0') &&
+    claudeService.includes('preserving source evidence after max_tokens stop') &&
+    claudeService.includes('Math.min(4096, Math.max(2048, requestMaxTokens * 2))'),
+  'Claude web search preserves usable source evidence across max-token stops and retries once only when no source evidence exists',
+);
+must(
   lexaraBackgroundInvestigation.includes('dynamicGeneralObjectiveMatch') &&
     lexaraBackgroundInvestigation.includes('decision.objective || decision.standaloneQuery'),
   'open-ended background facts use the semantic objective as an evidence signal instead of requiring a fixed fact keyword',

@@ -82,10 +82,8 @@ const MAX_RECURSIVE_PASSES = 30;
 const LIVE_RECURSIVE_PASSES = 6;
 const MAX_TOTAL_CANDIDATES = 30;
 const LIVE_TOTAL_CANDIDATES = 18;
-const BROAD_PERSON_LIVE_TOTAL_CANDIDATES = 12;
 const TARGETS_PER_PASS = 10;
 const LIVE_TARGETS_PER_PASS = 6;
-const BROAD_PERSON_LIVE_TARGETS_PER_PASS = 4;
 const TOTAL_RESEARCH_BUDGET_MS = 10 * 60_000;
 const LIVE_RESEARCH_BUDGET_MS = 15_000;
 const PARTIAL_EVIDENCE_THRESHOLD = 0.52;
@@ -494,14 +492,8 @@ export async function investigateLexaraBackgroundQuestion(
   const broadPersonBackground = subject.kind === 'person' && decision.requestedFact === 'general-public-record';
   const researchBudgetMs = deepAcquisitionRequested ? TOTAL_RESEARCH_BUDGET_MS : LIVE_RESEARCH_BUDGET_MS;
   const maxPasses = deepAcquisitionRequested ? MAX_RECURSIVE_PASSES : LIVE_RECURSIVE_PASSES;
-  // Broad "what do you know about this person?" turns keep the last-known-good
-  // live breadth. Targeted facts retain the newer higher-throughput limits.
-  const maxCandidates = deepAcquisitionRequested
-    ? MAX_TOTAL_CANDIDATES
-    : broadPersonBackground ? BROAD_PERSON_LIVE_TOTAL_CANDIDATES : LIVE_TOTAL_CANDIDATES;
-  const targetsPerPass = deepAcquisitionRequested
-    ? TARGETS_PER_PASS
-    : broadPersonBackground ? BROAD_PERSON_LIVE_TARGETS_PER_PASS : LIVE_TARGETS_PER_PASS;
+  const maxCandidates = deepAcquisitionRequested ? MAX_TOTAL_CANDIDATES : LIVE_TOTAL_CANDIDATES;
+  const targetsPerPass = deepAcquisitionRequested ? TARGETS_PER_PASS : LIVE_TARGETS_PER_PASS;
   const startedAt = Date.now();
   const deadlineAt = startedAt + researchBudgetMs;
   const assessed = new Map<string, AssessedEvidence>();
@@ -894,6 +886,60 @@ export async function investigateLexaraBackgroundQuestion(
             confidence: evaluation.confidence,
             sourceUrl: evaluation.url,
           });
+        }
+      }
+
+      // A max-token Claude turn can still return completed web-search source
+      // URLs without a final cited prose block. Retrieve those already-found
+      // sources inside the remaining live budget instead of discarding them.
+      if (![...assessed.values()].some(item => item.confidence >= PARTIAL_EVIDENCE_THRESHOLD)
+        && claudeParallel.candidates.length
+        && Date.now() < deadlineAt) {
+        const claudeTargets = claudeParallel.candidates
+          .filter(item => !seenUrls.has(item.url))
+          .slice(0, targetsPerPass);
+        if (claudeTargets.length) {
+          claudeTargets.forEach(item => seenUrls.add(item.url));
+          const remainingMs = Math.max(1, deadlineAt - Date.now());
+          const retrievalController = new AbortController();
+          const relayRetrievalAbort = () => retrievalController.abort(laneSignal.reason);
+          if (laneSignal.aborted) retrievalController.abort(laneSignal.reason);
+          else laneSignal.addEventListener('abort', relayRetrievalAbort, { once: true });
+          const retrievalTimer = setTimeout(
+            () => retrievalController.abort(new Error('lexara_claude_source_retrieval_budget_exhausted')),
+            remainingMs,
+          );
+          try {
+            const retrieval = await lexaraRetrievalAdapter.retrieve({
+              purpose: 'lexara_legal_research',
+              targets: claudeTargets.map(item => item.url),
+              signal: retrievalController.signal,
+            }).catch(() => ({ evidence: [] }));
+            for (const evidence of retrieval.evidence) {
+              const evaluation = assessEvidence(
+                evidence.content,
+                evidence.target,
+                evidence.retrievedAt,
+                subject,
+                decision,
+                prompt,
+              );
+              if (!evaluation) continue;
+              const existing = assessed.get(evidence.target);
+              if (!existing || evaluation.confidence > existing.confidence) {
+                assessed.set(evidence.target, evaluation);
+              }
+              context.onProgress?.({
+                type: 'evidence',
+                pass: recursionPasses,
+                confidence: evaluation.confidence,
+                sourceUrl: evaluation.url,
+              });
+            }
+          } finally {
+            clearTimeout(retrievalTimer);
+            laneSignal.removeEventListener('abort', relayRetrievalAbort);
+          }
         }
       }
     }
