@@ -1557,6 +1557,47 @@ function normalizeAndroidRawGnss(
             satellite.satelliteInterSignalBiasUncertaintyNanos
             ?? satellite.SatelliteInterSignalBiasUncertaintyNanos
           ),
+          lineOfSightProbability: finite(
+            record(
+              satellite.measurementCorrection
+              || satellite.singleSatCorrection
+              || satellite.correction
+            ).probabilityLineOfSight
+            ?? record(
+              satellite.measurementCorrection
+              || satellite.singleSatCorrection
+              || satellite.correction
+            ).lineOfSightProbability
+            ?? satellite.lineOfSightProbability
+          ),
+          excessPathLengthMeters: finite(
+            record(
+              satellite.measurementCorrection
+              || satellite.singleSatCorrection
+              || satellite.correction
+            ).excessPathLengthMeters
+            ?? satellite.excessPathLengthMeters
+          ),
+          excessPathLengthUncertaintyMeters: finite(
+            record(
+              satellite.measurementCorrection
+              || satellite.singleSatCorrection
+              || satellite.correction
+            ).excessPathLengthUncertaintyMeters
+            ?? satellite.excessPathLengthUncertaintyMeters
+          ),
+          reflectingPlanePresent: Boolean(
+            record(
+              satellite.measurementCorrection
+              || satellite.singleSatCorrection
+              || satellite.correction
+            ).reflectingPlane
+            || satellite.reflectingPlane
+          ),
+          correlationVectorCount: list(
+            satellite.correlationVectors
+            || satellite.correlationVectorOutputs
+          ).length,
         };
       });
 
@@ -1592,6 +1633,14 @@ function normalizeAndroidRawGnss(
         carrierFrequencyMHz: finite(
           antenna.carrierFrequencyMHz ?? antenna.CarrierFrequencyMHz
         ),
+        phaseCenterVariationCorrectionCount: list(
+          antenna.phaseCenterVariationCorrections
+          || antenna.phaseCenterVariation
+        ).flat().length,
+        signalGainCorrectionCount: list(
+          antenna.signalGainCorrections
+          || antenna.signalGain
+        ).flat().length,
         phaseCenterOffsetMm: {
           x: finite(phaseCenter.x ?? phaseCenter.offsetXMm),
           y: finite(phaseCenter.y ?? phaseCenter.offsetYMm),
