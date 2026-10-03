@@ -86,9 +86,16 @@ export class HybridGeoconsole extends EventEmitter {
   private trailCache: Map<string, MotionTrail> = new Map();
   private reportCache: Map<string, LocationIntelligenceReport> = new Map();
   
-  // Processing queues
-  private processingQueue: Array<{ id: string; task: () => Promise<void> }> = [];
-  private isProcessing = false;
+  // Processing queues. These are now an actual concurrency gate rather than
+  // descriptive configuration only.
+  private processingQueue: Array<{
+    id: string;
+    estimatedUnits: number;
+    grant: () => void;
+    reject: (error: Error) => void;
+    timer: ReturnType<typeof setTimeout>;
+  }> = [];
+  private budgetWindowStartedAt = Date.now();
 
   constructor(
     fusionConfig?: Partial<InputFusionConfig>,
@@ -120,6 +127,102 @@ export class HybridGeoconsole extends EventEmitter {
       cacheStrategy: this.orchestrationConfig.cacheStrategy,
       historyDays: this.timelineConfig.historyDays,
       futurecastHours: this.timelineConfig.futurecastHours,
+    });
+  }
+
+  private refreshComputeBudget(now = Date.now()): void {
+    if (now - this.budgetWindowStartedAt < 60_000) return;
+    this.budgetWindowStartedAt = now;
+    this.orchestrationState.computeUsage = 0;
+    this.orchestrationState.lastOptimizationPass = new Date(now);
+    this.orchestrationState.nextScheduledPass = new Date(now + 60_000);
+  }
+
+  private releaseProcessingPermit(): void {
+    this.orchestrationState.activeTasks = Math.max(
+      0,
+      this.orchestrationState.activeTasks - 1,
+    );
+
+    while (
+      this.processingQueue.length > 0
+      && this.orchestrationState.activeTasks < this.orchestrationConfig.maxConcurrentOperations
+    ) {
+      const next = this.processingQueue.shift();
+      if (!next) break;
+      clearTimeout(next.timer);
+      this.orchestrationState.queuedTasks = this.processingQueue.length;
+      next.grant();
+    }
+  }
+
+  private async acquireProcessingPermit(
+    taskId: string,
+    estimatedUnits: number,
+  ): Promise<() => void> {
+    const units = Math.max(1, Math.min(250, Math.ceil(estimatedUnits)));
+    const queueLimit = Math.max(
+      this.orchestrationConfig.maxConcurrentOperations * 8,
+      this.orchestrationConfig.maxConcurrentOperations,
+    );
+
+    const grant = (): (() => void) => {
+      this.refreshComputeBudget();
+      if (
+        this.orchestrationState.computeUsage + units
+        > this.orchestrationConfig.computeBudget
+      ) {
+        throw new Error('GeoConsole compute budget exhausted for the current minute.');
+      }
+
+      this.orchestrationState.activeTasks += 1;
+      this.orchestrationState.computeUsage += units;
+
+      let released = false;
+      return () => {
+        if (released) return;
+        released = true;
+        this.releaseProcessingPermit();
+      };
+    };
+
+    if (
+      this.orchestrationState.activeTasks
+      < this.orchestrationConfig.maxConcurrentOperations
+    ) {
+      return grant();
+    }
+
+    if (this.processingQueue.length >= queueLimit) {
+      throw new Error('GeoConsole processing queue is saturated.');
+    }
+
+    return await new Promise<() => void>((resolve, reject) => {
+      const queued = {
+        id: taskId,
+        estimatedUnits: units,
+        grant: () => {
+          try {
+            resolve(grant());
+          } catch (error) {
+            reject(error instanceof Error ? error : new Error(String(error)));
+            this.releaseProcessingPermit();
+          }
+        },
+        reject,
+        timer: setTimeout(() => undefined, 1),
+      };
+
+      queued.timer = setTimeout(() => {
+        const index = this.processingQueue.findIndex(item => item.id === taskId);
+        if (index >= 0) this.processingQueue.splice(index, 1);
+        this.orchestrationState.queuedTasks = this.processingQueue.length;
+        reject(new Error('GeoConsole processing queue wait timed out.'));
+      }, 10_000);
+      queued.timer.unref?.();
+
+      this.processingQueue.push(queued);
+      this.orchestrationState.queuedTasks = this.processingQueue.length;
     });
   }
 
@@ -173,6 +276,11 @@ export class HybridGeoconsole extends EventEmitter {
   }> {
     const taskId = sessionId || randomUUID();
     const startTime = Date.now();
+    const estimatedComputeUnits = Math.max(1, Math.ceil(inputs.length / 25));
+    const releaseProcessingPermit = await this.acquireProcessingPermit(
+      taskId,
+      estimatedComputeUnits,
+    );
 
     this.emitProgress(taskId, 'fusion', 0, 'Starting multimodal input fusion...');
     
@@ -235,6 +343,8 @@ export class HybridGeoconsole extends EventEmitter {
       log.error('Location processing failed', { taskId, error });
       this.emitProgress(taskId, 'error', 0, `Processing failed: ${error}`);
       throw error;
+    } finally {
+      releaseProcessingPermit();
     }
   }
 
