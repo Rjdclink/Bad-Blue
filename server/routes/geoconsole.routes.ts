@@ -143,6 +143,7 @@ const telemetryAbsoluteSchema = z.object({
     'device_gps', 'gnss_fix', 'gnss_raw', 'browser_geolocation',
     'vehicle_telemetry', 'exif_photo', 'exif_video', 'xmp_sidecar',
     'json_sidecar', 'social_geotag', 'visual_detection', 'network_region',
+    'uwb_range', 'uwb_direction', 'bluetooth_proximity',
     'public_camera', 'traffic_cam', 'satellite_imagery', 'historical_location', 'public_record',
   ]),
   timestamp: validDateString,
