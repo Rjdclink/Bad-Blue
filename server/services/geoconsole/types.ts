@@ -68,6 +68,7 @@ export type DataSource =
   | 'cellular'
   | 'cell_serving'
   | 'cell_neighbor'
+  | 'nr_positioning'
   | 'uwb_range'
   | 'uwb_direction'
   | 'bluetooth_proximity'
