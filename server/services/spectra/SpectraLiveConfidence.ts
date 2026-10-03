@@ -302,8 +302,19 @@ function measurementQualityWeight(point: GPSPoint): number {
 
   const integrity = metadata.integrity;
   if (integrity && typeof integrity === 'object') {
-    const score = Number((integrity as Record<string, unknown>).integrityScore);
-    if (Number.isFinite(score)) weight *= clamp(score, 0.15, 1);
+    const integrityRecord = integrity as Record<string, unknown>;
+    const score = Number(integrityRecord.integrityScore);
+    const readiness = Number(integrityRecord.precisionReadinessScore);
+    if (Number.isFinite(score) && Number.isFinite(readiness)) {
+      weight *= clamp(Math.sqrt(score * readiness), 0.10, 1);
+    } else if (Number.isFinite(score)) {
+      weight *= clamp(score, 0.10, 1);
+    }
+    if (integrityRecord.spoofingSuspected === true) weight *= 0.10;
+    if (integrityRecord.jammingSuspected === true) weight *= 0.35;
+    if (String(integrityRecord.navigationAuthenticationStatus || '').toLowerCase() === 'failed') {
+      weight *= 0.25;
+    }
   }
 
   const nlosProbability = Number(metadata.nlosProbability);
@@ -322,6 +333,23 @@ function measurementQualityWeight(point: GPSPoint): number {
       : nadm === 5 ? 0.10
       : 0.03;
     weight *= nadmWeight;
+  }
+
+  const ambiguityRatio = Number(metadata.ambiguityRatio);
+  if (Number.isFinite(ambiguityRatio) && ambiguityRatio >= 0) {
+    const ambiguityWeight = 0.75 + 0.25 * (1 - Math.exp(-ambiguityRatio / 3));
+    weight *= clamp(ambiguityWeight, 0.75, 1);
+  }
+
+  const satellitesUsed = Number(metadata.satellitesUsed);
+  if (Number.isFinite(satellitesUsed) && satellitesUsed > 0) {
+    const satelliteWeight = 0.60 + 0.40 * (1 - Math.exp(-satellitesUsed / 8));
+    weight *= clamp(satelliteWeight, 0.60, 1);
+  }
+
+  const hdop = Number(metadata.hdop);
+  if (Number.isFinite(hdop) && hdop > 0) {
+    weight *= clamp(1 / Math.sqrt(Math.max(1, hdop)), 0.25, 1);
   }
 
   const correctionAgeSeconds = Number(metadata.correctionAgeSeconds);
