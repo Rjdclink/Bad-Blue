@@ -337,6 +337,7 @@ export function useGeoRuntime(
         framesRef.current = [];
         setFrames([]);
         setFuturecastFrames([]);
+        sessionIdRef.current = configuredSessionId;
         setSessionId(configuredSessionId);
         setCurrentIndex(0);
         setIsPlaying(false);
