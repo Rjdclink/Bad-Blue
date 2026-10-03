@@ -36,6 +36,8 @@ const geoconsoleRoutes = read('server/routes/geoconsole.routes.ts');
 const adapterRegistry = read('server/services/spectra/SpectraAdapterRegistry.ts');
 const providerNormalizer = read('server/services/spectra/SpectraProviderTelemetryNormalizer.ts');
 const advancedRadioNormalizer = read('server/services/spectra/SpectraAdvancedRadioNormalizer.ts');
+const externalLocationNormalizer = read('server/services/spectra/SpectraExternalLocationNormalizer.ts');
+const liveConfidence = read('server/services/spectra/SpectraLiveConfidence.ts');
 const genericPull = read('server/services/spectra/SpectraGenericPullAdapters.ts');
 const realtimeBridge = read('server/services/spectra/SpectraRealtimeBridge.ts');
 const telemetryImport = read('server/services/spectra/SpectraTelemetryImport.ts');
@@ -381,7 +383,9 @@ test('Bluetooth adapters preserve Channel Sounding PBR/RTT plus AoA/AoD directio
   advancedRadioNormalizer.includes('rttDistanceMeters') &&
   advancedRadioNormalizer.includes("methodRaw === 'aod'") &&
   advancedRadioNormalizer.includes('antennaArrayId') &&
-  advancedRadioNormalizer.includes("source: 'ble_aoa'"));
+  advancedRadioNormalizer.includes("'bluetooth_channel_sounding'") &&
+  advancedRadioNormalizer.includes("'ble_aod'") &&
+  advancedRadioNormalizer.includes("'ble_aoa'"));
 test('Android Wi-Fi adapter preserves 802.11az NTB, responder location and Wi-Fi Aware context',
   advancedRadioNormalizer.includes("'802.11az-ntb'") &&
   advancedRadioNormalizer.includes('responderLocation') &&
@@ -413,10 +417,42 @@ test('Apple Nearby Interaction adapter covers UWB, EDM, DL-TDOA and Bluetooth Ch
   advancedRadioNormalizer.includes("'uwb-edm'") &&
   advancedRadioNormalizer.includes("'dl-tdoa'") &&
   advancedRadioNormalizer.includes("'bluetooth-channel-sounding'") &&
-  advancedRadioNormalizer.includes("'bluetooth_proximity'") &&
+  advancedRadioNormalizer.includes("'bluetooth_channel_sounding'") &&
   advancedRadioNormalizer.includes("'uwb_direction'") &&
   advancedRadioNormalizer.includes("'uwb_range'") &&
-  geoconsoleRoutes.includes("'uwb_range', 'uwb_direction', 'bluetooth_proximity'"));
+  geoconsoleRoutes.includes("'bluetooth_channel_sounding'") &&
+  geoconsoleRoutes.includes("'ble_aod'"));
+test('Managed-device, enterprise sensor, IoT and vehicle feeds share the signed provider bridge',
+  providerNormalizer.includes('SPECTRA_EXTERNAL_LOCATION_NORMALIZER_KINDS') &&
+  providerNormalizer.includes('normalizeSpectraExternalLocationPayload') &&
+  externalLocationNormalizer.includes("'android-managed-lost-mode'") &&
+  externalLocationNormalizer.includes("'apple-managed-lost-mode'") &&
+  externalLocationNormalizer.includes("'meraki-scanning'") &&
+  externalLocationNormalizer.includes("'cisco-spaces-location'") &&
+  externalLocationNormalizer.includes("'aws-iot-device-location'") &&
+  externalLocationNormalizer.includes("'connected-vehicle-location'") &&
+  adapterRegistry.includes("id: 'android-managed-lost-mode-ingest'") &&
+  adapterRegistry.includes("id: 'apple-managed-lost-mode-ingest'") &&
+  adapterRegistry.includes("id: 'meraki-scanning-ingest'") &&
+  adapterRegistry.includes("id: 'cisco-spaces-location-ingest'") &&
+  adapterRegistry.includes("id: 'aws-iot-device-location-ingest'") &&
+  adapterRegistry.includes("id: 'connected-vehicle-location-ingest'"));
+test('CAMARA verification and reachability remain corroboration context rather than fabricated positions',
+  externalLocationNormalizer.includes("'camara-location-verification'") &&
+  externalLocationNormalizer.includes("'camara-reachability'") &&
+  externalLocationNormalizer.includes("'location_verification'") &&
+  externalLocationNormalizer.includes("'network_reachability'") &&
+  geoconsoleRoutes.includes("'location_verification', 'network_reachability'"));
+test('SPECTRA live confidence requires fresh independent consensus and collapses on contradiction',
+  routes.includes('assessSpectraLiveLocation(qualityLocationObservations)') &&
+  routes.includes('liveLocationAssessment.confidenceScore') &&
+  liveConfidence.includes('consensusAssessments.length < 2') &&
+  liveConfidence.includes('strongConsensus.length < 3') &&
+  liveConfidence.includes('precisionFamilyCount < 2') &&
+  liveConfidence.includes('freshestAgeMs > 30_000') &&
+  liveConfidence.includes('score = Math.min(score, 0.69)') &&
+  liveConfidence.includes('score = Math.max(score, 0.991)') &&
+  liveConfidence.includes('exceedsNinetyNinePercent'));
 test('CDMA cell identity preserves SID NID and BID through the canonical radio schema',
   advancedRadioNormalizer.includes('cell.systemId ?? cell.sid') &&
   advancedRadioNormalizer.includes('cell.networkId ?? cell.nid') &&
