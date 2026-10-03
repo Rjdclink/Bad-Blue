@@ -44,6 +44,7 @@ export interface SpectraLiveLocationAssessment {
   independentFamilyCount: number;
   residualScale: number;
   consistencyScore: number;
+  consistencyPenalty: number;
   freshnessScore: number;
   freshestAgeMs?: number;
   consensusCenter?: {
@@ -575,6 +576,7 @@ export function assessSpectraLiveLocation(
       independentFamilyCount: 0,
       residualScale: 0,
       consistencyScore: 0,
+      consistencyPenalty: 0,
       freshnessScore: 0,
       sources: [],
       reasons: [
@@ -788,9 +790,17 @@ export function assessSpectraLiveLocation(
   ) / prepared.length;
   const independentReliability = combinedIndependentReliability(prepared);
 
+  // A chi-square survival probability is a diagnostic p-value, not the
+  // probability that the position is correct. Do not multiply by it directly.
+  // Penalize only statistically abnormal residual inconsistency while leaving
+  // normally distributed residuals neutral.
+  const consistencyPenalty = consistencyScore >= 0.05
+    ? 1
+    : Math.sqrt(clamp(consistencyScore / 0.05, 0, 1));
+
   const confidenceScore = clamp(
     independentReliability
-    * Math.sqrt(clamp(consistencyScore, 0, 1))
+    * consistencyPenalty
     * Math.sqrt(clamp(freshnessScore, 0, 1)),
     0,
     MAX_CONFIDENCE_SCORE,
@@ -857,6 +867,7 @@ export function assessSpectraLiveLocation(
     independentFamilyCount: prepared.length,
     residualScale: Number(residualScale.toFixed(3)),
     consistencyScore: Number(consistencyScore.toFixed(6)),
+    consistencyPenalty: Number(consistencyPenalty.toFixed(6)),
     freshnessScore: Number(freshnessScore.toFixed(6)),
     freshestAgeMs,
     consensusCenter: {
