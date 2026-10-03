@@ -367,8 +367,12 @@ test('SPECTRA active acquisition uses managed-device identifiers and canonical t
   activeAcquisition.includes('SPECTRA_CISCO_SPACES_DEVICE_URL_TEMPLATE') &&
   !activeAcquisition.includes("target: 'phone'") &&
   !activeAcquisition.includes('SPECTRA_CAMARA_LOCATION_RETRIEVAL_URL') &&
+  adapterRegistry.includes("id: 'android-managed-location-active'") &&
+  adapterRegistry.includes("id: 'apple-managed-location-active'") &&
   adapterRegistry.includes("id: 'cisco-spaces-active-location'") &&
-  adapterRegistry.includes("id: 'active-provider-adapters'"));
+  adapterRegistry.includes("id: 'active-provider-adapters'") &&
+  activeAcquisition.includes('SPECTRA_ANDROID_MDM_LOCATION_URL_TEMPLATE') &&
+  activeAcquisition.includes('SPECTRA_APPLE_MDM_LOCATION_URL_TEMPLATE'));
 test('Configured anchor identities are resolved before trusted ranging multilateration',
   anchorRegistry.includes('SPECTRA_ANCHOR_CATALOG_JSON') &&
   anchorRegistry.includes('resolveConfiguredSpectraAnchor') &&
