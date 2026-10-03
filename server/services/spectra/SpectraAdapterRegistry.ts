@@ -170,6 +170,23 @@ export const SPECTRA_ADAPTER_CAPABILITIES: SpectraAdapterCapability[] = [
     notes: 'Nearby geotagged street imagery, capture time and directional context.',
   },
   {
+    id: 'external-camera-json',
+    label: 'Configured external camera directory',
+    mode: 'camera',
+    sourceTypes: ['traffic_cam','public_camera'],
+    configured: () => {
+      try {
+        const feeds = JSON.parse(String(process.env.SPECTRA_CAMERA_JSON_FEEDS || '[]'));
+        return Array.isArray(feeds) && feeds.length > 0;
+      } catch {
+        return false;
+      }
+    },
+    priority: 'high',
+    supportsRealtime: true,
+    notes: 'Provider-neutral camera directory adapter for configured JSON feeds with geospatial field mappings.',
+  },
+  {
     id: 'trafficland',
     label: 'TrafficLand camera network',
     mode: 'camera',
