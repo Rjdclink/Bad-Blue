@@ -431,6 +431,51 @@ function measurement(batch: ReturnType<typeof normalizeSpectraProviderPayload>, 
 
 {
   const batch = normalizeSpectraProviderPayload(
+    'gnss-precision-solution',
+    'galileo-has-ppp',
+    {
+      solutions: [{
+        timestamp: '2026-10-02T20:59:55Z',
+        latitude: 43.5446001,
+        longitude: -96.7311002,
+        solutionType: 'PPP',
+        horizontalAccuracyMeters: 0.18,
+        accuracyConfidenceLevel: 0.95,
+        satellitesUsed: 17,
+        hdop: 0.8,
+        corrections: {
+          service: 'Galileo HAS',
+          serviceLevel: 'SL1',
+          transport: 'E6-B',
+          format: 'HAS-CSSR',
+          ageSeconds: 1.2,
+          convergenceSeconds: 145,
+          orbitCorrections: true,
+          clockCorrections: true,
+          codeBiasCorrections: true,
+          phaseBiasCorrections: true,
+          ionosphericCorrections: false,
+        },
+        covariance: {
+          eastVariance: 0.0036,
+          northVariance: 0.0036,
+        },
+      }],
+    },
+  );
+  const position = measurement(batch, 0);
+  assert.equal(position.source, 'gnss_fix');
+  assert.equal(position.metadata.solutionType, 'ppp');
+  assert.equal(position.metadata.correctionService, 'Galileo HAS');
+  assert.equal(position.metadata.correctionServiceLevel, 'SL1');
+  assert.equal(position.metadata.correctionConvergenceSeconds, 145);
+  assert.equal(position.metadata.correctionCapabilities.orbitCorrections, true);
+  assert.equal(position.metadata.correctionCapabilities.phaseBiasCorrections, true);
+  assert.equal(position.metadata.correctionCapabilities.ionosphericCorrections, false);
+}
+
+{
+  const batch = normalizeSpectraProviderPayload(
     'android-raw-gnss',
     'android-integrity',
     {
@@ -624,6 +669,32 @@ function measurement(batch: ReturnType<typeof normalizeSpectraProviderPayload>, 
   assert.equal(raw.metadata.satelliteCount, 1);
   assert.equal(raw.metadata.satellites[0].svid, 7);
   assert.equal(raw.metadata.satellites[0].carrierFrequencyHz, 1575420000);
+}
+
+{
+  const rtklibPos = [
+    '% (lat/lon/height=WGS84/ellipsoidal,Q=1:fix,2:float,3:sbas,4:dgps,5:single,6:ppp,ns=# of satellites)',
+    '%  GPST                  latitude(deg) longitude(deg) height(m) Q ns sdn(m) sde(m) sdu(m) sdne(m) sdeu(m) sdun(m) age(s) ratio',
+    '2026/10/02 20:59:55.000 43.544600200 -96.731100100 410.2000 1 19 0.0120 0.0100 0.0250 0.0001 0.0002 0.0003 0.80 4.80',
+  ].join('\n');
+  const batch = normalizeSpectraProviderPayload(
+    'universal-radio-log',
+    'rtklib-stream',
+    { text: rtklibPos },
+  );
+  const position = measurement(batch, 0);
+  const correction = measurement(batch, 1);
+  assert.equal(position.kind, 'position');
+  assert.equal(position.source, 'gnss_fix');
+  assert.equal(position.metadata.solutionType, 'rtk-fixed');
+  assert.equal(position.metadata.correctionTransport, 'RTKLIB');
+  assert.equal(position.metadata.correctionFormat, 'RTKLIB-POS');
+  assert.equal(position.metadata.satellitesUsed, 19);
+  assert.equal(position.metadata.ambiguityRatio, 4.8);
+  assert.equal(position.metadata.ambiguitiesFixed, true);
+  assert.ok(position.metadata.covariance.eastVariance > 0);
+  assert.equal(correction.source, 'gnss_corrections');
+  assert.equal(correction.values.correctionAgeSeconds, 0.8);
 }
 
 {
