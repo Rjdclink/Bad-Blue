@@ -969,7 +969,31 @@ router.post('/acquire', async (req: Request, res: Response) => {
     return res.status(401).json({ success: false, error: 'Authentication required.' });
   }
 
+  const tenantScope = createSpectraTenantScope(userId);
   const acquisitionSessionId = requestedSessionId || `spectra-${randomUUID()}`;
+  const finishAcquisitionMetric = spectraMetricsAcquisitionStarted();
+  let resourcePermit: SpectraResourcePermit | null = null;
+
+  try {
+    resourcePermit = await acquireSpectraResourcePermit(tenantScope.tenantId);
+  } catch (error) {
+    finishAcquisitionMetric();
+    if (error instanceof SpectraResourceBusyError) {
+      spectraMetricsAcquisitionOutcome('busy');
+      res.setHeader('Retry-After', String(Math.max(1, Math.ceil(error.retryAfterMs / 1000))));
+      return res.status(429).json({
+        success: false,
+        error: error.message,
+        retryAfterMs: error.retryAfterMs,
+      });
+    }
+    spectraMetricsAcquisitionOutcome('error');
+    return res.status(503).json({
+      success: false,
+      error: 'SPECTRA resource governor is unavailable.',
+    });
+  }
+
   const acquisitionLease = registerSpectraAcquisitionRequest(userId, acquisitionSessionId);
   const cancelDisconnectedRequest = () => {
     if (!res.writableEnded) {
@@ -1536,6 +1560,7 @@ router.post('/acquire', async (req: Request, res: Response) => {
       };
     });
 
+    spectraMetricsAcquisitionOutcome('success');
     return res.json({
       success: true,
       target,
@@ -1604,6 +1629,7 @@ router.post('/acquire', async (req: Request, res: Response) => {
     });
   } catch (error) {
     if (acquisitionLease.signal.aborted) {
+      spectraMetricsAcquisitionOutcome('stopped');
       if (!res.headersSent && !res.writableEnded) {
         return res.status(499).json({
           success: false,
@@ -1615,6 +1641,7 @@ router.post('/acquire', async (req: Request, res: Response) => {
       return;
     }
 
+    spectraMetricsAcquisitionOutcome('error');
     console.error('[SPECTRA] Acquisition failed', error);
     return res.status(500).json({
       success: false,
@@ -1623,6 +1650,8 @@ router.post('/acquire', async (req: Request, res: Response) => {
   } finally {
     res.off('close', cancelDisconnectedRequest);
     acquisitionLease.release();
+    await resourcePermit?.release().catch(() => undefined);
+    finishAcquisitionMetric();
   }
 });
 
