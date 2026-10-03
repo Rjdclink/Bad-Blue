@@ -6,6 +6,7 @@ export const SPECTRA_ADVANCED_RADIO_NORMALIZER_KINDS = [
   'ble-direction-finding',
   'android-wifi-ranging',
   'android-ranging-manager',
+  'android-uwb-sensor-fusion',
   'nr-positioning',
   'android-cellular',
   'android-raw-gnss',
@@ -690,6 +691,269 @@ function normalizeAndroidRangingManager(
   return normalizerBatch(
     wrapped.providerId,
     'android-ranging-manager',
+    wrapped.sessionId,
+    wrapped.subjectLabel,
+    measurements,
+  );
+}
+
+function normalizeAndroidUwbSensorFusion(
+  payload: unknown,
+  providerId: string,
+): SpectraAdvancedNormalizedBatch {
+  const wrapped = envelope(payload, providerId);
+  const updates = list(
+    wrapped.body.results
+    || wrapped.body.estimates
+    || wrapped.body.updates
+    || wrapped.body.measurements
+  );
+  const measurements: Array<Record<string, unknown>> = [];
+
+  for (const raw of updates.slice(0, 2000)) {
+    const update = record(raw);
+    const observedAt = timestampValue(
+      update.timestamp
+      || update.observedAt
+      || update.elapsedRealtimeTimestamp
+      || update.wallClockTime
+      || wrapped.body.timestamp
+    );
+    if (!observedAt) continue;
+
+    const estimateTypeRaw = String(
+      update.estimateType
+      || update.resultType
+      || update.type
+      || ''
+    ).trim().toLowerCase();
+    const estimateType =
+      /precise/.test(estimateTypeRaw) ? 'precise'
+      : /imprecise/.test(estimateTypeRaw) ? 'imprecise'
+      : /drifting/.test(estimateTypeRaw) ? 'drifting'
+      : /fallback/.test(estimateTypeRaw) ? 'fallback'
+      : 'range-only';
+
+    const distanceMeters = finite(
+      update.distanceMeters
+      ?? record(update.distance).value
+      ?? record(update.distance).valueMeters
+    );
+    const distanceUncertaintyMeters = finite(
+      update.distanceUncertaintyMeters
+      ?? record(update.distance).uncertainty
+      ?? record(update.distance).uncertaintyMeters
+    );
+    const azimuthDegrees = bounded(
+      update.azimuthDegrees
+      ?? record(update.azimuth).value
+      ?? record(update.azimuth).valueDegrees,
+      -180,
+      180,
+    );
+    const elevationDegrees = bounded(
+      update.elevationDegrees
+      ?? record(update.elevation).value
+      ?? record(update.elevation).valueDegrees,
+      -90,
+      90,
+    );
+
+    const peer = record(
+      update.anchor
+      || update.peerLocation
+      || update.referenceLocation
+      || update.peerPosition
+    );
+    const anchor = anchorCoordinates(peer);
+    const peerRef = stringValue(
+      update.peerRef
+      || update.peerId
+      || update.deviceAddress
+      || update.uwbDeviceId,
+      200,
+    );
+    const stalenessThresholdMillis = finite(
+      update.dataStalenessThresholdMillis
+      ?? wrapped.body.dataStalenessThresholdMillis
+    );
+    const estimateAgeMillis = finite(
+      update.estimateAgeMillis
+      ?? update.ageMillis
+      ?? 0
+    );
+    const estimateStale =
+      stalenessThresholdMillis !== null
+      && estimateAgeMillis !== null
+      && estimateAgeMillis > stalenessThresholdMillis;
+
+    const odometry = record(update.odometry || update.pose || update.localPose);
+    const metadata = {
+      providerKind: 'android-uwb-sensor-fusion',
+      estimateType,
+      peerRef,
+      distanceMeters,
+      distanceUncertaintyMeters,
+      azimuthDegrees,
+      elevationDegrees,
+      dataStalenessThresholdMillis: stalenessThresholdMillis,
+      estimateAgeMillis,
+      estimateStale,
+      odometryAvailable:
+        estimateType === 'precise'
+        || estimateType === 'drifting'
+        || Object.keys(odometry).length > 0,
+      rawRangeAvailable:
+        estimateType === 'precise'
+        || estimateType === 'imprecise'
+        || estimateType === 'range-only',
+      localOdometry: Object.keys(odometry).length ? odometry : undefined,
+      elapsedRealtimeNanos: finite(update.elapsedRealtimeNanos),
+    };
+
+    const solved = record(
+      update.solution
+      || update.position
+      || update.absolutePosition
+    );
+    const latitude = bounded(
+      solved.latitude ?? solved.lat,
+      -90,
+      90,
+    );
+    const longitude = bounded(
+      solved.longitude ?? solved.lng ?? solved.lon,
+      -180,
+      180,
+    );
+
+    if (
+      latitude !== null
+      && longitude !== null
+      && estimateType !== 'drifting'
+      && !estimateStale
+    ) {
+      const accuracy = finite(
+        solved.horizontalAccuracyMeters
+        ?? solved.accuracyMeters
+        ?? solved.accuracy
+        ?? distanceUncertaintyMeters
+      );
+      measurements.push({
+        kind: 'position',
+        source: 'uwb_direction',
+        timestamp: observedAt,
+        latitude,
+        longitude,
+        altitude: finite(
+          solved.altitudeMeters ?? solved.altitude
+        ) ?? undefined,
+        accuracy:
+          accuracy !== null && accuracy > 0
+            ? Math.min(5_000_000, accuracy)
+            : undefined,
+        confidence:
+          estimateType === 'precise' ? 0.99
+          : estimateType === 'imprecise' ? 0.88
+          : 0.82,
+        provider: wrapped.providerId,
+        recordId: stringValue(
+          update.recordId || update.measurementId,
+          300,
+        ),
+        correlationGroup:
+          stringValue(update.correlationGroup, 300)
+          || `uwb-sensor-fusion:${wrapped.providerId}:${peerRef || 'peer'}`,
+        metadata: {
+          ...metadata,
+          accuracyConfidenceLevel: bounded(
+            solved.accuracyConfidenceLevel,
+            0.2,
+            0.9999,
+          ) ?? 0.68,
+          covariance: solved.covariance,
+        },
+      });
+      continue;
+    }
+
+    if (
+      anchor
+      && distanceMeters !== null
+      && distanceMeters >= 0
+      && estimateType !== 'drifting'
+      && !estimateStale
+    ) {
+      const rangedAnchor: Record<string, unknown> = {
+        id: peerRef,
+        latitude: anchor.latitude,
+        longitude: anchor.longitude,
+        distanceMeters: Math.max(
+          0.01,
+          Math.min(1_000_000, distanceMeters),
+        ),
+        uncertaintyMeters:
+          distanceUncertaintyMeters !== null
+          && distanceUncertaintyMeters > 0
+            ? Math.min(1_000_000, distanceUncertaintyMeters)
+            : estimateType === 'precise'
+              ? Math.max(0.05, distanceMeters * 0.01)
+              : Math.max(0.15, distanceMeters * 0.04),
+      };
+
+      if (azimuthDegrees !== null) {
+        const normalizedBearing = (azimuthDegrees + 360) % 360;
+        rangedAnchor.bearingDegrees = normalizedBearing;
+        rangedAnchor.bearingReference = String(
+          update.bearingReference || 'device'
+        ).toLowerCase() === 'true_north'
+          ? 'true_north'
+          : 'device';
+        const uncertaintyDegrees = bounded(
+          update.azimuthUncertaintyDegrees
+          ?? record(update.azimuth).uncertainty,
+          0.01,
+          180,
+        );
+        if (uncertaintyDegrees !== null) {
+          rangedAnchor.bearingUncertaintyDegrees = uncertaintyDegrees;
+        }
+      }
+
+      measurements.push({
+        kind: 'ranging',
+        source: azimuthDegrees !== null ? 'uwb_direction' : 'uwb_range',
+        timestamp: observedAt,
+        provider: wrapped.providerId,
+        correlationGroup:
+          stringValue(update.correlationGroup, 300)
+          || `uwb-sensor-fusion:${wrapped.providerId}:${peerRef || 'peer'}`,
+        anchors: [rangedAnchor],
+        metadata,
+      });
+    } else {
+      // Drifting/expired odometry-only estimates remain context and cannot
+      // manufacture a live absolute position.
+      measurements.push(contextMeasurement(
+        'uwb_context',
+        observedAt,
+        wrapped.providerId,
+        {
+          distanceMeters,
+          distanceUncertaintyMeters,
+          azimuthDegrees,
+          elevationDegrees,
+          estimateAgeMillis,
+          stalenessThresholdMillis,
+        },
+        metadata,
+      ));
+    }
+  }
+
+  return normalizerBatch(
+    wrapped.providerId,
+    'android-uwb-sensor-fusion',
     wrapped.sessionId,
     wrapped.subjectLabel,
     measurements,
@@ -2141,6 +2405,8 @@ function tryNormalize(
         return normalizeAndroidWifiRanging(payload, providerId);
       case 'android-ranging-manager':
         return normalizeAndroidRangingManager(payload, providerId);
+      case 'android-uwb-sensor-fusion':
+        return normalizeAndroidUwbSensorFusion(payload, providerId);
       case 'nr-positioning':
         return normalizeNrPositioning(payload, providerId);
       case 'android-cellular':
@@ -2180,6 +2446,7 @@ function normalizeAndroidRadioCollector(
     ['android-raw-gnss', { ...body, epochs: body.gnss || body.gnssEpochs || body.gnssMeasurements }],
     ['android-wifi-ranging', { ...body, results: body.wifiRtt || body.wifiRanging }],
     ['android-ranging-manager', { ...body, results: body.rangingManager || body.androidRanging || body.rangingResults }],
+    ['android-uwb-sensor-fusion', { ...body, results: body.uwbSensorFusion || body.sensorFusionEstimates }],
     ['bluetooth-channel-sounding', { ...body, observations: body.bluetoothChannelSounding }],
     ['ble-direction-finding', { ...body, observations: body.bleDirectionFinding }],
     ['ble-gateway', { ...body, observations: body.bleScans || body.bluetoothScans }],
@@ -2393,6 +2660,8 @@ export function normalizeSpectraAdvancedRadioPayload(
       return normalizeAndroidWifiRanging(payload, normalizedProviderId);
     case 'android-ranging-manager':
       return normalizeAndroidRangingManager(payload, normalizedProviderId);
+    case 'android-uwb-sensor-fusion':
+      return normalizeAndroidUwbSensorFusion(payload, normalizedProviderId);
     case 'nr-positioning':
       return normalizeNrPositioning(payload, normalizedProviderId);
     case 'android-cellular':
