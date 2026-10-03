@@ -287,6 +287,12 @@ function reset(mode) {
   );
   assert.equal(mergedSubject.name, 'Avery Loretta Example of Hartley',
     'a shorter compatible subject must never replace the fuller identity from the user turn');
+  const conflictingMiddle = subject.mergeCompatibleLexaraBackgroundSubjects(
+    { name: 'Avery Ann Example', kind: 'person', identifiable: true, location: 'Iowa' },
+    { name: 'Avery Beth Example', kind: 'person', identifiable: true, location: 'Iowa' },
+  );
+  assert.equal(conflictingMiddle.name, 'Avery Ann Example',
+    'matching first and last names must not fuse conflicting middle-name identities');
 
   reset('delayed-general');
   const broadBackground = await investigator.investigateLexaraBackgroundQuestion(
