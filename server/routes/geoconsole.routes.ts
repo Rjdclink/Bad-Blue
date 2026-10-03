@@ -1217,7 +1217,68 @@ async function persistTelemetryBatch(input: {
   }
 }
 
-async function processTelemetryBatch(
+function coalesceTrustedRangingMeasurements(
+  measurements: TelemetryMeasurement[],
+): TelemetryMeasurement[] {
+  const passthrough: TelemetryMeasurement[] = [];
+  const groups = new Map<string, z.infer<typeof telemetryRangingSchema>>();
+
+  for (const measurement of measurements) {
+    if (measurement.kind !== 'ranging') {
+      passthrough.push(measurement);
+      continue;
+    }
+
+    const timestampMs = measurement.timestamp.getTime();
+    const timeBucket = Math.floor(timestampMs / 250);
+    const provider = String(measurement.provider || 'telemetry-source');
+    const key = [measurement.source, provider, timeBucket].join('|');
+    const existing = groups.get(key);
+
+    if (!existing) {
+      groups.set(key, {
+        ...measurement,
+        anchors: [...measurement.anchors],
+        correlationGroup:
+          measurement.correlationGroup
+          || `ranging-batch:${provider}:${measurement.source}:${timeBucket}`,
+        metadata: {
+          ...(measurement.metadata || {}),
+          coalescedRangingMeasurements: 1,
+        },
+      });
+      continue;
+    }
+
+    const seen = new Set(
+      existing.anchors.map(anchor => [
+        String(anchor.id || ''),
+        Number(anchor.latitude).toFixed(7),
+        Number(anchor.longitude).toFixed(7),
+      ].join('|')),
+    );
+    for (const anchor of measurement.anchors) {
+      const anchorKey = [
+        String(anchor.id || ''),
+        Number(anchor.latitude).toFixed(7),
+        Number(anchor.longitude).toFixed(7),
+      ].join('|');
+      if (!seen.has(anchorKey)) {
+        existing.anchors.push(anchor);
+        seen.add(anchorKey);
+      }
+    }
+    existing.metadata = {
+      ...(existing.metadata || {}),
+      coalescedRangingMeasurements:
+        Number(existing.metadata?.coalescedRangingMeasurements || 1) + 1,
+    };
+  }
+
+  return [...passthrough, ...groups.values()];
+}
+
+export async function processSpectraTelemetryBatch(
   batch: TelemetryBatch,
   trustedProvider: boolean,
   userId?: string,
@@ -1233,8 +1294,11 @@ async function processTelemetryBatch(
   liveAssessment: ReturnType<typeof assessSpectraLiveLocation>;
 }> {
   const sessionId = batch.sessionId || randomUUID();
+  const measurements = trustedProvider
+    ? coalesceTrustedRangingMeasurements(batch.measurements)
+    : batch.measurements;
   const pointOutcomes = await Promise.allSettled(
-    batch.measurements.map(measurement => telemetryPoint(measurement, trustedProvider))
+    measurements.map(measurement => telemetryPoint(measurement, trustedProvider))
   );
   const points = pointOutcomes.flatMap(outcome =>
     outcome.status === 'fulfilled' && outcome.value ? [outcome.value] : []
@@ -1351,7 +1415,7 @@ router.post('/telemetry/provider/:providerId/normalize/:kind', async (req: Reque
   }
 
   try {
-    const processed = await processTelemetryBatch(validation.data, true, undefined, providerId);
+    const processed = await processSpectraTelemetryBatch(validation.data, true, undefined, providerId);
     return res.json({
       success: true,
       data: {
@@ -1399,7 +1463,7 @@ router.post('/telemetry/provider/:providerId', async (req: Request, res: Respons
   }
 
   try {
-    const processed = await processTelemetryBatch(validation.data, true, undefined, req.params.providerId);
+    const processed = await processSpectraTelemetryBatch(validation.data, true, undefined, req.params.providerId);
     return res.json({
       success: true,
       data: {
@@ -1789,7 +1853,7 @@ async function runStructuredTelemetryImport(input: {
     },
   });
 
-  const processed = await processTelemetryBatch(
+  const processed = await processSpectraTelemetryBatch(
     batch,
     true,
     userId,
@@ -1976,7 +2040,7 @@ router.post('/telemetry/pull/:adapterId', async (req: Request, res: Response) =>
       metadata: { acquisitionMode: 'configured-https-pull' },
     });
 
-    const processed = await processTelemetryBatch(batch, true, userId, adapterId);
+    const processed = await processSpectraTelemetryBatch(batch, true, userId, adapterId);
     return res.json({
       success: true,
       data: {
@@ -2022,7 +2086,7 @@ router.post('/telemetry-ingest', async (req: Request, res: Response) => {
   if (!userId) return res.status(401).json({ success: false, error: 'Authentication required.' });
 
   try {
-    const processed = await processTelemetryBatch(validation.data, false, userId, validation.data.sourceId);
+    const processed = await processSpectraTelemetryBatch(validation.data, false, userId, validation.data.sourceId);
     return res.json({
       success: true,
       data: {
