@@ -56,6 +56,10 @@ import {
 import { assessSpectraLiveLocation } from '../services/spectra/SpectraLiveConfidence';
 import { solveSpectraConstraintLayer } from '../services/spectra/SpectraConstraintSolver';
 import { discoverPublicArcGisCameraLayers } from '../services/spectra/SpectraArcGisPublicCameraDiscovery';
+import {
+  findSpectraPublicGtfsRealtimeFeeds,
+  getSpectraPublicFeedCatalogSource,
+} from '../services/spectra/SpectraPublicFeedRegistry';
 
 const router = Router();
 const log = createLogger('GeoconsoleRoutes');
@@ -1826,6 +1830,13 @@ router.get('/telemetry-capabilities', (_req: Request, res: Response) => {
       ],
       contextSources: ['accelerometer', 'imu_gyro', 'magnetometer', 'barometer'],
       radioGeolocationConfigured: true,
+      publicFeedDiscovery: {
+        mobilityDatabaseGtfsRealtimeCatalog: true,
+        catalogSource: getSpectraPublicFeedCatalogSource(),
+        arcGisPublicCameraSearch: true,
+        fccAntennaContext: true,
+        noaaCorsContext: true,
+      },
       radioGeolocationProviders: {
         beaconDb: true,
         google: Boolean(
@@ -1842,6 +1853,27 @@ router.get('/telemetry-capabilities', (_req: Request, res: Response) => {
       configuredAnchorCount: getConfiguredSpectraAnchorCount(),
       genericPullAdapters: getSpectraGenericPullAdapters(),
     },
+  });
+});
+
+router.get('/public-feed-catalog', async (req: Request, res: Response) => {
+  const validation = z.object({
+    lat: z.coerce.number().min(-90).max(90),
+    lng: z.coerce.number().min(-180).max(180),
+    limit: z.coerce.number().int().min(1).max(200).default(50),
+  }).safeParse(req.query);
+
+  if (!validation.success) {
+    return res.status(400).json({ success: false, error: 'Invalid public feed search coordinates.' });
+  }
+
+  const { lat, lng, limit } = validation.data;
+  const feeds = await findSpectraPublicGtfsRealtimeFeeds(lat, lng, limit);
+  return res.json({
+    success: true,
+    data: feeds,
+    source: getSpectraPublicFeedCatalogSource(),
+    contextOnly: true,
   });
 });
 
