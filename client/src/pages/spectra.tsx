@@ -272,6 +272,8 @@ export default function SpectraPage() {
 
   const resetSession = useCallback(() => {
     requestRef.current += 1;
+    launchedFromLexaraRef.current = false;
+    originLexaraSessionIdRef.current = null;
     setPhase('awaiting_target');
     setTarget('');
     setDetails('');
