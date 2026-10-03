@@ -1224,6 +1224,16 @@ async function persistTelemetryBatch(input: {
         })) {
           throw new Error('SPECTRA provider is not bound to this tenant session');
         }
+      } else if (input.userId) {
+        const binding = input.providerId
+          ? resolveSpectraProviderSessionBinding({
+              providerId: input.providerId,
+              sessionId: input.sessionId,
+            })
+          : null;
+        if (!binding?.tenantId || binding.tenantId !== input.userId) {
+          throw new Error('SPECTRA unowned legacy telemetry session cannot be claimed by this request');
+        }
       }
 
       const existingSubject = String(existingSession.rows[0]?.subject_label || '')
