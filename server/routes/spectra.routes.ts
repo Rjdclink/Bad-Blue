@@ -42,7 +42,10 @@ import {
   loadSpectraSessionObservations,
   persistSpectraAcquisition,
 } from '../services/spectra/SpectraAcquisitionPersistence';
-import { assessSpectraIdentityBinding } from '../services/spectra/SpectraIdentityBinding';
+import {
+  assessSpectraIdentityBinding,
+  conservativeJointConfidence,
+} from '../services/spectra/SpectraIdentityBinding';
 import { acquireSpectraPlaceContext } from '../services/spectra/SpectraPlaceContext';
 import { retrieveSpectraPublicEvidence } from '../services/spectra/SpectraPublicRetrieval';
 import { assessSpectraLiveLocation } from '../services/spectra/SpectraLiveConfidence';
@@ -1149,9 +1152,9 @@ router.post('/acquire', async (req: Request, res: Response) => {
     // (1) the subject/device identity is correct, and
     // (2) the live spatial estimate is correct. Treat them as separate
     // evidence dimensions and report the conservative joint confidence.
-    const subjectLiveLocationConfidence = Math.max(
-      0,
-      Math.min(1, boundIdentityConfidence * locationConfidence),
+    const subjectLiveLocationConfidence = conservativeJointConfidence(
+      boundIdentityConfidence,
+      locationConfidence,
     );
 
     const sourceKeys = new Set<string>();
