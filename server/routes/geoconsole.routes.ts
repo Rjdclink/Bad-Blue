@@ -1372,7 +1372,7 @@ export async function processSpectraTelemetryBatch(
     sessionId,
     userId,
     providerId,
-    points: quality.points,
+    points: constrainedPoints,
   }).catch(error => {
     log.warn('SPECTRA telemetry persistence unavailable', {
       error: error instanceof Error ? error.message : String(error),
