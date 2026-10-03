@@ -39,6 +39,60 @@ export interface SpectraActiveAcquisitionResult {
   attempts: SpectraActiveAcquisitionAttempt[];
 }
 
+export interface SpectraActiveAcquisitionHealth {
+  id: string;
+  label: string;
+  state: 'healthy' | 'degraded' | 'unknown';
+  normalizerKind: string;
+  lastAttemptAt?: string;
+  lastSuccessAt?: string;
+  lastErrorAt?: string;
+  lastError?: string;
+  measurementCount: number;
+  consecutiveFailures: number;
+}
+
+const activeHealth = new Map<string, SpectraActiveAcquisitionHealth>();
+
+function recordActiveHealth(
+  config: ActiveProviderConfig,
+  status: 'fulfilled' | 'failed' | 'skipped',
+  measurementCount: number,
+  reason?: string,
+): void {
+  const existing = activeHealth.get(config.id);
+  const now = new Date().toISOString();
+  const failed = status === 'failed';
+  activeHealth.set(config.id, {
+    id: config.id,
+    label: config.label,
+    state: status === 'fulfilled'
+      ? 'healthy'
+      : failed
+        ? 'degraded'
+        : existing?.state || 'unknown',
+    normalizerKind: config.normalizerKind,
+    lastAttemptAt: now,
+    lastSuccessAt: status === 'fulfilled' ? now : existing?.lastSuccessAt,
+    lastErrorAt: failed ? now : existing?.lastErrorAt,
+    lastError: failed ? String(reason || 'Unknown provider error').slice(0, 500) : undefined,
+    measurementCount: status === 'fulfilled'
+      ? measurementCount
+      : existing?.measurementCount || 0,
+    consecutiveFailures: failed
+      ? (existing?.consecutiveFailures || 0) + 1
+      : status === 'fulfilled'
+        ? 0
+        : existing?.consecutiveFailures || 0,
+  });
+}
+
+export function getSpectraActiveAcquisitionHealth(): SpectraActiveAcquisitionHealth[] {
+  return [...activeHealth.values()]
+    .sort((a, b) => a.id.localeCompare(b.id))
+    .map(item => ({ ...item }));
+}
+
 function record(value: unknown): Record<string, any> {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, any>
@@ -407,6 +461,8 @@ export async function acquireSpectraActiveTelemetry(
   const outcomes = await Promise.all(
     adapters.map(async config => {
       if (!targetAvailable(config, input)) {
+        const reason = 'Required managed-device identifier was not supplied.';
+        recordActiveHealth(config, 'skipped', 0, reason);
         return {
           batch: null,
           attempt: {
@@ -415,13 +471,14 @@ export async function acquireSpectraActiveTelemetry(
             status: 'skipped' as const,
             normalizerKind: config.normalizerKind,
             measurementCount: 0,
-            reason: 'Required managed-device identifier was not supplied.',
+            reason,
           },
         };
       }
 
       try {
         const batch = await fetchAdapter(config, input);
+        recordActiveHealth(config, 'fulfilled', batch.measurements.length);
         return {
           batch,
           attempt: {
@@ -433,6 +490,8 @@ export async function acquireSpectraActiveTelemetry(
           },
         };
       } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        recordActiveHealth(config, 'failed', 0, reason);
         return {
           batch: null,
           attempt: {
@@ -441,7 +500,7 @@ export async function acquireSpectraActiveTelemetry(
             status: 'failed' as const,
             normalizerKind: config.normalizerKind,
             measurementCount: 0,
-            reason: error instanceof Error ? error.message : String(error),
+            reason,
           },
         };
       }
