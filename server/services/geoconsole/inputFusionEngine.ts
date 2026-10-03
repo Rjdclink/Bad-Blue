@@ -37,8 +37,10 @@ const DEFAULT_SOURCE_CONFIGS: DataSourceConfig[] = [
   { source: 'uwb_range', enabled: true, priority: 10, confidenceWeight: 0.98 },
   { source: 'uwb_direction', enabled: true, priority: 10, confidenceWeight: 0.98 },
   { source: 'bluetooth_proximity', enabled: true, priority: 4, confidenceWeight: 0.45 },
+  { source: 'bluetooth_channel_sounding', enabled: true, priority: 9, confidenceWeight: 0.94 },
   { source: 'ble_rssi', enabled: true, priority: 5, confidenceWeight: 0.52 },
   { source: 'ble_aoa', enabled: true, priority: 8, confidenceWeight: 0.86 },
+  { source: 'ble_aod', enabled: true, priority: 8, confidenceWeight: 0.86 },
   { source: 'accelerometer', enabled: true, priority: 3, confidenceWeight: 0.30 },
   { source: 'imu_gyro', enabled: true, priority: 3, confidenceWeight: 0.30 },
   { source: 'magnetometer', enabled: true, priority: 3, confidenceWeight: 0.30 },
@@ -107,11 +109,13 @@ export class InputFusionEngine {
     switch (source) {
       case 'uwb_range':
       case 'uwb_direction': return 1.5;
+      case 'bluetooth_channel_sounding': return 1;
       case 'wifi_rtt': return 2.5;
       case 'gnss_fix':
       case 'device_gps': return 12;
       case 'browser_geolocation': return 25;
-      case 'ble_aoa': return 8;
+      case 'ble_aoa':
+      case 'ble_aod': return 8;
       case 'wifi_fingerprint': return 35;
       case 'wifi_rssi':
       case 'wifi_handoff': return 80;
@@ -137,7 +141,8 @@ export class InputFusionEngine {
   private minimumReportedAccuracyMeters(source: DataSource): number {
     switch (source) {
       case 'uwb_range':
-      case 'uwb_direction': return 0.25;
+      case 'uwb_direction':
+      case 'bluetooth_channel_sounding': return 0.25;
       case 'wifi_rtt': return 1;
       case 'gnss_fix':
       case 'gnss_raw': return 1.5;
@@ -148,7 +153,8 @@ export class InputFusionEngine {
       case 'exif_video':
       case 'xmp_sidecar':
       case 'json_sidecar': return 5;
-      case 'ble_aoa': return 3;
+      case 'ble_aoa':
+      case 'ble_aod': return 3;
       case 'wifi_fingerprint': return 10;
       case 'wifi_rssi':
       case 'wifi_handoff': return 25;
