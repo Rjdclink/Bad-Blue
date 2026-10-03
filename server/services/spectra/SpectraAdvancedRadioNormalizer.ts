@@ -2063,6 +2063,7 @@ function normalizeGnssPrecisionSolution(
         deviceRef: precisionDeviceRef,
         correlationDomain: precisionDeviceRef,
         accuracyConfidenceLevel: accuracyLevel ?? 0.68,
+        inputTimeSystem: stringValue(solution.timeSystem, 20),
         covariance: {
           eastVariance: finite(
             covariance.eastVariance
