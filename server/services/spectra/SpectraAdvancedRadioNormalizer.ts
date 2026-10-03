@@ -8,6 +8,7 @@ export const SPECTRA_ADVANCED_RADIO_NORMALIZER_KINDS = [
   'android-ranging-manager',
   'android-cellular',
   'android-raw-gnss',
+  'gnss-precision-solution',
   'apple-nearby-interaction',
   'android-radio-collector',
   'ble-gateway',
@@ -1188,6 +1189,268 @@ function normalizeAndroidRawGnss(
   );
 }
 
+function normalizeGnssPrecisionSolution(
+  payload: unknown,
+  providerId: string,
+): SpectraAdvancedNormalizedBatch {
+  const wrapped = envelope(payload, providerId);
+  const solutions = list(
+    wrapped.body.solutions
+    || wrapped.body.positions
+    || wrapped.body.measurements
+    || wrapped.body.results
+  );
+  const inputs = solutions.length ? solutions : [wrapped.body];
+  const measurements: Array<Record<string, unknown>> = [];
+
+  for (const raw of inputs.slice(0, 2000)) {
+    const solution = record(raw);
+    const observedAt = timestampValue(
+      solution.timestamp
+      || solution.observedAt
+      || solution.solutionTime
+      || solution.gpsTime
+      || wrapped.body.timestamp
+    );
+    const latitude = bounded(
+      solution.latitude ?? solution.lat,
+      -90,
+      90,
+    );
+    const longitude = bounded(
+      solution.longitude ?? solution.lng ?? solution.lon,
+      -180,
+      180,
+    );
+    if (!observedAt || latitude === null || longitude === null) continue;
+
+    const solutionTypeRaw = String(
+      solution.solutionType
+      || solution.fixType
+      || solution.mode
+      || solution.method
+      || 'gnss'
+    ).trim().toLowerCase();
+    const solutionType =
+      /ppp.?rtk/.test(solutionTypeRaw) ? 'ppp-rtk'
+      : /rtk.*fixed|fixed.*rtk|integer/.test(solutionTypeRaw) ? 'rtk-fixed'
+      : /rtk.*float|float.*rtk/.test(solutionTypeRaw) ? 'rtk-float'
+      : /network.?rtk|nrtk|vrs/.test(solutionTypeRaw) ? 'network-rtk'
+      : /ppp/.test(solutionTypeRaw) ? 'ppp'
+      : /sbas/.test(solutionTypeRaw) ? 'sbas'
+      : /dgnss|dgps/.test(solutionTypeRaw) ? 'dgnss'
+      : 'gnss';
+
+    const accuracy = finite(
+      solution.horizontalAccuracyMeters
+      ?? solution.accuracyMeters
+      ?? solution.accuracy
+      ?? solution.sigmaHorizontalMeters
+    );
+    const accuracyLevel = bounded(
+      solution.accuracyConfidenceLevel
+      ?? solution.confidenceLevel
+      ?? solution.confidencePercent !== undefined
+        ? Number(solution.confidencePercent) / 100
+        : undefined,
+      0.2,
+      0.9999,
+    );
+    const covariance = record(
+      solution.covariance
+      || solution.covarianceEnu
+      || solution.positionCovariance
+    );
+    const correction = record(
+      solution.corrections
+      || solution.correctionStatus
+      || wrapped.body.corrections
+    );
+    const integrity = record(
+      solution.integrity
+      || solution.integrityStatus
+      || wrapped.body.integrity
+    );
+
+    const correctionAgeSeconds = finite(
+      correction.ageSeconds
+      ?? correction.correctionAgeSeconds
+      ?? solution.correctionAgeSeconds
+    );
+    const ambiguityRatio = finite(
+      solution.ambiguityRatio
+      ?? solution.ratioTest
+      ?? solution.ambiguityResolutionRatio
+    );
+    const baselineMeters = finite(
+      solution.baselineMeters
+      ?? solution.baseToRoverDistanceMeters
+    );
+    const horizontalProtectionLevelMeters = finite(
+      integrity.horizontalProtectionLevelMeters
+      ?? integrity.hpl
+      ?? solution.horizontalProtectionLevelMeters
+      ?? solution.hpl
+    );
+    const verticalProtectionLevelMeters = finite(
+      integrity.verticalProtectionLevelMeters
+      ?? integrity.vpl
+      ?? solution.verticalProtectionLevelMeters
+      ?? solution.vpl
+    );
+
+    const correctionTransport = stringValue(
+      correction.transport
+      || correction.protocol
+      || solution.correctionTransport,
+      80,
+    );
+    const correctionFormat = stringValue(
+      correction.format
+      || correction.messageFormat
+      || solution.correctionFormat,
+      80,
+    );
+
+    measurements.push({
+      kind: 'position',
+      source: 'gnss_fix',
+      timestamp: observedAt,
+      latitude,
+      longitude,
+      altitude: finite(
+        solution.altitudeMeters
+        ?? solution.ellipsoidHeightMeters
+        ?? solution.altitude
+      ) ?? undefined,
+      accuracy:
+        accuracy !== null && accuracy > 0
+          ? Math.min(5_000_000, accuracy)
+          : undefined,
+      verticalAccuracy:
+        finite(
+          solution.verticalAccuracyMeters
+          ?? solution.sigmaVerticalMeters
+        ) ?? undefined,
+      speed:
+        finite(solution.speedMetersPerSecond ?? solution.speed) ?? undefined,
+      heading:
+        bounded(solution.headingDegrees ?? solution.heading, 0, 360) ?? undefined,
+      confidence:
+        bounded(solution.confidence, 0, 1)
+        ?? (
+          solutionType === 'rtk-fixed' || solutionType === 'network-rtk'
+            ? 0.995
+            : solutionType === 'ppp-rtk'
+              ? 0.99
+              : solutionType === 'ppp' || solutionType === 'rtk-float'
+                ? 0.96
+                : 0.90
+        ),
+      provider: wrapped.providerId,
+      recordId: stringValue(
+        solution.recordId
+        || solution.solutionId
+        || solution.epochId,
+        300,
+      ),
+      correlationGroup:
+        stringValue(solution.correlationGroup, 300)
+        || `gnss-precision:${wrapped.providerId}`,
+      metadata: {
+        providerKind: 'gnss-precision-solution',
+        solutionType,
+        accuracyConfidenceLevel: accuracyLevel ?? 0.68,
+        covariance: {
+          eastVariance: finite(
+            covariance.eastVariance
+            ?? covariance.xx
+            ?? covariance[0]
+          ),
+          northVariance: finite(
+            covariance.northVariance
+            ?? covariance.yy
+            ?? covariance[4]
+          ),
+          eastNorthCovariance: finite(
+            covariance.eastNorthCovariance
+            ?? covariance.xy
+            ?? covariance[1]
+          ),
+        },
+        correctionAgeSeconds,
+        correctionTransport,
+        correctionFormat,
+        ntripMountpoint: stringValue(
+          correction.mountpoint || solution.ntripMountpoint,
+          200,
+        ),
+        rtcmMessages: Array.isArray(correction.rtcmMessages)
+          ? correction.rtcmMessages.slice(0, 64)
+          : undefined,
+        ambiguityRatio,
+        ambiguitiesFixed:
+          solution.ambiguitiesFixed === true
+          || solution.integerAmbiguityFixed === true
+          || solutionType === 'rtk-fixed',
+        baselineMeters,
+        satellitesUsed: finite(
+          solution.satellitesUsed ?? solution.numSatellites
+        ),
+        hdop: finite(solution.hdop ?? solution.HDOP),
+        vdop: finite(solution.vdop ?? solution.VDOP),
+        pdop: finite(solution.pdop ?? solution.PDOP),
+        horizontalProtectionLevelMeters,
+        verticalProtectionLevelMeters,
+        integrityAvailable:
+          horizontalProtectionLevelMeters !== null
+          || verticalProtectionLevelMeters !== null
+          || Object.keys(integrity).length > 0,
+      },
+    });
+
+    if (
+      correctionAgeSeconds !== null
+      || correctionTransport
+      || correctionFormat
+    ) {
+      measurements.push(contextMeasurement(
+        'gnss_corrections',
+        observedAt,
+        wrapped.providerId,
+        {
+          correctionAgeSeconds,
+          ambiguityRatio,
+          baselineMeters,
+          satellitesUsed: finite(
+            solution.satellitesUsed ?? solution.numSatellites
+          ),
+        },
+        {
+          providerKind: 'gnss-precision-solution',
+          solutionType,
+          correctionTransport,
+          correctionFormat,
+          ntripMountpoint: stringValue(
+            correction.mountpoint || solution.ntripMountpoint,
+            200,
+          ),
+          horizontalProtectionLevelMeters,
+          verticalProtectionLevelMeters,
+        },
+      ));
+    }
+  }
+
+  return normalizerBatch(
+    wrapped.providerId,
+    'gnss-precision-solution',
+    wrapped.sessionId,
+    wrapped.subjectLabel,
+    measurements,
+  );
+}
+
 function normalizeAppleNearbyInteraction(
   payload: unknown,
   providerId: string,
@@ -1613,6 +1876,8 @@ function tryNormalize(
         return normalizeAndroidCellular(payload, providerId);
       case 'android-raw-gnss':
         return normalizeAndroidRawGnss(payload, providerId);
+      case 'gnss-precision-solution':
+        return normalizeGnssPrecisionSolution(payload, providerId);
       case 'apple-nearby-interaction':
         return normalizeAppleNearbyInteraction(payload, providerId);
       case 'ble-gateway':
@@ -1861,6 +2126,8 @@ export function normalizeSpectraAdvancedRadioPayload(
       return normalizeAndroidCellular(payload, normalizedProviderId);
     case 'android-raw-gnss':
       return normalizeAndroidRawGnss(payload, normalizedProviderId);
+    case 'gnss-precision-solution':
+      return normalizeGnssPrecisionSolution(payload, normalizedProviderId);
     case 'apple-nearby-interaction':
       return normalizeAppleNearbyInteraction(payload, normalizedProviderId);
     case 'android-radio-collector':
