@@ -823,6 +823,29 @@ async function collectSpectraContextEvidence(input: {
   };
 }
 
+router.post('/acquisition/stop', (req: Request, res: Response) => {
+  const parsed = stopAcquisitionSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ success: false, error: 'A SPECTRA session ID is required.' });
+  }
+
+  const userId = getPlatformUserId(req.user as any);
+  if (!userId) {
+    return res.status(401).json({ success: false, error: 'Authentication required.' });
+  }
+
+  stopSpectraAcquisitionSession(
+    userId,
+    parsed.data.sessionId,
+    'SPECTRA acquisition stopped because the viewer exited',
+  );
+  return res.json({
+    success: true,
+    sessionId: parsed.data.sessionId,
+    stopped: true,
+  });
+});
+
 router.post('/acquire', async (req: Request, res: Response) => {
   const parsed = acquireSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -838,11 +861,23 @@ router.post('/acquire', async (req: Request, res: Response) => {
     directEvidence,
     sessionId: requestedSessionId,
     originSessionId,
+    queryStartedAt,
+    recursivePass = 0,
   } = parsed.data;
   const userId = getPlatformUserId(req.user as any);
   if (!userId) {
     return res.status(401).json({ success: false, error: 'Authentication required.' });
   }
+
+  const acquisitionSessionId = requestedSessionId || `spectra-${randomUUID()}`;
+  const acquisitionLease = registerSpectraAcquisitionRequest(userId, acquisitionSessionId);
+  const cancelDisconnectedRequest = () => {
+    if (!res.writableEnded) {
+      acquisitionLease.cancel('SPECTRA acquisition request disconnected');
+    }
+  };
+  res.once('close', cancelDisconnectedRequest);
+
   const normalizedTarget = normalizeTargetIntent(target);
   const combinedTargetText = [normalizedTarget, details].filter(Boolean).join(' ');
   const phone = extractPhoneNumber(combinedTargetText);
