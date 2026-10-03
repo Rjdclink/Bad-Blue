@@ -42,6 +42,7 @@ const placeContext = read('server/services/spectra/SpectraPlaceContext.ts');
 const publicRetrieval = read('server/services/spectra/SpectraPublicRetrieval.ts');
 const lexaraConversation = read('client/src/components/LexaraConversation.tsx');
 const spectraMigration = read('server/migrations/064_spectra_durable_observations.sql');
+const spectraAccessMigration = read('server/migrations/065_spectra_server_only_access.sql');
 const landing = read('client/src/pages/landing.tsx');
 const login = read('client/src/pages/login.tsx');
 
@@ -310,6 +311,11 @@ test('SPECTRA migration enables PostGIS, RLS and guarded Realtime publication',
   spectraMigration.includes('DO $') &&
   spectraMigration.includes('ADD TABLE public.spectra_location_observations') &&
   (spectraMigration.match(/ENABLE ROW LEVEL SECURITY/g) || []).length === 4);
+test('SPECTRA persistence tables remain server-only',
+  spectraAccessMigration.includes('REVOKE ALL ON TABLE') &&
+  spectraAccessMigration.includes('FROM PUBLIC, anon, authenticated') &&
+  spectraAccessMigration.includes('TO service_role') &&
+  dockerfile.includes('065_spectra_server_only_access.sql'));
 test('Realtime observations work locally and across replicas when Supabase Realtime is configured',
   geoconsoleRoutes.includes("router.get('/telemetry-stream/:sessionId'") &&
   geoconsoleRoutes.includes('telemetryPushEmitter') &&
