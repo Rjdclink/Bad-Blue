@@ -42,6 +42,32 @@ export const SPECTRA_ADAPTER_CAPABILITIES: SpectraAdapterCapability[] = [
     notes: 'Client watchPosition observations are normalized and fused server-side.',
   },
   {
+    id: 'android-managed-location-active',
+    label: 'Android managed-device latest location',
+    mode: 'provider-pull',
+    sourceTypes: ['device_gps'],
+    configured: () => anyEnv(
+      'SPECTRA_ANDROID_MDM_LOCATION_URL_TEMPLATE',
+      'SPECTRA_ANDROID_MDM_LOCATION_TOKEN',
+    ),
+    priority: 'critical',
+    supportsRealtime: true,
+    notes: 'Pulls the latest location already available from a configured Android EMM backend for an enrolled company-managed device.',
+  },
+  {
+    id: 'apple-managed-location-active',
+    label: 'Apple supervised-device latest location',
+    mode: 'provider-pull',
+    sourceTypes: ['device_gps'],
+    configured: () => anyEnv(
+      'SPECTRA_APPLE_MDM_LOCATION_URL_TEMPLATE',
+      'SPECTRA_APPLE_MDM_LOCATION_TOKEN',
+    ),
+    priority: 'critical',
+    supportsRealtime: true,
+    notes: 'Pulls the latest DeviceLocation response already available from a configured MDM backend for a supervised Apple device.',
+  },
+  {
     id: 'cisco-spaces-active-location',
     label: 'Cisco Spaces active device location',
     mode: 'provider-pull',
