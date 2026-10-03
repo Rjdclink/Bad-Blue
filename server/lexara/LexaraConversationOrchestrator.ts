@@ -14,7 +14,7 @@ import {
 import { decideLexaraResearchNeed, isLexaraGenericLegalIntake, isLexaraRepeatRequest } from './LexaraResearchIntentRouter';
 import { planLexaraSequence } from './LexaraSequenceRouter';
 import { resolveLexaraResearchDecisionSemantic } from './LexaraSemanticIntentInterpreter';
-import { resolveLexaraBackgroundSubject } from './LexaraBackgroundSubject';
+import { mergeCompatibleLexaraBackgroundSubjects, resolveLexaraBackgroundSubject } from './LexaraBackgroundSubject';
 import {
   formatLexaraBackgroundResearchForSystem,
   investigateLexaraBackgroundQuestion,
@@ -666,18 +666,16 @@ export async function generateLexaraConversationResponse(
   const promptBackgroundSubject = backgroundResearchRequested
     ? resolveLexaraBackgroundSubject(cleanPrompt, previousUserTurns, jurisdiction)
     : null;
-  const sameResolvedSubject = Boolean(
-    decisionBackgroundSubject?.name && promptBackgroundSubject?.name
-    && decisionBackgroundSubject.name.toLocaleLowerCase() === promptBackgroundSubject.name.toLocaleLowerCase()
+  const compatibleBackgroundSubject = mergeCompatibleLexaraBackgroundSubjects(
+    decisionBackgroundSubject,
+    promptBackgroundSubject,
   );
-  const resolvedBackgroundSubject = sameResolvedSubject && decisionBackgroundSubject && promptBackgroundSubject
+  const resolvedBackgroundSubject = compatibleBackgroundSubject
     ? {
-        ...decisionBackgroundSubject,
-        kind: researchDecision.subjectKind || promptBackgroundSubject.kind,
-        location: promptBackgroundSubject.location || decisionBackgroundSubject.location,
-        identifiable: decisionBackgroundSubject.identifiable || promptBackgroundSubject.identifiable,
+        ...compatibleBackgroundSubject,
+        kind: researchDecision.subjectKind || compatibleBackgroundSubject.kind,
       }
-    : decisionBackgroundSubject || promptBackgroundSubject;
+    : null;
 
   const backgroundPrompt = mixedLegalFactNeed
     ? `${researchDecision.objective}\n\nLEXARA-DELEGATED FACTUAL OBJECTIVE: Retrieve only background facts and identifiers materially useful for identifying or resolving this legal matter (for example name variants, locations, dates, related proceedings, court references, docket/citation clues, and relevant public records). Do not perform the legal analysis and do not broaden into an unrestricted background report.`
