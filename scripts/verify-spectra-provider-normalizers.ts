@@ -692,7 +692,10 @@ function measurement(batch: ReturnType<typeof normalizeSpectraProviderPayload>, 
   assert.equal(position.metadata.satellitesUsed, 19);
   assert.equal(position.metadata.ambiguityRatio, 4.8);
   assert.equal(position.metadata.ambiguitiesFixed, true);
+  assert.equal(position.metadata.inputTimeSystem, 'GPST');
+  assert.equal(position.timestamp, '2026-10-02T20:59:37.000Z');
   assert.ok(position.metadata.covariance.eastVariance > 0);
+  assert.ok(Math.abs(position.metadata.covariance.eastNorthCovariance - 1e-8) < 1e-12);
   assert.equal(correction.source, 'gnss_corrections');
   assert.equal(correction.values.correctionAgeSeconds, 0.8);
 }
