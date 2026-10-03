@@ -48,6 +48,53 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+function normalizedSubjectTokens(value: string): string[] {
+  return String(value || '')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+/**
+ * Preserve the most specific compatible identity already present in the user's
+ * turn. A shorter semantic/parser result may enrich metadata, but it must not
+ * replace a longer compatible person or entity name from the raw prompt.
+ */
+export function mergeCompatibleLexaraBackgroundSubjects(
+  primary: LexaraBackgroundSubject | null | undefined,
+  alternate: LexaraBackgroundSubject | null | undefined,
+): LexaraBackgroundSubject | null {
+  if (!primary) return alternate || null;
+  if (!alternate) return primary;
+
+  const primaryTokens = normalizedSubjectTokens(primary.name);
+  const alternateTokens = normalizedSubjectTokens(alternate.name);
+  const exact = primaryTokens.join(' ') === alternateTokens.join(' ');
+  const sameFirstLast = primaryTokens.length >= 2 && alternateTokens.length >= 2
+    && primaryTokens[0] === alternateTokens[0]
+    && primaryTokens[primaryTokens.length - 1] === alternateTokens[alternateTokens.length - 1];
+  const primarySubset = primaryTokens.length >= 2
+    && primaryTokens.length < alternateTokens.length
+    && primaryTokens.every(token => alternateTokens.includes(token));
+  const alternateSubset = alternateTokens.length >= 2
+    && alternateTokens.length < primaryTokens.length
+    && alternateTokens.every(token => primaryTokens.includes(token));
+
+  if (!exact && !sameFirstLast && !primarySubset && !alternateSubset) return primary;
+
+  const mostSpecific = alternateTokens.length > primaryTokens.length ? alternate : primary;
+  return {
+    ...primary,
+    name: mostSpecific.name,
+    kind: mostSpecific.kind || primary.kind,
+    location: alternate.location || primary.location,
+    identifiable: primary.identifiable || alternate.identifiable,
+  };
+}
 export function resolveLexaraBackgroundSubject(
   prompt: string,
   previousUserTurns: readonly string[] = [],
