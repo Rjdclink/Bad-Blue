@@ -42,6 +42,7 @@ const placeContext = read('server/services/spectra/SpectraPlaceContext.ts');
 const publicRetrieval = read('server/services/spectra/SpectraPublicRetrieval.ts');
 const cameraDirectories = read('server/services/spectra/SpectraCameraDirectoryAdapters.ts');
 const motionContext = read('server/services/spectra/SpectraMotionContext.ts');
+const monteCarlo = read('server/services/geoconsole/monteCarloPathEngine.ts');
 const lexaraConversation = read('client/src/components/LexaraConversation.tsx');
 const spectraMigration = read('server/migrations/064_spectra_durable_observations.sql');
 const motionContextMigration = read('server/migrations/067_spectra_motion_context.sql');
@@ -399,7 +400,30 @@ test('Motion-context schema is packaged after the existing SPECTRA 065/066 migra
 test('Aggregate camera traffic context never becomes a target location observation',
   geoconsoleRoutes.includes("contextKind: 'aggregate_traffic_flow'") &&
   !motionContext.includes('spectra_location_observations') &&
-  !routes.includes('motionContextApplied'));
+  !routes.includes('observations.push(...motionContext') &&
+  !geoconsoleRoutes.includes('spectra_location_observations') === false);
+test('Aggregate vehicle-flow context can refine Futurecast only behind a vehicle-motion gate',
+  geoconsoleRoutes.includes('loadSpectraMotionContext') &&
+  geoconsoleRoutes.includes('motionContextApplied') &&
+  monteCarlo.includes('const likelyVehicleMotion = usable.some(vehicleClass)') &&
+  monteCarlo.includes('motionContextInfluence = Math.min(0.35') &&
+  monteCarlo.includes('motionContextCongestionRatio') &&
+  runtime.includes('sessionId: sessionId || configuredSessionId || undefined'));
+test('WorldCam discovery is additive and camera-directory integration stays provider-neutral',
+  spectraSources.includes("sourceId") &&
+  spectraSources.includes("'worldcam-directory'") &&
+  spectraSources.includes('site:worldcam.io webcam camera live') &&
+  cameraDirectories.includes('SPECTRA_CAMERA_JSON_FEEDS') &&
+  adapterRegistry.includes("id: 'external-camera-json'"));
+test('Generic vehicle/camera feeds preserve track identity and velocity context',
+  genericPull.includes('trackIdPath?: string') &&
+  genericPull.includes('cameraIdPath?: string') &&
+  genericPull.includes('objectClassPath?: string') &&
+  genericPull.includes('speedPath?: string') &&
+  genericPull.includes('headingPath?: string') &&
+  geoconsoleRoutes.includes('trackId: z.string()') &&
+  geoconsoleRoutes.includes('cameraId: z.string()') &&
+  geoconsoleRoutes.includes('objectClass: z.string()'));
 test('SPECTRA API is mounted',
   serverRoutes.includes("app.use('/api/spectra', spectraRoutes.default)"));
 
