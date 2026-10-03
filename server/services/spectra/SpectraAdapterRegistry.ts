@@ -326,6 +326,16 @@ export const SPECTRA_ADAPTER_CAPABILITIES: SpectraAdapterCapability[] = [
     notes: 'Normalizes AWS IoT GeoJSON positions with measurement type, horizontal/vertical accuracy and resolver timestamp.',
   },
   {
+    id: 'arcore-geospatial-pose-ingest',
+    label: 'ARCore Geospatial / VPS ingest',
+    mode: 'provider-webhook',
+    sourceTypes: ['visual_positioning'],
+    configured: () => anyEnv('SPECTRA_TELEMETRY_HMAC_SECRET'),
+    priority: 'critical',
+    supportsRealtime: true,
+    notes: 'Normalizes ARCore GeospatialPose/VPS latitude, longitude, altitude and calibrated 68%-radius accuracy into SPECTRA.',
+  },
+  {
     id: 'connected-vehicle-location-ingest',
     label: 'Connected vehicle location ingest',
     mode: 'provider-webhook',
