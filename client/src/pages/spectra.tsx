@@ -331,11 +331,35 @@ export default function SpectraPage() {
     detailsValue: string,
     extraEvidence: GPSPoint[] = directEvidence,
     sessionOverride?: string,
-  ) => {
+    options: AcquireTargetOptions = {},
+  ): Promise<AcquisitionResponse | null> => {
+    const backgroundPass = options.backgroundPass === true;
+
+    if (!backgroundPass && activeAcquisitionAbortRef.current) {
+      activeAcquisitionAbortRef.current.abort(new Error('SPECTRA foreground acquisition superseded the background pass.'));
+      activeAcquisitionAbortRef.current = null;
+    }
+
     const requestId = ++requestRef.current;
-    setPhase('acquiring');
-    setLastError(null);
-    setAcquisitionStage('Resolving supplied location context…');
+    const resolvedSessionId =
+      sessionOverride ||
+      spectraSessionIdRef.current ||
+      createSpectraSessionId();
+
+    if (spectraSessionIdRef.current !== resolvedSessionId) {
+      spectraSessionIdRef.current = resolvedSessionId;
+      setSpectraSessionId(resolvedSessionId);
+    }
+
+    if (!backgroundPass) {
+      setPhase('acquiring');
+      setLastError(null);
+      setAcquisitionStage('Resolving supplied location context…');
+    } else {
+      setAcquisitionStage(
+        `Continuous recursive acquisition · pass ${Math.max(1, options.recursivePass || 1)}`,
+      );
+    }
 
     // Put evidence already in hand on the map immediately. Deep discovery may
     // take substantially longer, but the viewer should never lose verified
@@ -363,51 +387,55 @@ export default function SpectraPage() {
       });
     }
 
-    const previewRegionPromise = (async () => {
-      for (const locationText of [detailsValue, targetValue]) {
-        if (!locationText.trim()) continue;
-        try {
-          const previewResponse = await fetch('/api/geoconsole/geocode-city-state', {
-            method: 'POST',
-            credentials: 'include',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ location: locationText }),
-          });
-          const previewPayload = await previewResponse.json().catch(() => ({}));
-          if (
-            requestId !== requestRef.current ||
-            !previewResponse.ok ||
-            previewPayload?.success !== true
-          ) {
-            continue;
-          }
+    const previewRegionPromise = backgroundPass
+      ? Promise.resolve()
+      : (async () => {
+          for (const locationText of [detailsValue, targetValue]) {
+            if (!locationText.trim()) continue;
+            try {
+              const previewResponse = await fetch('/api/geoconsole/geocode-city-state', {
+                method: 'POST',
+                credentials: 'include',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ location: locationText }),
+                signal: options.signal,
+              });
+              const previewPayload = await previewResponse.json().catch(() => ({}));
+              if (
+                requestId !== requestRef.current ||
+                !previewResponse.ok ||
+                previewPayload?.success !== true
+              ) {
+                continue;
+              }
 
-          const region = previewPayload.data;
-          if (
-            Number.isFinite(Number(region?.latitude)) &&
-            Number.isFinite(Number(region?.longitude))
-          ) {
-            setCandidateLocations([{
-              latitude: Number(region.latitude),
-              longitude: Number(region.longitude),
-              label: String(region.displayName || locationText),
-              confidence: 0.25,
-              basis: 'regional_context',
-              accuracyMeters: Number.isFinite(Number(region.accuracyMeters))
-                ? Number(region.accuracyMeters)
-                : 25_000,
-            }]);
-            setAcquisitionStage('Regional context mapped; broadening identity discovery…');
-            return;
+              const region = previewPayload.data;
+              if (
+                Number.isFinite(Number(region?.latitude)) &&
+                Number.isFinite(Number(region?.longitude))
+              ) {
+                setCandidateLocations([{
+                  latitude: Number(region.latitude),
+                  longitude: Number(region.longitude),
+                  label: String(region.displayName || locationText),
+                  confidence: 0.25,
+                  basis: 'regional_context',
+                  accuracyMeters: Number.isFinite(Number(region.accuracyMeters))
+                    ? Number(region.accuracyMeters)
+                    : 25_000,
+                }]);
+                setAcquisitionStage('Regional context mapped; broadening identity discovery…');
+                return;
+              }
+            } catch (error) {
+              if (options.signal?.aborted) return;
+              // Regional preview is advisory and must never block deeper discovery.
+            }
           }
-        } catch {
-          // Regional preview is advisory and must never block deeper discovery.
-        }
-      }
-      if (requestId === requestRef.current) {
-        setAcquisitionStage('Broadening identity and source discovery…');
-      }
-    })();
+          if (requestId === requestRef.current) {
+            setAcquisitionStage('Broadening identity and source discovery…');
+          }
+        })();
 
     try {
       void previewRegionPromise;
@@ -415,11 +443,14 @@ export default function SpectraPage() {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
+        signal: options.signal,
         body: JSON.stringify({
           target: targetValue,
           details: detailsValue,
-          sessionId: sessionOverride || spectraSessionId || undefined,
+          sessionId: resolvedSessionId,
           originSessionId: originLexaraSessionIdRef.current || undefined,
+          queryStartedAt: options.queryStartedAt || queryStartedAtRef.current,
+          recursivePass: Math.max(0, options.recursivePass || 0),
           directEvidence: extraEvidence.map(point => ({
             ...point,
             timestamp: new Date(point.timestamp).toISOString(),
@@ -438,8 +469,8 @@ export default function SpectraPage() {
         }),
       });
 
-      const payload = await response.json() as AcquisitionResponse;
-      if (requestId !== requestRef.current) return;
+      const payload = await response.json().catch(() => ({})) as AcquisitionResponse;
+      if (requestId !== requestRef.current) return null;
 
       if (!response.ok || !payload.success) {
         throw new Error(payload.error || 'Target acquisition failed.');
@@ -478,37 +509,65 @@ export default function SpectraPage() {
       );
       setSourceCount(payload.acquisition?.sourceCount ?? 0);
       if (typeof payload.sessionId === 'string' && payload.sessionId.trim()) {
-        setSpectraSessionId(payload.sessionId.trim());
+        const returnedSessionId = payload.sessionId.trim();
+        spectraSessionIdRef.current = returnedSessionId;
+        setSpectraSessionId(returnedSessionId);
       }
-      setPhase('active');
 
-      const certainty = points.length > 0 || canonicalLocationConfidence > 0
-        ? Math.round(canonicalLocationConfidence * 100)
-        : null;
+      if (!backgroundPass) {
+        setPhase('active');
+      } else {
+        setLastError(null);
+        setAcquisitionStage(
+          `Continuous recursive acquisition · pass ${Math.max(1, options.recursivePass || 1)} complete`,
+        );
+      }
 
-      const regionalCandidates = Array.isArray(payload.candidateLocations)
-        ? payload.candidateLocations
-        : [];
-      const resolvedTarget = payload.resolvedTargetLabel?.trim() || targetValue;
-      const responseText = points.length > 0
-        ? `I acquired ${points.length} timestamped location observation${points.length === 1 ? '' : 's'} for ${resolvedTarget}. The map is updated${certainty !== null ? ` with ${certainty}% location-evidence confidence` : ''}.`
-        : regionalCandidates.length > 0
-          ? `I found a regional location candidate for ${resolvedTarget} and placed it on the map. I do not yet have timestamped coordinate evidence for a movement track.`
-          : `I completed the current discovery pass for ${resolvedTarget} across ${payload.acquisition?.sourceCount ?? 0} distinct source group${(payload.acquisition?.sourceCount ?? 0) === 1 ? '' : 's'}, but I do not yet have timestamped coordinate evidence strong enough to place the target precisely on the map.`;
+      if (!backgroundPass) {
+        const certainty = points.length > 0 || canonicalLocationConfidence > 0
+          ? Math.round(canonicalLocationConfidence * 100)
+          : null;
 
-      addMessage('spectra', responseText);
-      speakIfEnabled(responseText);
+        const regionalCandidates = Array.isArray(payload.candidateLocations)
+          ? payload.candidateLocations
+          : [];
+        const resolvedTarget = payload.resolvedTargetLabel?.trim() || targetValue;
+        const responseText = points.length > 0
+          ? `I acquired ${points.length} timestamped location observation${points.length === 1 ? '' : 's'} for ${resolvedTarget}. The map is updated${certainty !== null ? ` with ${certainty}% location-evidence confidence` : ''}.`
+          : regionalCandidates.length > 0
+            ? `I found a regional location candidate for ${resolvedTarget} and placed it on the map. I do not yet have timestamped coordinate evidence for a movement track.`
+            : `I completed the current discovery pass for ${resolvedTarget} across ${payload.acquisition?.sourceCount ?? 0} distinct source group${(payload.acquisition?.sourceCount ?? 0) === 1 ? '' : 's'}, but I do not yet have timestamped coordinate evidence strong enough to place the target precisely on the map.`;
+
+        addMessage('spectra', responseText);
+        speakIfEnabled(responseText);
+      }
+
+      return payload;
     } catch (error) {
-      if (requestId !== requestRef.current) return;
+      if (
+        options.signal?.aborted ||
+        (error instanceof DOMException && error.name === 'AbortError')
+      ) {
+        return null;
+      }
+      if (requestId !== requestRef.current) return null;
+
       const message = error instanceof Error ? error.message : 'Target acquisition failed.';
+      if (backgroundPass) {
+        setLastError(message);
+        setAcquisitionStage('Continuous acquisition retrying…');
+        return null;
+      }
+
       setLastError(message);
       setAcquisitionStage('Acquisition needs additional information');
       setPhase('error');
       const responseText = 'I could not complete that acquisition. Give me corrected or additional target information and I will try again.';
       addMessage('spectra', responseText);
       speakIfEnabled(responseText);
+      return null;
     }
-  }, [addMessage, directEvidence, speakIfEnabled, spectraSessionId]);
+  }, [addMessage, directEvidence, speakIfEnabled]);
 
   useEffect(() => {
     const launch = lexaraLaunchRef.current;
