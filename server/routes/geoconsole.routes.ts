@@ -942,6 +942,32 @@ async function persistTelemetryBatch(input: {
   try {
     await client.query('BEGIN');
 
+    const existingSession = await client.query(
+      `SELECT user_id, subject_label
+       FROM public.spectra_investigations
+       WHERE session_id = $1
+       FOR UPDATE`,
+      [input.sessionId],
+    );
+    if (existingSession.rows.length && input.userId) {
+      const existingUserId = String(existingSession.rows[0]?.user_id || '');
+      if (existingUserId && existingUserId !== input.userId) {
+        throw new Error('SPECTRA telemetry session ownership mismatch');
+      }
+
+      const existingSubject = String(existingSession.rows[0]?.subject_label || '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .toLowerCase();
+      const incomingSubject = String(input.batch.subjectLabel || '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .toLowerCase();
+      if (existingSubject && incomingSubject && existingSubject !== incomingSubject) {
+        throw new Error('SPECTRA telemetry session subject mismatch');
+      }
+    }
+
     const investigationResult = await client.query(
       `INSERT INTO public.spectra_investigations
         (user_id, subject_label, session_id, clues, state)
