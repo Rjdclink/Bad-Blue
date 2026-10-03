@@ -462,6 +462,13 @@ function measurement(batch: ReturnType<typeof normalizeSpectraProviderPayload>, 
             carrierFrequencyHz: 1575420000,
             cn0DbHz: 38,
             multipathIndicator: 2,
+            measurementCorrection: {
+              probabilityLineOfSight: 0.98,
+              excessPathLengthMeters: 0.2,
+              excessPathLengthUncertaintyMeters: 0.05,
+              reflectingPlane: { latitudeDegrees: 43.54 },
+            },
+            correlationVectors: [{ samplingWidthMeters: 0.5 }],
           },
           {
             svid: 3,
@@ -518,6 +525,9 @@ function measurement(batch: ReturnType<typeof normalizeSpectraProviderPayload>, 
   assert.equal(raw.metadata.integrity.carrierPhaseReady, true);
   assert.equal(raw.metadata.integrity.dualFrequencyReady, true);
   assert.equal(raw.metadata.integrity.multiConstellationReady, true);
+  assert.ok(raw.metadata.integrity.measurementCorrectionCoverage > 0);
+  assert.equal(raw.metadata.integrity.meanLineOfSightProbability, 0.98);
+  assert.equal(raw.metadata.integrity.correlationVectorSatelliteCount, 1);
   assert.ok(raw.metadata.integrity.integrityScore > 0.8);
 }
 
