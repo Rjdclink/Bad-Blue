@@ -343,6 +343,40 @@ function stableJson(value: unknown): string {
   ).join(',')}}`;
 }
 
+function infrastructureWebhookAuthorized(req: Request, providerId: string): boolean {
+  const raw = String(process.env.SPECTRA_INFRASTRUCTURE_WEBHOOK_AUTH || '').trim();
+  if (!raw || !providerId) return false;
+
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return false;
+    const entry = parsed.find((item: any) =>
+      String(item?.providerId || '').trim().toLowerCase() === providerId.toLowerCase()
+    );
+    if (!entry) return false;
+
+    const headerName = String(entry?.header || 'authorization').trim().toLowerCase();
+    const tokenEnv = String(entry?.tokenEnv || '').trim();
+    if (!headerName || !tokenEnv) return false;
+
+    const expectedRaw = String(process.env[tokenEnv] || '').trim();
+    if (!expectedRaw) return false;
+
+    const actualRaw = String(req.header(headerName) || '').trim();
+    if (!actualRaw) return false;
+
+    const expected = /^authorization$/i.test(headerName) && !/^(?:Bearer|Basic)\s+/i.test(expectedRaw)
+      ? `Bearer ${expectedRaw}`
+      : expectedRaw;
+    const actualBuffer = Buffer.from(actualRaw, 'utf8');
+    const expectedBuffer = Buffer.from(expected, 'utf8');
+    return actualBuffer.length === expectedBuffer.length
+      && timingSafeEqual(actualBuffer, expectedBuffer);
+  } catch {
+    return false;
+  }
+}
+
 function providerTelemetryAuthorized(req: Request): boolean {
   const secret = String(process.env.SPECTRA_TELEMETRY_HMAC_SECRET || '').trim();
   if (!secret) return false;
@@ -1454,6 +1488,61 @@ router.post('/traffic-context/provider/:providerId', async (req: Request, res: R
       attempted: validation.data.contexts.length,
     },
   });
+});
+
+router.post('/telemetry/infrastructure/:providerId/normalize/:kind', async (req: Request, res: Response) => {
+  const providerId = String(req.params.providerId || '').trim().slice(0, 200);
+  const kind = String(req.params.kind || '').trim() as SpectraProviderNormalizerKind;
+
+  if (!providerId || !SPECTRA_PROVIDER_NORMALIZER_KINDS.includes(kind)) {
+    return res.status(400).json({ success: false, error: 'Unsupported infrastructure telemetry normalizer.' });
+  }
+  if (!infrastructureWebhookAuthorized(req, providerId)) {
+    return res.status(401).json({ success: false, error: 'Invalid infrastructure webhook credentials.' });
+  }
+
+  let normalized;
+  try {
+    normalized = normalizeSpectraProviderPayload(kind, providerId, req.body);
+  } catch (error) {
+    return res.status(400).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Infrastructure telemetry could not be normalized.',
+    });
+  }
+
+  const validation = telemetryBatchSchema.safeParse(normalized);
+  if (!validation.success) {
+    return res.status(400).json({
+      success: false,
+      error: 'Normalized infrastructure telemetry did not match the canonical SPECTRA schema.',
+      details: validation.error.errors,
+    });
+  }
+
+  try {
+    const processed = await processSpectraTelemetryBatch(validation.data, true, undefined, providerId);
+    return res.json({
+      success: true,
+      data: {
+        normalizer: kind,
+        providerId,
+        sessionId: processed.sessionId,
+        inputCount: processed.inputCount,
+        positionCount: processed.positionCount,
+        contextOnlyCount: processed.contextOnlyCount,
+        persistence: processed.persistence,
+        liveAssessment: processed.liveAssessment,
+      },
+    });
+  } catch (error) {
+    log.warn('SPECTRA infrastructure webhook processing failed', {
+      providerId,
+      kind,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return res.status(500).json({ success: false, error: 'Infrastructure telemetry processing failed.' });
+  }
 });
 
 router.post('/telemetry/provider/:providerId/normalize/:kind', async (req: Request, res: Response) => {
