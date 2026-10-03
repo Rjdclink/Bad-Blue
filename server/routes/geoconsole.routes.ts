@@ -1929,6 +1929,10 @@ async function runStructuredTelemetryImport(input: {
       point: signServerEvidence(location.point),
     })) || [],
     futurecast: processed.result?.futurecast.map(signServerEvidence) || [],
+    trajectory: processed.result ? {
+      states: processed.result.trajectory.states.map(signServerEvidence),
+      diagnostics: processed.result.trajectory.diagnostics,
+    } : null,
     liveAssessment: processed.liveAssessment,
     inputQuality: {
       acceptedCount: processed.quality.acceptedCount,
@@ -2113,6 +2117,10 @@ router.post('/telemetry/pull/:adapterId', async (req: Request, res: Response) =>
           point: signServerEvidence(location.point),
         })) || [],
         futurecast: processed.result?.futurecast.map(signServerEvidence) || [],
+        trajectory: processed.result ? {
+          states: processed.result.trajectory.states.map(signServerEvidence),
+          diagnostics: processed.result.trajectory.diagnostics,
+        } : null,
         liveAssessment: processed.liveAssessment,
         inputQuality: {
           acceptedCount: processed.quality.acceptedCount,
@@ -2159,6 +2167,10 @@ router.post('/telemetry-ingest', async (req: Request, res: Response) => {
         })) || [],
         trail: processed.result?.trail || null,
         futurecast: processed.result?.futurecast.map(signServerEvidence) || [],
+        trajectory: processed.result ? {
+          states: processed.result.trajectory.states.map(signServerEvidence),
+          diagnostics: processed.result.trajectory.diagnostics,
+        } : null,
         liveAssessment: processed.liveAssessment,
         inputQuality: {
           acceptedCount: processed.quality.acceptedCount,
