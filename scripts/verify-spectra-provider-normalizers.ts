@@ -308,6 +308,149 @@ function measurement(batch: ReturnType<typeof normalizeSpectraProviderPayload>, 
 
 {
   const batch = normalizeSpectraProviderPayload(
+    'gnss-precision-solution',
+    'rtk-rover',
+    {
+      solutions: [{
+        timestamp: '2026-10-02T20:59:55Z',
+        latitude: 43.5446002,
+        longitude: -96.7311001,
+        solutionType: 'RTK Fixed',
+        horizontalAccuracyMeters: 0.025,
+        verticalAccuracyMeters: 0.05,
+        accuracyConfidenceLevel: 0.95,
+        ambiguityRatio: 4.8,
+        ambiguitiesFixed: true,
+        baselineMeters: 5400,
+        satellitesUsed: 19,
+        hdop: 0.7,
+        corrections: {
+          transport: 'NTRIP',
+          format: 'RTCM3',
+          ageSeconds: 0.8,
+          mountpoint: 'VRS_NEAR',
+          rtcmMessages: [1005, 1077, 1087, 1097, 1127, 1230],
+        },
+        integrity: {
+          horizontalProtectionLevelMeters: 0.08,
+          verticalProtectionLevelMeters: 0.15,
+        },
+        covariance: {
+          eastVariance: 0.0001,
+          northVariance: 0.0001,
+          eastNorthCovariance: 0,
+        },
+      }],
+    },
+  );
+  const position = measurement(batch, 0);
+  const correction = measurement(batch, 1);
+  assert.equal(position.kind, 'position');
+  assert.equal(position.source, 'gnss_fix');
+  assert.equal(position.metadata.solutionType, 'rtk-fixed');
+  assert.equal(position.metadata.correctionTransport, 'NTRIP');
+  assert.equal(position.metadata.correctionFormat, 'RTCM3');
+  assert.equal(position.metadata.ambiguitiesFixed, true);
+  assert.equal(position.metadata.horizontalProtectionLevelMeters, 0.08);
+  assert.equal(correction.kind, 'sensor');
+  assert.equal(correction.source, 'gnss_corrections');
+  assert.equal(correction.values.correctionAgeSeconds, 0.8);
+}
+
+{
+  const batch = normalizeSpectraProviderPayload(
+    'android-raw-gnss',
+    'android-integrity',
+    {
+      epochs: [{
+        timestamp: '2026-10-02T20:59:55Z',
+        clock: {
+          timeNanos: 1234567890,
+          fullBiasNanos: -1230000000,
+          biasUncertaintyNanos: 4,
+          timeUncertaintyNanos: 2,
+          hardwareClockDiscontinuityCount: 3,
+        },
+        previousHardwareClockDiscontinuityCount: 3,
+        automaticGainControls: [{
+          carrierFrequencyHz: 1575420000,
+          levelDb: 12,
+        }, {
+          carrierFrequencyHz: 1176450000,
+          levelDb: 13,
+        }],
+        satellites: [
+          {
+            svid: 1,
+            constellationType: 1,
+            state: 16385,
+            accumulatedDeltaRangeState: 9,
+            accumulatedDeltaRangeMeters: 100.1,
+            accumulatedDeltaRangeUncertaintyMeters: 0.02,
+            carrierFrequencyHz: 1575420000,
+            cn0DbHz: 38,
+            multipathIndicator: 2,
+          },
+          {
+            svid: 3,
+            constellationType: 1,
+            state: 16385,
+            accumulatedDeltaRangeState: 9,
+            accumulatedDeltaRangeMeters: 101.1,
+            accumulatedDeltaRangeUncertaintyMeters: 0.02,
+            carrierFrequencyHz: 1176450000,
+            cn0DbHz: 37,
+            multipathIndicator: 2,
+          },
+          {
+            svid: 8,
+            constellationType: 6,
+            state: 16385,
+            accumulatedDeltaRangeState: 9,
+            accumulatedDeltaRangeMeters: 102.1,
+            accumulatedDeltaRangeUncertaintyMeters: 0.03,
+            carrierFrequencyHz: 1575420000,
+            cn0DbHz: 36,
+            multipathIndicator: 2,
+          },
+          {
+            svid: 12,
+            constellationType: 6,
+            state: 16385,
+            accumulatedDeltaRangeState: 9,
+            accumulatedDeltaRangeMeters: 103.1,
+            accumulatedDeltaRangeUncertaintyMeters: 0.03,
+            carrierFrequencyHz: 1176450000,
+            cn0DbHz: 35,
+            multipathIndicator: 2,
+          },
+          {
+            svid: 18,
+            constellationType: 3,
+            state: 16385,
+            accumulatedDeltaRangeState: 9,
+            accumulatedDeltaRangeMeters: 104.1,
+            accumulatedDeltaRangeUncertaintyMeters: 0.04,
+            carrierFrequencyHz: 1575420000,
+            cn0DbHz: 34,
+            multipathIndicator: 2,
+          },
+        ],
+      }],
+    },
+  );
+  const raw = measurement(batch, 0);
+  assert.equal(raw.source, 'gnss_raw');
+  assert.equal(raw.metadata.integrity.validTrackingCount, 5);
+  assert.equal(raw.metadata.integrity.usableAdrCount, 5);
+  assert.equal(raw.metadata.integrity.carrierPhaseReady, true);
+  assert.equal(raw.metadata.integrity.dualFrequencyReady, true);
+  assert.equal(raw.metadata.integrity.multiConstellationReady, true);
+  assert.ok(raw.metadata.integrity.integrityScore > 0.8);
+}
+
+{
+  const batch = normalizeSpectraProviderPayload(
     'apple-nearby-interaction',
     'ios-nearby-interaction',
     {
@@ -691,6 +834,7 @@ for (const kind of [
   'android-ranging-manager',
   'android-cellular',
   'android-raw-gnss',
+  'gnss-precision-solution',
   'apple-nearby-interaction',
   'android-radio-collector',
   'ble-gateway',
