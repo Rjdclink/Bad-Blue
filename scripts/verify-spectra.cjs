@@ -557,7 +557,7 @@ test('CAMARA verification and reachability remain corroboration context rather t
   externalLocationNormalizer.includes("'network_reachability'") &&
   geoconsoleRoutes.includes("'location_verification', 'network_reachability'"));
 test('SPECTRA live confidence is posterior/covariance driven with no hard-coded 99 percent gate',
-  routes.includes('assessSpectraLiveLocation(qualityLocationObservations)') &&
+  routes.includes('assessSpectraLiveLocation(solvedLocationObservations)') &&
   routes.includes('liveLocationAssessment.confidenceScore') &&
   routes.includes('liveLocationRadius99Meters') &&
   liveConfidence.includes('radiusToSigma') &&
@@ -580,6 +580,20 @@ test('SPECTRA live confidence is posterior/covariance driven with no hard-coded 
   !liveConfidence.includes('exceedsNinetyNinePercent') &&
   !liveConfidence.includes('strongConsensus.length < 3') &&
   !liveConfidence.includes('precisionFamilyCount < 2'));
+test('Main SPECTRA acquisition uses the constraint solver before fusion confidence and persistence',
+  routes.includes("import { solveSpectraConstraintLayer } from '../services/spectra/SpectraConstraintSolver'") &&
+  routes.includes('const constraintSolution = solveSpectraConstraintLayer(qualityLocationObservations)') &&
+  routes.includes('const solvedLocationObservations = constraintSolution.points') &&
+  routes.includes('inputFusionEngine.fuseInputs(solvedLocationObservations)') &&
+  routes.includes('assessSpectraLiveLocation(solvedLocationObservations)') &&
+  routes.includes('observations: solvedLocationObservations') &&
+  routes.includes('constraintSolverDiagnostics: constraintSolution.diagnostics'));
+test('Telemetry persistence and realtime publish the same constrained points used by posterior and Futurecast',
+  geoconsoleRoutes.includes('const constrainedPoints = constraintSolution.points') &&
+  geoconsoleRoutes.includes('assessSpectraLiveLocation(constrainedPoints)') &&
+  geoconsoleRoutes.includes('hybridGeoconsole.processLocationData(constrainedPoints, sessionId)') &&
+  geoconsoleRoutes.includes('points: constrainedPoints'));
+
 test('Carrier identity bindings are persisted, reloaded and fused conservatively with spatial confidence',
   acquisitionPersistence.includes('loadSpectraSessionIdentityBindings') &&
   acquisitionPersistence.includes("measurement.source !== 'identity_binding'") &&
