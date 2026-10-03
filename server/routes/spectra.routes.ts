@@ -38,9 +38,11 @@ import {
   SPECTRA_DISCOVERY_POLICY,
 } from '../services/spectra/SpectraSourceRegistry';
 import {
+  loadSpectraSessionIdentityBindings,
   loadSpectraSessionObservations,
   persistSpectraAcquisition,
 } from '../services/spectra/SpectraAcquisitionPersistence';
+import { assessSpectraIdentityBinding } from '../services/spectra/SpectraIdentityBinding';
 import { acquireSpectraPlaceContext } from '../services/spectra/SpectraPlaceContext';
 import { retrieveSpectraPublicEvidence } from '../services/spectra/SpectraPublicRetrieval';
 import { assessSpectraLiveLocation } from '../services/spectra/SpectraLiveConfidence';
@@ -808,6 +810,9 @@ router.post('/acquire', async (req: Request, res: Response) => {
     const persistedObservationsPromise = requestedSessionId
       ? loadSpectraSessionObservations(userId, requestedSessionId).catch(() => [])
       : Promise.resolve([] as GPSPoint[]);
+    const identityBindingsPromise = requestedSessionId
+      ? loadSpectraSessionIdentityBindings(userId, requestedSessionId).catch(() => [])
+      : Promise.resolve([]);
 
     const semanticSubject = resolveLexaraBackgroundSubject(
       [target, details].filter(Boolean).join('. '),
@@ -845,10 +850,16 @@ router.post('/acquire', async (req: Request, res: Response) => {
       location: semanticSubject?.location || details,
     });
 
-    const [backgroundOutcome, firstPass, persistedObservations] = await Promise.all([
+    const [
+      backgroundOutcome,
+      firstPass,
+      persistedObservations,
+      identityBindingEvidence,
+    ] = await Promise.all([
       backgroundPromise,
       firstPassPromise,
       persistedObservationsPromise,
+      identityBindingsPromise,
     ]);
 
     const background = backgroundOutcome.status === 'fulfilled'
@@ -1104,6 +1115,12 @@ router.post('/acquire', async (req: Request, res: Response) => {
     const identityConfidence = Number.isFinite(confidenceRaw)
       ? Math.max(0, Math.min(1, confidenceRaw > 1 ? confidenceRaw / 100 : confidenceRaw))
       : 0;
+    const identityBindingAssessment = assessSpectraIdentityBinding({
+      baselineIdentityConfidence: identityConfidence,
+      targetIsPhone,
+      evidence: identityBindingEvidence,
+    });
+    const boundIdentityConfidence = identityBindingAssessment.confidence;
     const latestFusedTimestamp = fusedLocationEvidence.reduce(
       (latest, location) => Math.max(latest, location.point.timestamp.getTime()),
       Number.NEGATIVE_INFINITY,
@@ -1134,7 +1151,7 @@ router.post('/acquire', async (req: Request, res: Response) => {
     // evidence dimensions and report the conservative joint confidence.
     const subjectLiveLocationConfidence = Math.max(
       0,
-      Math.min(1, identityConfidence * locationConfidence),
+      Math.min(1, boundIdentityConfidence * locationConfidence),
     );
 
     const sourceKeys = new Set<string>();
@@ -1204,6 +1221,9 @@ router.post('/acquire', async (req: Request, res: Response) => {
       observations: qualityLocationObservations,
       state: {
         identityConfidence,
+        boundIdentityConfidence,
+        identityBindingEvidenceCount: identityBindingAssessment.evidenceCount,
+        identityBindingProviders: identityBindingAssessment.providers,
         locationConfidence,
         liveLocationStatus: liveLocationAssessment.status,
         liveLocationConfidence: liveLocationAssessment.confidenceScore,
@@ -1243,6 +1263,8 @@ router.post('/acquire', async (req: Request, res: Response) => {
       persistenceAvailable: persistence.available,
       acquisition: {
         identityConfidence,
+        boundIdentityConfidence,
+        identityBindingEvidenceCount: identityBindingAssessment.evidenceCount,
         locationConfidence,
         liveLocationStatus: liveLocationAssessment.status,
         liveLocationConfidence: liveLocationAssessment.confidenceScore,
@@ -1275,6 +1297,7 @@ router.post('/acquire', async (req: Request, res: Response) => {
       candidateLocations,
       contextEvidence,
       liveLocationAssessment,
+      identityBindingAssessment,
       evidence: {
         contactInformation: report.contactInformation || [],
         locationHistory: report.locationHistory || [],
