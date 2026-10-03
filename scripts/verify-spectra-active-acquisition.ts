@@ -8,9 +8,6 @@ import { normalizeSpectraProviderPayload } from '../server/services/spectra/Spec
 
 const originalFetch = globalThis.fetch;
 const savedEnv = {
-  camaraUrl: process.env.SPECTRA_CAMARA_LOCATION_RETRIEVAL_URL,
-  camaraToken: process.env.SPECTRA_CAMARA_LOCATION_RETRIEVAL_TOKEN,
-  camaraMaxAge: process.env.SPECTRA_CAMARA_MAX_AGE_SECONDS,
   ciscoUrl: process.env.SPECTRA_CISCO_SPACES_DEVICE_URL_TEMPLATE,
   ciscoToken: process.env.SPECTRA_CISCO_SPACES_TOKEN,
   activeAdapters: process.env.SPECTRA_ACTIVE_PROVIDER_ADAPTERS,
@@ -23,55 +20,51 @@ function restoreEnv(name: string, value: string | undefined) {
 }
 
 try {
-  process.env.SPECTRA_CAMARA_LOCATION_RETRIEVAL_URL =
-    'https://carrier.example/location-retrieval/v1/retrieve';
-  process.env.SPECTRA_CAMARA_LOCATION_RETRIEVAL_TOKEN = 'fixture-token';
-  process.env.SPECTRA_CAMARA_MAX_AGE_SECONDS = '30';
-  delete process.env.SPECTRA_CISCO_SPACES_DEVICE_URL_TEMPLATE;
-  delete process.env.SPECTRA_CISCO_SPACES_TOKEN;
+  process.env.SPECTRA_CISCO_SPACES_DEVICE_URL_TEMPLATE =
+    'https://dnaspaces.example/api/location/v1/clients/{{deviceRef}}';
+  process.env.SPECTRA_CISCO_SPACES_TOKEN = 'fixture-cisco-token';
   process.env.SPECTRA_ACTIVE_PROVIDER_ADAPTERS = '[]';
 
-  let camaraCalled = false;
   globalThis.fetch = async (input: any, init?: RequestInit) => {
-    const url = String(input);
-    assert.equal(url, 'https://carrier.example/location-retrieval/v1/retrieve');
-    assert.equal(init?.method, 'POST');
-    assert.equal((init?.headers as Record<string, string>)?.Authorization, 'Bearer fixture-token');
-    const body = JSON.parse(String(init?.body || '{}'));
-    assert.equal(body.device.phoneNumber, '+17125550100');
-    assert.equal(body.maxAge, 30);
-    camaraCalled = true;
+    assert.equal(
+      String(input),
+      'https://dnaspaces.example/api/location/v1/clients/00%3A11%3A22%3A33%3A44%3A55',
+    );
+    assert.equal(init?.method, 'GET');
+    assert.equal(
+      (init?.headers as Record<string, string>)?.Authorization,
+      'Bearer fixture-cisco-token',
+    );
     return new Response(JSON.stringify({
-      lastLocationTime: '2026-10-03T15:00:00Z',
-      area: {
-        areaType: 'CIRCLE',
-        center: { latitude: 43.55, longitude: -96.73 },
-        radius: 120,
+      eventType: 'DEVICE_LOCATION_UPDATE',
+      timestamp: '2026-10-03T15:00:00Z',
+      macAddress: '00:11:22:33:44:55',
+      location: {
+        latitude: 43.55,
+        longitude: -96.73,
+        accuracy: 18,
       },
-      device: { phoneNumber: '+17125550100' },
     }), {
       status: 200,
       headers: { 'Content-Type': 'application/json' },
     });
   };
 
-  const camara = await acquireSpectraActiveTelemetry({
-    phoneNumber: '(712) 555-0100',
+  const cisco = await acquireSpectraActiveTelemetry({
+    deviceRef: '00:11:22:33:44:55',
     sessionId: 'fixture-session',
-    subjectLabel: 'fixture phone',
+    subjectLabel: 'managed device',
   });
-  assert.equal(camaraCalled, true);
-  assert.equal(camara.batches.length, 1);
-  assert.equal(camara.attempts[0]?.status, 'fulfilled');
-  assert.equal(camara.batches[0]?.measurements[0]?.source, 'network_region');
-  assert.equal(camara.batches[0]?.measurements[0]?.accuracy, 120);
+  assert.equal(cisco.batches.length, 1);
+  assert.equal(cisco.attempts[0]?.status, 'fulfilled');
+  assert.equal(cisco.batches[0]?.measurements[0]?.source, 'wifi_fingerprint');
   assert.equal(
-    (camara.batches[0]?.measurements[0]?.metadata as any)?.providerKind,
-    'camara-location-retrieval',
+    (cisco.batches[0]?.measurements[0]?.metadata as any)?.providerKind,
+    'cisco-spaces-location',
   );
 
-  delete process.env.SPECTRA_CAMARA_LOCATION_RETRIEVAL_URL;
-  delete process.env.SPECTRA_CAMARA_LOCATION_RETRIEVAL_TOKEN;
+  delete process.env.SPECTRA_CISCO_SPACES_DEVICE_URL_TEMPLATE;
+  delete process.env.SPECTRA_CISCO_SPACES_TOKEN;
   process.env.SPECTRA_ACTIVE_PROVIDER_ADAPTERS = JSON.stringify([{
     id: 'android-collector-fixture',
     label: 'Android collector fixture',
@@ -85,7 +78,10 @@ try {
 
   globalThis.fetch = async (input: any, init?: RequestInit) => {
     assert.equal(String(input), 'https://collector.example/device/device-a');
-    assert.equal((init?.headers as Record<string, string>)?.Authorization, 'collector-token');
+    assert.equal(
+      (init?.headers as Record<string, string>)?.Authorization,
+      'collector-token',
+    );
     const body = JSON.parse(String(init?.body || '{}'));
     assert.equal(body.deviceRef, 'device-a');
     return new Response(JSON.stringify({
@@ -112,11 +108,18 @@ try {
   const collector = await acquireSpectraActiveTelemetry({
     deviceRef: 'device-a',
     sessionId: 'fixture-session',
-    subjectLabel: 'fixture device',
+    subjectLabel: 'managed device',
   });
   assert.equal(collector.batches.length, 1);
   assert.equal(collector.batches[0]?.measurements[0]?.source, 'device_gps');
   assert.equal(collector.batches[0]?.metadata?.acquisition, 'active-provider-pull');
+
+  const skipped = await acquireSpectraActiveTelemetry({
+    sessionId: 'fixture-session',
+    subjectLabel: 'missing managed device',
+  });
+  assert.equal(skipped.batches.length, 0);
+  assert.equal(skipped.attempts[0]?.status, 'skipped');
 
   process.env.SPECTRA_ANCHOR_CATALOG_JSON = JSON.stringify([
     { id: 'uwb-a', latitude: 43.55, longitude: -96.73, accuracyMeters: 0.1 },
@@ -166,21 +169,9 @@ try {
   const capabilities = getSpectraActiveAcquisitionCapabilities();
   assert.ok(capabilities.some(capability => capability.id === 'android-collector-fixture'));
 
-  console.log('SPECTRA active acquisition and configured-anchor verification passed.');
+  console.log('SPECTRA managed-device active acquisition and anchor verification passed.');
 } finally {
   globalThis.fetch = originalFetch;
-  restoreEnv(
-    'SPECTRA_CAMARA_LOCATION_RETRIEVAL_URL',
-    savedEnv.camaraUrl,
-  );
-  restoreEnv(
-    'SPECTRA_CAMARA_LOCATION_RETRIEVAL_TOKEN',
-    savedEnv.camaraToken,
-  );
-  restoreEnv(
-    'SPECTRA_CAMARA_MAX_AGE_SECONDS',
-    savedEnv.camaraMaxAge,
-  );
   restoreEnv(
     'SPECTRA_CISCO_SPACES_DEVICE_URL_TEMPLATE',
     savedEnv.ciscoUrl,
