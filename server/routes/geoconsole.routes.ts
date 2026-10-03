@@ -51,6 +51,7 @@ import {
   SPECTRA_PROVIDER_NORMALIZER_KINDS,
   type SpectraProviderNormalizerKind,
 } from '../services/spectra/SpectraProviderTelemetryNormalizer';
+import { assessSpectraLiveLocation } from '../services/spectra/SpectraLiveConfidence';
 
 const router = Router();
 const log = createLogger('GeoconsoleRoutes');
@@ -1227,6 +1228,7 @@ async function processTelemetryBatch(
   quality: ReturnType<typeof assessLocationQuality>;
   result: Awaited<ReturnType<typeof hybridGeoconsole.processLocationData>> | null;
   persistence: { available: boolean; investigationId?: string; eventId?: string };
+  liveAssessment: ReturnType<typeof assessSpectraLiveLocation>;
 }> {
   const sessionId = batch.sessionId || randomUUID();
   const pointOutcomes = await Promise.allSettled(
@@ -1236,6 +1238,7 @@ async function processTelemetryBatch(
     outcome.status === 'fulfilled' && outcome.value ? [outcome.value] : []
   );
   const quality = assessLocationQuality(points);
+  const liveAssessment = assessSpectraLiveLocation(quality.points);
   const result = quality.points.length
     ? await hybridGeoconsole.processLocationData(quality.points, sessionId)
     : null;
@@ -1261,6 +1264,7 @@ async function processTelemetryBatch(
     quality,
     result,
     persistence,
+    liveAssessment,
   };
 }
 
@@ -1362,6 +1366,7 @@ router.post('/telemetry/provider/:providerId/normalize/:kind', async (req: Reque
         })) || [],
         trail: processed.result?.trail || null,
         futurecast: processed.result?.futurecast.map(signServerEvidence) || [],
+        liveAssessment: processed.liveAssessment,
         inputQuality: {
           acceptedCount: processed.quality.acceptedCount,
           rejectedCount: processed.quality.rejectedCount,
@@ -1407,6 +1412,7 @@ router.post('/telemetry/provider/:providerId', async (req: Request, res: Respons
         })) || [],
         trail: processed.result?.trail || null,
         futurecast: processed.result?.futurecast.map(signServerEvidence) || [],
+        liveAssessment: processed.liveAssessment,
         inputQuality: {
           acceptedCount: processed.quality.acceptedCount,
           rejectedCount: processed.quality.rejectedCount,
@@ -1799,6 +1805,7 @@ async function runStructuredTelemetryImport(input: {
       point: signServerEvidence(location.point),
     })) || [],
     futurecast: processed.result?.futurecast.map(signServerEvidence) || [],
+    liveAssessment: processed.liveAssessment,
     inputQuality: {
       acceptedCount: processed.quality.acceptedCount,
       rejectedCount: processed.quality.rejectedCount,
@@ -1982,6 +1989,7 @@ router.post('/telemetry/pull/:adapterId', async (req: Request, res: Response) =>
           point: signServerEvidence(location.point),
         })) || [],
         futurecast: processed.result?.futurecast.map(signServerEvidence) || [],
+        liveAssessment: processed.liveAssessment,
         inputQuality: {
           acceptedCount: processed.quality.acceptedCount,
           rejectedCount: processed.quality.rejectedCount,
@@ -2027,6 +2035,7 @@ router.post('/telemetry-ingest', async (req: Request, res: Response) => {
         })) || [],
         trail: processed.result?.trail || null,
         futurecast: processed.result?.futurecast.map(signServerEvidence) || [],
+        liveAssessment: processed.liveAssessment,
         inputQuality: {
           acceptedCount: processed.quality.acceptedCount,
           rejectedCount: processed.quality.rejectedCount,
