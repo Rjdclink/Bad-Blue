@@ -62,7 +62,7 @@
     "verify:master-access": "npm run verify:master-auth && node scripts/verify-master-access-navigation.cjs",
     "verify:auth-runtime": "node --import tsx scripts/verify-auth-runtime.ts",
     "verify:geoconsole": "node scripts/verify-geoconsole.cjs && node scripts/verify-geoconsole-e2e.cjs && node scripts/verify-geoconsole-links.cjs && node scripts/verify-production-mode.cjs && node scripts/verify-spectra.cjs",
-    "verify:spectra": "node scripts/verify-spectra.cjs && node --import tsx scripts/verify-spectra-clue-intelligence.ts && node --import tsx scripts/verify-spectra-provider-normalizers.ts && node --import tsx scripts/verify-spectra-active-acquisition.ts && node --import tsx scripts/verify-spectra-live-confidence.ts && node --import tsx scripts/verify-spectra-posterior-calibration.ts && node --import tsx scripts/verify-spectra-identity-binding.ts",
+    "verify:spectra": "node scripts/verify-spectra.cjs && node --import tsx scripts/verify-spectra-clue-intelligence.ts && node --import tsx scripts/verify-spectra-provider-normalizers.ts && node --import tsx scripts/verify-spectra-active-acquisition.ts && node --import tsx scripts/verify-spectra-live-confidence.ts && node --import tsx scripts/verify-spectra-posterior-calibration.ts && node --import tsx scripts/verify-spectra-identity-binding.ts && node --import tsx scripts/verify-spectra-trajectory-estimator.ts",
     "verify:lexara-realization": "node scripts/verify-lexara-realization.cjs",
     "verify:ai-harmony": "node scripts/verify-ai-harmony-platform.cjs",
     "verify:pantheon-source-registry": "node scripts/verify-pantheon-source-registry.cjs",
