@@ -169,8 +169,8 @@ assert.ok(
 // The high-quality independent source configuration must be capable of
 // producing >99% evidence confidence without a forced minimum score.
 assert.ok(
-  posteriorAbove99Rate > 0.5,
-  'Expected fresh independent precision sources to naturally exceed 99% posterior confidence in most trials.',
+  posteriorAbove99Rate >= 0.95,
+  `Expected fresh independent precision sources to naturally exceed 99% posterior confidence in >=95% of trials; observed ${(posteriorAbove99Rate * 100).toFixed(3)}%`,
 );
 
 assert.ok(
