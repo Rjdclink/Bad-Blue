@@ -59,7 +59,12 @@ function timestamp(value: unknown): string | null {
     typeof value === 'string' && /^-?\d+(?:\.\d+)?$/.test(value.trim())
       ? Number(value)
       : value;
-  const date = new Date(normalized as any);
+  const epochAware =
+    typeof normalized === 'number'
+    && Math.abs(normalized) < 100_000_000_000
+      ? normalized * 1000
+      : normalized;
+  const date = new Date(epochAware as any);
   const ms = date.getTime();
   if (!Number.isFinite(ms)) return null;
   if (ms < Date.UTC(1900, 0, 1) || ms > Date.now() + 24 * 60 * 60_000) return null;
