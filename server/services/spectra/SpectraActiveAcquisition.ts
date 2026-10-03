@@ -222,7 +222,7 @@ function configuredAdapters(): ActiveProviderConfig[] {
     if (!Array.isArray(parsed)) return [];
 
     const seen = new Set<string>();
-    return parsed.flatMap((item: any) => {
+    return parsed.slice(0, 16).flatMap((item: any) => {
       const id = String(item?.id || '').trim().slice(0, 120);
       const url = String(item?.url || '').trim();
       const normalizerKind = String(item?.normalizerKind || '').trim();
