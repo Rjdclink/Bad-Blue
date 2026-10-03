@@ -707,6 +707,10 @@ test('Major infrastructure feeds normalize through the canonical SPECTRA provide
   infrastructureNormalizer.includes("'aruba-location-json'") &&
   infrastructureNormalizer.includes('resolveSpectraFloorplanCoordinate') &&
   infrastructureNormalizer.includes('resolveSpectraInfrastructureBinding') &&
+  infrastructureNormalizer.includes('row.clientMac') &&
+  infrastructureNormalizer.includes('row.sensorMac') &&
+  infrastructureNormalizer.includes('row.siteName') &&
+  infrastructureNormalizer.includes('row.floorName') &&
   providerNormalizer.includes('SPECTRA_INFRASTRUCTURE_PROVIDER_KINDS'));
 test('Aruba Central WSS decoder implements documented CloudEvents and location protobuf fields',
   arubaStreamDecoder.includes('parseCloudEvent') &&
@@ -718,6 +722,10 @@ test('Provider-neutral WSS coordinator is reconnectable, authenticated and wired
   providerStreamCoordinator.includes('SPECTRA_WSS_PROVIDER_ADAPTERS') &&
   providerStreamCoordinator.includes("decoder === 'aruba-location-protobuf'") &&
   providerStreamCoordinator.includes('Authorization') &&
+  providerStreamCoordinator.includes('oauthClientIdEnv') &&
+  providerStreamCoordinator.includes('https://sso.common.cloud.hpe.com/as/token.oauth2') &&
+  providerStreamCoordinator.includes("grant_type: 'client_credentials'") &&
+  providerStreamCoordinator.includes('accessTokenExpiresAt') &&
   providerStreamCoordinator.includes('scheduleReconnect') &&
   geoconsoleRoutes.includes('startSpectraProviderStreams') &&
   geoconsoleRoutes.includes("'wss-provider-stream'"));
@@ -745,7 +753,9 @@ test('Infrastructure adapter registry advertises Mist, Extreme, Aruba, UniFi, WS
   adapterRegistry.includes("id: 'aruba-location-stream'") &&
   adapterRegistry.includes("id: 'unifi-client-location'") &&
   adapterRegistry.includes("id: 'provider-neutral-wss-stream'") &&
-  adapterRegistry.includes("id: 'provider-neutral-mqtt-stream'"));
+  adapterRegistry.includes("id: 'provider-neutral-mqtt-stream'") &&
+  adapterRegistry.includes('SPECTRA_INFRASTRUCTURE_WEBHOOK_AUTH') &&
+  adapterRegistry.includes('SPECTRA_UNIFI_CLIENT_URL_TEMPLATE'));
 
 test('Place context uses independent OpenStreetMap and GeoNames lanes',
   geoconsoleRoutes.includes("router.get('/place-context'") &&
