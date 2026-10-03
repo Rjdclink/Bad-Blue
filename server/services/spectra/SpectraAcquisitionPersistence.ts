@@ -80,6 +80,79 @@ function clueType(value: string): string {
   return 'freeform';
 }
 
+export interface SpectraIdentityBindingEvidence {
+  provider?: string;
+  observedAt: Date;
+  values: Record<string, number>;
+  metadata: Record<string, unknown>;
+}
+
+export async function loadSpectraSessionIdentityBindings(
+  userId: string,
+  sessionId: string,
+  limit = 200,
+): Promise<SpectraIdentityBindingEvidence[]> {
+  const normalizedSessionId = sessionId.trim();
+  if (!normalizedSessionId || normalizedSessionId.length > 200) return [];
+  const boundedLimit = Math.max(1, Math.min(500, Math.floor(limit)));
+
+  try {
+    const result = await pool.query(
+      `SELECT provider, observed_at, received_at, payload
+       FROM public.spectra_telemetry_events
+       WHERE session_id = $1 AND user_id = $2
+       ORDER BY COALESCE(observed_at, received_at) DESC
+       LIMIT $3`,
+      [normalizedSessionId, userId, boundedLimit],
+    );
+
+    return result.rows.flatMap((row: any) => {
+      const payload = row.payload && typeof row.payload === 'object'
+        ? row.payload
+        : {};
+      const measurements = Array.isArray(payload.measurements)
+        ? payload.measurements
+        : [];
+
+      return measurements.flatMap((measurement: any) => {
+        if (
+          !measurement
+          || measurement.kind !== 'sensor'
+          || measurement.source !== 'identity_binding'
+        ) return [];
+
+        const observedAt = new Date(
+          measurement.timestamp
+          || row.observed_at
+          || row.received_at,
+        );
+        if (!Number.isFinite(observedAt.getTime())) return [];
+
+        const values = measurement.values && typeof measurement.values === 'object'
+          ? Object.fromEntries(
+              Object.entries(measurement.values)
+                .map(([key, value]) => [key, Number(value)] as const)
+                .filter(([, value]) => Number.isFinite(value)),
+            )
+          : {};
+        const metadata = measurement.metadata && typeof measurement.metadata === 'object'
+          ? { ...measurement.metadata }
+          : {};
+
+        return [{
+          provider: measurement.provider || row.provider || undefined,
+          observedAt,
+          values,
+          metadata,
+        } satisfies SpectraIdentityBindingEvidence];
+      });
+    });
+  } catch (error: any) {
+    if (error?.code === '42P01') return [];
+    throw error;
+  }
+}
+
 export async function loadSpectraSessionObservations(
   userId: string,
   sessionId: string,
