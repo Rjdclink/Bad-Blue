@@ -184,9 +184,36 @@ const telemetryRadioSchema = z.object({
     locationAreaCode: z.number().int().nonnegative().optional(),
     mobileCountryCode: z.number().int().min(0).max(999).optional(),
     mobileNetworkCode: z.number().int().min(0).max(32767),
+    physicalCellId: z.number().int().min(0).max(1007).optional(),
+    arfcn: z.number().int().nonnegative().max(3_279_165).optional(),
+    radioType: z.enum(['gsm', 'cdma', 'wcdma', 'lte', 'nr']).optional(),
+    registered: z.boolean().optional(),
     age: z.number().nonnegative().optional(),
-    signalStrength: z.number().optional(),
-    timingAdvance: z.number().nonnegative().optional(),
+    signalStrength: z.number().min(-200).max(100).optional(),
+    timingAdvance: z.number().nonnegative().max(10_000_000).optional(),
+    signal: z.object({
+      rssiDbm: z.number().min(-200).max(0).optional(),
+      bitErrorRate: z.number().min(0).max(99).optional(),
+      timingAdvance: z.number().nonnegative().max(10_000_000).optional(),
+      rsrpDbm: z.number().min(-200).max(0).optional(),
+      rsrqDb: z.number().min(-100).max(100).optional(),
+      rssnrDb: z.number().min(-100).max(100).optional(),
+      rscpDbm: z.number().min(-200).max(0).optional(),
+      ecNoDb: z.number().min(-100).max(100).optional(),
+      ssRsrpDbm: z.number().min(-200).max(0).optional(),
+      ssRsrqDb: z.number().min(-100).max(100).optional(),
+      ssSinrDb: z.number().min(-100).max(100).optional(),
+      csiRsrpDbm: z.number().min(-200).max(0).optional(),
+      csiRsrqDb: z.number().min(-100).max(100).optional(),
+      csiSinrDb: z.number().min(-100).max(100).optional(),
+      cqiTableIndex: z.number().int().min(1).max(3).optional(),
+      cqi: z.number().int().min(0).max(15).optional(),
+      cdmaDbm: z.number().min(-200).max(0).optional(),
+      cdmaEcio: z.number().min(-500).max(100).optional(),
+      evdoDbm: z.number().min(-200).max(0).optional(),
+      evdoEcio: z.number().min(-500).max(100).optional(),
+      evdoSnr: z.number().min(0).max(8).optional(),
+    }).optional(),
   })).max(32).optional(),
   metadata: z.record(z.unknown()).optional(),
 }).refine(value =>
@@ -230,7 +257,12 @@ const telemetryRangingSchema = z.object({
 
 const telemetrySensorSchema = z.object({
   kind: z.literal('sensor'),
-  source: z.enum(['accelerometer', 'imu_gyro', 'magnetometer', 'barometer']),
+  source: z.enum([
+    'accelerometer', 'imu_gyro', 'magnetometer', 'barometer',
+    'gnss_raw', 'bluetooth_channel_sounding', 'ble_direction_finding',
+    'wifi_rtt_context', 'cellular_signal', 'uwb_context',
+    'ble_gateway', 'lorawan_radio', 'radio_context',
+  ]),
   timestamp: validDateString,
   provider: z.string().max(200).optional(),
   values: z.record(z.number()),
@@ -595,7 +627,7 @@ async function openCellIdPoint(
     endpoint.searchParams.set('lac', String(lac));
     endpoint.searchParams.set('cellid', String(cellId));
     endpoint.searchParams.set('format', 'json');
-    const radio = openCellIdRadioName(measurement.radioType);
+    const radio = openCellIdRadioName(tower.radioType ?? measurement.radioType);
     if (radio) endpoint.searchParams.set('radio', radio);
 
     try {
@@ -666,12 +698,27 @@ function sanitizedWifiAccessPoints(
   });
 }
 
+function sanitizedCellTowers(
+  measurement: z.infer<typeof telemetryRadioSchema>,
+) {
+  return (measurement.cellTowers || []).map(tower => ({
+    radioType: tower.radioType ?? measurement.radioType,
+    mobileCountryCode: tower.mobileCountryCode ?? measurement.homeMobileCountryCode,
+    mobileNetworkCode: tower.mobileNetworkCode ?? measurement.homeMobileNetworkCode,
+    locationAreaCode: tower.locationAreaCode,
+    cellId: tower.newRadioCellId ?? tower.cellId,
+    signalStrength: tower.signalStrength,
+    timingAdvance: tower.timingAdvance,
+    age: tower.age,
+  }));
+}
+
 async function beaconDbRadioPoint(
   measurement: z.infer<typeof telemetryRadioSchema>,
 ): Promise<GPSPoint | null> {
   const wifiAccessPoints = sanitizedWifiAccessPoints(measurement);
   const cellTowers = (measurement.cellTowers || []).map(tower => ({
-    radioType: measurement.radioType,
+    radioType: tower.radioType ?? measurement.radioType,
     mobileCountryCode: tower.mobileCountryCode ?? measurement.homeMobileCountryCode,
     mobileNetworkCode: tower.mobileNetworkCode ?? measurement.homeMobileNetworkCode,
     locationAreaCode: tower.locationAreaCode,
@@ -751,6 +798,7 @@ async function googleRadioPoint(
   if (!key) return null;
 
   const wifiAccessPoints = sanitizedWifiAccessPoints(measurement);
+  const cellTowers = sanitizedCellTowers(measurement);
 
   const endpoint = new URL('https://www.googleapis.com/geolocation/v1/geolocate');
   endpoint.searchParams.set('key', key);
@@ -766,7 +814,7 @@ async function googleRadioPoint(
         carrier: measurement.carrier,
         considerIp: false,
         wifiAccessPoints: wifiAccessPoints.length ? wifiAccessPoints : undefined,
-        cellTowers: measurement.cellTowers?.length ? measurement.cellTowers : undefined,
+        cellTowers: cellTowers.length ? cellTowers : undefined,
       }),
       signal: AbortSignal.timeout(6_000),
     });
