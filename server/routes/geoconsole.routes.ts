@@ -54,6 +54,7 @@ import {
   type SpectraProviderNormalizerKind,
 } from '../services/spectra/SpectraProviderTelemetryNormalizer';
 import { assessSpectraLiveLocation } from '../services/spectra/SpectraLiveConfidence';
+import { estimateSpectraTrajectory } from '../services/spectra/SpectraTrajectoryEstimator';
 
 const router = Router();
 const log = createLogger('GeoconsoleRoutes');
@@ -1476,6 +1477,10 @@ router.post('/telemetry/provider/:providerId/normalize/:kind', async (req: Reque
         })) || [],
         trail: processed.result?.trail || null,
         futurecast: processed.result?.futurecast.map(signServerEvidence) || [],
+        trajectory: processed.result ? {
+          states: processed.result.trajectory.states.map(signServerEvidence),
+          diagnostics: processed.result.trajectory.diagnostics,
+        } : null,
         liveAssessment: processed.liveAssessment,
         inputQuality: {
           acceptedCount: processed.quality.acceptedCount,
@@ -1522,6 +1527,10 @@ router.post('/telemetry/provider/:providerId', async (req: Request, res: Respons
         })) || [],
         trail: processed.result?.trail || null,
         futurecast: processed.result?.futurecast.map(signServerEvidence) || [],
+        trajectory: processed.result ? {
+          states: processed.result.trajectory.states.map(signServerEvidence),
+          diagnostics: processed.result.trajectory.diagnostics,
+        } : null,
         liveAssessment: processed.liveAssessment,
         inputQuality: {
           acceptedCount: processed.quality.acceptedCount,
@@ -2940,6 +2949,7 @@ router.post('/process', async (req: Request, res: Response) => {
       position: signServerEvidence(trailPoint.position),
     }));
     const signedFuturecast = result.futurecast.map(signServerEvidence);
+    const signedTrajectoryStates = result.trajectory.states.map(signServerEvidence);
 
     res.json({
       success: true,
@@ -2960,6 +2970,11 @@ router.post('/process', async (req: Request, res: Response) => {
           stops: result.trail.stops,
         },
         futurecast: signedFuturecast,
+        trajectory: {
+          states: signedTrajectoryStates,
+          latest: signedTrajectoryStates[signedTrajectoryStates.length - 1],
+          diagnostics: result.trajectory.diagnostics,
+        },
         liveAssessment: assessSpectraLiveLocation(quality.points),
         inputQuality: {
           acceptedCount: quality.acceptedCount,
@@ -3045,6 +3060,9 @@ router.get('/status', async (req: Request, res: Response) => {
         capabilities: {
           multimodalFusion: true,
           uncertaintyAwareFusion: true,
+          dependencyAwareTrajectorySmoothing: true,
+          fixedLagStateEstimation: true,
+          robustMotionConstraintGating: true,
           monteCarloInterpolation: true,
           futurecastPrediction: true,
           mapRenderer: 'maplibre',
@@ -3237,7 +3255,15 @@ router.post('/futurecast', async (req: Request, res: Response) => {
       })
     );
 
-    const sortedGpsPoints = [...gpsPoints]
+    const trajectory = estimateSpectraTrajectory(gpsPoints, {
+      fixedLagSeconds: 60 * 60,
+      maxSpeedMps: 90,
+    });
+    const futurecastInput = trajectory.states.length >= 3
+      ? trajectory.states
+      : gpsPoints;
+
+    const sortedGpsPoints = [...futurecastInput]
       .sort((left, right) => left.timestamp.getTime() - right.timestamp.getTime());
     const latestPoint = sortedGpsPoints[sortedGpsPoints.length - 1];
     let motionContext: SpectraMotionContext[] = [];
@@ -3264,7 +3290,7 @@ router.post('/futurecast', async (req: Request, res: Response) => {
     }
 
     const futurecast = await monteCarloPathEngine.generateFuturecast(
-      gpsPoints,
+      futurecastInput,
       hours,
       motionContext,
     );
@@ -3276,6 +3302,7 @@ router.post('/futurecast', async (req: Request, res: Response) => {
         hours,
         motionContextCount: motionContext.length,
         motionContextApplied: futurecast.some(point => point.metadata?.motionContextApplied === true),
+        trajectoryDiagnostics: trajectory.diagnostics,
         confidence: futurecast.length > 0 
           ? futurecast.reduce((sum, p) => sum + p.confidence, 0) / futurecast.length 
           : 0,
