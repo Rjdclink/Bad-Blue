@@ -1165,18 +1165,29 @@ function normalizeNrPositioning(
       continue;
     }
 
-    const anchors = list(
+    const rawAnchors = list(
       result.anchors
       || result.trps
       || result.transmissionReceptionPoints
       || result.baseStations
-    ).flatMap(rawAnchor => {
+    );
+
+    const anchorModels = rawAnchors.flatMap((rawAnchor, anchorIndex) => {
       const anchor = record(rawAnchor);
       const coordinates = anchorCoordinates(
         anchor.location || anchor.position || anchor
       );
       if (!coordinates) return [];
 
+      const configured = resolveConfiguredSpectraAnchor(anchor);
+      const id = stringValue(
+        anchor.id
+        || anchor.trpId
+        || anchor.cellId
+        || configured?.id
+        || `anchor-${anchorIndex}`,
+        200,
+      );
       const distanceMeters = finite(
         anchor.distanceMeters
         ?? anchor.rangeMeters
@@ -1194,45 +1205,291 @@ function normalizeNrPositioning(
         0,
         360,
       );
+      const bearingReference = String(
+        anchor.bearingReference || 'true_north'
+      ).toLowerCase() === 'true_north'
+        ? 'true_north'
+        : 'device';
+      const bearingUncertaintyDegrees = bounded(
+        anchor.bearingUncertaintyDegrees
+        ?? anchor.angleStdDevDegrees,
+        0.01,
+        180,
+      );
+      const timeDifferenceNanos = finite(
+        anchor.timeDifferenceNanos
+        ?? anchor.referenceSignalTimeDifferenceNanos
+        ?? anchor.rstdNanos
+        ?? anchor.rstd
+      );
+      const timeDifferenceUncertaintyNanos = finite(
+        anchor.timeDifferenceUncertaintyNanos
+        ?? anchor.rstdUncertaintyNanos
+        ?? anchor.timeDifferenceStdDevNanos
+      );
+      const sectorCenterDegrees = bounded(
+        anchor.sectorAzimuthDegrees
+        ?? anchor.sectorBearingDegrees
+        ?? anchor.azimuthCenterDegrees,
+        0,
+        360,
+      );
+      const sectorWidthDegrees = bounded(
+        anchor.sectorWidthDegrees
+        ?? anchor.beamWidthDegrees
+        ?? anchor.horizontalBeamWidthDegrees,
+        0.1,
+        360,
+      );
 
-      if (distanceMeters === null && rssiDistance === null) return [];
-
-      const normalized: Record<string, unknown> = {
-        id: stringValue(
-          anchor.id || anchor.trpId || anchor.cellId,
-          200,
-        ),
+      return [{
+        raw: anchor,
+        id,
         latitude: coordinates.latitude,
         longitude: coordinates.longitude,
+        accuracyMeters:
+          finite(anchor.anchorAccuracyMeters ?? anchor.locationAccuracyMeters)
+          ?? configured?.accuracyMeters,
+        distanceMeters,
+        rssiDistance,
+        rangeUncertaintyMeters: finite(
+          anchor.uncertaintyMeters ?? anchor.rangeStdDevMeters
+        ),
+        bearingDegrees,
+        bearingReference,
+        bearingUncertaintyDegrees,
+        timeDifferenceNanos,
+        timeDifferenceUncertaintyNanos,
+        sectorCenterDegrees,
+        sectorWidthDegrees,
+        minRangeMeters: finite(
+          anchor.minRangeMeters ?? anchor.minimumRangeMeters
+        ),
+        maxRangeMeters: finite(
+          anchor.maxRangeMeters
+          ?? anchor.coverageRangeMeters
+          ?? anchor.maximumRangeMeters
+        ),
+        isReference: Boolean(
+          anchor.isReference
+          ?? anchor.reference
+          ?? anchor.isReferenceTrp
+        ),
+      }];
+    });
+
+    const anchors = anchorModels.flatMap(anchor => {
+      if (anchor.distanceMeters === null && anchor.rssiDistance === null) return [];
+
+      const normalized: Record<string, unknown> = {
+        id: anchor.id,
+        latitude: anchor.latitude,
+        longitude: anchor.longitude,
+        accuracyMeters: anchor.accuracyMeters,
         distanceMeters:
-          distanceMeters !== null
-            ? Math.max(0.01, Math.min(1_000_000, distanceMeters))
-            : Math.max(0.01, Math.min(1_000_000, rssiDistance!)),
+          anchor.distanceMeters !== null
+            ? Math.max(0.01, Math.min(1_000_000, anchor.distanceMeters))
+            : Math.max(0.01, Math.min(1_000_000, anchor.rssiDistance!)),
         uncertaintyMeters:
-          finite(anchor.uncertaintyMeters ?? anchor.rangeStdDevMeters)
-          ?? Math.max(0.5, Number(distanceMeters ?? rssiDistance) * 0.05),
+          anchor.rangeUncertaintyMeters
+          ?? Math.max(
+            0.5,
+            Number(anchor.distanceMeters ?? anchor.rssiDistance) * 0.05,
+          ),
       };
 
-      if (bearingDegrees !== null) {
-        normalized.bearingDegrees = bearingDegrees;
-        normalized.bearingReference = String(
-          anchor.bearingReference || 'true_north'
-        ).toLowerCase() === 'true_north'
-          ? 'true_north'
-          : 'device';
-        const bearingUncertainty = bounded(
-          anchor.bearingUncertaintyDegrees
-          ?? anchor.angleStdDevDegrees,
-          0.01,
-          180,
-        );
-        if (bearingUncertainty !== null) {
-          normalized.bearingUncertaintyDegrees = bearingUncertainty;
+      if (anchor.bearingDegrees !== null) {
+        normalized.bearingDegrees = anchor.bearingDegrees;
+        normalized.bearingReference = anchor.bearingReference;
+        if (anchor.bearingUncertaintyDegrees !== null) {
+          normalized.bearingUncertaintyDegrees =
+            anchor.bearingUncertaintyDegrees;
         }
       }
 
       return [normalized];
     });
+
+    const constraintFactors: Array<Record<string, unknown>> = [];
+    const baseCorrelation =
+      stringValue(result.correlationGroup, 300)
+      || `nr-positioning:${wrapped.providerId}`;
+
+    for (const anchor of anchorModels) {
+      const anchorDefinition = {
+        id: anchor.id,
+        latitude: anchor.latitude,
+        longitude: anchor.longitude,
+        accuracyMeters: anchor.accuracyMeters,
+      };
+
+      if (anchor.distanceMeters !== null || anchor.rssiDistance !== null) {
+        const distance = Number(anchor.distanceMeters ?? anchor.rssiDistance);
+        constraintFactors.push({
+          type: 'range',
+          id: anchor.id ? `${anchor.id}:range` : undefined,
+          anchor: anchorDefinition,
+          distanceMeters: Math.max(0.01, Math.min(1_000_000, distance)),
+          uncertaintyMeters:
+            anchor.rangeUncertaintyMeters
+            ?? (
+              anchor.distanceMeters !== null
+                ? Math.max(0.5, distance * 0.05)
+                : Math.max(10, distance * 0.6)
+            ),
+          confidence: anchor.distanceMeters !== null ? 0.92 : 0.55,
+          correlationGroup: `${baseCorrelation}:${anchor.id || 'anchor'}`,
+        });
+      }
+
+      if (
+        anchor.bearingDegrees !== null
+        && anchor.bearingReference === 'true_north'
+      ) {
+        constraintFactors.push({
+          type: 'bearing',
+          id: anchor.id ? `${anchor.id}:bearing` : undefined,
+          anchor: anchorDefinition,
+          bearingDegrees: anchor.bearingDegrees,
+          bearingUncertaintyDegrees:
+            anchor.bearingUncertaintyDegrees ?? 12,
+          confidence: 0.86,
+          correlationGroup: `${baseCorrelation}:${anchor.id || 'anchor'}`,
+        });
+      }
+
+      if (
+        anchor.sectorCenterDegrees !== null
+        && anchor.sectorWidthDegrees !== null
+      ) {
+        constraintFactors.push({
+          type: 'sector',
+          id: anchor.id ? `${anchor.id}:sector` : undefined,
+          anchor: anchorDefinition,
+          centerBearingDegrees: anchor.sectorCenterDegrees,
+          halfWidthDegrees: Math.max(
+            0.05,
+            Math.min(180, anchor.sectorWidthDegrees / 2),
+          ),
+          minRangeMeters:
+            anchor.minRangeMeters !== null
+              ? Math.max(0, anchor.minRangeMeters)
+              : undefined,
+          maxRangeMeters:
+            anchor.maxRangeMeters !== null
+              ? Math.max(0.01, anchor.maxRangeMeters)
+              : undefined,
+          uncertaintyMeters:
+            anchor.rangeUncertaintyMeters
+            ?? (
+              anchor.maxRangeMeters !== null
+                ? Math.max(25, anchor.maxRangeMeters * 0.15)
+                : undefined
+            ),
+          confidence: 0.62,
+          correlationGroup: `${baseCorrelation}:${anchor.id || 'anchor'}`,
+        });
+      }
+    }
+
+    const explicitReferenceId = stringValue(
+      result.referenceAnchorId
+      || result.referenceTrpId
+      || result.referenceCellId,
+      200,
+    );
+    const referenceAnchor =
+      anchorModels.find(anchor =>
+        explicitReferenceId
+        && anchor.id === explicitReferenceId
+      )
+      || anchorModels.find(anchor => anchor.isReference)
+      || anchorModels[0];
+
+    if (referenceAnchor) {
+      for (const anchor of anchorModels) {
+        if (anchor === referenceAnchor || anchor.timeDifferenceNanos === null) continue;
+        constraintFactors.push({
+          type: 'range_difference',
+          id: anchor.id ? `${anchor.id}:tdoa` : undefined,
+          anchorA: {
+            id: anchor.id,
+            latitude: anchor.latitude,
+            longitude: anchor.longitude,
+            accuracyMeters: anchor.accuracyMeters,
+          },
+          anchorB: {
+            id: referenceAnchor.id,
+            latitude: referenceAnchor.latitude,
+            longitude: referenceAnchor.longitude,
+            accuracyMeters: referenceAnchor.accuracyMeters,
+          },
+          timeDifferenceNanos: anchor.timeDifferenceNanos,
+          timeDifferenceUncertaintyNanos:
+            anchor.timeDifferenceUncertaintyNanos ?? undefined,
+          confidence: 0.9,
+          correlationGroup:
+            `${baseCorrelation}:tdoa:${referenceAnchor.id || 'reference'}:${anchor.id || 'anchor'}`,
+        });
+      }
+
+      const topLevelTimeDifference = finite(
+        commonMetadata.referenceSignalTimeDifferenceNanos
+      );
+      if (
+        topLevelTimeDifference !== null
+        && anchorModels.length >= 2
+        && !constraintFactors.some(constraint =>
+          constraint.type === 'range_difference'
+        )
+      ) {
+        const explicitTargetId = stringValue(
+          result.targetAnchorId
+          || result.measuredTrpId
+          || result.targetTrpId,
+          200,
+        );
+        const targetAnchor =
+          anchorModels.find(anchor =>
+            anchor !== referenceAnchor
+            && explicitTargetId
+            && anchor.id === explicitTargetId
+          )
+          || anchorModels.find(anchor => anchor !== referenceAnchor);
+        if (targetAnchor) {
+          constraintFactors.push({
+            type: 'range_difference',
+            id: targetAnchor.id ? `${targetAnchor.id}:tdoa` : undefined,
+            anchorA: {
+              id: targetAnchor.id,
+              latitude: targetAnchor.latitude,
+              longitude: targetAnchor.longitude,
+              accuracyMeters: targetAnchor.accuracyMeters,
+            },
+            anchorB: {
+              id: referenceAnchor.id,
+              latitude: referenceAnchor.latitude,
+              longitude: referenceAnchor.longitude,
+              accuracyMeters: referenceAnchor.accuracyMeters,
+            },
+            timeDifferenceNanos: topLevelTimeDifference,
+            timeDifferenceUncertaintyNanos:
+              finite(
+                result.referenceSignalTimeDifferenceUncertaintyNanos
+                ?? result.rstdUncertaintyNanos
+              ) ?? undefined,
+            confidence: 0.9,
+            correlationGroup:
+              `${baseCorrelation}:tdoa:${referenceAnchor.id || 'reference'}:${targetAnchor.id || 'anchor'}`,
+          });
+        }
+      }
+    }
+
+    const hasNonRangeConstraint = constraintFactors.some(constraint =>
+      constraint.type === 'range_difference'
+      || constraint.type === 'sector'
+    );
 
     if (anchors.length) {
       measurements.push({
@@ -1240,16 +1497,35 @@ function normalizeNrPositioning(
         source: 'nr_positioning',
         timestamp: observedAt,
         provider: wrapped.providerId,
-        correlationGroup:
-          stringValue(result.correlationGroup, 300)
-          || `nr-positioning:${wrapped.providerId}`,
+        correlationGroup: baseCorrelation,
         anchors,
         metadata: {
           ...commonMetadata,
           anchorCount: anchors.length,
         },
       });
-    } else {
+    }
+
+    if (hasNonRangeConstraint && constraintFactors.length >= 2) {
+      measurements.push({
+        kind: 'constraint',
+        source: 'nr_positioning',
+        timestamp: observedAt,
+        provider: wrapped.providerId,
+        correlationGroup: baseCorrelation,
+        constraints: constraintFactors,
+        metadata: {
+          ...commonMetadata,
+          anchorCount: anchorModels.length,
+          directConstraintKinds: [...new Set(
+            constraintFactors.map(constraint => String(constraint.type || 'unknown'))
+          )],
+          tdoaSignConvention: 'anchorA_minus_anchorB_provider_supplied',
+        },
+      });
+    }
+
+    if (!anchors.length && !(hasNonRangeConstraint && constraintFactors.length >= 2)) {
       measurements.push(contextMeasurement(
         'cellular_signal',
         observedAt,
