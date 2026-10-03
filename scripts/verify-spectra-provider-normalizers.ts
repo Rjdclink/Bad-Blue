@@ -300,6 +300,80 @@ function measurement(batch: ReturnType<typeof normalizeSpectraProviderPayload>, 
 
 {
   const batch = normalizeSpectraProviderPayload(
+    'apple-nearby-interaction',
+    'ios-channel-sounding',
+    {
+      observations: [{
+        timestamp: '2025-01-02T03:04:05Z',
+        mode: 'bluetooth-channel-sounding',
+        peerRef: 'accessory-peer',
+        solution: {
+          latitude: 43.5447,
+          longitude: -96.7312,
+          accuracyMeters: 1.8,
+        },
+      }],
+    },
+  );
+  const point = measurement(batch);
+  assert.equal(point.kind, 'position');
+  assert.equal(point.source, 'bluetooth_proximity');
+  assert.equal(point.metadata.bluetoothChannelSounding, true);
+}
+
+{
+  const batch = normalizeSpectraProviderPayload(
+    'android-cellular',
+    'android-cdma',
+    {
+      cells: [{
+        timestamp: '2025-01-02T03:04:05Z',
+        radioType: 'cdma',
+        mcc: 310,
+        sid: 42,
+        nid: 7,
+        bid: 1024,
+        signal: {
+          cdmaDbm: -91,
+          cdmaEcio: -10,
+          evdoDbm: -95,
+          evdoEcio: -12,
+          evdoSnr: 5,
+        },
+      }],
+    },
+  );
+  const radio = measurement(batch);
+  assert.equal(radio.kind, 'radio');
+  assert.equal(radio.radioType, 'cdma');
+  assert.equal(radio.homeMobileNetworkCode, 42);
+  assert.equal(radio.cellTowers[0].locationAreaCode, 7);
+  assert.equal(radio.cellTowers[0].cellId, 1024);
+  assert.equal(radio.metadata.identifiers.systemId, 42);
+  assert.equal(radio.metadata.identifiers.networkId, 7);
+  assert.equal(radio.metadata.identifiers.baseStationId, 1024);
+}
+
+{
+  const gnssLogger = [
+    '# Raw,UtcTimeMillis,TimeNanos,FullBiasNanos,BiasNanos,BiasUncertaintyNanos,Svid,ConstellationType,ReceivedSvTimeNanos,ReceivedSvTimeUncertaintyNanos,Cn0DbHz,PseudorangeRateMetersPerSecond,AccumulatedDeltaRangeMeters,AccumulatedDeltaRangeUncertaintyMeters,CarrierFrequencyHz,CodeType',
+    'Raw,1735787045000,1234567890,-1230000000,2,12,7,1,99887766,45,38.5,-623.4,12345.6,0.2,1575420000,C',
+  ].join('\n');
+  const batch = normalizeSpectraProviderPayload(
+    'universal-radio-log',
+    'gnsslogger-import',
+    { text: gnssLogger },
+  );
+  const raw = measurement(batch);
+  assert.equal(raw.kind, 'sensor');
+  assert.equal(raw.source, 'gnss_raw');
+  assert.equal(raw.metadata.satelliteCount, 1);
+  assert.equal(raw.metadata.satellites[0].svid, 7);
+  assert.equal(raw.metadata.satellites[0].carrierFrequencyHz, 1575420000);
+}
+
+{
+  const batch = normalizeSpectraProviderPayload(
     'ble-gateway',
     'bluez-gateway',
     {
