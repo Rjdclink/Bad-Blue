@@ -864,6 +864,46 @@ async function collectSpectraContextEvidence(input: {
   };
 }
 
+router.get('/live', (_req: Request, res: Response) => {
+  return res.json({
+    success: true,
+    data: {
+      status: 'live',
+      apiVersion: SPECTRA_API_VERSION,
+      checkedAt: new Date().toISOString(),
+    },
+  });
+});
+
+router.get('/ready', async (_req: Request, res: Response) => {
+  try {
+    await Promise.race([
+      pool.query('SELECT 1 AS ok'),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('SPECTRA readiness database timeout')), 1_000)
+      ),
+    ]);
+    return res.json({
+      success: true,
+      data: {
+        status: 'ready',
+        apiVersion: SPECTRA_API_VERSION,
+        resourceGovernor: getSpectraResourceGovernorSnapshot(),
+        checkedAt: new Date().toISOString(),
+      },
+    });
+  } catch {
+    return res.status(503).json({
+      success: false,
+      data: {
+        status: 'not-ready',
+        apiVersion: SPECTRA_API_VERSION,
+        checkedAt: new Date().toISOString(),
+      },
+    });
+  }
+});
+
 router.get('/health', async (_req: Request, res: Response) => {
   const providerStreams = getSpectraProviderStreamHealth();
   const mqttStreams = getSpectraMqttProviderHealth();
