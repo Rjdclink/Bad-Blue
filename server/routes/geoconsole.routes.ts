@@ -86,7 +86,7 @@ const gpsPointSchema = z.object({
     'accelerometer', 'imu_gyro', 'magnetometer', 'barometer',
     'browser_geolocation', 'browser_timestamp', 'network_region',
     'social_media', 'social_geotag', 'visual_detection', 'vehicle_telemetry',
-    'public_camera', 'traffic_cam', 'satellite_imagery', 'historical_location',
+    'visual_positioning', 'public_camera', 'traffic_cam', 'satellite_imagery', 'historical_location',
     'public_record', 'manual_input', 'interpolated', 'predicted'
   ]),
   confidence: z.number().min(0).max(1),
@@ -143,7 +143,7 @@ const telemetryAbsoluteSchema = z.object({
   kind: z.literal('position'),
   source: z.enum([
     'device_gps', 'gnss_fix', 'gnss_raw', 'browser_geolocation',
-    'vehicle_telemetry', 'exif_photo', 'exif_video', 'xmp_sidecar',
+    'vehicle_telemetry', 'visual_positioning', 'exif_photo', 'exif_video', 'xmp_sidecar',
     'json_sidecar', 'social_geotag', 'visual_detection', 'network_region',
     'wifi_fingerprint', 'cellular', 'nr_positioning',
     'uwb_range', 'uwb_direction', 'bluetooth_proximity',
