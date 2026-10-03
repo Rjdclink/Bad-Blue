@@ -119,6 +119,25 @@ interface AcquisitionResponse {
 
 const FIRST_PROMPT = 'What is it that you want to locate?';
 const DETAILS_PROMPT = 'What information can you give me about the target?';
+const CONTINUOUS_ACQUISITION_DELAY_MS = 1_500;
+
+interface AcquireTargetOptions {
+  backgroundPass?: boolean;
+  signal?: AbortSignal;
+  recursivePass?: number;
+  queryStartedAt?: string;
+}
+
+function createSpectraSessionId(): string {
+  try {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return `spectra-${crypto.randomUUID()}`;
+    }
+  } catch {
+    // Fall through to the compatibility identifier.
+  }
+  return `spectra-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+}
 
 function makeMessage(role: Message['role'], content: string): Message {
   return {
@@ -164,6 +183,23 @@ export default function SpectraPage() {
   const lastSpokenTextRef = useRef<{ normalized: string; expiresAt: number } | null>(null);
   const recentVoiceTurnRef = useRef<{ normalized: string; at: number } | null>(null);
   const initialVoicePromptRef = useRef(false);
+  const queryStartedAtRef = useRef(new Date().toISOString());
+  const spectraSessionIdRef = useRef<string | null>(null);
+  const targetRef = useRef(target);
+  const detailsRef = useRef(details);
+  const directEvidenceRef = useRef(directEvidence);
+  const continuousAcquisitionActiveRef = useRef(false);
+  const continuousAcquisitionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const activeAcquisitionAbortRef = useRef<AbortController | null>(null);
+  const recursivePassRef = useRef(0);
+  const hardStopRef = useRef<(reason?: string, notifyServer?: boolean) => void>(() => undefined);
+
+  useEffect(() => {
+    targetRef.current = target;
+    detailsRef.current = details;
+    directEvidenceRef.current = directEvidence;
+    spectraSessionIdRef.current = spectraSessionId;
+  }, [details, directEvidence, spectraSessionId, target]);
 
   const voiceSynthesis = useVoiceSynthesis();
   const voiceMode = useVoiceMode({
