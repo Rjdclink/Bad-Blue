@@ -1,4 +1,5 @@
 import { parse as parseCsv } from 'csv-parse/sync';
+import { assessSpectraGnssIntegrity } from './SpectraGnssIntegrity';
 
 export const SPECTRA_ADVANCED_RADIO_NORMALIZER_KINDS = [
   'bluetooth-channel-sounding',
@@ -988,8 +989,103 @@ function normalizeAndroidRawGnss(
             ?? satellite.AccumulatedDeltaRangeState
             ?? satellite.adrState
           ),
+          snrInDb: finite(satellite.snrInDb ?? satellite.SnrInDb),
+          automaticGainControlLevelDb: finite(
+            satellite.automaticGainControlLevelDb
+            ?? satellite.AutomaticGainControlLevelDb
+          ),
+          fullInterSignalBiasNanos: finite(
+            satellite.fullInterSignalBiasNanos
+            ?? satellite.FullInterSignalBiasNanos
+          ),
+          fullInterSignalBiasUncertaintyNanos: finite(
+            satellite.fullInterSignalBiasUncertaintyNanos
+            ?? satellite.FullInterSignalBiasUncertaintyNanos
+          ),
+          satelliteInterSignalBiasNanos: finite(
+            satellite.satelliteInterSignalBiasNanos
+            ?? satellite.SatelliteInterSignalBiasNanos
+          ),
+          satelliteInterSignalBiasUncertaintyNanos: finite(
+            satellite.satelliteInterSignalBiasUncertaintyNanos
+            ?? satellite.SatelliteInterSignalBiasUncertaintyNanos
+          ),
         };
       });
+
+    const automaticGainControls = list(
+      epoch.automaticGainControls
+      || epoch.gnssAutomaticGainControls
+      || wrapped.body.automaticGainControls
+    ).slice(0, 32).map(rawAgc => {
+      const agc = record(rawAgc);
+      return {
+        carrierFrequencyHz: finite(
+          agc.carrierFrequencyHz ?? agc.CarrierFrequencyHz
+        ),
+        levelDb: finite(
+          agc.levelDb
+          ?? agc.agcLevelDb
+          ?? agc.AutomaticGainControlLevelDb
+        ),
+      };
+    });
+
+    const antennaInfo = list(
+      epoch.antennaInfo
+      || epoch.gnssAntennaInfo
+      || wrapped.body.antennaInfo
+    ).slice(0, 16).map(rawAntenna => {
+      const antenna = record(rawAntenna);
+      const phaseCenter = record(
+        antenna.phaseCenterOffset
+        || antenna.PhaseCenterOffset
+      );
+      return {
+        carrierFrequencyMHz: finite(
+          antenna.carrierFrequencyMHz ?? antenna.CarrierFrequencyMHz
+        ),
+        phaseCenterOffsetMm: {
+          x: finite(phaseCenter.x ?? phaseCenter.offsetXMm),
+          y: finite(phaseCenter.y ?? phaseCenter.offsetYMm),
+          z: finite(phaseCenter.z ?? phaseCenter.offsetZMm),
+          xUncertainty: finite(
+            phaseCenter.xUncertainty ?? phaseCenter.offsetXUncertaintyMm
+          ),
+          yUncertainty: finite(
+            phaseCenter.yUncertainty ?? phaseCenter.offsetYUncertaintyMm
+          ),
+          zUncertainty: finite(
+            phaseCenter.zUncertainty ?? phaseCenter.offsetZUncertaintyMm
+          ),
+        },
+      };
+    });
+
+    const integrity = assessSpectraGnssIntegrity({
+      satellites,
+      clock: {
+        hardwareClockDiscontinuityCount: finite(
+          clock.hardwareClockDiscontinuityCount ?? clock.HardwareClockDiscontinuityCount
+        ),
+        timeUncertaintyNanos: finite(
+          clock.timeUncertaintyNanos ?? clock.TimeUncertaintyNanos
+        ),
+        biasUncertaintyNanos: finite(
+          clock.biasUncertaintyNanos ?? clock.BiasUncertaintyNanos
+        ),
+        driftUncertaintyNanosPerSecond: finite(
+          clock.driftUncertaintyNanosPerSecond ?? clock.DriftUncertaintyNanosPerSecond
+        ),
+        elapsedRealtimeUncertaintyNanos: finite(
+          clock.elapsedRealtimeUncertaintyNanos ?? clock.ElapsedRealtimeUncertaintyNanos
+        ),
+      },
+      automaticGainControls,
+      previousHardwareClockDiscontinuityCount: finite(
+        epoch.previousHardwareClockDiscontinuityCount
+      ),
+    });
 
     const solution = record(epoch.solution || epoch.fix);
     const latitude = bounded(solution.latitude ?? solution.lat, -90, 90);
@@ -1020,6 +1116,9 @@ function normalizeAndroidRawGnss(
       },
       satellites,
       satelliteCount: satellites.length,
+      automaticGainControls,
+      antennaInfo,
+      integrity,
     };
 
     measurements.push(contextMeasurement(
@@ -1055,7 +1154,27 @@ function normalizeAndroidRawGnss(
         correlationGroup:
           stringValue(epoch.correlationGroup, 300)
           || `gnss:${wrapped.providerId}`,
-        metadata: rawMetadata,
+        metadata: {
+          ...rawMetadata,
+          accuracyConfidenceLevel: 0.68,
+          solutionType: stringValue(
+            solution.solutionType
+            || solution.fixType
+            || solution.method,
+            80,
+          ),
+          hdop: finite(solution.hdop ?? solution.HDOP),
+          vdop: finite(solution.vdop ?? solution.VDOP),
+          pdop: finite(solution.pdop ?? solution.PDOP),
+          horizontalProtectionLevelMeters: finite(
+            solution.horizontalProtectionLevelMeters
+            ?? solution.hpl
+          ),
+          verticalProtectionLevelMeters: finite(
+            solution.verticalProtectionLevelMeters
+            ?? solution.vpl
+          ),
+        },
       });
     }
   }
