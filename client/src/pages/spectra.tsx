@@ -89,6 +89,7 @@ function launchDetails(launch: SpectraLaunchPayload): string {
 
   return [
     launch.clues,
+    launch.lexaraSessionId ? `LEXARA session reference: ${launch.lexaraSessionId}` : '',
     conversation ? `LEXARA conversation context:\n${conversation}` : '',
   ].filter(Boolean).join('\n\n').slice(-10_000);
 }
@@ -132,6 +133,7 @@ export default function SpectraPage() {
   const [, setLocation] = useLocation();
   const lexaraLaunchRef = useRef<SpectraLaunchPayload | null>(readLexaraSpectraLaunch());
   const initialLexaraLaunch = lexaraLaunchRef.current;
+  const launchedFromLexaraRef = useRef(Boolean(initialLexaraLaunch));
   const [phase, setPhase] = useState<Phase>(
     initialLexaraLaunch ? 'acquiring' : 'awaiting_target'
   );
@@ -219,7 +221,7 @@ export default function SpectraPage() {
   }, []);
 
   useEffect(() => {
-    if (lexaraLaunchRef.current) return;
+    if (launchedFromLexaraRef.current) return;
     if (initialVoicePromptRef.current || getLexaraLiveEnabled() !== 'true') return;
     initialVoicePromptRef.current = true;
 
