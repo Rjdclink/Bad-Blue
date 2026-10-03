@@ -2848,6 +2848,7 @@ router.post('/process', async (req: Request, res: Response) => {
           stops: result.trail.stops,
         },
         futurecast: signedFuturecast,
+        liveAssessment: assessSpectraLiveLocation(quality.points),
         inputQuality: {
           acceptedCount: quality.acceptedCount,
           rejectedCount: quality.rejectedCount,
