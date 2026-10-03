@@ -58,7 +58,6 @@ import { solveSpectraConstraintLayer } from '../services/spectra/SpectraConstrai
 import {
   loadSpectraSessionObservationPage,
   loadSpectraSessionObservationRange,
-  loadSpectraSessionObservations,
 } from '../services/spectra/SpectraAcquisitionPersistence';
 import { spectraMetricsProviderEvent } from '../services/spectra/SpectraObservability';
 import {
