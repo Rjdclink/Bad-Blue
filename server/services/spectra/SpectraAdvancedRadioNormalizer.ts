@@ -472,7 +472,12 @@ function normalizeAndroidWifiRanging(
     const responder = record(
       result.responderLocation || result.location || result.anchor || result.peerLocation
     );
-    const anchor = anchorCoordinates(responder);
+    const anchor = anchorCoordinates({
+      ...responder,
+      id: responder.id ?? result.responderId ?? result.peerId,
+      macAddress: responder.macAddress ?? result.macAddress,
+      bssid: responder.bssid ?? result.bssid,
+    });
     const distanceMeters = finite(
       result.distanceMeters
       ?? (result.distanceMm !== undefined ? Number(result.distanceMm) / 1000 : undefined)
@@ -592,7 +597,13 @@ function normalizeAndroidRangingManager(
       || result.responderLocation
       || result.referenceLocation
     );
-    const anchor = anchorCoordinates(peer);
+    const anchor = anchorCoordinates({
+      ...peer,
+      id: peer.id ?? result.anchorId ?? result.peerId ?? result.deviceRef,
+      peerRef: peer.peerRef ?? result.peerRef ?? result.peerId,
+      macAddress: peer.macAddress ?? result.macAddress,
+      bssid: peer.bssid ?? result.bssid,
+    });
     const distance = finite(
       result.distanceMeters
       ?? result.distance
@@ -785,7 +796,12 @@ function normalizeAndroidUwbSensorFusion(
       || update.referenceLocation
       || update.peerPosition
     );
-    const anchor = anchorCoordinates(peer);
+    const anchor = anchorCoordinates({
+      ...peer,
+      id: peer.id ?? update.anchorId ?? update.peerId ?? update.uwbDeviceId,
+      peerRef: peer.peerRef ?? update.peerRef ?? update.peerId,
+      deviceId: peer.deviceId ?? update.uwbDeviceId,
+    });
     const peerRef = stringValue(
       update.peerRef
       || update.peerId
