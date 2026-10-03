@@ -73,6 +73,7 @@ import {
   getSpectraPublicFeedCatalogSource,
 } from '../services/spectra/SpectraPublicFeedRegistry';
 import { spectraApiVersionHeaders } from '../services/spectra/SpectraApiContract';
+import { providerMayWriteOwnedSpectraSession } from '../services/spectra/SpectraProviderSessionAccess';
 
 const router = Router();
 router.use(spectraApiVersionHeaders);
@@ -1152,10 +1153,20 @@ async function persistTelemetryBatch(input: {
        FOR UPDATE`,
       [input.sessionId],
     );
-    if (existingSession.rows.length && input.userId) {
+    if (existingSession.rows.length) {
       const existingUserId = String(existingSession.rows[0]?.user_id || '');
-      if (existingUserId && existingUserId !== input.userId) {
-        throw new Error('SPECTRA telemetry session ownership mismatch');
+      if (existingUserId) {
+        if (input.userId) {
+          if (existingUserId !== input.userId) {
+            throw new Error('SPECTRA telemetry session ownership mismatch');
+          }
+        } else if (!providerMayWriteOwnedSpectraSession({
+          providerId: input.providerId || input.batch.sourceId,
+          sessionId: input.sessionId,
+          ownerTenantId: existingUserId,
+        })) {
+          throw new Error('SPECTRA provider is not bound to this tenant session');
+        }
       }
 
       const existingSubject = String(existingSession.rows[0]?.subject_label || '')
