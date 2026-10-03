@@ -9,6 +9,7 @@ export const SPECTRA_EXTERNAL_LOCATION_NORMALIZER_KINDS = [
   'meraki-scanning',
   'cisco-spaces-location',
   'aws-iot-device-location',
+  'arcore-geospatial-pose',
   'connected-vehicle-location',
 ] as const;
 
@@ -790,6 +791,132 @@ function normalizeAwsIotDeviceLocation(
   );
 }
 
+function normalizeArcoreGeospatialPose(
+  payload: unknown,
+  providerId: string,
+): SpectraExternalNormalizedBatch {
+  const wrapped = envelope(payload, providerId);
+  const items = list(
+    wrapped.body.poses
+    || wrapped.body.results
+    || wrapped.body.measurements
+    || wrapped.body.updates
+  );
+  const inputs = items.length ? items : [wrapped.body];
+  const measurements: Array<Record<string, unknown>> = [];
+
+  for (const rawItem of inputs.slice(0, 2000)) {
+    const item = record(rawItem);
+    const pose = record(
+      item.geospatialPose
+      || item.pose
+      || item.position
+      || item
+    );
+    const latitude = bounded(
+      pose.latitude ?? pose.lat,
+      -90,
+      90,
+    );
+    const longitude = bounded(
+      pose.longitude ?? pose.lng ?? pose.lon,
+      -180,
+      180,
+    );
+    const observedAt = timestamp(
+      item.timestamp
+      || item.observedAt
+      || item.elapsedRealtimeTimestamp
+      || pose.timestamp
+    );
+    if (latitude === null || longitude === null || !observedAt) continue;
+
+    const deviceRef = text(
+      item.deviceRef
+      || item.deviceId
+      || wrapped.body.deviceRef
+      || wrapped.body.deviceId,
+      300,
+    );
+    const horizontalAccuracy = finite(
+      pose.horizontalAccuracy
+      ?? pose.horizontalAccuracyMeters
+      ?? pose.accuracy
+    );
+    const verticalAccuracy = finite(
+      pose.verticalAccuracy
+      ?? pose.verticalAccuracyMeters
+    );
+    const trackingState = text(
+      item.trackingState
+      || pose.trackingState
+      || wrapped.body.trackingState,
+      80,
+    );
+    const vpsAvailability = text(
+      item.vpsAvailability
+      || pose.vpsAvailability
+      || wrapped.body.vpsAvailability,
+      80,
+    );
+    const vpsUsed =
+      item.vpsUsed === true
+      || pose.vpsUsed === true
+      || /available|localized|tracking/i.test(String(vpsAvailability || ''));
+
+    measurements.push(pointMeasurement({
+      source: 'visual_positioning',
+      timestamp: observedAt,
+      latitude,
+      longitude,
+      altitude: finite(
+        pose.altitude
+        ?? pose.altitudeMeters
+      ),
+      accuracy: horizontalAccuracy,
+      verticalAccuracy,
+      heading: finite(
+        pose.heading
+        ?? pose.headingDegrees
+        ?? pose.orientationYawDegrees
+      ),
+      provider: wrapped.providerId,
+      recordId: text(
+        item.recordId
+        || item.poseId
+        || item.frameId,
+        300,
+      ),
+      correlationGroup:
+        `visual-positioning:${wrapped.providerId}:${deviceRef || 'device'}`,
+      confidenceCeiling: vpsUsed ? 0.98 : 0.92,
+      metadata: {
+        providerKind: 'arcore-geospatial-pose',
+        engine: 'arcore-geospatial-vps',
+        deviceRef,
+        correlationDomain: deviceRef,
+        vpsAvailability,
+        vpsUsed,
+        trackingState,
+        orientationYawAccuracyDegrees: finite(
+          pose.orientationYawAccuracy
+          ?? pose.orientationYawAccuracyDegrees
+          ?? pose.headingAccuracy
+        ),
+        accuracyConfidenceLevel: 0.68,
+        horizontalAccuracySemantics: 'radial-68-percent',
+      },
+    }));
+  }
+
+  return batch(
+    'arcore-geospatial-pose',
+    wrapped.providerId,
+    wrapped,
+    measurements,
+  );
+}
+
 function normalizeConnectedVehicleLocation(
   payload: unknown,
   providerId: string,
@@ -913,6 +1040,8 @@ export function normalizeSpectraExternalLocationPayload(
       return normalizeCiscoSpaces(payload, normalizedProviderId);
     case 'aws-iot-device-location':
       return normalizeAwsIotDeviceLocation(payload, normalizedProviderId);
+    case 'arcore-geospatial-pose':
+      return normalizeArcoreGeospatialPose(payload, normalizedProviderId);
     case 'connected-vehicle-location':
       return normalizeConnectedVehicleLocation(payload, normalizedProviderId);
     default:
