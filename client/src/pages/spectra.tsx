@@ -467,6 +467,25 @@ export default function SpectraPage() {
     }
   }, [addMessage, directEvidence, speakIfEnabled, spectraSessionId]);
 
+  useEffect(() => {
+    const launch = lexaraLaunchRef.current;
+    if (!launch) return;
+
+    lexaraLaunchRef.current = null;
+    try {
+      sessionStorage.removeItem('legalwhat:spectra-launch');
+    } catch {
+      // One-time launch context can still proceed if storage cleanup is unavailable.
+    }
+
+    const targetValue = launch.target;
+    const detailsValue = launchDetails(launch);
+    setTarget(targetValue);
+    setDetails(detailsValue);
+    setAcquisitionStage('LEXARA context received; starting SPECTRA acquisition…');
+    void acquireTarget(targetValue, detailsValue);
+  }, [acquireTarget]);
+
   const handleMediaEvidence = useCallback(async (file: File) => {
     if (phase === 'awaiting_target') {
       const response = 'Tell me what you want to locate first. Then I can use that media as target information.';
