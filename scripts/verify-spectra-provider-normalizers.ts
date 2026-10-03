@@ -148,7 +148,7 @@ function measurement(batch: ReturnType<typeof normalizeSpectraProviderPayload>, 
   );
   const ranging = measurement(batch);
   assert.equal(ranging.kind, 'ranging');
-  assert.equal(ranging.source, 'bluetooth_proximity');
+  assert.equal(ranging.source, 'bluetooth_channel_sounding');
   assert.equal(ranging.metadata.technology, 'bluetooth-6-channel-sounding');
   assert.ok(ranging.anchors[0].distanceMeters > 4.8);
   assert.ok(ranging.anchors[0].distanceMeters < 5.0);
@@ -173,7 +173,7 @@ function measurement(batch: ReturnType<typeof normalizeSpectraProviderPayload>, 
   );
   const ranging = measurement(batch);
   assert.equal(ranging.kind, 'ranging');
-  assert.equal(ranging.source, 'ble_aoa');
+  assert.equal(ranging.source, 'ble_aod');
   assert.equal(ranging.metadata.directionMethod, 'aod');
   assert.equal(ranging.anchors[0].bearingReference, 'true_north');
 }
@@ -317,7 +317,7 @@ function measurement(batch: ReturnType<typeof normalizeSpectraProviderPayload>, 
   );
   const point = measurement(batch);
   assert.equal(point.kind, 'position');
-  assert.equal(point.source, 'bluetooth_proximity');
+  assert.equal(point.source, 'bluetooth_channel_sounding');
   assert.equal(point.metadata.bluetoothChannelSounding, true);
 }
 
@@ -486,6 +486,175 @@ function measurement(batch: ReturnType<typeof normalizeSpectraProviderPayload>, 
   assert.ok(batch.measurements.some(item => item.kind === 'ranging'));
 }
 
+{
+  const batch = normalizeSpectraProviderPayload(
+    'android-managed-lost-mode',
+    'android-management',
+    {
+      device: 'enterprises/e/devices/d1',
+      retrievalTime: '2026-10-02T21:00:00Z',
+      usageLogEvents: [{
+        eventId: 'lost-1',
+        eventTime: '2026-10-02T20:59:55Z',
+        lostModeLocationEvent: {
+          location: { latitude: 43.5446, longitude: -96.7311 },
+          batteryLevel: 72,
+        },
+      }],
+    },
+  );
+  const point = measurement(batch);
+  assert.equal(point.kind, 'position');
+  assert.equal(point.source, 'device_gps');
+  assert.equal(point.metadata.providerKind, 'android-managed-lost-mode');
+  assert.equal(point.metadata.batteryLevel, 72);
+}
+
+{
+  const batch = normalizeSpectraProviderPayload(
+    'apple-managed-lost-mode',
+    'apple-mdm',
+    {
+      Latitude: 37.33385013244351,
+      Longitude: -122.01079213269968,
+      HorizontalAccuracy: 3.677859038862057,
+      Timestamp: '2026-10-02T20:59:55Z',
+      UDID: 'device-1',
+      Status: 'Acknowledged',
+    },
+  );
+  const point = measurement(batch);
+  assert.equal(point.kind, 'position');
+  assert.equal(point.source, 'device_gps');
+  assert.equal(point.metadata.providerKind, 'apple-managed-lost-mode');
+  assert.equal(point.accuracy, 3.677859038862057);
+}
+
+{
+  const batch = normalizeSpectraProviderPayload(
+    'meraki-scanning',
+    'meraki',
+    {
+      version: '3.0',
+      type: 'WiFi',
+      data: {
+        networkId: 'L_1',
+        observations: [{
+          clientId: 'client-1',
+          locations: [{
+            lat: 43.5446,
+            lng: -96.7311,
+            time: '2026-10-02T20:59:55Z',
+            variance: 25,
+            floorPlanId: 'floor-1',
+          }],
+        }],
+      },
+    },
+  );
+  const point = measurement(batch);
+  assert.equal(point.source, 'wifi_fingerprint');
+  assert.equal(point.metadata.providerKind, 'meraki-scanning');
+  assert.equal(point.accuracy, 5);
+}
+
+{
+  const batch = normalizeSpectraProviderPayload(
+    'cisco-spaces-location',
+    'cisco-spaces',
+    {
+      events: [{
+        eventType: 'DEVICE_LOCATION_UPDATE',
+        eventId: 'evt-1',
+        deviceId: 'device-1',
+        timestamp: '2026-10-02T20:59:55Z',
+        location: {
+          latitude: 43.5446,
+          longitude: -96.7311,
+          accuracy: 12,
+          mapId: 'map-1',
+        },
+      }],
+    },
+  );
+  const point = measurement(batch);
+  assert.equal(point.source, 'wifi_fingerprint');
+  assert.equal(point.metadata.providerKind, 'cisco-spaces-location');
+}
+
+{
+  const batch = normalizeSpectraProviderPayload(
+    'aws-iot-device-location',
+    'aws-iot',
+    {
+      type: 'Point',
+      coordinates: [-96.7311, 43.5446, 410],
+      WirelessDeviceId: 'wireless-1',
+      properties: {
+        measurementType: 'GNSS',
+        horizontalAccuracy: 8,
+        verticalAccuracy: 12,
+        timestamp: '2026-10-02T20:59:55Z',
+      },
+    },
+  );
+  const point = measurement(batch);
+  assert.equal(point.source, 'gnss_fix');
+  assert.equal(point.metadata.providerKind, 'aws-iot-device-location');
+  assert.equal(point.accuracy, 8);
+}
+
+{
+  const batch = normalizeSpectraProviderPayload(
+    'connected-vehicle-location',
+    'tesla-fleet',
+    {
+      vehicleId: 'vehicle-1',
+      location: {
+        latitude: 43.5446,
+        longitude: -96.7311,
+        gps_as_of: 1790974795,
+        speed: 14,
+        heading: 180,
+      },
+    },
+  );
+  const point = measurement(batch);
+  assert.equal(point.source, 'vehicle_telemetry');
+  assert.equal(point.metadata.providerKind, 'connected-vehicle-location');
+  assert.equal(point.speed, 14);
+}
+
+{
+  const batch = normalizeSpectraProviderPayload(
+    'camara-reachability',
+    'carrier-network',
+    {
+      reachabilityStatus: 'CONNECTED_DATA',
+      lastStatusTime: '2026-10-02T20:59:55Z',
+    },
+  );
+  const context = measurement(batch);
+  assert.equal(context.kind, 'sensor');
+  assert.equal(context.source, 'network_reachability');
+  assert.equal(context.values.connected, 1);
+}
+
+{
+  const batch = normalizeSpectraProviderPayload(
+    'camara-location-verification',
+    'carrier-network',
+    {
+      verificationResult: true,
+      lastLocationTime: '2026-10-02T20:59:55Z',
+    },
+  );
+  const context = measurement(batch);
+  assert.equal(context.kind, 'sensor');
+  assert.equal(context.source, 'location_verification');
+  assert.equal(context.values.verified, 1);
+}
+
 for (const kind of [
   'bluetooth-channel-sounding',
   'ble-direction-finding',
@@ -497,6 +666,14 @@ for (const kind of [
   'ble-gateway',
   'lorawan-observation',
   'universal-radio-log',
+  'camara-location-verification',
+  'camara-reachability',
+  'android-managed-lost-mode',
+  'apple-managed-lost-mode',
+  'meraki-scanning',
+  'cisco-spaces-location',
+  'aws-iot-device-location',
+  'connected-vehicle-location',
 ]) {
   assert.ok(
     SPECTRA_PROVIDER_NORMALIZER_KINDS.includes(kind as any),
