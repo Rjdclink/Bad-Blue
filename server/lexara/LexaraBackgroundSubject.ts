@@ -90,11 +90,12 @@ export function mergeCompatibleLexaraBackgroundSubjects(
   return {
     ...primary,
     name: mostSpecific.name,
-    kind: mostSpecific.kind || primary.kind,
+    kind: mostSpecific.kind,
     location: alternate.location || primary.location,
     identifiable: primary.identifiable || alternate.identifiable,
   };
 }
+
 export function resolveLexaraBackgroundSubject(
   prompt: string,
   previousUserTurns: readonly string[] = [],
