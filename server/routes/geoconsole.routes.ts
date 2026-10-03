@@ -1287,6 +1287,7 @@ export async function resolveSpectraNormalizedTelemetryBatch(
   batch: TelemetryBatch;
   points: GPSPoint[];
   quality: ReturnType<typeof assessLocationQuality>;
+  processedMeasurementCount: number;
 }> {
   const validation = telemetryBatchSchema.safeParse(value);
   if (!validation.success) {
@@ -1300,6 +1301,7 @@ export async function resolveSpectraNormalizedTelemetryBatch(
     batch: validation.data,
     points: resolved.points,
     quality: resolved.quality,
+    processedMeasurementCount: resolved.processedMeasurementCount,
   };
 }
 
@@ -1309,6 +1311,7 @@ export async function resolveSpectraTelemetryBatchPoints(
 ): Promise<{
   points: GPSPoint[];
   quality: ReturnType<typeof assessLocationQuality>;
+  processedMeasurementCount: number;
 }> {
   const measurements = trustedProvider
     ? coalesceTrustedRangingMeasurements(batch.measurements)
@@ -1322,6 +1325,7 @@ export async function resolveSpectraTelemetryBatchPoints(
   return {
     points,
     quality: assessLocationQuality(points),
+    processedMeasurementCount: measurements.length,
   };
 }
 
@@ -1366,7 +1370,7 @@ export async function processSpectraTelemetryBatch(
     sessionId,
     inputCount: batch.measurements.length,
     positionCount: quality.points.length,
-    contextOnlyCount: batch.measurements.length - points.length,
+    contextOnlyCount: Math.max(0, resolved.processedMeasurementCount - points.length),
     quality,
     result,
     persistence,
