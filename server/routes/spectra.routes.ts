@@ -53,6 +53,7 @@ import { assessSpectraLiveLocation } from '../services/spectra/SpectraLiveConfid
 import { solveSpectraConstraintLayer } from '../services/spectra/SpectraConstraintSolver';
 import { acquireConfiguredSpectraCameras } from '../services/spectra/SpectraCameraDirectoryAdapters';
 import { acquireSpectraActiveTelemetry } from '../services/spectra/SpectraActiveAcquisition';
+import { findSpectraPublicGtfsRealtimeFeeds } from '../services/spectra/SpectraPublicFeedRegistry';
 
 const router = Router();
 router.use(isAuthenticated);
@@ -718,6 +719,7 @@ interface SpectraContextEvidence {
   geotaggedMedia: any[];
   weather?: Record<string, unknown>;
   earthObservation: Array<Record<string, unknown>>;
+  publicFeeds: Awaited<ReturnType<typeof findSpectraPublicGtfsRealtimeFeeds>>;
   sourceFamilies: string[];
 }
 
@@ -746,6 +748,7 @@ async function collectSpectraContextEvidence(input: {
       ? nwsLatestObservation(input.latitude, input.longitude)
       : Promise.resolve(null),
     copernicusItems(input.latitude, input.longitude, earthFrom, earthTo),
+    findSpectraPublicGtfsRealtimeFeeds(input.latitude, input.longitude, 24),
   ]);
 
   const places = outcomes[0].status === 'fulfilled' ? outcomes[0].value : [];
@@ -758,15 +761,21 @@ async function collectSpectraContextEvidence(input: {
     ? outcomes[6].value
     : undefined;
   const earthObservation = outcomes[7].status === 'fulfilled' ? outcomes[7].value : [];
+  const publicFeeds = outcomes[8].status === 'fulfilled' ? outcomes[8].value : [];
 
   const sourceFamilies: string[] = [];
   if (places.length) sourceFamilies.push('place-context');
+  if (places.some(place =>
+    place.provider === 'FCC Antenna Structure Registration'
+    || place.provider === 'NOAA CORS Network'
+  )) sourceFamilies.push('public-infrastructure');
   if (trafficLand.length || arcGis.length || externalCameras.length) {
     sourceFamilies.push('public-camera');
   }
   if (wikimedia.length || flickr.length) sourceFamilies.push('geotagged-media');
   if (weather) sourceFamilies.push('weather');
   if (earthObservation.length) sourceFamilies.push('earth-observation');
+  if (publicFeeds.length) sourceFamilies.push('public-mobility-feed');
 
   return {
     anchor: {
@@ -781,6 +790,7 @@ async function collectSpectraContextEvidence(input: {
     geotaggedMedia: [...wikimedia, ...flickr].slice(0, 120),
     weather,
     earthObservation: earthObservation.slice(0, 20),
+    publicFeeds: publicFeeds.slice(0, 24),
     sourceFamilies,
   };
 }
@@ -1236,6 +1246,7 @@ router.post('/acquire', async (req: Request, res: Response) => {
       cameras: [],
       geotaggedMedia: [],
       earthObservation: [],
+      publicFeeds: [],
       sourceFamilies: [],
     };
     const contextAnchor = canonicalLatest?.point
@@ -1271,6 +1282,7 @@ router.post('/acquire', async (req: Request, res: Response) => {
       + contextEvidence.cameras.length
       + contextEvidence.geotaggedMedia.length
       + contextEvidence.earthObservation.length
+      + contextEvidence.publicFeeds.length
       + (contextEvidence.weather ? 1 : 0);
 
     const persistence = await persistSpectraAcquisition({
