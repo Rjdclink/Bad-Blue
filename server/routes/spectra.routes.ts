@@ -1342,11 +1342,13 @@ router.post('/acquire', async (req: Request, res: Response) => {
         : null;
 
     if (contextAnchor) {
+      throwIfAcquisitionStopped(acquisitionLease.signal);
       const contextOutcome = await settleWithin(
         collectSpectraContextEvidence(contextAnchor),
         8_500,
         'SPECTRA geographic context',
       );
+      throwIfAcquisitionStopped(acquisitionLease.signal);
       if (contextOutcome.status === 'fulfilled') {
         contextEvidence = contextOutcome.value;
       }
@@ -1479,11 +1481,26 @@ router.post('/acquire', async (req: Request, res: Response) => {
       },
     });
   } catch (error) {
+    if (acquisitionLease.signal.aborted) {
+      if (!res.headersSent && !res.writableEnded) {
+        return res.status(499).json({
+          success: false,
+          error: 'SPECTRA acquisition stopped.',
+          stopped: true,
+          sessionId: acquisitionSessionId,
+        });
+      }
+      return;
+    }
+
     console.error('[SPECTRA] Acquisition failed', error);
     return res.status(500).json({
       success: false,
       error: 'SPECTRA could not complete target acquisition.',
     });
+  } finally {
+    res.off('close', cancelDisconnectedRequest);
+    acquisitionLease.release();
   }
 });
 
