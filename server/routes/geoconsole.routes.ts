@@ -1351,22 +1351,61 @@ function coalesceTrustedRangingMeasurements(
   measurements: TelemetryMeasurement[],
 ): TelemetryMeasurement[] {
   const passthrough: TelemetryMeasurement[] = [];
-  const groups = new Map<string, z.infer<typeof telemetryRangingSchema>>();
+  const rangingGroups = new Map<string, z.infer<typeof telemetryRangingSchema>>();
+  const constraintGroups = new Map<string, z.infer<typeof telemetryConstraintSchema>>();
 
   for (const measurement of measurements) {
+    const timestampMs = measurement.timestamp.getTime();
+    const timeBucket = Math.floor(timestampMs / 250);
+    const provider = String(
+      'provider' in measurement && measurement.provider
+        ? measurement.provider
+        : 'telemetry-source'
+    );
+
+    if (measurement.kind === 'constraint') {
+      const key = [measurement.source, provider, timeBucket].join('|');
+      const existing = constraintGroups.get(key);
+      if (!existing) {
+        constraintGroups.set(key, {
+          ...measurement,
+          constraints: [...measurement.constraints],
+          correlationGroup:
+            measurement.correlationGroup
+            || `constraint-batch:${provider}:${measurement.source}:${timeBucket}`,
+          metadata: {
+            ...(measurement.metadata || {}),
+            coalescedConstraintMeasurements: 1,
+          },
+        });
+        continue;
+      }
+
+      const seen = new Set(existing.constraints.map(constraint => stableJson(constraint)));
+      for (const constraint of measurement.constraints) {
+        const constraintKey = stableJson(constraint);
+        if (seen.has(constraintKey)) continue;
+        existing.constraints.push(constraint);
+        seen.add(constraintKey);
+      }
+      existing.metadata = {
+        ...(existing.metadata || {}),
+        coalescedConstraintMeasurements:
+          Number(existing.metadata?.coalescedConstraintMeasurements || 1) + 1,
+      };
+      continue;
+    }
+
     if (measurement.kind !== 'ranging') {
       passthrough.push(measurement);
       continue;
     }
 
-    const timestampMs = measurement.timestamp.getTime();
-    const timeBucket = Math.floor(timestampMs / 250);
-    const provider = String(measurement.provider || 'telemetry-source');
     const key = [measurement.source, provider, timeBucket].join('|');
-    const existing = groups.get(key);
+    const existing = rangingGroups.get(key);
 
     if (!existing) {
-      groups.set(key, {
+      rangingGroups.set(key, {
         ...measurement,
         anchors: [...measurement.anchors],
         correlationGroup:
@@ -1405,7 +1444,11 @@ function coalesceTrustedRangingMeasurements(
     };
   }
 
-  return [...passthrough, ...groups.values()];
+  return [
+    ...passthrough,
+    ...rangingGroups.values(),
+    ...constraintGroups.values(),
+  ];
 }
 
 export async function resolveSpectraNormalizedTelemetryBatch(
