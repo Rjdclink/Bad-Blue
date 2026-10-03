@@ -34,6 +34,10 @@ import {
 import { InputFusionEngine, inputFusionEngine } from './inputFusionEngine';
 import { MonteCarloPathEngine, monteCarloPathEngine } from './monteCarloPathEngine';
 import { createLogger } from '../../logger';
+import {
+  estimateSpectraTrajectory,
+  type SpectraTrajectoryEstimate,
+} from '../spectra/SpectraTrajectoryEstimator';
 
 const log = createLogger('HybridGeoconsole');
 
@@ -170,6 +174,7 @@ export class HybridGeoconsole extends EventEmitter {
     primaryFusedLocations: FusedLocation[];
     trail: MotionTrail;
     futurecast: GPSPoint[];
+    trajectory: SpectraTrajectoryEstimate;
   }> {
     const taskId = sessionId || randomUUID();
     const startTime = Date.now();
@@ -187,6 +192,15 @@ export class HybridGeoconsole extends EventEmitter {
 
       // Step 2: Keep alternate hypotheses, but resolve one physical timeline.
       const primaryFusedLocations = this.selectPrimaryFusedTimeline(fusedLocations);
+
+      // Maintain a separate dependency-aware state estimate over the recent
+      // observation window. Raw/fused evidence remains unchanged; this derived
+      // posterior is used to stabilize the motion seed without rewriting source
+      // observations or pretending a smoothed state is a direct measurement.
+      const trajectory = estimateSpectraTrajectory(inputs, {
+        fixedLagSeconds: 60 * 60,
+        maxSpeedMps: DEFAULT_PROCESSING_CONFIG.maxInterpolationSpeedMps,
+      });
 
       this.emitProgress(taskId, 'interpolation', 40, 'Reconstructing supported movement gaps...');
       const sortedPoints = primaryFusedLocations
@@ -209,9 +223,12 @@ export class HybridGeoconsole extends EventEmitter {
           break;
         }
       }
-      const recentPoints = interpolatedPoints.slice(continuousStart).slice(-20);
+      const recentObservedPoints = interpolatedPoints.slice(continuousStart).slice(-20);
+      const trajectorySeed = trajectory.states.length >= 3
+        ? trajectory.states.slice(-20)
+        : recentObservedPoints;
       const futurecast = await this.monteCarloEngine.generateFuturecast(
-        recentPoints,
+        trajectorySeed,
         this.timelineConfig.futurecastHours
       );
 
@@ -227,10 +244,13 @@ export class HybridGeoconsole extends EventEmitter {
         fusedCount: fusedLocations.length,
         trailPoints: trail.points.length,
         futurecastPoints: futurecast.length,
+        trajectoryStates: trajectory.states.length,
+        trajectoryIndependentDomains: trajectory.diagnostics.independentDomainCount,
+        trajectoryContradictions: trajectory.diagnostics.contradictionCount,
         processingTime: Date.now() - startTime,
       });
 
-      return { fusedLocations, primaryFusedLocations, trail, futurecast };
+      return { fusedLocations, primaryFusedLocations, trail, futurecast, trajectory };
     } catch (error) {
       log.error('Location processing failed', { taskId, error });
       this.emitProgress(taskId, 'error', 0, `Processing failed: ${error}`);
