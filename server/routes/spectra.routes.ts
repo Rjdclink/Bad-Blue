@@ -865,7 +865,6 @@ router.post('/acquire', async (req: Request, res: Response) => {
       location: semanticSubject?.location || details,
     });
     const activeAcquisitionPromise = acquireSpectraActiveTelemetry({
-      phoneNumber: phone,
       deviceRef,
       sessionId: requestedSessionId,
       subjectLabel: resolvedTargetLabel,
