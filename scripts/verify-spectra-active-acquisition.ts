@@ -36,14 +36,14 @@ try {
       'Bearer fixture-cisco-token',
     );
     return new Response(JSON.stringify({
-      eventType: 'DEVICE_LOCATION_UPDATE',
-      timestamp: '2026-10-03T15:00:00Z',
-      macAddress: '00:11:22:33:44:55',
-      location: {
-        latitude: 43.55,
-        longitude: -96.73,
-        accuracy: 18,
-      },
+      results: [{
+        macAddress: '00:11:22:33:44:55',
+        coordinates: [43.55, -96.73],
+        confidenceFactor: 18,
+        computeType: 'RSSI',
+        lastLocationAt: '2026-10-03T15:00:00Z',
+        numDetectingAps: 4,
+      }],
     }), {
       status: 200,
       headers: { 'Content-Type': 'application/json' },
