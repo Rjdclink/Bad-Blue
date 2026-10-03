@@ -302,10 +302,12 @@ async function decodeFrame(
 
 function reconnectDelay(runtime: RuntimeState): number {
   const attempt = Math.max(0, runtime.reconnectAttempt);
-  return Math.min(
+  const ceiling = Math.min(
     runtime.config.reconnectMaxMs,
     runtime.config.reconnectMinMs * Math.pow(2, Math.min(8, attempt)),
   );
+  const floor = Math.min(runtime.config.reconnectMinMs, ceiling);
+  return Math.max(floor, Math.floor(floor + Math.random() * Math.max(1, ceiling - floor)));
 }
 
 function scheduleReconnect(runtime: RuntimeState): void {
