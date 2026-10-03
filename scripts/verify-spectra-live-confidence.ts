@@ -54,10 +54,12 @@ function point(overrides: Partial<GPSPoint> & Pick<GPSPoint, 'source'>): GPSPoin
       source: 'gnss_fix',
       accuracy: 1.2,
       confidence: 0.998,
+      provenance: { provider: 'gnss-rtk-rover' },
       timestamp: new Date(now.getTime() - 50),
     }),
     point({
       source: 'wifi_rtt',
+      provenance: { provider: 'wifi-rtt-array' },
       latitude: 43.5446004,
       longitude: -96.7310996,
       accuracy: 0.8,
@@ -66,6 +68,7 @@ function point(overrides: Partial<GPSPoint> & Pick<GPSPoint, 'source'>): GPSPoin
     }),
     point({
       source: 'bluetooth_channel_sounding',
+      provenance: { provider: 'bluetooth-cs-array' },
       latitude: 43.5446002,
       longitude: -96.7310998,
       accuracy: 0.25,
@@ -78,6 +81,7 @@ function point(overrides: Partial<GPSPoint> & Pick<GPSPoint, 'source'>): GPSPoin
     }),
     point({
       source: 'uwb_range',
+      provenance: { provider: 'uwb-anchor-network' },
       latitude: 43.5446001,
       longitude: -96.7311001,
       accuracy: 0.3,
