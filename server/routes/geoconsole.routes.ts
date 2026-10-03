@@ -54,7 +54,10 @@ import {
   type SpectraProviderNormalizerKind,
 } from '../services/spectra/SpectraProviderTelemetryNormalizer';
 import { assessSpectraLiveLocation } from '../services/spectra/SpectraLiveConfidence';
-import { estimateSpectraTrajectory } from '../services/spectra/SpectraTrajectoryEstimator';
+import {
+  estimateSpectraTrajectory,
+  selectSpectraTrajectoryFuturecastSeed,
+} from '../services/spectra/SpectraTrajectoryEstimator';
 
 const router = Router();
 const log = createLogger('GeoconsoleRoutes');
@@ -3259,9 +3262,10 @@ router.post('/futurecast', async (req: Request, res: Response) => {
       fixedLagSeconds: 60 * 60,
       maxSpeedMps: 90,
     });
-    const futurecastInput = trajectory.states.length >= 3
-      ? trajectory.states
-      : gpsPoints;
+    const futurecastInput = selectSpectraTrajectoryFuturecastSeed(
+      trajectory,
+      gpsPoints,
+    );
 
     const sortedGpsPoints = [...futurecastInput]
       .sort((left, right) => left.timestamp.getTime() - right.timestamp.getTime());
