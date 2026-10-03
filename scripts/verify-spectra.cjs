@@ -39,6 +39,8 @@ const advancedRadioNormalizer = read('server/services/spectra/SpectraAdvancedRad
 const externalLocationNormalizer = read('server/services/spectra/SpectraExternalLocationNormalizer.ts');
 const liveConfidence = read('server/services/spectra/SpectraLiveConfidence.ts');
 const gnssIntegrity = read('server/services/spectra/SpectraGnssIntegrity.ts');
+const identityBinding = read('server/services/spectra/SpectraIdentityBinding.ts');
+const posteriorCalibration = read('scripts/verify-spectra-posterior-calibration.ts');
 const genericPull = read('server/services/spectra/SpectraGenericPullAdapters.ts');
 const realtimeBridge = read('server/services/spectra/SpectraRealtimeBridge.ts');
 const telemetryImport = read('server/services/spectra/SpectraTelemetryImport.ts');
@@ -509,6 +511,25 @@ test('SPECTRA live confidence is posterior/covariance driven with no hard-coded 
   !liveConfidence.includes('exceedsNinetyNinePercent') &&
   !liveConfidence.includes('strongConsensus.length < 3') &&
   !liveConfidence.includes('precisionFamilyCount < 2'));
+test('Carrier identity bindings are persisted, reloaded and fused conservatively with spatial confidence',
+  acquisitionPersistence.includes('loadSpectraSessionIdentityBindings') &&
+  acquisitionPersistence.includes("measurement.source !== 'identity_binding'") &&
+  routes.includes('loadSpectraSessionIdentityBindings') &&
+  routes.includes('assessSpectraIdentityBinding') &&
+  routes.includes('conservativeJointConfidence') &&
+  routes.includes('subjectLiveLocationConfidence') &&
+  identityBinding.includes('camara-number-verification') &&
+  identityBinding.includes('camara-device-identifier') &&
+  identityBinding.includes('camara-kyc-match') &&
+  identityBinding.includes('Fréchet-Hoeffding lower bound'));
+test('Posterior calibration verifies empirical 99 percent containment without a runtime score floor',
+  posteriorCalibration.includes('TRIALS = 10_000') &&
+  posteriorCalibration.includes('empiricalContainment >= 0.99') &&
+  posteriorCalibration.includes('assessment.confidenceScore > 0.99') &&
+  posteriorCalibration.includes('confidenceRadiusMeters99') &&
+  posteriorCalibration.includes('calibration regression test, not a runtime threshold') &&
+  !liveConfidence.includes('Math.max(score, 0.99') &&
+  !liveConfidence.includes('exceedsNinetyNinePercent'));
 test('CDMA cell identity preserves SID NID and BID through the canonical radio schema',
   advancedRadioNormalizer.includes('cell.systemId ?? cell.sid') &&
   advancedRadioNormalizer.includes('cell.networkId ?? cell.nid') &&
