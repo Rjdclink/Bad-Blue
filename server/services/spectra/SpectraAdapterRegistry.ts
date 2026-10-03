@@ -1,6 +1,8 @@
 export type SpectraAdapterMode =
   | 'live-telemetry'
   | 'provider-webhook'
+  | 'provider-pull'
+  | 'anchor-resolution'
   | 'radio-resolution'
   | 'ranging'
   | 'media'
@@ -38,6 +40,60 @@ export const SPECTRA_ADAPTER_CAPABILITIES: SpectraAdapterCapability[] = [
     priority: 'critical',
     supportsRealtime: true,
     notes: 'Client watchPosition observations are normalized and fused server-side.',
+  },
+  {
+    id: 'camara-location-retrieval-active',
+    label: 'CAMARA active network location retrieval',
+    mode: 'provider-pull',
+    sourceTypes: ['network_region'],
+    configured: () => anyEnv(
+      'SPECTRA_CAMARA_LOCATION_RETRIEVAL_URL',
+      'SPECTRA_CAMARA_LOCATION_RETRIEVAL_TOKEN',
+      'SPECTRA_CAMARA_BEARER_TOKEN',
+    ),
+    priority: 'critical',
+    supportsRealtime: true,
+    notes: 'Actively requests configured CAMARA Device Location Retrieval for a supplied phone-number target, preserving provider freshness and uncertainty.',
+  },
+  {
+    id: 'cisco-spaces-active-location',
+    label: 'Cisco Spaces active device location',
+    mode: 'provider-pull',
+    sourceTypes: ['wifi_fingerprint'],
+    configured: () => anyEnv(
+      'SPECTRA_CISCO_SPACES_DEVICE_URL_TEMPLATE',
+      'SPECTRA_CISCO_SPACES_TOKEN',
+    ),
+    priority: 'high',
+    supportsRealtime: true,
+    notes: 'Pulls a configured Cisco Spaces device-location endpoint for a supplied device identifier and normalizes it into SPECTRA.',
+  },
+  {
+    id: 'active-provider-adapters',
+    label: 'Configured active provider/device collectors',
+    mode: 'provider-pull',
+    sourceTypes: [
+      'device_gps','gnss_fix','gnss_raw','wifi_fingerprint','wifi_rtt',
+      'cellular','nr_positioning','uwb_range','uwb_direction',
+      'bluetooth_proximity','bluetooth_channel_sounding','ble_rssi','ble_aoa','ble_aod',
+    ],
+    configured: () => anyEnv('SPECTRA_ACTIVE_PROVIDER_ADAPTERS'),
+    priority: 'critical',
+    supportsRealtime: true,
+    notes: 'Configured HTTPS provider/device collectors can be queried during acquisition and routed through an existing SPECTRA normalizer or the canonical telemetry schema.',
+  },
+  {
+    id: 'configured-anchor-catalog',
+    label: 'Configured radio/ranging anchor catalog',
+    mode: 'anchor-resolution',
+    sourceTypes: [
+      'wifi_rtt','uwb_range','uwb_direction','bluetooth_channel_sounding',
+      'ble_rssi','ble_aoa','ble_aod',
+    ],
+    configured: () => anyEnv('SPECTRA_ANCHOR_CATALOG_JSON'),
+    priority: 'critical',
+    supportsRealtime: true,
+    notes: 'Resolves known Wi-Fi/UWB/Bluetooth anchor identifiers to configured coordinates before multilateration.',
   },
   {
     id: 'signed-provider-webhook',
