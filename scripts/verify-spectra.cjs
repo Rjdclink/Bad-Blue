@@ -34,6 +34,7 @@ const pantheonSources = read('server/services/pantheon/PantheonSovereignSourceRe
 const geocoder = read('server/services/geoconsole/city-state-geocoder.ts');
 const geoconsoleRoutes = read('server/routes/geoconsole.routes.ts');
 const adapterRegistry = read('server/services/spectra/SpectraAdapterRegistry.ts');
+const providerNormalizer = read('server/services/spectra/SpectraProviderTelemetryNormalizer.ts');
 const genericPull = read('server/services/spectra/SpectraGenericPullAdapters.ts');
 const realtimeBridge = read('server/services/spectra/SpectraRealtimeBridge.ts');
 const telemetryImport = read('server/services/spectra/SpectraTelemetryImport.ts');
@@ -348,6 +349,23 @@ test('SPECTRA adapter capability registry truthfully exposes optional and built-
   adapterRegistry.includes("id: 'trafficland'") &&
   adapterRegistry.includes("id: 'overpass-place-context'") &&
   adapterRegistry.includes("id: 'geonames-place-context'"));
+test('SPECTRA signed provider bridge normalizes carrier, BLE and accessory-network telemetry',
+  geoconsoleRoutes.includes("router.post('/telemetry/provider/:providerId/normalize/:kind'") &&
+  geoconsoleRoutes.includes('normalizeSpectraProviderPayload') &&
+  geoconsoleRoutes.includes('providerTelemetryAuthorized(req)') &&
+  adapterRegistry.includes("id: 'camara-location-retrieval-ingest'") &&
+  adapterRegistry.includes("id: 'bluetooth-scanner-ingest'") &&
+  adapterRegistry.includes("id: 'accessory-network-ingest'") &&
+  providerNormalizer.includes("'camara-location-retrieval'") &&
+  providerNormalizer.includes("'bluetooth-scanner'") &&
+  providerNormalizer.includes("'accessory-network'") &&
+  providerNormalizer.includes("source: 'network_region'") &&
+  providerNormalizer.includes("kind: 'ranging'"));
+test('CAMARA provider normalization preserves circle and polygon uncertainty',
+  providerNormalizer.includes("areaType === 'CIRCLE'") &&
+  providerNormalizer.includes("areaType === 'POLYGON'") &&
+  providerNormalizer.includes('camaraPolygonCenter') &&
+  providerNormalizer.includes('confidenceForAccuracy'));
 test('Place context uses independent OpenStreetMap and GeoNames lanes',
   geoconsoleRoutes.includes("router.get('/place-context'") &&
   placeContext.includes('overpass-api.de/api/interpreter') &&
