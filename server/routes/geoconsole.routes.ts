@@ -55,6 +55,7 @@ import {
 } from '../services/spectra/SpectraProviderTelemetryNormalizer';
 import { assessSpectraLiveLocation } from '../services/spectra/SpectraLiveConfidence';
 import { solveSpectraConstraintLayer } from '../services/spectra/SpectraConstraintSolver';
+import { spectraMetricsProviderEvent } from '../services/spectra/SpectraObservability';
 import {
   startSpectraProviderStreams,
   getSpectraProviderStreamHealth,
@@ -1449,6 +1450,8 @@ export async function processSpectraTelemetryBatch(
     });
     return { available: false };
   });
+
+  spectraMetricsProviderEvent(batch.measurements.length);
 
   return {
     sessionId,
