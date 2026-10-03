@@ -44,7 +44,7 @@ const cameraDirectories = read('server/services/spectra/SpectraCameraDirectoryAd
 const motionContext = read('server/services/spectra/SpectraMotionContext.ts');
 const lexaraConversation = read('client/src/components/LexaraConversation.tsx');
 const spectraMigration = read('server/migrations/064_spectra_durable_observations.sql');
-const motionContextMigration = read('server/migrations/065_spectra_motion_context.sql');
+const motionContextMigration = read('server/migrations/067_spectra_motion_context.sql');
 const spectraAccessMigration = read('server/migrations/065_spectra_server_only_access.sql');
 const spectraIndexMigration = read('server/migrations/066_spectra_foreign_key_indexes.sql');
 const landing = read('client/src/pages/landing.tsx');
@@ -392,6 +392,11 @@ test('Aggregate camera motion context is stored separately from target observati
   motionContext.includes('spectra_motion_context') &&
   motionContextMigration.includes('CREATE TABLE IF NOT EXISTS public.spectra_motion_context') &&
   adapterRegistry.includes("id: 'aggregate-camera-motion-context'"));
+test('Motion-context schema is packaged after the existing SPECTRA 065/066 migrations and is server-only',
+  dockerfile.includes('067_spectra_motion_context.sql') &&
+  motionContextMigration.includes('REVOKE ALL ON TABLE public.spectra_motion_context') &&
+  motionContextMigration.includes('FROM PUBLIC, anon, authenticated') &&
+  motionContextMigration.includes('TO service_role'));
 test('Aggregate camera traffic context never becomes a target location observation',
   geoconsoleRoutes.includes("contextKind: 'aggregate_traffic_flow'") &&
   !motionContext.includes('spectra_location_observations') &&
