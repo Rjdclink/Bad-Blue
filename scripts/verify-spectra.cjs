@@ -39,6 +39,8 @@ const realtimeBridge = read('server/services/spectra/SpectraRealtimeBridge.ts');
 const telemetryImport = read('server/services/spectra/SpectraTelemetryImport.ts');
 const acquisitionPersistence = read('server/services/spectra/SpectraAcquisitionPersistence.ts');
 const placeContext = read('server/services/spectra/SpectraPlaceContext.ts');
+const publicRetrieval = read('server/services/spectra/SpectraPublicRetrieval.ts');
+const lexaraConversation = read('client/src/components/LexaraConversation.tsx');
 const spectraMigration = read('server/migrations/064_spectra_durable_observations.sql');
 const landing = read('client/src/pages/landing.tsx');
 const login = read('client/src/pages/login.tsx');
@@ -333,6 +335,31 @@ test('Place context uses independent OpenStreetMap and GeoNames lanes',
   placeContext.includes('overpass-api.de/api/interpreter') &&
   placeContext.includes('secure.geonames.org/findNearbyJSON') &&
   placeContext.includes('Promise.allSettled'));
+test('Radio positioning has independent Google, beaconDB and OpenCellID lanes',
+  geoconsoleRoutes.includes('www.googleapis.com/geolocation/v1/geolocate') &&
+  geoconsoleRoutes.includes('api.beacondb.net/v1/geolocate') &&
+  geoconsoleRoutes.includes('opencellid.org/cell/get') &&
+  geoconsoleRoutes.includes('Promise.allSettled([') &&
+  adapterRegistry.includes("id: 'beacondb-radio-geolocation'"));
+test('Public discovery retrieves underlying pages before admitting coordinate evidence',
+  routes.includes('retrieveSpectraPublicEvidence') &&
+  publicRetrieval.includes('MAX_TARGETS = 6') &&
+  publicRetrieval.includes('application/ld+json') &&
+  publicRetrieval.includes('json-geospatial-field-extraction') &&
+  routes.includes('subjectMatchConfidence: 0.35') &&
+  routes.includes('timestampConfidence: observation.timestamp ? 0.75 : 0'));
+test('SPECTRA attachment flow accepts both media and structured telemetry files',
+  spectra.includes('/api/gps/extract-upload') &&
+  spectra.includes('/api/geoconsole/telemetry/import-file') &&
+  spectra.includes('handleTargetFile') &&
+  spectra.includes('.geojson,.gpx,.kml,.nmea,.csv,.ndjson,.jsonl,.log,.txt'));
+test('Lexara exposes the SPECTRA icon only on matching location command responses',
+  lexaraConversation.includes('spectraTargetFromPrompt') &&
+  lexaraConversation.includes('data-testid="lexara-spectra-launch"') &&
+  lexaraConversation.includes("message.role === 'lexara' && message.spectraLaunch") &&
+  lexaraConversation.includes("sessionStorage.setItem('legalwhat:spectra-launch'") &&
+  spectra.includes("sessionStorage.getItem('legalwhat:spectra-launch'") &&
+  spectra.includes('void acquireTarget(targetValue, detailsValue)'));
 test('SPECTRA API is mounted',
   serverRoutes.includes("app.use('/api/spectra', spectraRoutes.default)"));
 
