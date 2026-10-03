@@ -34,6 +34,7 @@ import {
 import { InputFusionEngine, inputFusionEngine } from './inputFusionEngine';
 import { MonteCarloPathEngine, monteCarloPathEngine } from './monteCarloPathEngine';
 import { createLogger } from '../../logger';
+import { smoothSpectraTrajectory } from './constraintStateEstimator';
 
 const log = createLogger('HybridGeoconsole');
 
@@ -186,7 +187,18 @@ export class HybridGeoconsole extends EventEmitter {
       }
 
       // Step 2: Keep alternate hypotheses, but resolve one physical timeline.
-      const primaryFusedLocations = this.selectPrimaryFusedTimeline(fusedLocations);
+      // A fixed-lag state estimator then uses recent observations jointly so later
+      // evidence can refine the recent path without erasing the raw hypotheses.
+      const selectedPrimaryLocations = this.selectPrimaryFusedTimeline(fusedLocations);
+      const smoothedPrimaryPoints = smoothSpectraTrajectory(
+        selectedPrimaryLocations.map(location => location.point),
+      );
+      const primaryFusedLocations = selectedPrimaryLocations.map(
+        (location, index) => ({
+          ...location,
+          point: smoothedPrimaryPoints[index] || location.point,
+        }),
+      );
 
       this.emitProgress(taskId, 'interpolation', 40, 'Reconstructing supported movement gaps...');
       const sortedPoints = primaryFusedLocations
