@@ -566,10 +566,13 @@ function combinedIndependentReliability(
   const strongestByDomain = new Map<string, number>();
 
   for (const measurement of measurements) {
+    // Reliability is combined once per independent correlation domain.
+    // The spatial information matrix already applies the 1/N common-mode
+    // discount, so applying it again here would artificially lower a domain's
+    // reliability merely because it emitted multiple correlated modalities.
     const effective = clamp(
       measurement.reliabilityWeight
-      * measurement.robustWeight
-      * measurement.correlationWeight,
+      * measurement.robustWeight,
       0,
       0.999999,
     );
