@@ -1,5 +1,6 @@
 import { parse as parseCsv } from 'csv-parse/sync';
 import { assessSpectraGnssIntegrity } from './SpectraGnssIntegrity';
+import { resolveConfiguredSpectraAnchor } from './SpectraAnchorRegistry';
 
 export const SPECTRA_ADVANCED_RADIO_NORMALIZER_KINDS = [
   'bluetooth-channel-sounding',
@@ -159,7 +160,17 @@ function anchorCoordinates(value: unknown) {
     -180,
     180,
   );
-  return latitude === null || longitude === null ? null : { latitude, longitude };
+  if (latitude !== null && longitude !== null) {
+    return { latitude, longitude };
+  }
+
+  const configured = resolveConfiguredSpectraAnchor(source);
+  return configured
+    ? {
+        latitude: configured.latitude,
+        longitude: configured.longitude,
+      }
+    : null;
 }
 
 function normalizerBatch(
