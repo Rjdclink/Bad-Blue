@@ -488,6 +488,15 @@ function normalizeAndroidWifiRanging(
       rssiDbm: finite(result.rssiDbm ?? result.rssi),
       successfulMeasurements: finite(result.successfulMeasurements),
       attemptedMeasurements: finite(result.attemptedMeasurements),
+      rangingTimestampMillis: finite(
+        result.rangingTimestampMillis
+        ?? result.elapsedRealtimeMillis
+      ),
+      rangingFrameProtected:
+        typeof result.rangingFrameProtected === 'boolean'
+          ? result.rangingFrameProtected
+          : undefined,
+      timestampUncertaintyMillis: finite(result.timestampUncertaintyMillis),
     };
 
     if (anchor && distanceMeters !== null && distanceMeters >= 0) {
@@ -809,6 +818,10 @@ function normalizeAndroidUwbSensorFusion(
         || estimateType === 'range-only',
       localOdometry: Object.keys(odometry).length ? odometry : undefined,
       elapsedRealtimeNanos: finite(update.elapsedRealtimeNanos),
+      elapsedRealtimeUncertaintyNanos: finite(
+        update.elapsedRealtimeUncertaintyNanos
+      ),
+      timestampUncertaintyMillis: finite(update.timestampUncertaintyMillis),
     };
 
     const solved = record(
@@ -1636,6 +1649,13 @@ function normalizeAndroidRawGnss(
       providerKind: 'android-raw-gnss',
       clock: {
         timeNanos: finite(clock.timeNanos ?? clock.TimeNanos),
+        elapsedRealtimeNanos: finite(
+          clock.elapsedRealtimeNanos ?? clock.ElapsedRealtimeNanos
+        ),
+        elapsedRealtimeUncertaintyNanos: finite(
+          clock.elapsedRealtimeUncertaintyNanos
+          ?? clock.ElapsedRealtimeUncertaintyNanos
+        ),
         fullBiasNanos: finite(clock.fullBiasNanos ?? clock.FullBiasNanos),
         biasNanos: finite(clock.biasNanos ?? clock.BiasNanos),
         biasUncertaintyNanos: finite(clock.biasUncertaintyNanos ?? clock.BiasUncertaintyNanos),
