@@ -151,6 +151,9 @@ const telemetryAbsoluteSchema = z.object({
   confidence: z.number().min(0).max(1).default(0.5),
   provider: z.string().trim().min(1).max(200).optional(),
   recordId: z.string().trim().min(1).max(300).optional(),
+  trackId: z.string().trim().min(1).max(200).optional(),
+  cameraId: z.string().trim().min(1).max(200).optional(),
+  objectClass: z.string().trim().min(1).max(80).optional(),
   correlationGroup: z.string().trim().min(1).max(300).optional(),
   metadata: z.record(z.unknown()).optional(),
 });
@@ -869,7 +872,11 @@ async function telemetryPoint(
         ? 'historical'
         : 'observed',
     correlationGroup: measurement.correlationGroup
-      || `${measurement.source}:${measurement.provider || 'telemetry-source'}`,
+      || (
+        measurement.trackId
+          ? `visual-track:${measurement.provider || 'telemetry-source'}:${measurement.trackId}`
+          : `${measurement.source}:${measurement.provider || 'telemetry-source'}`
+      ),
     provenance: {
       provider: measurement.provider || 'telemetry-source',
       recordId: measurement.recordId,
@@ -878,6 +885,9 @@ async function telemetryPoint(
     },
     metadata: {
       ...(measurement.metadata || {}),
+      trackId: measurement.trackId,
+      cameraId: measurement.cameraId,
+      objectClass: measurement.objectClass,
       velocity: (
         measurement.speed !== undefined || measurement.heading !== undefined
       ) ? {
