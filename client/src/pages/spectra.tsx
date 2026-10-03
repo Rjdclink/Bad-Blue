@@ -721,6 +721,8 @@ export default function SpectraPage() {
 
     const targetValue = launch.target;
     const detailsValue = launchDetails(launch);
+    targetRef.current = targetValue;
+    detailsRef.current = detailsValue;
     setTarget(targetValue);
     setDetails(detailsValue);
     setAcquisitionStage('LEXARA context received; starting SPECTRA acquisition…');
@@ -964,6 +966,7 @@ export default function SpectraPage() {
     setInput('');
 
     if (phase === 'awaiting_target') {
+      targetRef.current = message;
       setTarget(message);
       setPhase('awaiting_details');
       addMessage('spectra', DETAILS_PROMPT);
@@ -972,14 +975,16 @@ export default function SpectraPage() {
     }
 
     if (phase === 'awaiting_details') {
+      detailsRef.current = message;
       setDetails(message);
-      await acquireTarget(target, message);
+      await acquireTarget(targetRef.current || target, message);
       return;
     }
 
-    const expandedDetails = [details, message].filter(Boolean).join('\n');
+    const expandedDetails = [detailsRef.current || details, message].filter(Boolean).join('\n');
+    detailsRef.current = expandedDetails;
     setDetails(expandedDetails);
-    await acquireTarget(target, expandedDetails);
+    await acquireTarget(targetRef.current || target, expandedDetails);
   }, [
     acquireTarget,
     addMessage,
