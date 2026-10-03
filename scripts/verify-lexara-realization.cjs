@@ -948,7 +948,9 @@ must(
     lexaraConversationOrchestrator.includes("const backgroundResearchRequested = sequencePlan.useBackgroundResearch") &&
     lexaraConversationOrchestrator.includes('const researchRouteSelected = sequencePlan.useLegalResearch') &&
     lexaraConversationOrchestrator.includes('resolvedSubject: resolvedBackgroundSubject || undefined') &&
-    lexaraBackgroundInvestigation.includes('const resolved = context.resolvedSubject') &&
+    lexaraBackgroundInvestigation.includes('mergeCompatibleLexaraBackgroundSubjects(') &&
+    lexaraBackgroundInvestigation.includes('context.resolvedSubject || decisionResolved') &&
+    lexaraBackgroundSubject.includes('mergeCompatibleLexaraBackgroundSubjects') &&
     lexaraBackgroundSubject.includes('CONVERSATIONAL_LEAD') &&
     lexaraBackgroundSubject.includes('commaSubjectLocation') &&
     lexaraBackgroundSubject.includes('jurisdictionSubjectLocality') &&
