@@ -42,6 +42,57 @@ function isSpectraTelemetryFile(file: File): boolean {
   return ['geojson', 'gpx', 'kml', 'nmea', 'csv', 'ndjson', 'jsonl', 'log', 'txt'].includes(extension);
 }
 
+interface SpectraLaunchPayload {
+  target: string;
+  clues: string;
+  lexaraSessionId?: string;
+  conversation?: Array<{
+    role?: string;
+    content?: string;
+    timestamp?: string;
+  }>;
+}
+
+function readLexaraSpectraLaunch(): SpectraLaunchPayload | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = sessionStorage.getItem('legalwhat:spectra-launch');
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    const target = String(parsed?.target || '').trim();
+    const clues = String(parsed?.clues || '').trim();
+    if (!target || !clues) return null;
+    return {
+      target: target.slice(0, 500),
+      clues: clues.slice(-8_000),
+      lexaraSessionId: typeof parsed?.lexaraSessionId === 'string'
+        ? parsed.lexaraSessionId.slice(0, 200)
+        : undefined,
+      conversation: Array.isArray(parsed?.conversation)
+        ? parsed.conversation.slice(-30)
+        : undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function launchDetails(launch: SpectraLaunchPayload): string {
+  const conversation = (launch.conversation || [])
+    .map(item => {
+      const role = item?.role === 'lexara' ? 'LEXARA' : 'USER';
+      const content = String(item?.content || '').replace(/\s+/g, ' ').trim();
+      return content ? `${role}: ${content}` : '';
+    })
+    .filter(Boolean)
+    .join('\n');
+
+  return [
+    launch.clues,
+    conversation ? `LEXARA conversation context:\n${conversation}` : '',
+  ].filter(Boolean).join('\n\n').slice(-10_000);
+}
+
 interface AcquisitionResponse {
   success: boolean;
   error?: string;
@@ -79,11 +130,19 @@ function makeMessage(role: Message['role'], content: string): Message {
 
 export default function SpectraPage() {
   const [, setLocation] = useLocation();
-  const [phase, setPhase] = useState<Phase>('awaiting_target');
-  const [target, setTarget] = useState('');
-  const [details, setDetails] = useState('');
+  const lexaraLaunchRef = useRef<SpectraLaunchPayload | null>(readLexaraSpectraLaunch());
+  const initialLexaraLaunch = lexaraLaunchRef.current;
+  const [phase, setPhase] = useState<Phase>(
+    initialLexaraLaunch ? 'acquiring' : 'awaiting_target'
+  );
+  const [target, setTarget] = useState(initialLexaraLaunch?.target || '');
+  const [details, setDetails] = useState(
+    initialLexaraLaunch ? launchDetails(initialLexaraLaunch) : ''
+  );
   const [messages, setMessages] = useState<Message[]>([
-    makeMessage('spectra', FIRST_PROMPT),
+    initialLexaraLaunch
+      ? makeMessage('spectra', 'LEXARA context received. Opening the SPECTRA investigation…')
+      : makeMessage('spectra', FIRST_PROMPT),
   ]);
   const [input, setInput] = useState('');
   const [observations, setObservations] = useState<GPSPoint[]>([]);
@@ -160,6 +219,7 @@ export default function SpectraPage() {
   }, []);
 
   useEffect(() => {
+    if (lexaraLaunchRef.current) return;
     if (initialVoicePromptRef.current || getLexaraLiveEnabled() !== 'true') return;
     initialVoicePromptRef.current = true;
 
