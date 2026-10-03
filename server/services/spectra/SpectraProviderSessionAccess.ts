@@ -36,32 +36,42 @@ function configuredBindings(): ProviderSessionBinding[] {
   }
 }
 
+export function resolveSpectraProviderSessionBinding(input: {
+  providerId?: string;
+  sessionId: string;
+}): ProviderSessionBinding | null {
+  const providerId = normalize(input.providerId, 200).toLowerCase();
+  const sessionId = normalize(input.sessionId, 200);
+  if (!providerId || !sessionId) return null;
+
+  return configuredBindings().find(binding =>
+    binding.providerId === providerId
+    && binding.sessionId === sessionId
+  ) || null;
+}
+
 export function providerMayWriteOwnedSpectraSession(input: {
   providerId?: string;
   sessionId: string;
   ownerTenantId: string;
 }): boolean {
-  const providerId = normalize(input.providerId, 200).toLowerCase();
-  const sessionId = normalize(input.sessionId, 200);
   const ownerTenantId = normalize(input.ownerTenantId, 240);
+  if (!ownerTenantId) return false;
 
-  if (!providerId || !sessionId || !ownerTenantId) return false;
-
-  return configuredBindings().some(binding =>
-    binding.providerId === providerId
-    && binding.sessionId === sessionId
-    && (!binding.tenantId || binding.tenantId === ownerTenantId)
-  );
+  const binding = resolveSpectraProviderSessionBinding(input);
+  return Boolean(binding?.tenantId && binding.tenantId === ownerTenantId);
 }
 
-export function getConfiguredSpectraProviderSessionBindings(): Array<{
-  providerId: string;
-  sessionId: string;
-  tenantScoped: boolean;
-}> {
-  return configuredBindings().map(binding => ({
-    providerId: binding.providerId,
-    sessionId: binding.sessionId,
-    tenantScoped: Boolean(binding.tenantId),
-  }));
+export function getConfiguredSpectraProviderSessionBindingSummary(): {
+  count: number;
+  tenantScopedCount: number;
+  unscopedCount: number;
+} {
+  const bindings = configuredBindings();
+  const tenantScopedCount = bindings.filter(binding => Boolean(binding.tenantId)).length;
+  return {
+    count: bindings.length,
+    tenantScopedCount,
+    unscopedCount: bindings.length - tenantScopedCount,
+  };
 }
