@@ -753,6 +753,11 @@ test('Constraint-state behavior has executable regression coverage',
   constraintEstimatorVerifier.includes('robustlyDownweightedCount >= 1') &&
   constraintEstimatorVerifier.includes('segmentCount, 2') &&
   constraintEstimatorVerifier.includes("backwardSmoothed, true"));
+test('Futurecast carries posterior motion state and uncertainty forward',
+  monteCarlo.includes('stateEstimatorSeeded') &&
+  monteCarlo.includes('stateEstimatorInfluence') &&
+  monteCarlo.includes('stateEstimatorRadius95Meters') &&
+  constraintEstimatorVerifier.includes('stateEstimatorSeeded, true'));
 
 console.log(`\nPassed: ${passed}  Failed: ${failed}\n`);
 process.exit(failed === 0 ? 0 : 1);
