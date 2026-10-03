@@ -74,9 +74,6 @@ export function mergeCompatibleLexaraBackgroundSubjects(
   const primaryTokens = normalizedSubjectTokens(primary.name);
   const alternateTokens = normalizedSubjectTokens(alternate.name);
   const exact = primaryTokens.join(' ') === alternateTokens.join(' ');
-  const sameFirstLast = primaryTokens.length >= 2 && alternateTokens.length >= 2
-    && primaryTokens[0] === alternateTokens[0]
-    && primaryTokens[primaryTokens.length - 1] === alternateTokens[alternateTokens.length - 1];
   const primarySubset = primaryTokens.length >= 2
     && primaryTokens.length < alternateTokens.length
     && primaryTokens.every(token => alternateTokens.includes(token));
@@ -84,7 +81,10 @@ export function mergeCompatibleLexaraBackgroundSubjects(
     && alternateTokens.length < primaryTokens.length
     && alternateTokens.every(token => primaryTokens.includes(token));
 
-  if (!exact && !sameFirstLast && !primarySubset && !alternateSubset) return primary;
+  // Only enrich when one normalized identity is actually contained in the
+  // other. Matching first/last names with conflicting middle names is not
+  // enough to fuse two subjects.
+  if (!exact && !primarySubset && !alternateSubset) return primary;
 
   const mostSpecific = alternateTokens.length > primaryTokens.length ? alternate : primary;
   return {
