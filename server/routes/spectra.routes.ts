@@ -6,6 +6,7 @@ import {
   copernicusItems,
   flickrNearbyMedia,
   nwsLatestObservation,
+  resolveSpectraNormalizedTelemetryBatch,
   trafficLandCameras,
   wikimediaNearbyMedia,
 } from './geoconsole.routes';
@@ -50,6 +51,7 @@ import { acquireSpectraPlaceContext } from '../services/spectra/SpectraPlaceCont
 import { retrieveSpectraPublicEvidence } from '../services/spectra/SpectraPublicRetrieval';
 import { assessSpectraLiveLocation } from '../services/spectra/SpectraLiveConfidence';
 import { acquireConfiguredSpectraCameras } from '../services/spectra/SpectraCameraDirectoryAdapters';
+import { acquireSpectraActiveTelemetry } from '../services/spectra/SpectraActiveAcquisition';
 
 const router = Router();
 router.use(isAuthenticated);
@@ -84,6 +86,8 @@ const acquireSchema = z.object({
 });
 
 const PHONE_CANDIDATE_RE = /(?:\+\d{1,3}[\s().-]*)?(?:\d[\s().-]*){7,15}/;
+const MAC_CANDIDATE_RE = /\b(?:[0-9A-F]{2}[:-]){5}[0-9A-F]{2}\b/i;
+const LABELED_DEVICE_REF_RE = /\b(?:device(?:\s*(?:id|ref))?|imei|meid|bssid|mac(?:\s+address)?)\s*(?::|=|-)\s*([A-Za-z0-9._:-]{4,120})/i;
 
 const configuredOsintTimeout = Number(process.env.SPECTRA_OSINT_TIMEOUT_MS);
 const SPECTRA_OSINT_TIMEOUT_MS = Number.isFinite(configuredOsintTimeout)
@@ -125,6 +129,13 @@ function extractPhoneNumber(value: string): string | undefined {
   const digits = candidate.replace(/\D/g, '');
   if (digits.length < 7 || digits.length > 15) return undefined;
   return candidate.replace(/[\s.,;:-]+$/g, '');
+}
+
+function extractDeviceRef(value: string): string | undefined {
+  const mac = value.match(MAC_CANDIDATE_RE)?.[0]?.trim();
+  if (mac) return mac.toLowerCase();
+  const labeled = value.match(LABELED_DEVICE_REF_RE)?.[1]?.trim();
+  return labeled ? labeled.slice(0, 120) : undefined;
 }
 
 function normalizeTargetIntent(value: string): string {
@@ -796,6 +807,7 @@ router.post('/acquire', async (req: Request, res: Response) => {
   const normalizedTarget = normalizeTargetIntent(target);
   const combinedTargetText = [normalizedTarget, details].filter(Boolean).join(' ');
   const phone = extractPhoneNumber(combinedTargetText);
+  const deviceRef = extractDeviceRef(combinedTargetText);
   const targetPhone = extractPhoneNumber(normalizedTarget);
   const remainingTarget = targetPhone
     ? normalizedTarget.replace(targetPhone, '').replace(/[\s,;:()\-.]+/g, '')
@@ -852,18 +864,35 @@ router.post('/acquire', async (req: Request, res: Response) => {
       subject: resolvedSubjectName,
       location: semanticSubject?.location || details,
     });
+    const activeAcquisitionPromise = acquireSpectraActiveTelemetry({
+      phoneNumber: phone,
+      deviceRef,
+      sessionId: requestedSessionId,
+      subjectLabel: resolvedTargetLabel,
+    });
 
     const [
       backgroundOutcome,
       firstPass,
       persistedObservations,
       identityBindingEvidence,
+      activeAcquisition,
     ] = await Promise.all([
       backgroundPromise,
       firstPassPromise,
       persistedObservationsPromise,
       identityBindingsPromise,
+      activeAcquisitionPromise,
     ]);
+
+    const activeBatchOutcomes = await Promise.allSettled(
+      activeAcquisition.batches.map(batch =>
+        resolveSpectraNormalizedTelemetryBatch(batch, true)
+      ),
+    );
+    const activeLocationPoints = activeBatchOutcomes.flatMap(outcome =>
+      outcome.status === 'fulfilled' ? outcome.value.quality.points : []
+    );
 
     const background = backgroundOutcome.status === 'fulfilled'
       ? backgroundOutcome.value
@@ -982,6 +1011,23 @@ router.post('/acquire', async (req: Request, res: Response) => {
     }
 
     const observations: any[] = [
+      ...activeLocationPoints.map(point => ({
+        ...point,
+        timestamp: point.timestamp.toISOString(),
+        receivedAt: point.receivedAt?.toISOString(),
+        provenance: point.provenance
+          ? {
+              ...point.provenance,
+              capturedAt: point.provenance.capturedAt instanceof Date
+                ? point.provenance.capturedAt.toISOString()
+                : point.provenance.capturedAt,
+            }
+          : undefined,
+        metadata: {
+          ...(point.metadata || {}),
+          acquisitionMethod: 'active-provider-pull',
+        },
+      })),
       ...persistedObservations.map(point => ({
         ...point,
         timestamp: point.timestamp.toISOString(),
@@ -1245,6 +1291,11 @@ router.post('/acquire', async (req: Request, res: Response) => {
         discoveryQueriesFailed,
         contextSourceFamilies: contextEvidence.sourceFamilies,
         contextEvidenceItemCount,
+        activeAcquisitionAttempts: activeAcquisition.attempts.length,
+        activeAcquisitionSucceeded: activeAcquisition.attempts.filter(
+          attempt => attempt.status === 'fulfilled'
+        ).length,
+        activeAcquisitionPositionCount: activeLocationPoints.length,
         originSessionId: originSessionId || null,
         lastAcquiredAt: new Date().toISOString(),
       },
@@ -1295,6 +1346,8 @@ router.post('/acquire', async (req: Request, res: Response) => {
         discoveryQueriesFailed,
         contextSourceFamilies: contextEvidence.sourceFamilies,
         contextEvidenceItemCount,
+        activeAcquisitionAttempts: activeAcquisition.attempts,
+        activeAcquisitionPositionCount: activeLocationPoints.length,
         summary: report.summary || '',
         verificationStatus: report.identitySummary?.verificationStatus || 'Unknown',
       },
