@@ -100,7 +100,7 @@ function evidence(
 
 {
   const joint = conservativeJointConfidence(0.8, 0.9);
-  assert.equal(joint, 0.7);
+  assert.ok(Math.abs(joint - 0.7) < 1e-12);
 }
 
 console.log('SPECTRA identity-binding regression checks passed.');
