@@ -269,6 +269,7 @@ const telemetrySensorSchema = z.object({
     'wifi_rtt_context', 'cellular_signal', 'uwb_context',
     'ble_gateway', 'lorawan_radio', 'radio_context',
     'gnss_corrections',
+    'identity_binding',
     'location_verification', 'network_reachability',
   ]),
   timestamp: validDateString,
