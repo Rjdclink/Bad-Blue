@@ -49,7 +49,7 @@ export const SPECTRA_DISCOVERY_POLICY: SpectraDiscoveryPolicy = {
 /**
  * Compatibility exports retained for callers that imported the old static
  * catalog. SPECTRA now builds targets dynamically, so the static catalog is
- * intentionally empty rather than Pantheon-derived.
+ * intentionally empty rather than being derived from a legacy registry.
  */
 export const SPECTRA_SOURCE_CATALOG: SpectraSourceTarget[] = [];
 export const SPECTRA_SOURCE_CATALOG_BY_ID = new Map<string, SpectraSourceTarget>();
