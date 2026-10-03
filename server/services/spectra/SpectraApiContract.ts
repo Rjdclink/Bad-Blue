@@ -25,11 +25,10 @@ export function getSpectraOpenApiDocument() {
     },
     jsonSchemaDialect: 'https://json-schema.org/draft/2020-12/schema',
     servers: [
-      { url: '/api/spectra/v1', description: 'SPECTRA v1 acquisition API' },
-      { url: '/api/geoconsole/v1', description: 'SPECTRA v1 telemetry/analysis API' },
+      { url: '/api', description: 'LegalWhat API root' },
     ],
     paths: {
-      '/acquire': {
+      '/spectra/v1/acquire': {
         post: {
           operationId: 'spectraAcquire',
           summary: 'Run one bounded SPECTRA acquisition pass',
@@ -56,7 +55,7 @@ export function getSpectraOpenApiDocument() {
           },
         },
       },
-      '/acquisition/stop': {
+      '/spectra/v1/acquisition/stop': {
         post: {
           operationId: 'spectraStopAcquisition',
           summary: 'Hard-stop recursive acquisition for a session',
@@ -82,14 +81,14 @@ export function getSpectraOpenApiDocument() {
           },
         },
       },
-      '/live': {
+      '/spectra/v1/live': {
         get: {
           operationId: 'spectraLive',
           summary: 'Lightweight liveness probe with no dependency checks',
           responses: { '200': { description: 'Process is live' } },
         },
       },
-      '/ready': {
+      '/spectra/v1/ready': {
         get: {
           operationId: 'spectraReady',
           summary: 'Readiness probe for critical persistence dependency',
@@ -99,7 +98,7 @@ export function getSpectraOpenApiDocument() {
           },
         },
       },
-      '/health': {
+      '/spectra/v1/health': {
         get: {
           operationId: 'spectraHealth',
           summary: 'Read current SPECTRA health and live capability state',
@@ -115,14 +114,14 @@ export function getSpectraOpenApiDocument() {
           },
         },
       },
-      '/openapi.json': {
+      '/spectra/v1/openapi.json': {
         get: {
           operationId: 'spectraOpenApi',
           summary: 'Read this OpenAPI contract',
           responses: { '200': { description: 'OpenAPI 3.1 document' } },
         },
       },
-      '/telemetry-history/{sessionId}': {
+      '/geoconsole/v1/telemetry-history/{sessionId}': {
         get: {
           operationId: 'spectraTelemetryHistory',
           summary: 'Read cursor-paged durable location observations for an owned session',
@@ -165,7 +164,7 @@ export function getSpectraOpenApiDocument() {
           },
         },
       },
-      '/telemetry-stream/{sessionId}': {
+      '/geoconsole/v1/telemetry-stream/{sessionId}': {
         get: {
           operationId: 'spectraTelemetryStream',
           summary: 'Subscribe to server-sent observation events',
@@ -183,14 +182,14 @@ export function getSpectraOpenApiDocument() {
           },
         },
       },
-      '/telemetry-capabilities': {
+      '/geoconsole/v1/telemetry-capabilities': {
         get: {
           operationId: 'spectraTelemetryCapabilities',
           summary: 'Read configured adapters, transports and stream health',
           responses: { '200': { description: 'Capability snapshot' } },
         },
       },
-      '/metrics': {
+      '/spectra/v1/metrics': {
         get: {
           operationId: 'spectraMetrics',
           summary: 'Prometheus text exposition for SPECTRA runtime metrics',
@@ -201,6 +200,48 @@ export function getSpectraOpenApiDocument() {
                 'text/plain': { schema: { type: 'string' } },
               },
             },
+          },
+        },
+      },
+      '/geoconsole/v1/process': {
+        post: {
+          operationId: 'spectraProcessLocationData',
+          summary: 'Run the canonical bounded location fusion pipeline',
+          responses: {
+            '200': { description: 'Fused location pipeline result' },
+            '400': { description: 'Invalid location input' },
+            '429': { description: 'Resource budget temporarily exhausted' },
+          },
+        },
+      },
+      '/geoconsole/v1/report': {
+        post: {
+          operationId: 'spectraGenerateReport',
+          summary: 'Generate a report by rehydrating tenant-owned durable observations',
+          responses: {
+            '200': { description: 'Durable-history report result' },
+            '404': { description: 'No owned durable observations for session/range' },
+            '429': { description: 'Resource budget temporarily exhausted' },
+          },
+        },
+      },
+      '/geoconsole/v1/interpolate': {
+        post: {
+          operationId: 'spectraInterpolate',
+          summary: 'Run bounded path interpolation',
+          responses: {
+            '200': { description: 'Interpolation result' },
+            '429': { description: 'Resource budget temporarily exhausted' },
+          },
+        },
+      },
+      '/geoconsole/v1/futurecast': {
+        post: {
+          operationId: 'spectraFuturecast',
+          summary: 'Run bounded future-position prediction',
+          responses: {
+            '200': { description: 'Futurecast result' },
+            '429': { description: 'Resource budget temporarily exhausted' },
           },
         },
       },
