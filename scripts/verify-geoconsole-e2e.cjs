@@ -27,6 +27,7 @@ const routes = read('server/routes/geoconsole.routes.ts');
 const hybrid = read('server/services/geoconsole/index.ts');
 const fusion = read('server/services/geoconsole/inputFusionEngine.ts');
 const futurecast = read('server/services/geoconsole/monteCarloPathEngine.ts');
+const trajectoryEstimator = read('server/services/spectra/SpectraTrajectoryEstimator.ts');
 const gpsRoutes = read('server/routes/gps.routes.ts');
 const tshpe = read('client/src/hooks/useTSHPELocator.ts');
 
@@ -53,6 +54,21 @@ test('HybridGeoconsole -> motion trail',
   hybrid.includes('generateMotionTrail'));
 test('HybridGeoconsole -> Futurecast',
   hybrid.includes('generateFuturecast'));
+test('HybridGeoconsole -> dependency-aware fixed-lag trajectory estimator',
+  hybrid.includes('estimateSpectraTrajectory') &&
+  hybrid.includes('selectSpectraTrajectoryFuturecastSeed') &&
+  trajectoryEstimator.includes('constant_velocity_rts_fixed_lag') &&
+  trajectoryEstimator.includes('rauch_tung_striebel_smoother'));
+test('Trajectory estimator caps correlated-domain information and rejects contradictions',
+  trajectoryEstimator.includes('domainScale') &&
+  trajectoryEstimator.includes('robustWeight') &&
+  trajectoryEstimator.includes('domainContradictionCount') &&
+  trajectoryEstimator.includes('motionConstraintViolation'));
+test('Trajectory posterior exposes covariance and bounded Futurecast seed continuity',
+  trajectoryEstimator.includes('covarianceMeters2') &&
+  trajectoryEstimator.includes('uncertaintyRadius99Meters') &&
+  trajectoryEstimator.includes('selectSpectraTrajectoryFuturecastSeed') &&
+  routes.includes('trajectoryDiagnostics'));
 test('/process returns signed fused locations, trail and Futurecast',
   routes.includes('fusedLocations: signedFusedLocations') &&
   routes.includes('points: signedTrailPoints') &&
