@@ -37,6 +37,15 @@ import {
   type SpectraTelemetryImportFormat,
 } from '../services/spectra/SpectraTelemetryImport';
 import { acquireSpectraPlaceContext } from '../services/spectra/SpectraPlaceContext';
+import {
+  acquireConfiguredSpectraCameras,
+  configuredSpectraCameraJsonFeeds,
+} from '../services/spectra/SpectraCameraDirectoryAdapters';
+import {
+  loadSpectraMotionContext,
+  persistSpectraMotionContext,
+  type SpectraMotionContext,
+} from '../services/spectra/SpectraMotionContext';
 
 const router = Router();
 const log = createLogger('GeoconsoleRoutes');
@@ -2018,6 +2027,7 @@ router.get('/public-cameras', async (req: Request, res: Response) => {
   const settled = await Promise.allSettled([
     trafficLandCameras(lat, lng, radiusMiles),
     arcGisCameras(lat, lng, radiusMiles),
+    acquireConfiguredSpectraCameras(lat, lng, radiusMiles),
   ]);
 
   const seen = new Set<string>();
@@ -2043,6 +2053,7 @@ router.get('/public-cameras', async (req: Request, res: Response) => {
     providers: {
       trafficLand: Boolean(process.env.TRAFFICLAND_API_KEY && process.env.TRAFFICLAND_SYSTEM),
       arcGisFeeds: configuredArcGisCameraLayers().length,
+      jsonFeeds: configuredSpectraCameraJsonFeeds(),
     },
   });
 });
@@ -2595,7 +2606,8 @@ router.get('/status', async (req: Request, res: Response) => {
           streetImagery: true,
           publicCameraIntegration:
             Boolean(process.env.TRAFFICLAND_API_KEY && process.env.TRAFFICLAND_SYSTEM)
-            || configuredArcGisCameraLayers().length > 0,
+            || configuredArcGisCameraLayers().length > 0
+            || configuredSpectraCameraJsonFeeds().length > 0,
         },
       },
     });
