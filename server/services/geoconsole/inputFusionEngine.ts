@@ -53,6 +53,7 @@ const DEFAULT_SOURCE_CONFIGS: DataSourceConfig[] = [
   { source: 'social_geotag', enabled: true, priority: 6, confidenceWeight: 0.64 },
   { source: 'visual_detection', enabled: true, priority: 6, confidenceWeight: 0.64 },
   { source: 'vehicle_telemetry', enabled: true, priority: 9, confidenceWeight: 0.90 },
+  { source: 'visual_positioning', enabled: true, priority: 9, confidenceWeight: 0.94 },
   { source: 'public_camera', enabled: true, priority: 5, confidenceWeight: 0.56 },
   { source: 'traffic_cam', enabled: true, priority: 5, confidenceWeight: 0.56 },
   { source: 'satellite_imagery', enabled: true, priority: 4, confidenceWeight: 0.42 },
@@ -121,6 +122,7 @@ export class InputFusionEngine {
       case 'wifi_rssi':
       case 'wifi_handoff': return 80;
       case 'vehicle_telemetry': return 20;
+      case 'visual_positioning': return 5;
       case 'nr_positioning': return 5;
       case 'cell_serving':
       case 'cell_neighbor':
@@ -151,6 +153,7 @@ export class InputFusionEngine {
       case 'device_gps':
       case 'browser_geolocation': return 3;
       case 'vehicle_telemetry': return 3;
+      case 'visual_positioning': return 0.5;
       case 'nr_positioning': return 0.5;
       case 'exif_photo':
       case 'exif_video':
