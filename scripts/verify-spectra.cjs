@@ -480,13 +480,24 @@ test('Managed-device, enterprise sensor, IoT and vehicle feeds share the signed 
   externalLocationNormalizer.includes("'meraki-scanning'") &&
   externalLocationNormalizer.includes("'cisco-spaces-location'") &&
   externalLocationNormalizer.includes("'aws-iot-device-location'") &&
+  externalLocationNormalizer.includes("'arcore-geospatial-pose'") &&
   externalLocationNormalizer.includes("'connected-vehicle-location'") &&
   adapterRegistry.includes("id: 'android-managed-lost-mode-ingest'") &&
   adapterRegistry.includes("id: 'apple-managed-lost-mode-ingest'") &&
   adapterRegistry.includes("id: 'meraki-scanning-ingest'") &&
   adapterRegistry.includes("id: 'cisco-spaces-location-ingest'") &&
   adapterRegistry.includes("id: 'aws-iot-device-location-ingest'") &&
+  adapterRegistry.includes("id: 'arcore-geospatial-pose-ingest'") &&
   adapterRegistry.includes("id: 'connected-vehicle-location-ingest'"));
+test('ARCore Geospatial VPS preserves calibrated visual-positioning accuracy without double-counting same-device GNSS',
+  externalLocationNormalizer.includes("'arcore-geospatial-pose'") &&
+  externalLocationNormalizer.includes("source: 'visual_positioning'") &&
+  externalLocationNormalizer.includes("accuracyConfidenceLevel: 0.68") &&
+  externalLocationNormalizer.includes("correlationDomain: deviceRef") &&
+  adapterRegistry.includes("id: 'arcore-geospatial-pose-ingest'") &&
+  geoconsoleRoutes.includes("'visual_positioning'") &&
+  fusion.includes("source: 'visual_positioning'") &&
+  liveConfidence.includes("point.source === 'visual_positioning'"));
 test('CAMARA verification and reachability remain corroboration context rather than fabricated positions',
   externalLocationNormalizer.includes("'camara-location-verification'") &&
   externalLocationNormalizer.includes("'camara-reachability'") &&
@@ -507,6 +518,12 @@ test('SPECTRA live confidence is posterior/covariance driven with no hard-coded 
   liveConfidence.includes('protectionLevelFloor') &&
   liveConfidence.includes('temporalInflationMeters') &&
   liveConfidence.includes('measurementQualityWeight') &&
+  liveConfidence.includes('independentDomainCount') &&
+  liveConfidence.includes("'visual-positioning'") &&
+  liveConfidence.includes('precisionReadinessScore') &&
+  liveConfidence.includes('ambiguityRatio') &&
+  liveConfidence.includes('satellitesUsed') &&
+  liveConfidence.includes('correctionAgeSeconds') &&
   !liveConfidence.includes('0.991') &&
   !liveConfidence.includes('exceedsNinetyNinePercent') &&
   !liveConfidence.includes('strongConsensus.length < 3') &&
