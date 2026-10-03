@@ -55,6 +55,10 @@ const gtfsRealtimeContext = read('server/services/spectra/SpectraGtfsRealtimeCon
 const arcGisCameraDiscovery = read('server/services/spectra/SpectraArcGisPublicCameraDiscovery.ts');
 const floorplanTransformer = read('server/services/spectra/SpectraFloorplanTransformer.ts');
 const infrastructureIdentity = read('server/services/spectra/SpectraInfrastructureIdentity.ts');
+const infrastructureNormalizer = read('server/services/spectra/SpectraInfrastructureProviderNormalizer.ts');
+const arubaStreamDecoder = read('server/services/spectra/SpectraArubaStreamDecoder.ts');
+const providerStreamCoordinator = read('server/services/spectra/SpectraProviderStreamCoordinator.ts');
+const mqttProviderCoordinator = read('server/services/spectra/SpectraMqttProviderCoordinator.ts');
 const publicRetrieval = read('server/services/spectra/SpectraPublicRetrieval.ts');
 const cameraDirectories = read('server/services/spectra/SpectraCameraDirectoryAdapters.ts');
 const motionContext = read('server/services/spectra/SpectraMotionContext.ts');
@@ -695,6 +699,53 @@ test('Infrastructure floorplan and identity helper utilities remain bounded and 
   floorplanTransformer.includes('affine-three-point') &&
   infrastructureIdentity.includes('SPECTRA_INFRASTRUCTURE_SUBJECT_BINDINGS') &&
   infrastructureIdentity.includes('infrastructureCorrelationGroup'));
+
+test('Major infrastructure feeds normalize through the canonical SPECTRA provider path',
+  infrastructureNormalizer.includes("'mist-location'") &&
+  infrastructureNormalizer.includes("'extreme-location'") &&
+  infrastructureNormalizer.includes("'unifi-client-location'") &&
+  infrastructureNormalizer.includes("'aruba-location-json'") &&
+  infrastructureNormalizer.includes('resolveSpectraFloorplanCoordinate') &&
+  infrastructureNormalizer.includes('resolveSpectraInfrastructureBinding') &&
+  providerNormalizer.includes('SPECTRA_INFRASTRUCTURE_PROVIDER_KINDS'));
+test('Aruba Central WSS decoder implements documented CloudEvents and location protobuf fields',
+  arubaStreamDecoder.includes('parseCloudEvent') &&
+  arubaStreamDecoder.includes('parseWifiClientLocation') &&
+  arubaStreamDecoder.includes('sta_eth_mac') &&
+  arubaStreamDecoder.includes('reporting_ap_serial') &&
+  arubaStreamDecoder.includes('error_level'));
+test('Provider-neutral WSS coordinator is reconnectable, authenticated and wired into canonical telemetry',
+  providerStreamCoordinator.includes('SPECTRA_WSS_PROVIDER_ADAPTERS') &&
+  providerStreamCoordinator.includes("decoder === 'aruba-location-protobuf'") &&
+  providerStreamCoordinator.includes('Authorization') &&
+  providerStreamCoordinator.includes('scheduleReconnect') &&
+  geoconsoleRoutes.includes('startSpectraProviderStreams') &&
+  geoconsoleRoutes.includes("'wss-provider-stream'"));
+test('Provider-neutral MQTT transport uses TLS, subscription, reconnect and QoS1 acknowledgement',
+  mqttProviderCoordinator.includes('SPECTRA_MQTT_PROVIDER_ADAPTERS') &&
+  mqttProviderCoordinator.includes("url.protocol === 'mqtts:'") &&
+  mqttProviderCoordinator.includes('subscribePacket') &&
+  mqttProviderCoordinator.includes('pubAckPacket') &&
+  mqttProviderCoordinator.includes('scheduleReconnect') &&
+  geoconsoleRoutes.includes('startSpectraMqttProviderStreams') &&
+  geoconsoleRoutes.includes("'mqtts-provider-stream'"));
+test('Infrastructure webhook ingress uses per-provider configured credentials before normalization',
+  geoconsoleRoutes.includes('SPECTRA_INFRASTRUCTURE_WEBHOOK_AUTH') &&
+  geoconsoleRoutes.includes("router.post('/telemetry/infrastructure/:providerId/normalize/:kind'") &&
+  geoconsoleRoutes.includes('timingSafeEqual(actualBuffer, expectedBuffer)') &&
+  geoconsoleRoutes.includes('normalizeSpectraProviderPayload(kind, providerId, req.body)'));
+test('UniFi client observations have a built-in authenticated pull adapter',
+  activeAcquisition.includes('SPECTRA_UNIFI_CLIENT_URL_TEMPLATE') &&
+  activeAcquisition.includes('SPECTRA_UNIFI_API_KEY') &&
+  activeAcquisition.includes("'X-API-Key': 'SPECTRA_UNIFI_API_KEY'") &&
+  activeAcquisition.includes("normalizerKind: 'unifi-client-location'"));
+test('Infrastructure adapter registry advertises Mist, Extreme, Aruba, UniFi, WSS and MQTT lanes',
+  adapterRegistry.includes("id: 'mist-location-webhook'") &&
+  adapterRegistry.includes("id: 'extreme-location-webhook'") &&
+  adapterRegistry.includes("id: 'aruba-location-stream'") &&
+  adapterRegistry.includes("id: 'unifi-client-location'") &&
+  adapterRegistry.includes("id: 'provider-neutral-wss-stream'") &&
+  adapterRegistry.includes("id: 'provider-neutral-mqtt-stream'"));
 
 test('Place context uses independent OpenStreetMap and GeoNames lanes',
   geoconsoleRoutes.includes("router.get('/place-context'") &&
