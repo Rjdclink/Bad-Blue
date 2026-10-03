@@ -76,6 +76,10 @@ const mesh = {
     if (state.mode === 'native-failure') throw new Error('fixture native discovery outage');
     if (state.mode === 'empty') return [candidate('https://records.example.test/empty')];
     if (state.mode === 'employment') return [candidate('https://records.example.test/employer')];
+    if (state.mode === 'targeted-throughput') return [
+      candidate('https://records.example.test/employer'),
+      ...Array.from({ length: 5 }, (_, index) => candidate(`https://records.example.test/targeted-${index + 1}`)),
+    ];
     if (state.mode === 'custom-general') return [candidate('https://records.example.test/civic-medal')];
     if (state.mode === 'delayed-general') return Array.from({ length: 6 }, (_, index) =>
       candidate(`https://records.example.test/broad-${index + 1}`));
@@ -279,6 +283,15 @@ function reset(mode) {
   const verifiedPrompt = investigator.formatLexaraBackgroundResearchForSystem(employment);
   assert.match(verifiedPrompt, /cleared Lexara's subject-match and evidence threshold/i);
   assert.match(verifiedPrompt, /do not call it a guess/i);
+
+  reset('targeted-throughput');
+  const targetedThroughput = await investigator.investigateLexaraBackgroundQuestion(
+    'Where does Avery Example work?',
+    { jurisdiction: 'Iowa' },
+  );
+  assert.equal(state.retrievalCalls[0].length, 6,
+    'targeted factual lookups retain the newer six-target live throughput');
+  assert.equal(targetedThroughput.endpoint, 'evidence-sufficient');
 
 
   const mergedSubject = subject.mergeCompatibleLexaraBackgroundSubjects(
