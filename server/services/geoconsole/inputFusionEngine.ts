@@ -240,7 +240,24 @@ export class InputFusionEngine {
   }
 
   private correlationKey(point: GPSPoint): string {
-    return point.correlationGroup || `${point.source}:${point.provenance?.provider || 'unknown'}`;
+    const metadata = point.metadata || {};
+    const dependency = String(
+      metadata.correlationDomain
+      ?? metadata.evidenceDependencyId
+      ?? metadata.derivedFromEvidenceGroup
+      ?? metadata.deviceRef
+      ?? metadata.vehicleRef
+      ?? metadata.peerRef
+      ?? ''
+    ).trim().toLowerCase();
+
+    // A dependency-domain identifier outranks individual records/providers.
+    // This prevents the same underlying measurement from gaining artificial
+    // confidence merely because it was re-published through several adapters.
+    if (dependency) return `domain:${dependency}`;
+
+    if (point.correlationGroup) return point.correlationGroup;
+    return `${point.source}:${point.provenance?.provider || 'unknown'}`;
   }
 
   private fusedObservationKind(points: GPSPoint[]): GPSPoint['observationKind'] {
