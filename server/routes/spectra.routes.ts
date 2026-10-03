@@ -59,8 +59,44 @@ import {
   registerSpectraAcquisitionRequest,
   stopSpectraAcquisitionSession,
 } from '../services/spectra/SpectraAcquisitionControl';
+import {
+  acquireSpectraResourcePermit,
+  getSpectraResourceGovernorSnapshot,
+  SpectraResourceBusyError,
+  type SpectraResourcePermit,
+} from '../services/spectra/SpectraResourceGovernor';
+import {
+  getSpectraMetricsSnapshot,
+  renderSpectraPrometheusMetrics,
+  spectraMetricsAcquisitionOutcome,
+  spectraMetricsAcquisitionStarted,
+} from '../services/spectra/SpectraObservability';
+import {
+  getSpectraOpenApiDocument,
+  SPECTRA_API_VERSION,
+  SPECTRA_SCHEMA_VERSION,
+  spectraApiVersionHeaders,
+} from '../services/spectra/SpectraApiContract';
+import { createSpectraTenantScope } from '../services/spectra/SpectraTenantScope';
+import {
+  getConfiguredSpectraProviderStreams,
+  getSpectraProviderStreamHealth,
+} from '../services/spectra/SpectraProviderStreamCoordinator';
+import {
+  getConfiguredSpectraMqttProviders,
+  getSpectraMqttProviderHealth,
+} from '../services/spectra/SpectraMqttProviderCoordinator';
+import { getSpectraAdapterCapabilities } from '../services/spectra/SpectraAdapterRegistry';
+import { spectraRealtimeBridgeConfigured } from '../services/spectra/SpectraRealtimeBridge';
 
 const router = Router();
+router.use(spectraApiVersionHeaders);
+
+router.get('/openapi.json', (_req: Request, res: Response) => {
+  res.setHeader('Cache-Control', 'public, max-age=300');
+  return res.json(getSpectraOpenApiDocument());
+});
+
 router.use(isAuthenticated);
 
 const directEvidenceSchema = z.object({
@@ -822,6 +858,70 @@ async function collectSpectraContextEvidence(input: {
     sourceFamilies,
   };
 }
+
+router.get('/health', async (_req: Request, res: Response) => {
+  const providerStreams = getSpectraProviderStreamHealth();
+  const mqttStreams = getSpectraMqttProviderHealth();
+  const governor = getSpectraResourceGovernorSnapshot();
+  let persistence = 'healthy';
+  let persistenceError: string | undefined;
+
+  try {
+    await Promise.race([
+      pool.query('SELECT 1 AS ok'),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('SPECTRA persistence health timeout')), 2_000)
+      ),
+    ]);
+  } catch (error) {
+    persistence = 'degraded';
+    persistenceError = error instanceof Error ? error.message : String(error);
+  }
+
+  const unhealthyStreams = [...providerStreams, ...mqttStreams]
+    .filter(item => item.state === 'failed' || item.state === 'degraded');
+  const status = persistence === 'healthy' && unhealthyStreams.length === 0
+    ? 'operational'
+    : 'degraded';
+
+  return res.json({
+    success: true,
+    data: {
+      status,
+      apiVersion: SPECTRA_API_VERSION,
+      schemaVersion: SPECTRA_SCHEMA_VERSION,
+      persistence: {
+        status: persistence,
+        error: persistenceError,
+      },
+      realtime: {
+        crossReplicaConfigured: spectraRealtimeBridgeConfigured(),
+      },
+      resourceGovernor: governor,
+      metrics: getSpectraMetricsSnapshot(),
+      adapters: getSpectraAdapterCapabilities(),
+      providerStreams: {
+        configured: getConfiguredSpectraProviderStreams(),
+        health: providerStreams,
+      },
+      mqttProviderStreams: {
+        configured: getConfiguredSpectraMqttProviders(),
+        health: mqttStreams,
+      },
+      checkedAt: new Date().toISOString(),
+    },
+  });
+});
+
+router.get('/metrics', (_req: Request, res: Response) => {
+  res.setHeader('Content-Type', 'text/plain; version=0.0.4; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-store');
+  return res.send(renderSpectraPrometheusMetrics({
+    apiVersion: SPECTRA_API_VERSION,
+    schemaVersion: SPECTRA_SCHEMA_VERSION,
+    governor: getSpectraResourceGovernorSnapshot(),
+  }));
+});
 
 router.post('/acquisition/stop', (req: Request, res: Response) => {
   const parsed = stopAcquisitionSchema.safeParse(req.body);
