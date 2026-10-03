@@ -116,6 +116,16 @@ export const SPECTRA_ADAPTER_CAPABILITIES: SpectraAdapterCapability[] = [
     notes: 'Normalizes 802.11mc/802.11az NTB, responder-location and Wi-Fi Aware ranging observations.',
   },
   {
+    id: 'android-ranging-manager-ingest',
+    label: 'Android RangingManager ingest',
+    mode: 'provider-webhook',
+    sourceTypes: ['uwb_range','uwb_direction','bluetooth_channel_sounding','wifi_rtt','ble_rssi'],
+    configured: () => anyEnv('SPECTRA_TELEMETRY_HMAC_SECRET'),
+    priority: 'critical',
+    supportsRealtime: true,
+    notes: 'Normalizes Android unified UWB, Bluetooth Channel Sounding, Wi-Fi NAN RTT and BLE RSSI ranging results.',
+  },
+  {
     id: 'android-cellular-measurements-ingest',
     label: 'Android rich cellular measurements ingest',
     mode: 'provider-webhook',
