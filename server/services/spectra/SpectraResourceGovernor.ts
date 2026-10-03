@@ -19,6 +19,7 @@ interface GovernorSnapshot {
   globalLimit: number;
   perTenantLimit: number;
   acquireTimeoutMs: number;
+  localFallbackEnabled: boolean;
   localActive: number;
   localQueued: number;
   localTenantActive: Record<string, number>;
@@ -54,6 +55,8 @@ function limits() {
     globalLimit: boundedInt(process.env.SPECTRA_MAX_CONCURRENT_ACQUISITIONS, 4, 1, 64),
     perTenantLimit: boundedInt(process.env.SPECTRA_MAX_CONCURRENT_ACQUISITIONS_PER_TENANT, 2, 1, 16),
     acquireTimeoutMs: boundedInt(process.env.SPECTRA_RESOURCE_ACQUIRE_TIMEOUT_MS, 1_500, 100, 15_000),
+    localFallbackEnabled:
+      String(process.env.SPECTRA_ALLOW_LOCAL_GOVERNOR_FALLBACK || '').trim().toLowerCase() === 'true',
   };
 }
 
@@ -230,9 +233,13 @@ export async function acquireSpectraResourcePermit(
       try {
         const permit = await tryPostgresPermit(normalizedTenantId);
         if (permit) return permit;
-      } catch {
-        const fallback = tryLocalPermit(normalizedTenantId);
-        if (fallback) return fallback;
+      } catch (error) {
+        if (limits().localFallbackEnabled) {
+          const fallback = tryLocalPermit(normalizedTenantId);
+          if (fallback) return fallback;
+        } else {
+          throw error;
+        }
       }
 
       await sleep(100, signal);
