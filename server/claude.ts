@@ -243,15 +243,55 @@ export async function callClaudeWebSearch(
     allowed_callers: ['direct'],
   }];
   const messages: any[] = [{ role: 'user', content: prompt }];
+  const sourceMap = new Map<string, ClaudeWebSearchSource>();
+  const accumulatedText: string[] = [];
   let response: any;
   let tokensUsed = 0;
   let searches = 0;
+  let requestMaxTokens = options.maxTokens || 900;
+  let maxTokenRetryUsed = false;
+
+  const collectResponse = (payload: any) => {
+    const blocks: any[] = Array.isArray(payload?.content) ? payload.content : [];
+    for (const block of blocks) {
+      if (block?.type === 'web_search_tool_result') {
+        const results = Array.isArray(block.content) ? block.content : [];
+        for (const result of results) {
+          const url = typeof result?.url === 'string' ? result.url.trim() : '';
+          if (!url) continue;
+          const existing = sourceMap.get(url);
+          sourceMap.set(url, {
+            url,
+            title: typeof result?.title === 'string' ? result.title : existing?.title,
+            citedText: existing?.citedText,
+          });
+        }
+      }
+
+      if (block?.type === 'text' && typeof block.text === 'string' && block.text.trim()) {
+        accumulatedText.push(block.text.trim());
+      }
+
+      if (block?.type === 'text' && Array.isArray(block.citations)) {
+        for (const citation of block.citations) {
+          const url = typeof citation?.url === 'string' ? citation.url.trim() : '';
+          if (!url) continue;
+          const existing = sourceMap.get(url);
+          sourceMap.set(url, {
+            url,
+            title: typeof citation?.title === 'string' ? citation.title : existing?.title,
+            citedText: typeof citation?.cited_text === 'string' ? citation.cited_text : existing?.citedText,
+          });
+        }
+      }
+    }
+  };
 
   try {
-    for (let continuation = 0; continuation < 3; continuation += 1) {
+    for (let continuation = 0; continuation < 4; continuation += 1) {
       response = await (client.messages as any).create({
         model,
-        max_tokens: options.maxTokens || 900,
+        max_tokens: requestMaxTokens,
         system: options.systemPrompt || 'Use web search only as needed. Prefer reliable, directly relevant sources and do not invent unsupported facts.',
         messages,
         tools,
@@ -266,53 +306,41 @@ export async function callClaudeWebSearch(
         + Number(usage.cache_read_input_tokens || 0)
         + Number(usage.cache_creation_input_tokens || 0);
       searches += Number(usage?.server_tool_use?.web_search_requests || 0);
+      collectResponse(response);
 
-      if (response?.stop_reason !== 'pause_turn') break;
-      messages.push({ role: 'assistant', content: response.content });
+      if (response?.stop_reason === 'pause_turn') {
+        messages.push({ role: 'assistant', content: response.content });
+        continue;
+      }
+
+      if (response?.stop_reason === 'max_tokens' && !maxTokenRetryUsed && sourceMap.size === 0) {
+        maxTokenRetryUsed = true;
+        requestMaxTokens = Math.min(4096, Math.max(2048, requestMaxTokens * 2));
+        console.info('[Claude Web Search] max_tokens reached before usable source evidence; retrying once with a larger bounded output budget', {
+          model,
+          maxTokens: requestMaxTokens,
+        });
+        continue;
+      }
+
+      break;
     }
 
-    const blocks: any[] = Array.isArray(response?.content) ? response.content : [];
-    const sourceMap = new Map<string, ClaudeWebSearchSource>();
-    let lastSearchResultIndex = -1;
+    const content = accumulatedText.join('\n').trim();
 
-    blocks.forEach((block, index) => {
-      if (block?.type === 'web_search_tool_result') {
-        lastSearchResultIndex = index;
-        const results = Array.isArray(block.content) ? block.content : [];
-        for (const result of results) {
-          const url = typeof result?.url === 'string' ? result.url.trim() : '';
-          if (!url) continue;
-          sourceMap.set(url, {
-            url,
-            title: typeof result?.title === 'string' ? result.title : undefined,
-          });
-        }
-      }
-      if (block?.type === 'text' && Array.isArray(block.citations)) {
-        for (const citation of block.citations) {
-          const url = typeof citation?.url === 'string' ? citation.url.trim() : '';
-          if (!url) continue;
-          const existing = sourceMap.get(url);
-          sourceMap.set(url, {
-            url,
-            title: typeof citation?.title === 'string' ? citation.title : existing?.title,
-            citedText: typeof citation?.cited_text === 'string' ? citation.cited_text : existing?.citedText,
-          });
-        }
-      }
-    });
+    // Source/tool-result blocks are independently useful to Lexara even if
+    // Claude ran out of output tokens before producing a final prose synthesis.
+    // Preserve those sources instead of collapsing the entire research lane.
+    if (!content && sourceMap.size === 0) {
+      throw new Error(`Claude web search returned no usable text or source evidence (stop_reason=${response?.stop_reason || 'unknown'})`);
+    }
 
-    const answerBlocks = blocks
-      .slice(lastSearchResultIndex >= 0 ? lastSearchResultIndex + 1 : 0)
-      .filter(block => block?.type === 'text' && typeof block.text === 'string')
-      .map(block => block.text.trim())
-      .filter(Boolean);
-    const content = answerBlocks.join('\n').trim()
-      || blocks.filter(block => block?.type === 'text' && typeof block.text === 'string')
-        .map(block => block.text.trim()).filter(Boolean).join('\n').trim();
-
-    if (!content) {
-      throw new Error(`Claude web search returned no final text (stop_reason=${response?.stop_reason || 'unknown'})`);
+    if (response?.stop_reason === 'max_tokens' && sourceMap.size > 0) {
+      console.info('[Claude Web Search] preserving source evidence after max_tokens stop', {
+        model,
+        sourceCount: sourceMap.size,
+        searches,
+      });
     }
 
     return {
