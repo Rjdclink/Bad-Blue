@@ -4,7 +4,7 @@
  * Scope invariant:
  * - Presentation only: preserve all existing destinations and law-domain routing.
  * - Every law book still enters /lexara-consent/:domainId.
- * - TEMPORARY SOLUTION X: PANTHEON, SPECTRA, and Inmate Locator remain visible but are intentionally non-interactive.
+ * - SPECTRA is intentionally hidden from the library and is launched contextually from LEXARA.
  */
 
 import { useCallback, useEffect, useRef, type CSSProperties } from "react";
@@ -15,7 +15,6 @@ import {
   Eye,
   Globe2,
   Landmark,
-  MapPin,
   Scale,
   Search,
   Shield,
@@ -52,13 +51,6 @@ const SERVICE_DESTINATIONS = [
     description: "Advanced identity and evidence intelligence.",
     route: "/pantheon",
     icon: Eye,
-  },
-  {
-    name: "SPECTRA",
-    subtitle: "Location Intelligence",
-    description: "Conversational target acquisition and location intelligence.",
-    route: "/spectra",
-    icon: MapPin,
   },
   {
     name: "United States Inmate Locator",
@@ -319,7 +311,7 @@ export default function WelcomePage() {
               </span>
               <div>
                 <h2 id="services-title">Intelligence Services</h2>
-                <p>Three additional LegalWhat tools, built directly into the library.</p>
+                <p>Additional LegalWhat tools, built directly into the library.</p>
               </div>
               <span className="service-lamp" aria-hidden="true">
                 <i />
