@@ -4,17 +4,25 @@ import {
   type SpectraAdvancedRadioNormalizerKind,
 } from './SpectraAdvancedRadioNormalizer';
 
+import {
+  normalizeSpectraExternalLocationPayload,
+  SPECTRA_EXTERNAL_LOCATION_NORMALIZER_KINDS,
+  type SpectraExternalLocationNormalizerKind,
+} from './SpectraExternalLocationNormalizer';
+
 export type SpectraProviderNormalizerKind =
   | 'camara-location-retrieval'
   | 'bluetooth-scanner'
   | 'accessory-network'
-  | SpectraAdvancedRadioNormalizerKind;
+  | SpectraAdvancedRadioNormalizerKind
+  | SpectraExternalLocationNormalizerKind;
 
 export const SPECTRA_PROVIDER_NORMALIZER_KINDS: readonly SpectraProviderNormalizerKind[] = [
   'camara-location-retrieval',
   'bluetooth-scanner',
   'accessory-network',
   ...SPECTRA_ADVANCED_RADIO_NORMALIZER_KINDS,
+  ...SPECTRA_EXTERNAL_LOCATION_NORMALIZER_KINDS,
 ] as const;
 
 export interface SpectraNormalizedProviderBatch {
@@ -401,6 +409,13 @@ export function normalizeSpectraProviderPayload(
       if ((SPECTRA_ADVANCED_RADIO_NORMALIZER_KINDS as readonly string[]).includes(kind)) {
         return normalizeSpectraAdvancedRadioPayload(
           kind as SpectraAdvancedRadioNormalizerKind,
+          normalizedProviderId,
+          payload,
+        );
+      }
+      if ((SPECTRA_EXTERNAL_LOCATION_NORMALIZER_KINDS as readonly string[]).includes(kind)) {
+        return normalizeSpectraExternalLocationPayload(
+          kind as SpectraExternalLocationNormalizerKind,
           normalizedProviderId,
           payload,
         );
