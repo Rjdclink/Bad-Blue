@@ -2955,6 +2955,7 @@ router.post('/futurecast', async (req: Request, res: Response) => {
     const schema = z.object({
       recentPoints: z.array(gpsPointSchema).min(3).max(100),
       hours: z.number().min(1).max(1).optional(),
+      sessionId: z.string().trim().min(1).max(200).optional(),
     });
 
     const validation = schema.safeParse(req.body);
@@ -2967,7 +2968,8 @@ router.post('/futurecast', async (req: Request, res: Response) => {
       });
     }
 
-    const { recentPoints, hours = 1 } = validation.data;
+    const { recentPoints, hours = 1, sessionId } = validation.data;
+    const userId = getPlatformUserId(req.user as any);
 
     const { monteCarloPathEngine } = await import('../services/geoconsole/monteCarloPathEngine');
     
@@ -2978,13 +2980,38 @@ router.post('/futurecast', async (req: Request, res: Response) => {
       })
     );
 
-    const futurecast = await monteCarloPathEngine.generateFuturecast(gpsPoints, hours);
+    const latestPoint = [...gpsPoints]
+      .sort((left, right) => left.timestamp.getTime() - right.timestamp.getTime())
+      .at(-1);
+    const motionContext = (
+      sessionId
+      && userId
+      && latestPoint
+    )
+      ? await loadSpectraMotionContext({
+          userId,
+          sessionId,
+          latitude: latestPoint.latitude,
+          longitude: latestPoint.longitude,
+          maxAgeMinutes: 30,
+          maxDistanceMeters: 10_000,
+          limit: 40,
+        }).catch(() => [])
+      : [];
+
+    const futurecast = await monteCarloPathEngine.generateFuturecast(
+      gpsPoints,
+      hours,
+      motionContext,
+    );
 
     res.json({
       success: true,
       data: {
         predictions: futurecast.map(signServerEvidence),
         hours,
+        motionContextCount: motionContext.length,
+        motionContextApplied: futurecast.some(point => point.metadata?.motionContextApplied === true),
         confidence: futurecast.length > 0 
           ? futurecast.reduce((sum, p) => sum + p.confidence, 0) / futurecast.length 
           : 0,
