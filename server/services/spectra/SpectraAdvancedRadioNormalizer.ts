@@ -1860,9 +1860,11 @@ function normalizeGnssPrecisionSolution(
     const accuracyLevel = bounded(
       solution.accuracyConfidenceLevel
       ?? solution.confidenceLevel
-      ?? solution.confidencePercent !== undefined
-        ? Number(solution.confidencePercent) / 100
-        : undefined,
+      ?? (
+        solution.confidencePercent !== undefined
+          ? Number(solution.confidencePercent) / 100
+          : undefined
+      ),
       0.2,
       0.9999,
     );
