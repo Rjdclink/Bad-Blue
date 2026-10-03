@@ -101,6 +101,163 @@ function point(overrides: Partial<GPSPoint> & Pick<GPSPoint, 'source'>): GPSPoin
   const assessment = assessSpectraLiveLocation([
     point({
       source: 'gnss_fix',
+      accuracy: 0.04,
+      confidence: 0.999,
+      provenance: { provider: 'rtk-provider-a' },
+      metadata: {
+        providerKind: 'gnss-precision-solution',
+        solutionType: 'rtk-fixed',
+        accuracyConfidenceLevel: 0.95,
+        correctionAgeSeconds: 0.4,
+        ambiguityRatio: 5.1,
+        ambiguitiesFixed: true,
+        satellitesUsed: 20,
+        hdop: 0.7,
+        horizontalProtectionLevelMeters: 0.09,
+        covariance: { eastVariance: 0.0001, northVariance: 0.0001 },
+      },
+    }),
+    point({
+      source: 'gnss_fix',
+      latitude: 43.5446001,
+      longitude: -96.7311001,
+      accuracy: 0.08,
+      confidence: 0.995,
+      provenance: { provider: 'ppp-provider-b' },
+      metadata: {
+        providerKind: 'gnss-precision-solution',
+        solutionType: 'ppp-rtk',
+        accuracyConfidenceLevel: 0.95,
+        correctionAgeSeconds: 0.7,
+        ambiguityRatio: 4.2,
+        satellitesUsed: 18,
+        hdop: 0.8,
+        covariance: { eastVariance: 0.0004, northVariance: 0.0004 },
+      },
+    }),
+  ], now);
+
+  assert.equal(assessment.independentFamilyCount, 1);
+  assert.equal(assessment.independentDomainCount, 2);
+  assert.equal(assessment.sources.length, 2);
+}
+
+{
+  const assessment = assessSpectraLiveLocation([
+    point({
+      source: 'gnss_fix',
+      accuracy: 0.04,
+      confidence: 0.999,
+      provenance: { provider: 'rtk-rover' },
+      metadata: {
+        providerKind: 'gnss-precision-solution',
+        deviceRef: 'rover-1',
+        correlationDomain: 'rover-1',
+        solutionType: 'rtk-fixed',
+        accuracyConfidenceLevel: 0.95,
+        correctionAgeSeconds: 0.4,
+        ambiguityRatio: 5.2,
+        ambiguitiesFixed: true,
+        satellitesUsed: 21,
+        hdop: 0.7,
+        covariance: { eastVariance: 0.0001, northVariance: 0.0001 },
+      },
+    }),
+    point({
+      source: 'visual_positioning',
+      latitude: 43.5446002,
+      longitude: -96.7310999,
+      accuracy: 1.0,
+      confidence: 0.98,
+      provenance: { provider: 'arcore-vps' },
+      metadata: {
+        providerKind: 'arcore-geospatial-pose',
+        deviceRef: 'rover-1',
+        correlationDomain: 'rover-1',
+        accuracyConfidenceLevel: 0.68,
+        vpsUsed: true,
+      },
+    }),
+  ], now);
+
+  assert.equal(assessment.independentFamilyCount, 2);
+  assert.equal(assessment.independentDomainCount, 1);
+}
+
+{
+  const assessment = assessSpectraLiveLocation([
+    point({
+      source: 'gnss_fix',
+      latitude: 43.5446000,
+      longitude: -96.7311000,
+      accuracy: 0.03,
+      confidence: 0.999,
+      timestamp: new Date(now.getTime() - 40),
+      provenance: { provider: 'rtk-rover' },
+      metadata: {
+        providerKind: 'gnss-precision-solution',
+        deviceRef: 'rover-precision-1',
+        correlationDomain: 'rover-precision-1',
+        solutionType: 'rtk-fixed',
+        accuracyConfidenceLevel: 0.95,
+        correctionAgeSeconds: 0.3,
+        ambiguityRatio: 5.4,
+        ambiguitiesFixed: true,
+        satellitesUsed: 22,
+        hdop: 0.6,
+        horizontalProtectionLevelMeters: 0.08,
+        covariance: { eastVariance: 0.0001, northVariance: 0.0001 },
+        integrity: {
+          integrityScore: 0.99,
+          precisionReadinessScore: 0.99,
+          spoofingSuspected: false,
+          jammingSuspected: false,
+          navigationAuthenticationStatus: 'authenticated',
+        },
+      },
+    }),
+    point({
+      source: 'visual_positioning',
+      latitude: 43.5446003,
+      longitude: -96.7310998,
+      accuracy: 1.1,
+      confidence: 0.98,
+      timestamp: new Date(now.getTime() - 30),
+      provenance: { provider: 'arcore-vps' },
+      metadata: {
+        providerKind: 'arcore-geospatial-pose',
+        deviceRef: 'rover-precision-1',
+        correlationDomain: 'rover-precision-1',
+        accuracyConfidenceLevel: 0.68,
+        vpsUsed: true,
+      },
+    }),
+    point({
+      source: 'uwb_range',
+      latitude: 43.5446001,
+      longitude: -96.7311001,
+      accuracy: 0.20,
+      confidence: 0.999,
+      timestamp: new Date(now.getTime() - 20),
+      provenance: { provider: 'independent-uwb-anchor-network' },
+      metadata: {
+        accuracyConfidenceLevel: 0.68,
+        correlationDomain: 'uwb-anchor-network-a',
+      },
+    }),
+  ], now);
+
+  assert.equal(assessment.status, 'corroborated');
+  assert.equal(assessment.independentDomainCount, 2);
+  assert.ok(assessment.confidenceScore > 0.99);
+  assert.ok((assessment.confidenceRadiusMeters99 ?? Infinity) < 1);
+  assert.ok(assessment.consistencyPenalty > 0.99);
+}
+
+{
+  const assessment = assessSpectraLiveLocation([
+    point({
+      source: 'gnss_fix',
       accuracy: 2,
       confidence: 0.99,
     }),
