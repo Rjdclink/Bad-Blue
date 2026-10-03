@@ -55,6 +55,7 @@ import {
 } from '../services/spectra/SpectraProviderTelemetryNormalizer';
 import { assessSpectraLiveLocation } from '../services/spectra/SpectraLiveConfidence';
 import { solveSpectraConstraintLayer } from '../services/spectra/SpectraConstraintSolver';
+import { loadSpectraSessionObservations } from '../services/spectra/SpectraAcquisitionPersistence';
 import { spectraMetricsProviderEvent } from '../services/spectra/SpectraObservability';
 import {
   startSpectraProviderStreams,
@@ -3195,8 +3196,24 @@ router.post('/report', async (req: Request, res: Response) => {
     }
 
     const { sessionId, subject, timeRange } = validation.data;
+    const userId = getPlatformUserId(req.user as any);
+    if (!userId) {
+      return res.status(401).json({ success: false, error: 'Authentication required.' });
+    }
 
     log.info('Generating intelligence report', { sessionId, subject });
+
+    // The canonical history is durable PostgreSQL/Supabase state. Rehydrate
+    // derived in-memory caches on every report request so a restart or cache
+    // clear cannot erase reportability.
+    const durableHistory = await loadSpectraSessionObservations(userId, sessionId, 2_000);
+    if (!durableHistory.length) {
+      return res.status(404).json({
+        success: false,
+        error: 'No durable SPECTRA observations were found for this session.',
+      });
+    }
+    await hybridGeoconsole.processLocationData(durableHistory, sessionId);
 
     const report = await hybridGeoconsole.generateIntelligenceReport(
       sessionId,
@@ -3236,6 +3253,8 @@ router.get('/status', async (req: Request, res: Response) => {
         status: 'operational',
         orchestration: state,
         capabilities: {
+          durableObservationPersistence: true,
+          restartSafeReportRehydration: true,
           multimodalFusion: true,
           uncertaintyAwareFusion: true,
           monteCarloInterpolation: true,
@@ -3303,7 +3322,7 @@ router.post('/clear-cache', async (req: Request, res: Response) => {
 
     res.json({
       success: true,
-      message: 'All caches cleared',
+      message: 'Derived in-memory caches cleared; durable SPECTRA observations remain in PostgreSQL/Supabase.',
     });
   } catch (error) {
     log.error('Clear cache endpoint error', { error });
