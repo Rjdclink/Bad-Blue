@@ -13,6 +13,11 @@ export interface SpectraGnssSatelliteMeasurement {
   accumulatedDeltaRangeMeters?: number | null;
   accumulatedDeltaRangeUncertaintyMeters?: number | null;
   receivedSvTimeUncertaintyNanos?: number | null;
+  lineOfSightProbability?: number | null;
+  excessPathLengthMeters?: number | null;
+  excessPathLengthUncertaintyMeters?: number | null;
+  reflectingPlanePresent?: boolean | null;
+  correlationVectorCount?: number | null;
 }
 
 export interface SpectraGnssClockQuality {
@@ -42,6 +47,10 @@ export interface SpectraGnssIntegrityAssessment {
   spoofingSuspected: boolean;
   jammingSuspected: boolean;
   navigationAuthenticationStatus?: 'authenticated' | 'partial' | 'failed' | 'unknown';
+  measurementCorrectionCoverage: number;
+  meanLineOfSightProbability?: number;
+  meanExcessPathLengthMeters?: number;
+  correlationVectorSatelliteCount: number;
   integrityScore: number;
   precisionReadinessScore: number;
   reasons: string[];
@@ -148,6 +157,20 @@ export function assessSpectraGnssIntegrity(input: {
   const adrUncertainty = usableAdr
     .map(satellite => finite(satellite.accumulatedDeltaRangeUncertaintyMeters))
     .filter((value): value is number => value !== null && value >= 0);
+  const losProbabilities = satellites
+    .map(satellite => finite(satellite.lineOfSightProbability))
+    .filter((value): value is number => value !== null && value >= 0 && value <= 1);
+  const excessPathLengths = satellites
+    .map(satellite => finite(satellite.excessPathLengthMeters))
+    .filter((value): value is number => value !== null && value >= 0);
+  const correctedSatelliteCount = satellites.filter(satellite =>
+    finite(satellite.lineOfSightProbability) !== null
+    || finite(satellite.excessPathLengthMeters) !== null
+    || satellite.reflectingPlanePresent === true
+  ).length;
+  const correlationVectorSatelliteCount = satellites.filter(satellite =>
+    (finite(satellite.correlationVectorCount) ?? 0) > 0
+  ).length;
 
   const discontinuity = finite(clock.hardwareClockDiscontinuityCount);
   const previousDiscontinuity = finite(input.previousHardwareClockDiscontinuityCount);
@@ -207,6 +230,28 @@ export function assessSpectraGnssIntegrity(input: {
   const strongSignalCount = strongSignal.length;
   const uniqueFrequencyCount = frequencies.size;
   const uniqueConstellationCount = constellations.size;
+  const measurementCorrectionCoverage = satelliteCount
+    ? correctedSatelliteCount / satelliteCount
+    : 0;
+  const meanLineOfSightProbability = losProbabilities.length
+    ? losProbabilities.reduce((sum, value) => sum + value, 0) / losProbabilities.length
+    : undefined;
+  const meanExcessPathLengthMeters = excessPathLengths.length
+    ? excessPathLengths.reduce((sum, value) => sum + value, 0) / excessPathLengths.length
+    : undefined;
+  const correctionQualityScore =
+    meanLineOfSightProbability === undefined
+      ? 1
+      : clamp(
+          meanLineOfSightProbability
+          * (
+            meanExcessPathLengthMeters === undefined
+              ? 1
+              : 1 / (1 + meanExcessPathLengthMeters / 10)
+          ),
+          0.10,
+          1,
+        );
 
   const trackingRatio = satelliteCount
     ? validTrackingCount / satelliteCount
@@ -240,6 +285,9 @@ export function assessSpectraGnssIntegrity(input: {
   if (spoofingSuspected) integrityScore *= 0.25;
   if (navigationAuthenticationStatus === 'failed') integrityScore *= 0.30;
   if (navigationAuthenticationStatus === 'partial') integrityScore *= 0.90;
+  if (losProbabilities.length) {
+    integrityScore *= 0.70 + 0.30 * correctionQualityScore;
+  }
   integrityScore = clamp(integrityScore);
 
   let precisionReadinessScore =
@@ -255,6 +303,9 @@ export function assessSpectraGnssIntegrity(input: {
   if (jammingSuspected) precisionReadinessScore *= 0.65;
   if (spoofingSuspected) precisionReadinessScore *= 0.20;
   if (navigationAuthenticationStatus === 'failed') precisionReadinessScore *= 0.30;
+  if (losProbabilities.length) {
+    precisionReadinessScore *= 0.65 + 0.35 * correctionQualityScore;
+  }
   precisionReadinessScore = clamp(precisionReadinessScore);
 
   const reasons: string[] = [];
@@ -288,6 +339,18 @@ export function assessSpectraGnssIntegrity(input: {
   if (navigationAuthenticationStatus === 'failed') {
     reasons.push('Navigation-message authentication failed for one or more signals.');
   }
+  if (
+    meanLineOfSightProbability !== undefined
+    && meanLineOfSightProbability < 0.5
+  ) {
+    reasons.push('Measurement-correction metadata indicates predominantly non-line-of-sight satellite propagation.');
+  }
+  if (
+    meanExcessPathLengthMeters !== undefined
+    && meanExcessPathLengthMeters > 10
+  ) {
+    reasons.push('Measurement corrections report substantial excess propagation path length consistent with multipath/NLOS bias.');
+  }
 
   return {
     satelliteCount,
@@ -310,6 +373,10 @@ export function assessSpectraGnssIntegrity(input: {
     spoofingSuspected,
     jammingSuspected,
     navigationAuthenticationStatus,
+    measurementCorrectionCoverage,
+    meanLineOfSightProbability,
+    meanExcessPathLengthMeters,
+    correlationVectorSatelliteCount,
     integrityScore,
     precisionReadinessScore,
     reasons,
