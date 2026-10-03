@@ -53,7 +53,11 @@ import { retrieveSpectraPublicEvidence } from '../services/spectra/SpectraPublic
 import { assessSpectraLiveLocation } from '../services/spectra/SpectraLiveConfidence';
 import { solveSpectraConstraintLayer } from '../services/spectra/SpectraConstraintSolver';
 import { acquireConfiguredSpectraCameras } from '../services/spectra/SpectraCameraDirectoryAdapters';
-import { acquireSpectraActiveTelemetry } from '../services/spectra/SpectraActiveAcquisition';
+import {
+  acquireSpectraActiveTelemetry,
+  getSpectraActiveAcquisitionCapabilities,
+  getSpectraActiveAcquisitionHealth,
+} from '../services/spectra/SpectraActiveAcquisition';
 import { findSpectraPublicGtfsRealtimeFeeds } from '../services/spectra/SpectraPublicFeedRegistry';
 import {
   registerSpectraAcquisitionRequest,
@@ -890,6 +894,7 @@ router.get('/health', async (_req: Request, res: Response) => {
       status,
       apiVersion: SPECTRA_API_VERSION,
       schemaVersion: SPECTRA_SCHEMA_VERSION,
+      tenantModel: 'user-v1',
       persistence: {
         status: persistence,
         error: persistenceError,
@@ -900,6 +905,10 @@ router.get('/health', async (_req: Request, res: Response) => {
       resourceGovernor: governor,
       metrics: getSpectraMetricsSnapshot(),
       adapters: getSpectraAdapterCapabilities(),
+      activeAcquisition: {
+        configured: getSpectraActiveAcquisitionCapabilities(),
+        health: getSpectraActiveAcquisitionHealth(),
+      },
       providerStreams: {
         configured: getConfiguredSpectraProviderStreams(),
         health: providerStreams,
