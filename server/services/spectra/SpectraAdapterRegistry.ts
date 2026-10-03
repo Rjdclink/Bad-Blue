@@ -173,7 +173,7 @@ export const SPECTRA_ADAPTER_CAPABILITIES: SpectraAdapterCapability[] = [
     configured: () => anyEnv('SPECTRA_TELEMETRY_HMAC_SECRET'),
     priority: 'critical',
     supportsRealtime: true,
-    notes: 'Normalizes RTK/NRTK/VRS/PPP/PPP-RTK/SBAS/DGNSS solutions with NTRIP/RTCM correction age, covariance, ambiguity status and protection levels.',
+    notes: 'Normalizes RTK/NRTK/VRS/PPP/PPP-RTK/SBAS/DGNSS solutions with NTRIP/RTCM, RTKLIB and Galileo HAS correction metadata, covariance, ambiguity status and protection levels.',
   },
   {
     id: 'apple-nearby-interaction-ingest',
@@ -223,7 +223,7 @@ export const SPECTRA_ADAPTER_CAPABILITIES: SpectraAdapterCapability[] = [
     configured: () => anyEnv('SPECTRA_TELEMETRY_HMAC_SECRET'),
     priority: 'high',
     supportsRealtime: false,
-    notes: 'Detects structured Android/modem/BLE/Wi-Fi/GNSS/LoRa records and routes them through the same canonical normalizers.',
+    notes: 'Detects structured Android/modem/BLE/Wi-Fi/GNSS/LoRa records plus RTKLIB .pos precision solutions and routes them through the same canonical normalizers.',
   },
   {
     id: 'camara-location-verification-ingest',
