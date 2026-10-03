@@ -570,6 +570,10 @@ test('Universal radio-log importer recognizes CSV Android GNSS Logger and RTKLIB
   advancedRadioNormalizer.includes('parseRtklibPosRecords') &&
   advancedRadioNormalizer.includes("recordType: 'rtklib-pos'") &&
   advancedRadioNormalizer.includes("kind: 'rtklib-solution'") &&
+  advancedRadioNormalizer.includes('signedSquareRootCovarianceToCovariance') &&
+  advancedRadioNormalizer.includes('rtklibCalendarTimestamp') &&
+  advancedRadioNormalizer.includes("timeSystem: 'GPST' | 'UTC' | 'JST'") &&
+  advancedRadioNormalizer.includes('inputTimeSystem') &&
   advancedRadioNormalizer.includes("kind === 'gnss-precision-solution' ? { solutions: [row]") &&
   advancedRadioNormalizer.includes('UtcTimeMillis') &&
   advancedRadioNormalizer.includes('CarrierFrequencyHz') &&
