@@ -43,6 +43,7 @@ const publicRetrieval = read('server/services/spectra/SpectraPublicRetrieval.ts'
 const lexaraConversation = read('client/src/components/LexaraConversation.tsx');
 const spectraMigration = read('server/migrations/064_spectra_durable_observations.sql');
 const spectraAccessMigration = read('server/migrations/065_spectra_server_only_access.sql');
+const spectraIndexMigration = read('server/migrations/066_spectra_foreign_key_indexes.sql');
 const landing = read('client/src/pages/landing.tsx');
 const login = read('client/src/pages/login.tsx');
 
@@ -316,6 +317,11 @@ test('SPECTRA persistence tables remain server-only',
   spectraAccessMigration.includes('FROM PUBLIC, anon, authenticated') &&
   spectraAccessMigration.includes('TO service_role') &&
   dockerfile.includes('065_spectra_server_only_access.sql'));
+test('SPECTRA persistence foreign keys have covering indexes',
+  spectraIndexMigration.includes('spectra_location_observations_investigation_idx') &&
+  spectraIndexMigration.includes('spectra_location_observations_telemetry_event_idx') &&
+  spectraIndexMigration.includes('spectra_telemetry_events_investigation_idx') &&
+  dockerfile.includes('066_spectra_foreign_key_indexes.sql'));
 test('Realtime observations work locally and across replicas when Supabase Realtime is configured',
   geoconsoleRoutes.includes("router.get('/telemetry-stream/:sessionId'") &&
   geoconsoleRoutes.includes('telemetryPushEmitter') &&
@@ -323,7 +329,7 @@ test('Realtime observations work locally and across replicas when Supabase Realt
   realtimeBridge.includes("table: 'spectra_location_observations'"));
 test('SPECTRA acquisition session stays attached to GeoRuntime and telemetry updates',
   spectra.includes('sessionId={spectraSessionId}') &&
-  spectra.includes('sessionId: spectraSessionId || undefined') &&
+  spectra.includes('sessionId: sessionOverride || spectraSessionId || undefined') &&
   dashboard.includes('sessionId?: string | null') &&
   dashboard.includes('sessionId: sessionId || undefined') &&
   runtime.includes("sessionId: configuredSessionId || undefined") &&
