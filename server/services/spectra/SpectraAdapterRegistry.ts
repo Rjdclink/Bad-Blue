@@ -269,6 +269,16 @@ export const SPECTRA_ADAPTER_CAPABILITIES: SpectraAdapterCapability[] = [
     notes: 'Spatiotemporal Earth-observation catalogue context.',
   },
   {
+    id: 'aggregate-camera-motion-context',
+    label: 'Aggregate camera motion context',
+    mode: 'camera',
+    sourceTypes: ['traffic_cam','public_camera'],
+    configured: () => true,
+    priority: 'supporting',
+    supportsRealtime: true,
+    notes: 'Accepts bounded aggregate traffic counts, speeds, headings and congestion context without promoting scene traffic into a target location observation.',
+  },
+  {
     id: 'public-source-retrieval',
     label: 'Direct public source retrieval',
     mode: 'generic-http',
