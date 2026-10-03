@@ -1128,6 +1128,14 @@ router.post('/acquire', async (req: Request, res: Response) => {
     const locationConfidence = liveLocationAssessment.isLive
       ? liveLocationAssessment.confidenceScore
       : baselineLocationConfidence;
+    // For a person-location claim, both propositions must hold:
+    // (1) the subject/device identity is correct, and
+    // (2) the live spatial estimate is correct. Treat them as separate
+    // evidence dimensions and report the conservative joint confidence.
+    const subjectLiveLocationConfidence = Math.max(
+      0,
+      Math.min(1, identityConfidence * locationConfidence),
+    );
 
     const sourceKeys = new Set<string>();
     for (const point of directEvidence) {
@@ -1206,6 +1214,7 @@ router.post('/acquire', async (req: Request, res: Response) => {
         liveLocationRadius99Meters: liveLocationAssessment.confidenceRadiusMeters99,
         liveLocationConsistency: liveLocationAssessment.consistencyScore,
         liveLocationFreshness: liveLocationAssessment.freshnessScore,
+        subjectLiveLocationConfidence,
         sourceCount: sourceKeys.size,
         discoveryPasses,
         discoveryQueriesAttempted,
@@ -1245,6 +1254,7 @@ router.post('/acquire', async (req: Request, res: Response) => {
         liveLocationConsistency: liveLocationAssessment.consistencyScore,
         liveLocationFreshness: liveLocationAssessment.freshnessScore,
         liveLocationFreshestAgeMs: liveLocationAssessment.freshestAgeMs,
+        subjectLiveLocationConfidence,
         sourceCount: sourceKeys.size,
         evidenceItemCount:
           directEvidence.length +
