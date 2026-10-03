@@ -79,6 +79,7 @@ const motionContextMigration = read('server/migrations/067_spectra_motion_contex
 const motionContextAccessMigration = read('server/migrations/068_spectra_motion_context_server_only_access.sql');
 const spectraAccessMigration = read('server/migrations/065_spectra_server_only_access.sql');
 const spectraIndexMigration = read('server/migrations/066_spectra_foreign_key_indexes.sql');
+const spectraTenantHistoryIndexMigration = read('server/migrations/069_spectra_tenant_history_indexes.sql');
 const landing = read('client/src/pages/landing.tsx');
 const login = read('client/src/pages/login.tsx');
 
@@ -786,6 +787,62 @@ test('Provider traffic context cannot attach to an owned tenant session without 
   geoconsoleRoutes.includes('providerMayWriteOwnedSpectraSession({') &&
   railwayEnvExample.includes('SPECTRA_PROVIDER_SESSION_BINDINGS=[]'));
 
+test('Long-running durable history returns freshest bounded evidence and supports opaque cursor pagination',
+  acquisitionPersistence.includes('ORDER BY observed_at DESC, id DESC') &&
+  acquisitionPersistence.includes('encodeObservationCursor') &&
+  acquisitionPersistence.includes('decodeObservationCursor') &&
+  acquisitionPersistence.includes('loadSpectraSessionObservationRange') &&
+  geoconsoleRoutes.includes("cursor: z.string().trim().min(1).max(1_000).optional()") &&
+  geoconsoleRoutes.includes("order: 'newest-first'") &&
+  apiContract.includes('opaque nextCursor') &&
+  spectraTenantHistoryIndexMigration.includes('user_id') &&
+  spectraTenantHistoryIndexMigration.includes('session_id') &&
+  spectraTenantHistoryIndexMigration.includes('observed_at DESC') &&
+  dockerfile.includes('069_spectra_tenant_history_indexes.sql'));
+test('Report rehydration can span a bounded durable time range instead of only the oldest cache window',
+  geoconsoleRoutes.includes('loadSpectraSessionObservationRange') &&
+  geoconsoleRoutes.includes('maxPoints: 20_000') &&
+  geoconsoleRoutes.includes('durableHistoryTruncated') &&
+  acquisitionPersistence.includes('maxPoints ?? 20_000'));
+test('Global GeoConsole configuration and cache mutation require administrator authorization',
+  geoconsoleRoutes.includes("router.post('/config', adminAuthMiddleware") &&
+  geoconsoleRoutes.includes("router.post('/clear-cache', adminAuthMiddleware"));
+test('Expensive GeoConsole routes share cross-replica resource governance',
+  geoconsoleRoutes.includes('const spectraResourceMiddleware') &&
+  geoconsoleRoutes.includes("router.post('/process', spectraResourceMiddleware") &&
+  geoconsoleRoutes.includes("router.post('/report', spectraResourceMiddleware") &&
+  geoconsoleRoutes.includes("router.post('/interpolate', spectraResourceMiddleware") &&
+  geoconsoleRoutes.includes("router.post('/futurecast', spectraResourceMiddleware"));
+test('Provider telemetry and motion context cannot create or append owned data without a tenant-scoped session binding',
+  providerSessionAccess.includes('resolveSpectraProviderSessionBinding') &&
+  providerSessionAccess.includes('Boolean(binding?.tenantId') &&
+  geoconsoleRoutes.includes('SPECTRA provider telemetry requires an explicit tenant-scoped session binding.') &&
+  geoconsoleRoutes.includes('Traffic-context provider requires a tenant-scoped session binding.') &&
+  geoconsoleRoutes.includes('userId: boundTenantId') &&
+  motionContext.includes('OR user_id = $3'));
+test('Detailed health reports provider binding counts without exposing bound session identifiers',
+  routes.includes('getConfiguredSpectraProviderSessionBindingSummary') &&
+  providerSessionAccess.includes('tenantScopedCount') &&
+  !routes.includes('getConfiguredSpectraProviderSessionBindings()'));
+test('Map renderer abstraction permits registered alternate renderers and falls back to MapLibre',
+  mapRendererAdapter.includes('registerGeoconsoleMapRenderer') &&
+  mapRendererAdapter.includes("adapters.set(id, adapter)") &&
+  mapRendererAdapter.includes("active: 'maplibre'") &&
+  intelligenceMap.includes('renderer.adapter.createMap') &&
+  intelligenceMap.includes('renderer.adapter.createPopup'));
+test('Configured provider fan-out is explicitly bounded',
+  activeAcquisition.includes('parsed.slice(0, 16)') &&
+  genericPull.includes('parsed.slice(0, 64)') &&
+  providerStreamCoordinator.includes('parsed.slice(0, 32)') &&
+  mqttProviderCoordinator.includes('parsed.slice(0, 32)'));
+test('Retry and reconnect loops use bounded jitter instead of synchronized fixed retries',
+  spectra.includes('jitteredAcquisitionDelay') &&
+  providerStreamCoordinator.includes('Math.random()') &&
+  mqttProviderCoordinator.includes('Math.random()'));
+test('Cross-replica governor fails closed unless local fallback is explicitly enabled',
+  resourceGovernor.includes('SPECTRA_ALLOW_LOCAL_GOVERNOR_FALLBACK') &&
+  railwayEnvExample.includes('SPECTRA_ALLOW_LOCAL_GOVERNOR_FALLBACK=false'));
+
 test('SPECTRA recursively reacquires until page exit with one stable session',
   spectra.includes('CONTINUOUS_ACQUISITION_DELAY_MS') &&
   spectra.includes('startContinuousAcquisition') &&
@@ -943,7 +1000,9 @@ test('Aggregate camera traffic context never becomes a target location observati
 test('Aggregate vehicle-flow context can refine Futurecast only behind a vehicle-motion gate',
   geoconsoleRoutes.includes('loadSpectraMotionContext') &&
   geoconsoleRoutes.includes('motionContextApplied') &&
-  geoconsoleRoutes.includes('WHERE session_id = $1 AND user_id = $2') &&
+  motionContext.includes('($3::text IS NULL AND user_id IS NULL)') &&
+  motionContext.includes('OR user_id = $3') &&
+  geoconsoleRoutes.includes("error: 'SPECTRA session not found.'") &&
   monteCarlo.includes('const likelyVehicleMotion = usable.some(vehicleClass)') &&
   monteCarlo.includes('motionContextInfluence = Math.min(0.35') &&
   monteCarlo.includes('motionContextCongestionRatio') &&
