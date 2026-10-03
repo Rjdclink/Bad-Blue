@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {
   normalizeSpectraProviderPayload,
+  SPECTRA_PROVIDER_NORMALIZER_KINDS,
   SpectraProviderNormalizationError,
 } from '../server/services/spectra/SpectraProviderTelemetryNormalizer';
 
@@ -127,6 +128,306 @@ function measurement(batch: ReturnType<typeof normalizeSpectraProviderPayload>, 
   assert.equal(point.accuracy, 35);
   assert.equal(point.metadata.network, 'google-find-hub');
   assert.equal(point.metadata.deviceRef, 'accessory-7');
+}
+
+{
+  const batch = normalizeSpectraProviderPayload(
+    'bluetooth-channel-sounding',
+    'bluetooth-6-locator',
+    {
+      observations: [{
+        timestamp: '2025-01-02T03:04:05Z',
+        peerId: 'peer-1',
+        anchor: { id: 'anchor-1', latitude: 43.5446, longitude: -96.7311 },
+        pbrDistanceMeters: 4.8,
+        pbrUncertaintyMeters: 0.12,
+        rttDistanceMeters: 5.0,
+        rttUncertaintyMeters: 0.3,
+      }],
+    },
+  );
+  const ranging = measurement(batch);
+  assert.equal(ranging.kind, 'ranging');
+  assert.equal(ranging.source, 'bluetooth_proximity');
+  assert.equal(ranging.metadata.technology, 'bluetooth-6-channel-sounding');
+  assert.ok(ranging.anchors[0].distanceMeters > 4.8);
+  assert.ok(ranging.anchors[0].distanceMeters < 5.0);
+}
+
+{
+  const batch = normalizeSpectraProviderPayload(
+    'ble-direction-finding',
+    'aod-array',
+    {
+      observations: [{
+        timestamp: '2025-01-02T03:04:05Z',
+        method: 'aod',
+        targetRef: 'tag-9',
+        locator: { latitude: 43.545, longitude: -96.73 },
+        distanceMeters: 12,
+        bearingDegrees: 82,
+        bearingReference: 'true_north',
+        antennaArrayId: 'array-2',
+      }],
+    },
+  );
+  const ranging = measurement(batch);
+  assert.equal(ranging.kind, 'ranging');
+  assert.equal(ranging.source, 'ble_aoa');
+  assert.equal(ranging.metadata.directionMethod, 'aod');
+  assert.equal(ranging.anchors[0].bearingReference, 'true_north');
+}
+
+{
+  const batch = normalizeSpectraProviderPayload(
+    'android-wifi-ranging',
+    'pixel-rtt',
+    {
+      results: [{
+        timestamp: '2025-01-02T03:04:05Z',
+        protocol: '802.11az NTB',
+        bssid: '00:11:22:33:44:55',
+        distanceMm: 6450,
+        distanceStdDevMm: 420,
+        responderLocation: { latitude: 41.2565, longitude: -95.9345 },
+        isWifiAwarePeer: true,
+      }],
+    },
+  );
+  const ranging = measurement(batch);
+  assert.equal(ranging.kind, 'ranging');
+  assert.equal(ranging.source, 'wifi_rtt');
+  assert.equal(ranging.metadata.protocol, '802.11az-ntb');
+  assert.equal(ranging.metadata.wifiAwarePeer, true);
+  assert.equal(ranging.anchors[0].distanceMeters, 6.45);
+}
+
+{
+  const batch = normalizeSpectraProviderPayload(
+    'android-cellular',
+    'android-telephony',
+    {
+      cells: [{
+        timestamp: '2025-01-02T03:04:05Z',
+        radioType: 'nr',
+        mcc: 310,
+        mnc: 260,
+        tac: 12345,
+        nci: 6871947,
+        pci: 321,
+        nrarfcn: 635334,
+        registered: true,
+        signal: {
+          ssRsrp: -92,
+          ssRsrq: -12,
+          ssSinr: 19,
+          csiRsrp: -95,
+          csiRsrq: -13,
+          csiSinr: 17,
+          cqi: 11,
+          csiCqiTableIndex: 2,
+          timingAdvance: 180,
+        },
+      }],
+    },
+  );
+  const radio = measurement(batch);
+  assert.equal(radio.kind, 'radio');
+  assert.equal(radio.radioType, 'nr');
+  assert.equal(radio.cellTowers[0].newRadioCellId, 6871947);
+  assert.equal(radio.cellTowers[0].physicalCellId, 321);
+  assert.equal(radio.cellTowers[0].arfcn, 635334);
+  assert.equal(radio.cellTowers[0].signal.ssRsrpDbm, -92);
+  assert.equal(radio.cellTowers[0].signal.csiSinrDb, 17);
+  assert.equal(radio.cellTowers[0].signal.cqi, 11);
+}
+
+{
+  const batch = normalizeSpectraProviderPayload(
+    'android-raw-gnss',
+    'android-gnss',
+    {
+      epochs: [{
+        timestamp: '2025-01-02T03:04:05Z',
+        clock: {
+          timeNanos: 1234567890,
+          fullBiasNanos: -1230000000,
+          biasUncertaintyNanos: 12,
+        },
+        satellites: [{
+          svid: 7,
+          constellationType: 1,
+          pseudorangeMeters: 21453231.2,
+          pseudorangeRateMetersPerSecond: -623.4,
+          accumulatedDeltaRangeMeters: 12345.6,
+          carrierFrequencyHz: 1575420000,
+          cn0DbHz: 38.5,
+        }],
+        solution: {
+          latitude: 43.5446,
+          longitude: -96.7311,
+          accuracyMeters: 4.5,
+        },
+      }],
+    },
+  );
+  assert.equal(batch.measurements.length, 2);
+  assert.equal(measurement(batch, 0).source, 'gnss_raw');
+  assert.equal(measurement(batch, 1).source, 'gnss_fix');
+  assert.equal(measurement(batch, 1).metadata.satelliteCount, 1);
+}
+
+{
+  const batch = normalizeSpectraProviderPayload(
+    'apple-nearby-interaction',
+    'ios-nearby-interaction',
+    {
+      observations: [{
+        timestamp: '2025-01-02T03:04:05Z',
+        mode: 'uwb-edm',
+        peerRef: 'watch-peer',
+        distanceMeters: 18.2,
+        anchor: { latitude: 43.544, longitude: -96.73 },
+        uncertaintyMeters: 0.25,
+      }],
+    },
+  );
+  const ranging = measurement(batch);
+  assert.equal(ranging.kind, 'ranging');
+  assert.equal(ranging.source, 'uwb_range');
+  assert.equal(ranging.metadata.extendedDistanceMeasurement, true);
+}
+
+{
+  const batch = normalizeSpectraProviderPayload(
+    'ble-gateway',
+    'bluez-gateway',
+    {
+      observations: [{
+        timestamp: '2025-01-02T03:04:05Z',
+        gatewayKind: 'linux-bluez',
+        gatewayId: 'gateway-1',
+        beaconId: 'tag-3',
+        gateway: { latitude: 43.5446, longitude: -96.7311 },
+        rssiDbm: -63,
+        txPowerAtOneMeterDbm: -59,
+      }],
+    },
+  );
+  const ranging = measurement(batch);
+  assert.equal(ranging.kind, 'ranging');
+  assert.equal(ranging.source, 'ble_rssi');
+  assert.equal(ranging.metadata.gatewayKind, 'linux-bluez');
+}
+
+{
+  const batch = normalizeSpectraProviderPayload(
+    'lorawan-observation',
+    'lora-solver',
+    {
+      timestamp: '2025-01-02T03:04:05Z',
+      result: {
+        latitude: 43.5446,
+        longitude: -96.7311,
+        accuracy: 180,
+        algorithmType: 'Tdoa',
+        numberOfGatewaysUsed: 4,
+      },
+      lorawan: [{
+        gatewayId: 'gw-1',
+        rssi: -91,
+        snr: 8.5,
+        toa: 611795075,
+        antennaLocation: {
+          latitude: 43.55,
+          longitude: -96.74,
+          altitude: 410,
+        },
+      }],
+    },
+  );
+  assert.equal(measurement(batch, 0).kind, 'position');
+  assert.equal(measurement(batch, 0).source, 'network_region');
+  assert.equal(measurement(batch, 1).source, 'lorawan_radio');
+}
+
+{
+  const batch = normalizeSpectraProviderPayload(
+    'android-radio-collector',
+    'android-collector',
+    {
+      timestamp: '2025-01-02T03:04:05Z',
+      cells: [{
+        timestamp: '2025-01-02T03:04:05Z',
+        type: 'lte',
+        mcc: 310,
+        mnc: 410,
+        tac: 42,
+        ci: 123456,
+        pci: 77,
+        signal: { rsrp: -96, rsrq: -10, rssnr: 18, timingAdvance: 12 },
+      }],
+      wifiRtt: [{
+        timestamp: '2025-01-02T03:04:05Z',
+        distanceMeters: 8,
+        responderLocation: { latitude: 43.544, longitude: -96.731 },
+      }],
+      bleScans: [{
+        timestamp: '2025-01-02T03:04:05Z',
+        gateway: { latitude: 43.545, longitude: -96.73 },
+        rssiDbm: -60,
+        txPowerAtOneMeterDbm: -59,
+      }],
+    },
+  );
+  assert.ok(batch.measurements.some(item => item.kind === 'radio'));
+  assert.ok(batch.measurements.some(item => item.kind === 'ranging'));
+}
+
+{
+  const batch = normalizeSpectraProviderPayload(
+    'universal-radio-log',
+    'vendor-log',
+    {
+      records: [{
+        kind: '5g-nr',
+        timestamp: '2025-01-02T03:04:05Z',
+        radioType: 'nr',
+        mcc: 310,
+        mnc: 260,
+        tac: 9,
+        nci: 12345,
+        pci: 8,
+        ssRsrp: -100,
+      }, {
+        kind: 'bluetooth-channel-sounding',
+        timestamp: '2025-01-02T03:04:05Z',
+        anchor: { latitude: 43.544, longitude: -96.731 },
+        pbrDistanceMeters: 3.2,
+        rttDistanceMeters: 3.4,
+      }],
+    },
+  );
+  assert.ok(batch.measurements.some(item => item.kind === 'radio'));
+  assert.ok(batch.measurements.some(item => item.kind === 'ranging'));
+}
+
+for (const kind of [
+  'bluetooth-channel-sounding',
+  'ble-direction-finding',
+  'android-wifi-ranging',
+  'android-cellular',
+  'android-raw-gnss',
+  'apple-nearby-interaction',
+  'android-radio-collector',
+  'ble-gateway',
+  'lorawan-observation',
+  'universal-radio-log',
+]) {
+  assert.ok(
+    SPECTRA_PROVIDER_NORMALIZER_KINDS.includes(kind as any),
+    `Expected provider normalizer registry to include ${kind}`,
+  );
 }
 
 assert.throws(
