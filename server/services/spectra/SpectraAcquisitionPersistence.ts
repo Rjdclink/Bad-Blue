@@ -60,6 +60,14 @@ function metadataString(point: GPSPoint, ...keys: string[]): string | null {
   return null;
 }
 
+const GENERIC_SPECTRA_SUBJECT_RE = /^(?:person|individual|target|device|vehicle|car|truck|business|company|organization|object|place|address|thing|property|phone|phone number)$/i;
+
+function subjectsCompatible(existing: string, incoming: string): boolean {
+  if (!existing || !incoming || existing === incoming) return true;
+  if (GENERIC_SPECTRA_SUBJECT_RE.test(existing) || GENERIC_SPECTRA_SUBJECT_RE.test(incoming)) return true;
+  return existing.includes(incoming) || incoming.includes(existing);
+}
+
 function clueType(value: string): string {
   if (/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i.test(value)) return 'email';
   if (/(?:\+\d{1,3}[\s().-]*)?(?:\d[\s().-]*){7,15}/.test(value)) return 'phone';
@@ -173,7 +181,7 @@ export async function persistSpectraAcquisition(input: {
       if (existingUserId && existingUserId !== input.userId) {
         throw new Error('SPECTRA session ownership mismatch');
       }
-      if (existingSubject && incomingSubject && existingSubject !== incomingSubject) {
+      if (!subjectsCompatible(existingSubject, incomingSubject)) {
         throw new Error('SPECTRA session subject mismatch');
       }
       claimingPreviouslyUnownedSession = !existingUserId;
@@ -200,6 +208,27 @@ export async function persistSpectraAcquisition(input: {
       ],
     );
     const investigationId = String(investigation.rows[0]?.id || '');
+
+    const existingSubject = existing.rows.length
+      ? normalizeClue(String(existing.rows[0]?.subject_label || ''))
+      : '';
+    const incomingSubject = normalizeClue(input.subjectLabel);
+    if (
+      investigationId
+      && incomingSubject
+      && (
+        !existingSubject
+        || GENERIC_SPECTRA_SUBJECT_RE.test(existingSubject)
+        || (incomingSubject.includes(existingSubject) && incomingSubject.length > existingSubject.length)
+      )
+    ) {
+      await client.query(
+        `UPDATE public.spectra_investigations
+         SET subject_label = $2, updated_at = now()
+         WHERE id = $1::uuid`,
+        [investigationId, input.subjectLabel],
+      );
+    }
 
     if (claimingPreviouslyUnownedSession) {
       await client.query(
