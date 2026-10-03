@@ -310,6 +310,53 @@ async function commonCrawl(query: string, existingUrls: readonly string[], optio
   return result||[];
 }
 
+export interface LegalMeshSearchProviderAdapter {
+  id: string;
+  search: (query: string, signal?: AbortSignal) => Promise<LegalMeshCandidate[]>;
+}
+
+const BUILTIN_SEARCH_PROVIDERS: readonly LegalMeshSearchProviderAdapter[] = [
+  { id: 'tavily', search: tavily },
+  { id: 'duckduckgo-instant-answer', search: duckDuckGoInstantAnswer },
+  { id: 'searxng', search: searxng },
+  { id: 'ddgs', search: ddgs },
+  { id: 'openserp', search: openserp },
+] as const;
+
+const registeredSearchProviders = new Map<string, LegalMeshSearchProviderAdapter>();
+
+export function registerLegalMeshSearchProvider(
+  adapter: LegalMeshSearchProviderAdapter,
+): () => void {
+  const id = String(adapter?.id || '').trim().toLowerCase();
+  if (!id || typeof adapter?.search !== 'function') {
+    throw new Error('Legal mesh search provider requires an ID and search function.');
+  }
+  if (BUILTIN_SEARCH_PROVIDERS.some(provider => provider.id === id)) {
+    throw new Error('Built-in legal mesh search providers cannot be replaced at runtime.');
+  }
+  registeredSearchProviders.set(id, { ...adapter, id });
+  return () => {
+    if (registeredSearchProviders.get(id)?.search === adapter.search) {
+      registeredSearchProviders.delete(id);
+    }
+  };
+}
+
+export function getLegalMeshSearchProviderIds(): string[] {
+  return [
+    ...BUILTIN_SEARCH_PROVIDERS.map(provider => provider.id),
+    ...registeredSearchProviders.keys(),
+  ];
+}
+
+function activeSearchProviders(): LegalMeshSearchProviderAdapter[] {
+  return [
+    ...BUILTIN_SEARCH_PROVIDERS,
+    ...registeredSearchProviders.values(),
+  ].slice(0, 12);
+}
+
 async function freeSearch(query: string, signal?: AbortSignal): Promise<LegalMeshCandidate[]> {
   // One parent listener per query variant prevents the shared turn signal from
   // accumulating a listener for every parallel search provider.
@@ -318,13 +365,11 @@ async function freeSearch(query: string, signal?: AbortSignal): Promise<LegalMes
   if (signal?.aborted) controller.abort(signal.reason);
   else signal?.addEventListener('abort', relayAbort, { once: true });
   try {
-    const groups=await Promise.all([
-      tavily(query,controller.signal),
-      duckDuckGoInstantAnswer(query,controller.signal),
-      searxng(query,controller.signal),
-      ddgs(query,controller.signal),
-      openserp(query,controller.signal),
-    ]);
+    const groups=await Promise.all(
+      activeSearchProviders().map(provider =>
+        provider.search(query, controller.signal).catch(() => [])
+      ),
+    );
     return fuseRankedCandidates(groups);
   } finally {
     signal?.removeEventListener('abort', relayAbort);
