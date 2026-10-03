@@ -1203,6 +1203,15 @@ router.post('/acquire', async (req: Request, res: Response) => {
     );
 
     const sourceKeys = new Set<string>();
+    for (const point of activeLocationPoints) {
+      sourceKeys.add(
+        String(
+          point.correlationGroup
+          || point.provenance?.provider
+          || `active:${point.source}`
+        ).trim().toLowerCase()
+      );
+    }
     for (const point of directEvidence) {
       sourceKeys.add(
         String(point.correlationGroup || `media:${point.source}`).trim().toLowerCase()
@@ -1334,6 +1343,7 @@ router.post('/acquire', async (req: Request, res: Response) => {
         subjectLiveLocationConfidence,
         sourceCount: sourceKeys.size,
         evidenceItemCount:
+          activeLocationPoints.length +
           directEvidence.length +
           backgroundSources.length +
           discoveryResults.length,
