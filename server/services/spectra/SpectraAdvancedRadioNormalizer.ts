@@ -448,11 +448,11 @@ function normalizeAndroidWifiRanging(
     const anchor = anchorCoordinates(responder);
     const distanceMeters = finite(
       result.distanceMeters
-      ?? result.distanceMm && Number(result.distanceMm) / 1000
+      ?? (result.distanceMm !== undefined ? Number(result.distanceMm) / 1000 : undefined)
     );
     const distanceStdDevMeters = finite(
       result.distanceStdDevMeters
-      ?? result.distanceStdDevMm && Number(result.distanceStdDevMm) / 1000
+      ?? (result.distanceStdDevMm !== undefined ? Number(result.distanceStdDevMm) / 1000 : undefined)
     );
     const protocol =
       result.is80211azNtb === true
