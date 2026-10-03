@@ -732,6 +732,60 @@ function measurement(batch: ReturnType<typeof normalizeSpectraProviderPayload>, 
 
 {
   const batch = normalizeSpectraProviderPayload(
+    'camara-number-verification',
+    'carrier-identity',
+    {
+      timestamp: '2026-10-02T20:59:55Z',
+      devicePhoneNumberVerified: true,
+      phoneNumber: '+16055551212',
+    },
+  );
+  const binding = measurement(batch);
+  assert.equal(binding.kind, 'sensor');
+  assert.equal(binding.source, 'identity_binding');
+  assert.equal(binding.values.verified, 1);
+  assert.equal(binding.metadata.bindingType, 'network-number-possession');
+}
+
+{
+  const batch = normalizeSpectraProviderPayload(
+    'camara-device-identifier',
+    'carrier-identity',
+    {
+      timestamp: '2026-10-02T20:59:55Z',
+      imei: '490154203237518',
+      imeiSv: '4901542032375187',
+      tac: '49015420',
+      manufacturer: 'Example',
+      model: 'Example Device',
+    },
+  );
+  const binding = measurement(batch);
+  assert.equal(binding.source, 'identity_binding');
+  assert.equal(binding.values.identifierPresent, 1);
+  assert.equal(binding.metadata.imei, '490154203237518');
+  assert.equal(binding.metadata.tac, '49015420');
+}
+
+{
+  const batch = normalizeSpectraProviderPayload(
+    'camara-kyc-match',
+    'carrier-kyc',
+    {
+      timestamp: '2026-10-02T20:59:55Z',
+      nameMatchScore: 99.7,
+      addressMatchScore: 99.2,
+      verified: true,
+    },
+  );
+  const binding = measurement(batch);
+  assert.equal(binding.source, 'identity_binding');
+  assert.ok(binding.values.matchScore > 0.99);
+  assert.equal(binding.metadata.bindingType, 'operator-kyc-match');
+}
+
+{
+  const batch = normalizeSpectraProviderPayload(
     'android-managed-lost-mode',
     'android-management',
     {
@@ -916,6 +970,9 @@ for (const kind of [
   'universal-radio-log',
   'camara-location-verification',
   'camara-reachability',
+  'camara-number-verification',
+  'camara-device-identifier',
+  'camara-kyc-match',
   'android-managed-lost-mode',
   'apple-managed-lost-mode',
   'meraki-scanning',
