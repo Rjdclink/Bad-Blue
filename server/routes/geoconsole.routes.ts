@@ -54,6 +54,10 @@ import {
   type SpectraProviderNormalizerKind,
 } from '../services/spectra/SpectraProviderTelemetryNormalizer';
 import { assessSpectraLiveLocation } from '../services/spectra/SpectraLiveConfidence';
+import {
+  solveSpectraSpatialConstraints,
+  type SpectraSpatialConstraint,
+} from '../services/geoconsole/constraintStateEstimator';
 
 const router = Router();
 const log = createLogger('GeoconsoleRoutes');
@@ -237,6 +241,7 @@ const telemetryRangingAnchorSchema = z.object({
   txPowerAtOneMeterDbm: z.number().min(-127).max(0).optional(),
   pathLossExponent: z.number().min(1).max(6).optional(),
   uncertaintyMeters: z.number().positive().max(1_000_000).optional(),
+  accuracyMeters: z.number().nonnegative().max(1_000_000).optional(),
   bearingDegrees: z.number().min(0).max(360).optional(),
   bearingUncertaintyDegrees: z.number().positive().max(180).optional(),
   bearingReference: z.enum(['true_north', 'magnetic_north', 'device']).optional(),
@@ -263,6 +268,104 @@ const telemetryRangingSchema = z.object({
   metadata: z.record(z.unknown()).optional(),
 });
 
+const telemetryConstraintAnchorSchema = z.object({
+  id: z.string().trim().min(1).max(200).optional(),
+  latitude: z.number().min(-90).max(90),
+  longitude: z.number().min(-180).max(180),
+  altitude: z.number().optional(),
+  accuracyMeters: z.number().nonnegative().max(1_000_000).optional(),
+});
+
+const telemetryPositionConstraintSchema = z.object({
+  type: z.literal('position'),
+  id: z.string().max(200).optional(),
+  latitude: z.number().min(-90).max(90),
+  longitude: z.number().min(-180).max(180),
+  uncertaintyMeters: z.number().positive().max(5_000_000),
+  confidence: z.number().min(0.05).max(1).optional(),
+  correlationGroup: z.string().max(300).optional(),
+});
+
+const telemetryRangeConstraintSchema = z.object({
+  type: z.literal('range'),
+  id: z.string().max(200).optional(),
+  anchor: telemetryConstraintAnchorSchema,
+  distanceMeters: z.number().nonnegative().max(1_000_000),
+  uncertaintyMeters: z.number().positive().max(1_000_000),
+  confidence: z.number().min(0.05).max(1).optional(),
+  correlationGroup: z.string().max(300).optional(),
+});
+
+const telemetryRangeDifferenceConstraintSchema = z.object({
+  type: z.literal('range_difference'),
+  id: z.string().max(200).optional(),
+  anchorA: telemetryConstraintAnchorSchema,
+  anchorB: telemetryConstraintAnchorSchema,
+  rangeDifferenceMeters: z.number().min(-1_000_000).max(1_000_000).optional(),
+  timeDifferenceNanos: z.number().min(-10_000_000).max(10_000_000).optional(),
+  uncertaintyMeters: z.number().positive().max(1_000_000).optional(),
+  timeDifferenceUncertaintyNanos: z.number().positive().max(10_000_000).optional(),
+  confidence: z.number().min(0.05).max(1).optional(),
+  correlationGroup: z.string().max(300).optional(),
+}).refine(value =>
+  value.rangeDifferenceMeters !== undefined
+  || value.timeDifferenceNanos !== undefined,
+  { message: 'Range-difference constraint requires distance difference or time difference.' },
+);
+
+const telemetryBearingConstraintSchema = z.object({
+  type: z.literal('bearing'),
+  id: z.string().max(200).optional(),
+  anchor: telemetryConstraintAnchorSchema,
+  bearingDegrees: z.number().min(0).max(360),
+  bearingUncertaintyDegrees: z.number().positive().max(180),
+  confidence: z.number().min(0.05).max(1).optional(),
+  correlationGroup: z.string().max(300).optional(),
+});
+
+const telemetrySectorConstraintSchema = z.object({
+  type: z.literal('sector'),
+  id: z.string().max(200).optional(),
+  anchor: telemetryConstraintAnchorSchema,
+  centerBearingDegrees: z.number().min(0).max(360),
+  halfWidthDegrees: z.number().positive().max(180),
+  minRangeMeters: z.number().nonnegative().max(1_000_000).optional(),
+  maxRangeMeters: z.number().positive().max(1_000_000).optional(),
+  uncertaintyMeters: z.number().positive().max(1_000_000).optional(),
+  confidence: z.number().min(0.05).max(1).optional(),
+  correlationGroup: z.string().max(300).optional(),
+}).refine(value =>
+  value.minRangeMeters === undefined
+  || value.maxRangeMeters === undefined
+  || value.minRangeMeters <= value.maxRangeMeters,
+  { message: 'Sector minimum range must not exceed maximum range.' },
+);
+
+const telemetrySpatialConstraintSchema = z.discriminatedUnion('type', [
+  telemetryPositionConstraintSchema,
+  telemetryRangeConstraintSchema,
+  telemetryRangeDifferenceConstraintSchema,
+  telemetryBearingConstraintSchema,
+  telemetrySectorConstraintSchema,
+]);
+
+const telemetryConstraintSchema = z.object({
+  kind: z.literal('constraint'),
+  source: z.enum([
+    'wifi_rtt', 'wifi_rssi', 'wifi_fingerprint',
+    'cellular', 'cell_serving', 'cell_neighbor', 'nr_positioning',
+    'uwb_range', 'uwb_direction',
+    'bluetooth_proximity', 'bluetooth_channel_sounding',
+    'ble_rssi', 'ble_aoa', 'ble_aod',
+    'gnss_fix', 'vehicle_telemetry', 'visual_positioning',
+  ]),
+  timestamp: validDateString,
+  provider: z.string().max(200).optional(),
+  correlationGroup: z.string().max(300).optional(),
+  constraints: z.array(telemetrySpatialConstraintSchema).min(1).max(256),
+  metadata: z.record(z.unknown()).optional(),
+});
+
 const telemetrySensorSchema = z.object({
   kind: z.literal('sensor'),
   source: z.enum([
@@ -284,6 +387,7 @@ const telemetryMeasurementSchema = z.union([
   telemetryAbsoluteSchema,
   telemetryRadioSchema,
   telemetryRangingSchema,
+  telemetryConstraintSchema,
   telemetrySensorSchema,
 ]);
 
@@ -442,169 +546,192 @@ function directionalAnchorCandidate(
 
 function rangingPoint(
   measurement: z.infer<typeof telemetryRangingSchema>,
+  trustedProvider: boolean,
 ): GPSPoint | null {
-  const originLatitude = measurement.anchors.reduce((sum, anchor) => sum + anchor.latitude, 0)
-    / measurement.anchors.length;
-  const originLongitude = measurement.anchors.reduce((sum, anchor) => sum + anchor.longitude, 0)
-    / measurement.anchors.length;
-  const anchors = measurement.anchors.flatMap(anchor => {
+  const constraints: SpectraSpatialConstraint[] = [];
+  let rssDerivedAnchorCount = 0;
+  let directionalAnchorCount = 0;
+
+  measurement.anchors.forEach((anchor, index) => {
     const resolvedRange = rangingDistanceMeters(anchor);
-    if (!resolvedRange) return [];
-    return [{
-      ...localMeters(anchor.latitude, anchor.longitude, originLatitude, originLongitude),
-      distance: resolvedRange.distance,
-      uncertainty: Math.max(
+    if (!resolvedRange) return;
+
+    if (resolvedRange.rssDerived) rssDerivedAnchorCount += 1;
+    const dependencyDomain = [
+      measurement.correlationGroup || `ranging:${measurement.provider || measurement.source}`,
+      anchor.id || index,
+    ].join(':');
+
+    constraints.push({
+      type: 'range',
+      id: anchor.id,
+      anchor: {
+        id: anchor.id,
+        latitude: anchor.latitude,
+        longitude: anchor.longitude,
+        accuracyMeters: anchor.accuracyMeters,
+      },
+      distanceMeters: resolvedRange.distance,
+      uncertaintyMeters: Math.max(
         0.1,
         anchor.uncertaintyMeters
-          ?? (resolvedRange.rssDerived ? Math.max(3, resolvedRange.distance * 0.6) : 2),
+          ?? (
+            resolvedRange.rssDerived
+              ? Math.max(3, resolvedRange.distance * 0.6)
+              : 2
+          ),
       ),
-      rssDerived: resolvedRange.rssDerived,
-      raw: anchor,
-    }];
+      confidence: resolvedRange.rssDerived ? 0.55 : 0.92,
+      correlationGroup: dependencyDomain,
+    });
+
+    if (
+      anchor.bearingReference === 'true_north'
+      && Number.isFinite(anchor.bearingDegrees)
+    ) {
+      directionalAnchorCount += 1;
+      constraints.push({
+        type: 'bearing',
+        id: anchor.id ? `${anchor.id}:bearing` : undefined,
+        anchor: {
+          id: anchor.id,
+          latitude: anchor.latitude,
+          longitude: anchor.longitude,
+          accuracyMeters: anchor.accuracyMeters,
+        },
+        bearingDegrees: Number(anchor.bearingDegrees),
+        bearingUncertaintyDegrees: Number(
+          anchor.bearingUncertaintyDegrees ?? 12,
+        ),
+        confidence: 0.86,
+        correlationGroup: dependencyDomain,
+      });
+    }
   });
-  if (!anchors.length) return null;
 
-  const directionalEstimates = anchors.flatMap(anchor => {
-    const relative = directionalAnchorCandidate(anchor.raw);
-    if (!relative) return [];
-    return [{
-      x: anchor.x + relative.x,
-      y: anchor.y + relative.y,
-      accuracy: relative.accuracy,
-    }];
-  });
-
-  let x: number;
-  let y: number;
-  let rangeAccuracy = Number.POSITIVE_INFINITY;
-  let residualRms = Number.POSITIVE_INFINITY;
-
-  if (anchors.length >= 3) {
-    const reference = anchors[0];
-    let ata00 = 0;
-    let ata01 = 0;
-    let ata11 = 0;
-    let atb0 = 0;
-    let atb1 = 0;
-
-    for (let index = 1; index < anchors.length; index += 1) {
-      const anchor = anchors[index];
-      const a0 = 2 * (anchor.x - reference.x);
-      const a1 = 2 * (anchor.y - reference.y);
-      const b =
-        reference.distance ** 2 - anchor.distance ** 2
-        - reference.x ** 2 - reference.y ** 2
-        + anchor.x ** 2 + anchor.y ** 2;
-      const weight = 1 / Math.max(0.25, anchor.uncertainty ** 2);
-      ata00 += weight * a0 * a0;
-      ata01 += weight * a0 * a1;
-      ata11 += weight * a1 * a1;
-      atb0 += weight * a0 * b;
-      atb1 += weight * a1 * b;
-    }
-
-    const determinant = ata00 * ata11 - ata01 * ata01;
-    if (Number.isFinite(determinant) && Math.abs(determinant) >= 1e-6) {
-      x = (atb0 * ata11 - atb1 * ata01) / determinant;
-      y = (ata00 * atb1 - ata01 * atb0) / determinant;
-      const residuals = anchors.map(anchor =>
-        Math.abs(Math.hypot(x - anchor.x, y - anchor.y) - anchor.distance)
-      );
-      residualRms = Math.sqrt(
-        residuals.reduce((sum, residual) => sum + residual ** 2, 0) / residuals.length
-      );
-      const anchorUncertainty = Math.sqrt(
-        anchors.reduce((sum, anchor) => sum + anchor.uncertainty ** 2, 0) / anchors.length
-      );
-      rangeAccuracy = Math.max(0.5, residualRms, anchorUncertainty);
-    } else if (!directionalEstimates.length) {
-      return null;
-    } else {
-      x = 0;
-      y = 0;
-    }
-  } else if (!directionalEstimates.length) {
-    // Range-only localization is underdetermined with fewer than three anchors.
-    return null;
-  } else {
-    x = 0;
-    y = 0;
-  }
-
-  if (directionalEstimates.length) {
-    let weightedX = 0;
-    let weightedY = 0;
-    let totalWeight = 0;
-
-    if (Number.isFinite(rangeAccuracy)) {
-      const rangeWeight = 1 / Math.max(0.25, rangeAccuracy ** 2);
-      weightedX += x * rangeWeight;
-      weightedY += y * rangeWeight;
-      totalWeight += rangeWeight;
-    }
-
-    for (const estimate of directionalEstimates) {
-      const weight = 1 / Math.max(0.25, estimate.accuracy ** 2);
-      weightedX += estimate.x * weight;
-      weightedY += estimate.y * weight;
-      totalWeight += weight;
-    }
-
-    if (totalWeight <= 0) return null;
-    x = weightedX / totalWeight;
-    y = weightedY / totalWeight;
-  }
-
-  const location = geoFromLocalMeters(x, y, originLatitude, originLongitude);
+  const pureRangeCount = constraints.filter(constraint =>
+    constraint.type === 'range'
+  ).length;
+  const hasDirectionalConstraint = constraints.some(constraint =>
+    constraint.type === 'bearing'
+  );
   if (
-    !Number.isFinite(location.latitude) || !Number.isFinite(location.longitude)
-    || location.latitude < -90 || location.latitude > 90
-    || location.longitude < -180 || location.longitude > 180
+    constraints.length < 2
+    || (pureRangeCount < 3 && !hasDirectionalConstraint)
   ) return null;
 
-  const directionalAccuracy = directionalEstimates.length
-    ? Math.sqrt(
-        directionalEstimates.reduce((sum, estimate) => sum + estimate.accuracy ** 2, 0)
-        / directionalEstimates.length
-      )
-    : Number.POSITIVE_INFINITY;
-  const accuracy = Math.max(
-    0.5,
-    Math.min(rangeAccuracy, directionalAccuracy),
-  );
+  const solved = solveSpectraSpatialConstraints(constraints);
+  if (!solved) return null;
 
-  return signServerEvidence({
-    latitude: location.latitude,
-    longitude: location.longitude,
-    accuracy: Number.isFinite(accuracy) ? accuracy : undefined,
+  const candidate: GPSPoint = {
+    latitude: solved.latitude,
+    longitude: solved.longitude,
+    accuracy: solved.accuracyMeters,
     timestamp: measurement.timestamp,
     receivedAt: new Date(),
     source: measurement.source,
-    confidence: Math.min(
-      0.95,
-      confidenceForAccuracy(Number.isFinite(accuracy) ? accuracy : 25)
-        + Math.min(0.18, Math.max(0, anchors.length - 2) * 0.06)
-        + Math.min(0.08, directionalEstimates.length * 0.03),
-    ),
+    confidence: Math.min(0.95, solved.confidence),
     observationKind: 'inferred',
-    correlationGroup: measurement.correlationGroup || `ranging:${measurement.provider || measurement.source}`,
+    correlationGroup:
+      measurement.correlationGroup
+      || `ranging:${measurement.provider || measurement.source}`,
     provenance: {
       provider: measurement.provider || 'spectra-ranging',
       capturedAt: measurement.timestamp,
       transformedBy: [
-        anchors.length >= 3 ? 'spectra_weighted_multilateration' : 'spectra_directional_ranging',
-        ...(directionalEstimates.length ? ['spectra_true_north_direction_fusion'] : []),
+        'spectra_robust_constraint_solver',
+        ...(hasDirectionalConstraint
+          ? ['spectra_true_north_direction_fusion']
+          : []),
       ],
     },
     metadata: {
       ...(measurement.metadata || {}),
-      anchorCount: anchors.length,
-      rssDerivedAnchorCount: anchors.filter(anchor => anchor.rssDerived).length,
-      directionalAnchorCount: directionalEstimates.length,
-      residualRmsMeters: Number.isFinite(residualRms) ? residualRms : undefined,
+      anchorCount: measurement.anchors.length,
+      rssDerivedAnchorCount,
+      directionalAnchorCount,
+      residualRmsMeters: solved.residualRms,
+      constraintCount: solved.constraintCount,
+      independentConstraintDomains: solved.independentDomainCount,
+      contradictionCount: solved.contradictionCount,
+      covariance: solved.covariance,
+      accuracyConfidenceLevel: 0.95,
+      solverIterations: solved.iterations,
+      constraintKinds: solved.supportKinds,
       bearingReferencePolicy: 'only_true_north_bearings_used_for_absolute_position',
+      dependencyPolicy: 'correlated_constraints_discounted_by_domain',
     },
-  });
+  };
+
+  return trustedProvider
+    ? signServerEvidence(candidate)
+    : normalizeClientEvidence(candidate);
+}
+
+function constraintPoint(
+  measurement: z.infer<typeof telemetryConstraintSchema>,
+  trustedProvider: boolean,
+): GPSPoint | null {
+  const constraints: SpectraSpatialConstraint[] = measurement.constraints.map(
+    (constraint): SpectraSpatialConstraint => {
+      if (constraint.type === 'range_difference') {
+        const rangeDifferenceMeters =
+          constraint.rangeDifferenceMeters
+          ?? Number(constraint.timeDifferenceNanos) * 0.299792458;
+        const uncertaintyMeters =
+          constraint.uncertaintyMeters
+          ?? (
+            constraint.timeDifferenceUncertaintyNanos !== undefined
+              ? constraint.timeDifferenceUncertaintyNanos * 0.299792458
+              : 15
+          );
+        return {
+          ...constraint,
+          rangeDifferenceMeters,
+          uncertaintyMeters,
+        };
+      }
+      return constraint;
+    },
+  );
+
+  const solved = solveSpectraSpatialConstraints(constraints);
+  if (!solved) return null;
+
+  const candidate: GPSPoint = {
+    latitude: solved.latitude,
+    longitude: solved.longitude,
+    accuracy: solved.accuracyMeters,
+    timestamp: measurement.timestamp,
+    receivedAt: new Date(),
+    source: measurement.source,
+    confidence: solved.confidence,
+    observationKind: 'inferred',
+    correlationGroup:
+      measurement.correlationGroup
+      || `constraint:${measurement.provider || measurement.source}`,
+    provenance: {
+      provider: measurement.provider || 'spectra-constraint-provider',
+      capturedAt: measurement.timestamp,
+      transformedBy: ['spectra_robust_constraint_solver'],
+    },
+    metadata: {
+      ...(measurement.metadata || {}),
+      constraintCount: solved.constraintCount,
+      independentConstraintDomains: solved.independentDomainCount,
+      contradictionCount: solved.contradictionCount,
+      residualRms: solved.residualRms,
+      covariance: solved.covariance,
+      accuracyConfidenceLevel: 0.95,
+      solverIterations: solved.iterations,
+      constraintKinds: solved.supportKinds,
+      dependencyPolicy: 'correlated_constraints_discounted_by_domain',
+    },
+  };
+
+  return trustedProvider
+    ? signServerEvidence(candidate)
+    : normalizeClientEvidence(candidate);
 }
 
 function openCellIdRadioName(value: string | undefined): string | undefined {
@@ -920,7 +1047,8 @@ async function telemetryPoint(
 ): Promise<GPSPoint | null> {
   if (measurement.kind === 'sensor') return null;
   if (measurement.kind === 'radio') return radioPoint(measurement);
-  if (measurement.kind === 'ranging') return rangingPoint(measurement);
+  if (measurement.kind === 'ranging') return rangingPoint(measurement, trustedProvider);
+  if (measurement.kind === 'constraint') return constraintPoint(measurement, trustedProvider);
 
   const inputMetadata = measurement.metadata || {};
   const candidate: GPSPoint = {
