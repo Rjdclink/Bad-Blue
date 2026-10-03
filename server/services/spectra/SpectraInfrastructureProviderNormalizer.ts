@@ -114,7 +114,9 @@ function identifiersForRow(kind: SpectraInfrastructureProviderKind, row: Record<
   const username = text(row.username ?? row.userName ?? row.user ?? row.identity, 200);
   const ipAddress = text(row.ip ?? row.ipAddress ?? row.ip_address, 120);
   const apId = text(
-    row.ap_serial
+    row.sensorMac
+    ?? row.sensor_mac
+    ?? row.ap_serial
     ?? row.apSerial
     ?? row.ap_id
     ?? row.apId
@@ -122,9 +124,9 @@ function identifiersForRow(kind: SpectraInfrastructureProviderKind, row: Record<
     ?? row.associatedAp,
     200,
   );
-  const siteId = text(row.site_id ?? row.siteId ?? row.site, 200);
+  const siteId = text(row.site_id ?? row.siteId ?? row.site ?? row.siteName, 200);
   const mapId = text(row.map_id ?? row.mapId ?? row.map, 200);
-  const floorId = text(row.floor_id ?? row.floorId ?? row.floor, 200);
+  const floorId = text(row.floor_id ?? row.floorId ?? row.floor ?? row.floorName, 200);
 
   return {
     providerId,
@@ -223,6 +225,10 @@ function observedAtForRow(kind: SpectraInfrastructureProviderKind, row: Record<s
     ?? row.locationTime
     ?? row.location_time
     ?? row.ts
+    ?? row.lastSeen
+    ?? row.lastseen
+    ?? row.firstSeen
+    ?? row.firstseen
     ?? (kind === 'mist-location' ? row.timestamp : undefined),
   );
 }
