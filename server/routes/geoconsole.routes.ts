@@ -6,7 +6,7 @@
  * may also be persisted through the canonical Postgres/PostGIS evidence store.
  */
 
-import { Router, Request, Response } from 'express';
+import { Router, type NextFunction, type Request, type Response } from 'express';
 import { EventEmitter } from 'node:events';
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'crypto';
 import { z } from 'zod';
@@ -93,7 +93,7 @@ const log = createLogger('GeoconsoleRoutes');
 const spectraResourceMiddleware = async (
   req: Request,
   res: Response,
-  next: () => void,
+  next: NextFunction,
 ) => {
   const userId = getPlatformUserId(req.user as any);
   if (!userId) {
