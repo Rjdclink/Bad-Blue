@@ -1278,6 +1278,28 @@ function coalesceTrustedRangingMeasurements(
   return [...passthrough, ...groups.values()];
 }
 
+export async function resolveSpectraTelemetryBatchPoints(
+  batch: TelemetryBatch,
+  trustedProvider: boolean,
+): Promise<{
+  points: GPSPoint[];
+  quality: ReturnType<typeof assessLocationQuality>;
+}> {
+  const measurements = trustedProvider
+    ? coalesceTrustedRangingMeasurements(batch.measurements)
+    : batch.measurements;
+  const pointOutcomes = await Promise.allSettled(
+    measurements.map(measurement => telemetryPoint(measurement, trustedProvider))
+  );
+  const points = pointOutcomes.flatMap(outcome =>
+    outcome.status === 'fulfilled' && outcome.value ? [outcome.value] : []
+  );
+  return {
+    points,
+    quality: assessLocationQuality(points),
+  };
+}
+
 export async function processSpectraTelemetryBatch(
   batch: TelemetryBatch,
   trustedProvider: boolean,
@@ -1294,16 +1316,9 @@ export async function processSpectraTelemetryBatch(
   liveAssessment: ReturnType<typeof assessSpectraLiveLocation>;
 }> {
   const sessionId = batch.sessionId || randomUUID();
-  const measurements = trustedProvider
-    ? coalesceTrustedRangingMeasurements(batch.measurements)
-    : batch.measurements;
-  const pointOutcomes = await Promise.allSettled(
-    measurements.map(measurement => telemetryPoint(measurement, trustedProvider))
-  );
-  const points = pointOutcomes.flatMap(outcome =>
-    outcome.status === 'fulfilled' && outcome.value ? [outcome.value] : []
-  );
-  const quality = assessLocationQuality(points);
+  const resolved = await resolveSpectraTelemetryBatchPoints(batch, trustedProvider);
+  const points = resolved.points;
+  const quality = resolved.quality;
   const liveAssessment = assessSpectraLiveLocation(quality.points);
   const result = quality.points.length
     ? await hybridGeoconsole.processLocationData(quality.points, sessionId)
