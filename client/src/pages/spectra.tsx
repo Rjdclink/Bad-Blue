@@ -96,6 +96,7 @@ function launchDetails(launch: SpectraLaunchPayload): string {
 interface AcquisitionResponse {
   success: boolean;
   error?: string;
+  retryAfterMs?: number;
   target?: string;
   details?: string;
   resolvedTargetLabel?: string;
@@ -192,6 +193,7 @@ export default function SpectraPage() {
   const continuousAcquisitionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeAcquisitionAbortRef = useRef<AbortController | null>(null);
   const recursivePassRef = useRef(0);
+  const continuousRetryDelayRef = useRef(CONTINUOUS_ACQUISITION_DELAY_MS);
   const hardStopRef = useRef<(reason?: string, notifyServer?: boolean) => void>(() => undefined);
 
   useEffect(() => {
@@ -310,6 +312,7 @@ export default function SpectraPage() {
     hardStopRef.current('new_target', true);
     queryStartedAtRef.current = new Date().toISOString();
     recursivePassRef.current = 0;
+    continuousRetryDelayRef.current = CONTINUOUS_ACQUISITION_DELAY_MS;
     spectraSessionIdRef.current = null;
     requestRef.current += 1;
     launchedFromLexaraRef.current = false;
@@ -482,9 +485,29 @@ export default function SpectraPage() {
       const payload = await response.json().catch(() => ({})) as AcquisitionResponse;
       if (requestId !== requestRef.current) return null;
 
+      if (response.status === 429) {
+        const headerSeconds = Number(response.headers.get('Retry-After'));
+        const retryAfterMs = Number.isFinite(Number(payload.retryAfterMs))
+          ? Number(payload.retryAfterMs)
+          : Number.isFinite(headerSeconds)
+            ? headerSeconds * 1000
+            : 5_000;
+        continuousRetryDelayRef.current = Math.max(
+          CONTINUOUS_ACQUISITION_DELAY_MS,
+          Math.min(60_000, Math.ceil(retryAfterMs)),
+        );
+        if (backgroundPass) {
+          setAcquisitionStage('Continuous acquisition throttled; retry scheduled…');
+          return null;
+        }
+        throw new Error(payload.error || 'SPECTRA acquisition capacity is temporarily saturated.');
+      }
+
       if (!response.ok || !payload.success) {
         throw new Error(payload.error || 'Target acquisition failed.');
       }
+
+      continuousRetryDelayRef.current = CONTINUOUS_ACQUISITION_DELAY_MS;
 
       const discoveredPoints = Array.isArray(payload.locationObservations)
         ? payload.locationObservations
@@ -668,15 +691,16 @@ export default function SpectraPage() {
         if (continuousAcquisitionActiveRef.current) {
           continuousAcquisitionTimerRef.current = setTimeout(
             () => void runPass(),
-            CONTINUOUS_ACQUISITION_DELAY_MS,
+            continuousRetryDelayRef.current,
           );
         }
       }
     };
 
+    continuousRetryDelayRef.current = CONTINUOUS_ACQUISITION_DELAY_MS;
     continuousAcquisitionTimerRef.current = setTimeout(
       () => void runPass(),
-      CONTINUOUS_ACQUISITION_DELAY_MS,
+      continuousRetryDelayRef.current,
     );
   }, [acquireTarget]);
 
