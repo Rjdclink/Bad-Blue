@@ -42,6 +42,14 @@ function list(value: unknown): any[] {
 }
 
 function finite(value: unknown): number | null {
+  if (
+    value === null
+    || value === undefined
+    || value === ''
+    || typeof value === 'boolean'
+  ) {
+    return null;
+  }
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 }
@@ -633,7 +641,10 @@ function normalizeCiscoSpaces(
 ): SpectraExternalNormalizedBatch {
   const wrapped = envelope(payload, providerId);
   const events = list(
-    wrapped.body.events || wrapped.body.data || wrapped.body.messages
+    wrapped.body.events
+    || wrapped.body.data
+    || wrapped.body.messages
+    || wrapped.body.results
   );
   const inputs = events.length ? events : [wrapped.body];
   const measurements: Array<Record<string, unknown>> = [];
@@ -648,13 +659,20 @@ function normalizeCiscoSpaces(
     const location = record(
       event.location || event.position || event.data || event
     );
+    const coordinates = Array.isArray(location.coordinates)
+      ? location.coordinates
+      : Array.isArray(event.coordinates)
+        ? event.coordinates
+        : Array.isArray(event.rawCoordinates)
+          ? event.rawCoordinates
+          : [];
     const latitude = bounded(
-      location.latitude ?? location.lat,
+      location.latitude ?? location.lat ?? coordinates[0],
       -90,
       90,
     );
     const longitude = bounded(
-      location.longitude ?? location.lng ?? location.lon,
+      location.longitude ?? location.lng ?? location.lon ?? coordinates[1],
       -180,
       180,
     );
@@ -662,6 +680,8 @@ function normalizeCiscoSpaces(
       event.timestamp
       || event.observedAt
       || event.eventTime
+      || event.lastLocationAt
+      || event.changedOn
       || location.timestamp
     );
     if (latitude === null || longitude === null || !observedAt) continue;
@@ -683,6 +703,7 @@ function normalizeCiscoSpaces(
         location.accuracy
         ?? location.uncertainty
         ?? event.accuracy
+        ?? event.confidenceFactor
       ),
       provider: wrapped.providerId,
       recordId: text(event.eventId || event.id, 300),
@@ -691,13 +712,19 @@ function normalizeCiscoSpaces(
       confidenceCeiling: 0.92,
       metadata: {
         providerKind: 'cisco-spaces-location',
-        eventType: eventType || 'DEVICE_LOCATION_UPDATE',
+        eventType: eventType || 'ACTIVE_CLIENT_LOCATION',
         deviceRef,
-        mapId: text(location.mapId || event.mapId, 200),
+        mapId: text(location.mapId || event.mapId || event.floorId, 200),
         locationId: text(
-          location.locationId || event.locationId,
+          location.locationId || event.locationId || event.buildingId,
           200,
         ),
+        campusId: text(event.campusId, 200),
+        buildingId: text(event.buildingId, 200),
+        floorId: text(event.floorId, 200),
+        computeType: text(event.computeType, 80),
+        detectingAccessPointCount: finite(event.numDetectingAps),
+        maxDetectedRssi: finite(record(event.maxDetectedRssi).rssi),
         xPos: finite(location.xPos ?? location.x),
         yPos: finite(location.yPos ?? location.y),
       },

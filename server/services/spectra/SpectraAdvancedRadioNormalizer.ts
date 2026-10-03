@@ -1,5 +1,6 @@
 import { parse as parseCsv } from 'csv-parse/sync';
 import { assessSpectraGnssIntegrity } from './SpectraGnssIntegrity';
+import { resolveConfiguredSpectraAnchor } from './SpectraAnchorRegistry';
 
 export const SPECTRA_ADVANCED_RADIO_NORMALIZER_KINDS = [
   'bluetooth-channel-sounding',
@@ -47,6 +48,14 @@ function list(value: unknown): any[] {
 }
 
 function finite(value: unknown): number | null {
+  if (
+    value === null
+    || value === undefined
+    || value === ''
+    || typeof value === 'boolean'
+  ) {
+    return null;
+  }
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 }
@@ -159,7 +168,17 @@ function anchorCoordinates(value: unknown) {
     -180,
     180,
   );
-  return latitude === null || longitude === null ? null : { latitude, longitude };
+  if (latitude !== null && longitude !== null) {
+    return { latitude, longitude };
+  }
+
+  const configured = resolveConfiguredSpectraAnchor(source);
+  return configured
+    ? {
+        latitude: configured.latitude,
+        longitude: configured.longitude,
+      }
+    : null;
 }
 
 function normalizerBatch(
@@ -461,7 +480,12 @@ function normalizeAndroidWifiRanging(
     const responder = record(
       result.responderLocation || result.location || result.anchor || result.peerLocation
     );
-    const anchor = anchorCoordinates(responder);
+    const anchor = anchorCoordinates({
+      ...responder,
+      id: responder.id ?? result.responderId ?? result.peerId,
+      macAddress: responder.macAddress ?? result.macAddress,
+      bssid: responder.bssid ?? result.bssid,
+    });
     const distanceMeters = finite(
       result.distanceMeters
       ?? (result.distanceMm !== undefined ? Number(result.distanceMm) / 1000 : undefined)
@@ -581,7 +605,13 @@ function normalizeAndroidRangingManager(
       || result.responderLocation
       || result.referenceLocation
     );
-    const anchor = anchorCoordinates(peer);
+    const anchor = anchorCoordinates({
+      ...peer,
+      id: peer.id ?? result.anchorId ?? result.peerId ?? result.deviceRef,
+      peerRef: peer.peerRef ?? result.peerRef ?? result.peerId,
+      macAddress: peer.macAddress ?? result.macAddress,
+      bssid: peer.bssid ?? result.bssid,
+    });
     const distance = finite(
       result.distanceMeters
       ?? result.distance
@@ -774,7 +804,12 @@ function normalizeAndroidUwbSensorFusion(
       || update.referenceLocation
       || update.peerPosition
     );
-    const anchor = anchorCoordinates(peer);
+    const anchor = anchorCoordinates({
+      ...peer,
+      id: peer.id ?? update.anchorId ?? update.peerId ?? update.uwbDeviceId,
+      peerRef: peer.peerRef ?? update.peerRef ?? update.peerId,
+      deviceId: peer.deviceId ?? update.uwbDeviceId,
+    });
     const peerRef = stringValue(
       update.peerRef
       || update.peerId

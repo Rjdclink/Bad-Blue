@@ -34,6 +34,8 @@ const pantheonSources = read('server/services/pantheon/PantheonSovereignSourceRe
 const geocoder = read('server/services/geoconsole/city-state-geocoder.ts');
 const geoconsoleRoutes = read('server/routes/geoconsole.routes.ts');
 const adapterRegistry = read('server/services/spectra/SpectraAdapterRegistry.ts');
+const activeAcquisition = read('server/services/spectra/SpectraActiveAcquisition.ts');
+const anchorRegistry = read('server/services/spectra/SpectraAnchorRegistry.ts');
 const providerNormalizer = read('server/services/spectra/SpectraProviderTelemetryNormalizer.ts');
 const advancedRadioNormalizer = read('server/services/spectra/SpectraAdvancedRadioNormalizer.ts');
 const externalLocationNormalizer = read('server/services/spectra/SpectraExternalLocationNormalizer.ts');
@@ -311,7 +313,7 @@ test('Configured HTTPS pull adapters are bounded and enter the canonical telemet
   geoconsoleRoutes.includes("router.post('/telemetry/pull/:adapterId'") &&
   genericPull.includes("Generic SPECTRA pull adapters require HTTPS.") &&
   genericPull.includes('rows.slice(0, 500)') &&
-  geoconsoleRoutes.includes('processTelemetryBatch(batch, true, userId, adapterId)'));
+  geoconsoleRoutes.includes('processSpectraTelemetryBatch(batch, true, userId, adapterId)'));
 test('Durable SPECTRA persistence stores investigations, clues and deduplicated observations',
   acquisitionPersistence.includes('spectra_investigations') &&
   acquisitionPersistence.includes('spectra_clues') &&
@@ -355,6 +357,34 @@ test('SPECTRA adapter capability registry truthfully exposes optional and built-
   adapterRegistry.includes("id: 'trafficland'") &&
   adapterRegistry.includes("id: 'overpass-place-context'") &&
   adapterRegistry.includes("id: 'geonames-place-context'"));
+test('SPECTRA active acquisition uses managed-device identifiers and canonical telemetry processing',
+  routes.includes('acquireSpectraActiveTelemetry') &&
+  routes.includes('resolveSpectraNormalizedTelemetryBatch') &&
+  routes.includes('activeAcquisitionPositionCount') &&
+  activeAcquisition.includes("target: 'device'") &&
+  activeAcquisition.includes("'canonical-telemetry'") &&
+  activeAcquisition.includes('SPECTRA_ACTIVE_PROVIDER_ADAPTERS') &&
+  activeAcquisition.includes('SPECTRA_CISCO_SPACES_DEVICE_URL_TEMPLATE') &&
+  !activeAcquisition.includes("target: 'phone'") &&
+  !activeAcquisition.includes('SPECTRA_CAMARA_LOCATION_RETRIEVAL_URL') &&
+  adapterRegistry.includes("id: 'android-managed-location-active'") &&
+  adapterRegistry.includes("id: 'apple-managed-location-active'") &&
+  adapterRegistry.includes("id: 'cisco-spaces-active-location'") &&
+  adapterRegistry.includes("id: 'active-provider-adapters'") &&
+  activeAcquisition.includes('SPECTRA_ANDROID_MDM_LOCATION_URL_TEMPLATE') &&
+  activeAcquisition.includes('SPECTRA_APPLE_MDM_LOCATION_URL_TEMPLATE'));
+test('Configured anchor identities are resolved before trusted ranging multilateration',
+  anchorRegistry.includes('SPECTRA_ANCHOR_CATALOG_JSON') &&
+  anchorRegistry.includes('resolveConfiguredSpectraAnchor') &&
+  advancedRadioNormalizer.includes('resolveConfiguredSpectraAnchor') &&
+  geoconsoleRoutes.includes('coalesceTrustedRangingMeasurements') &&
+  geoconsoleRoutes.includes('resolveSpectraNormalizedTelemetryBatch'));
+test('Cisco Spaces active-client REST responses preserve location freshness and AP context',
+  externalLocationNormalizer.includes('wrapped.body.results') &&
+  externalLocationNormalizer.includes('event.lastLocationAt') &&
+  externalLocationNormalizer.includes('event.confidenceFactor') &&
+  externalLocationNormalizer.includes('event.numDetectingAps') &&
+  externalLocationNormalizer.includes("providerKind: 'cisco-spaces-location'"));
 test('SPECTRA signed provider bridge normalizes carrier, BLE and accessory-network telemetry',
   geoconsoleRoutes.includes("router.post('/telemetry/provider/:providerId/normalize/:kind'") &&
   geoconsoleRoutes.includes('normalizeSpectraProviderPayload') &&

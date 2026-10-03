@@ -24,6 +24,8 @@ import {
   signServerEvidence,
 } from '../services/geoconsole/evidence-proof';
 import { getSpectraAdapterCapabilities } from '../services/spectra/SpectraAdapterRegistry';
+import { getSpectraActiveAcquisitionCapabilities } from '../services/spectra/SpectraActiveAcquisition';
+import { getConfiguredSpectraAnchorCount } from '../services/spectra/SpectraAnchorRegistry';
 import {
   getSpectraGenericPullAdapters,
   pullSpectraGenericAdapter,
@@ -1217,7 +1219,117 @@ async function persistTelemetryBatch(input: {
   }
 }
 
-async function processTelemetryBatch(
+function coalesceTrustedRangingMeasurements(
+  measurements: TelemetryMeasurement[],
+): TelemetryMeasurement[] {
+  const passthrough: TelemetryMeasurement[] = [];
+  const groups = new Map<string, z.infer<typeof telemetryRangingSchema>>();
+
+  for (const measurement of measurements) {
+    if (measurement.kind !== 'ranging') {
+      passthrough.push(measurement);
+      continue;
+    }
+
+    const timestampMs = measurement.timestamp.getTime();
+    const timeBucket = Math.floor(timestampMs / 250);
+    const provider = String(measurement.provider || 'telemetry-source');
+    const key = [measurement.source, provider, timeBucket].join('|');
+    const existing = groups.get(key);
+
+    if (!existing) {
+      groups.set(key, {
+        ...measurement,
+        anchors: [...measurement.anchors],
+        correlationGroup:
+          measurement.correlationGroup
+          || `ranging-batch:${provider}:${measurement.source}:${timeBucket}`,
+        metadata: {
+          ...(measurement.metadata || {}),
+          coalescedRangingMeasurements: 1,
+        },
+      });
+      continue;
+    }
+
+    const seen = new Set(
+      existing.anchors.map(anchor => [
+        String(anchor.id || ''),
+        Number(anchor.latitude).toFixed(7),
+        Number(anchor.longitude).toFixed(7),
+      ].join('|')),
+    );
+    for (const anchor of measurement.anchors) {
+      const anchorKey = [
+        String(anchor.id || ''),
+        Number(anchor.latitude).toFixed(7),
+        Number(anchor.longitude).toFixed(7),
+      ].join('|');
+      if (!seen.has(anchorKey)) {
+        existing.anchors.push(anchor);
+        seen.add(anchorKey);
+      }
+    }
+    existing.metadata = {
+      ...(existing.metadata || {}),
+      coalescedRangingMeasurements:
+        Number(existing.metadata?.coalescedRangingMeasurements || 1) + 1,
+    };
+  }
+
+  return [...passthrough, ...groups.values()];
+}
+
+export async function resolveSpectraNormalizedTelemetryBatch(
+  value: unknown,
+  trustedProvider = true,
+): Promise<{
+  batch: TelemetryBatch;
+  points: GPSPoint[];
+  quality: ReturnType<typeof assessLocationQuality>;
+  processedMeasurementCount: number;
+}> {
+  const validation = telemetryBatchSchema.safeParse(value);
+  if (!validation.success) {
+    throw new Error('Active SPECTRA provider telemetry did not match the canonical schema.');
+  }
+  const resolved = await resolveSpectraTelemetryBatchPoints(
+    validation.data,
+    trustedProvider,
+  );
+  return {
+    batch: validation.data,
+    points: resolved.points,
+    quality: resolved.quality,
+    processedMeasurementCount: resolved.processedMeasurementCount,
+  };
+}
+
+export async function resolveSpectraTelemetryBatchPoints(
+  batch: TelemetryBatch,
+  trustedProvider: boolean,
+): Promise<{
+  points: GPSPoint[];
+  quality: ReturnType<typeof assessLocationQuality>;
+  processedMeasurementCount: number;
+}> {
+  const measurements = trustedProvider
+    ? coalesceTrustedRangingMeasurements(batch.measurements)
+    : batch.measurements;
+  const pointOutcomes = await Promise.allSettled(
+    measurements.map(measurement => telemetryPoint(measurement, trustedProvider))
+  );
+  const points = pointOutcomes.flatMap(outcome =>
+    outcome.status === 'fulfilled' && outcome.value ? [outcome.value] : []
+  );
+  return {
+    points,
+    quality: assessLocationQuality(points),
+    processedMeasurementCount: measurements.length,
+  };
+}
+
+export async function processSpectraTelemetryBatch(
   batch: TelemetryBatch,
   trustedProvider: boolean,
   userId?: string,
@@ -1233,13 +1345,9 @@ async function processTelemetryBatch(
   liveAssessment: ReturnType<typeof assessSpectraLiveLocation>;
 }> {
   const sessionId = batch.sessionId || randomUUID();
-  const pointOutcomes = await Promise.allSettled(
-    batch.measurements.map(measurement => telemetryPoint(measurement, trustedProvider))
-  );
-  const points = pointOutcomes.flatMap(outcome =>
-    outcome.status === 'fulfilled' && outcome.value ? [outcome.value] : []
-  );
-  const quality = assessLocationQuality(points);
+  const resolved = await resolveSpectraTelemetryBatchPoints(batch, trustedProvider);
+  const points = resolved.points;
+  const quality = resolved.quality;
   const liveAssessment = assessSpectraLiveLocation(quality.points);
   const result = quality.points.length
     ? await hybridGeoconsole.processLocationData(quality.points, sessionId)
@@ -1262,7 +1370,7 @@ async function processTelemetryBatch(
     sessionId,
     inputCount: batch.measurements.length,
     positionCount: quality.points.length,
-    contextOnlyCount: batch.measurements.length - points.length,
+    contextOnlyCount: Math.max(0, resolved.processedMeasurementCount - points.length),
     quality,
     result,
     persistence,
@@ -1351,7 +1459,7 @@ router.post('/telemetry/provider/:providerId/normalize/:kind', async (req: Reque
   }
 
   try {
-    const processed = await processTelemetryBatch(validation.data, true, undefined, providerId);
+    const processed = await processSpectraTelemetryBatch(validation.data, true, undefined, providerId);
     return res.json({
       success: true,
       data: {
@@ -1399,7 +1507,7 @@ router.post('/telemetry/provider/:providerId', async (req: Request, res: Respons
   }
 
   try {
-    const processed = await processTelemetryBatch(validation.data, true, undefined, req.params.providerId);
+    const processed = await processSpectraTelemetryBatch(validation.data, true, undefined, req.params.providerId);
     return res.json({
       success: true,
       data: {
@@ -1715,6 +1823,8 @@ router.get('/telemetry-capabilities', (_req: Request, res: Response) => {
       providerWebhookConfigured: Boolean(process.env.SPECTRA_TELEMETRY_HMAC_SECRET),
       crossReplicaRealtimeConfigured: spectraRealtimeBridgeConfigured(),
       adapters: getSpectraAdapterCapabilities(),
+      activeAcquisitionAdapters: getSpectraActiveAcquisitionCapabilities(),
+      configuredAnchorCount: getConfiguredSpectraAnchorCount(),
       genericPullAdapters: getSpectraGenericPullAdapters(),
     },
   });
@@ -1789,7 +1899,7 @@ async function runStructuredTelemetryImport(input: {
     },
   });
 
-  const processed = await processTelemetryBatch(
+  const processed = await processSpectraTelemetryBatch(
     batch,
     true,
     userId,
@@ -1976,7 +2086,7 @@ router.post('/telemetry/pull/:adapterId', async (req: Request, res: Response) =>
       metadata: { acquisitionMode: 'configured-https-pull' },
     });
 
-    const processed = await processTelemetryBatch(batch, true, userId, adapterId);
+    const processed = await processSpectraTelemetryBatch(batch, true, userId, adapterId);
     return res.json({
       success: true,
       data: {
@@ -2022,7 +2132,7 @@ router.post('/telemetry-ingest', async (req: Request, res: Response) => {
   if (!userId) return res.status(401).json({ success: false, error: 'Authentication required.' });
 
   try {
-    const processed = await processTelemetryBatch(validation.data, false, userId, validation.data.sourceId);
+    const processed = await processSpectraTelemetryBatch(validation.data, false, userId, validation.data.sourceId);
     return res.json({
       success: true,
       data: {
