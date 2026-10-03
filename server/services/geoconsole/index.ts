@@ -34,6 +34,10 @@ import {
 import { InputFusionEngine, inputFusionEngine } from './inputFusionEngine';
 import { MonteCarloPathEngine, monteCarloPathEngine } from './monteCarloPathEngine';
 import { createLogger } from '../../logger';
+import {
+  estimateSpectraConstraintState,
+  type SpectraConstraintStateSummary,
+} from '../spectra/SpectraConstraintStateEstimator';
 
 const log = createLogger('HybridGeoconsole');
 
@@ -82,6 +86,7 @@ export class HybridGeoconsole extends EventEmitter {
   
   // In-memory storage (NO disk writes)
   private locationCache: Map<string, GPSPoint[]> = new Map();
+  private evidenceCache: Map<string, GPSPoint[]> = new Map();
   private pathCache: Map<string, InterpolatedPath> = new Map();
   private trailCache: Map<string, MotionTrail> = new Map();
   private reportCache: Map<string, LocationIntelligenceReport> = new Map();
@@ -159,6 +164,62 @@ export class HybridGeoconsole extends EventEmitter {
     );
   }
 
+  private mergeSessionEvidence(sessionId: string, incoming: GPSPoint[]): GPSPoint[] {
+    if (!incoming.length) return [];
+
+    const previous = this.evidenceCache.get(sessionId) || [];
+    const incomingTimes = incoming
+      .map(point => point.timestamp.getTime())
+      .filter(Number.isFinite);
+    if (!incomingTimes.length) return incoming;
+
+    const minimumIncomingTime = Math.min(...incomingTimes);
+    const maximumIncomingTime = Math.max(...incomingTimes);
+    const historyCutoff = minimumIncomingTime - 15 * 60_000;
+
+    // Reuse only the immediately preceding evidence window. This lets successive
+    // live telemetry batches constrain one continuous hidden state without
+    // allowing unrelated old observations to pull a new trajectory backward.
+    const relevantPrevious = previous.filter(point => {
+      const timestamp = point.timestamp.getTime();
+      return Number.isFinite(timestamp)
+        && timestamp >= historyCutoff
+        && timestamp <= maximumIncomingTime;
+    });
+
+    const deduplicated = new Map<string, GPSPoint>();
+    for (const point of [...relevantPrevious, ...incoming]) {
+      const key = [
+        point.timestamp.getTime(),
+        point.latitude.toFixed(7),
+        point.longitude.toFixed(7),
+        point.source,
+        point.correlationGroup || '',
+        point.provenance?.provider || '',
+        point.provenance?.recordId || '',
+      ].join('|');
+      deduplicated.set(key, point);
+    }
+
+    const merged = [...deduplicated.values()].sort(
+      (a, b) => a.timestamp.getTime() - b.timestamp.getTime(),
+    );
+
+    const cacheCutoff = maximumIncomingTime - 60 * 60_000;
+    const cache = merged
+      .filter(point =>
+        point.timestamp.getTime() >= cacheCutoff
+        && point.observationKind !== 'predicted'
+        && point.source !== 'predicted'
+        && point.observationKind !== 'interpolated'
+        && point.source !== 'interpolated'
+      )
+      .slice(-500);
+    this.evidenceCache.set(sessionId, cache);
+
+    return merged;
+  }
+
   /**
    * Process raw location inputs through the full pipeline
    */
@@ -168,6 +229,8 @@ export class HybridGeoconsole extends EventEmitter {
   ): Promise<{
     fusedLocations: FusedLocation[];
     primaryFusedLocations: FusedLocation[];
+    stateEstimatedPoints: GPSPoint[];
+    constraintState: SpectraConstraintStateSummary;
     trail: MotionTrail;
     futurecast: GPSPoint[];
   }> {
@@ -177,9 +240,13 @@ export class HybridGeoconsole extends EventEmitter {
     this.emitProgress(taskId, 'fusion', 0, 'Starting multimodal input fusion...');
     
     try {
-      // Step 1: Fuse inputs from multiple sources
+      // Step 1: Fuse inputs from multiple sources. Successive batches attached
+      // to the same session retain a bounded recent evidence window so the
+      // hidden motion state can be estimated across updates rather than from
+      // isolated snapshots.
       this.emitProgress(taskId, 'fusion', 20, 'Fusing location data from multiple sources...');
-      const fusedLocations = await this.inputFusionEngine.fuseInputs(inputs);
+      const evidenceInputs = this.mergeSessionEvidence(taskId, inputs);
+      const fusedLocations = await this.inputFusionEngine.fuseInputs(evidenceInputs);
       
       if (fusedLocations.length === 0) {
         throw new Error('No valid locations after fusion');
@@ -188,12 +255,24 @@ export class HybridGeoconsole extends EventEmitter {
       // Step 2: Keep alternate hypotheses, but resolve one physical timeline.
       const primaryFusedLocations = this.selectPrimaryFusedTimeline(fusedLocations);
 
-      this.emitProgress(taskId, 'interpolation', 40, 'Reconstructing supported movement gaps...');
-      const sortedPoints = primaryFusedLocations
-        .map(f => f.point)
-        .sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+      // Step 2a: Treat the physical timeline as a hidden state rather than a
+      // sequence of unrelated dots. The constant-velocity Kalman filter rejects
+      // inconsistent measurements softly, while the backward RTS pass lets a
+      // later observation refine earlier positions in the same continuous
+      // segment. Raw canonical fused locations remain available unchanged.
+      const constraintState = estimateSpectraConstraintState(
+        primaryFusedLocations
+          .map(location => location.point)
+          .sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime()),
+      );
+      const stateEstimatedPoints = constraintState.points.length
+        ? constraintState.points
+        : primaryFusedLocations
+            .map(location => location.point)
+            .sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
 
-      const interpolatedPoints = await this.interpolateGaps(sortedPoints);
+      this.emitProgress(taskId, 'interpolation', 40, 'Reconstructing supported movement gaps...');
+      const interpolatedPoints = await this.interpolateGaps(stateEstimatedPoints);
       
       // Step 3: Generate motion trail
       this.emitProgress(taskId, 'trail', 60, 'Generating motion trail...');
@@ -224,13 +303,24 @@ export class HybridGeoconsole extends EventEmitter {
       log.info('Location data processed', {
         taskId,
         inputCount: inputs.length,
+        retainedEvidenceCount: evidenceInputs.length,
         fusedCount: fusedLocations.length,
+        stateEstimatedCount: stateEstimatedPoints.length,
+        constraintSegments: constraintState.summary.segmentCount,
+        robustlyDownweightedMeasurements: constraintState.summary.robustlyDownweightedCount,
         trailPoints: trail.points.length,
         futurecastPoints: futurecast.length,
         processingTime: Date.now() - startTime,
       });
 
-      return { fusedLocations, primaryFusedLocations, trail, futurecast };
+      return {
+        fusedLocations,
+        primaryFusedLocations,
+        stateEstimatedPoints,
+        constraintState: constraintState.summary,
+        trail,
+        futurecast,
+      };
     } catch (error) {
       log.error('Location processing failed', { taskId, error });
       this.emitProgress(taskId, 'error', 0, `Processing failed: ${error}`);
