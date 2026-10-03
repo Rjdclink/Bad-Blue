@@ -637,7 +637,7 @@ async function beaconDbRadioPoint(
     mobileCountryCode: tower.mobileCountryCode ?? measurement.homeMobileCountryCode,
     mobileNetworkCode: tower.mobileNetworkCode ?? measurement.homeMobileNetworkCode,
     locationAreaCode: tower.locationAreaCode,
-    cellId: tower.cellId,
+    cellId: tower.newRadioCellId ?? tower.cellId,
     signalStrength: tower.signalStrength,
     timingAdvance: tower.timingAdvance,
     age: tower.age,
