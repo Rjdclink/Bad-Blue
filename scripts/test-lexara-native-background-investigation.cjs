@@ -77,6 +77,8 @@ const mesh = {
     if (state.mode === 'empty') return [candidate('https://records.example.test/empty')];
     if (state.mode === 'employment') return [candidate('https://records.example.test/employer')];
     if (state.mode === 'custom-general') return [candidate('https://records.example.test/civic-medal')];
+    if (state.mode === 'delayed-general') return Array.from({ length: 6 }, (_, index) =>
+      candidate(`https://records.example.test/broad-${index + 1}`));
     if (state.mode === 'age-inference') return [candidate('https://records.example.test/juvenile')];
     if (state.mode === 'converged-inference') return [
       candidate('https://records.example.test/juvenile-a'),
@@ -190,6 +192,18 @@ const learning = {
 const claudeParallel = {
   async searchLexaraBackgroundWithClaude(input) {
     state.claudeCalls.push(input);
+    if (state.mode === 'delayed-general') {
+      await new Promise(resolve => setTimeout(resolve, 25));
+      return {
+        candidates: [candidate('https://claude.example.test/background', 'claude-web-search')],
+        citationEvidence: [{
+          url: 'https://claude.example.test/background',
+          content: 'Public record for Avery Loretta Example of Hartley, Iowa lists a 2024 civil filing.',
+          retrievedAt: '2026-10-02T03:05:55.000Z',
+        }],
+        searches: 2,
+      };
+    }
     if (state.mode !== 'claude-only' && state.mode !== 'native-failure') {
       return { candidates: [], citationEvidence: [], searches: 1 };
     }
@@ -266,6 +280,42 @@ function reset(mode) {
   assert.match(verifiedPrompt, /cleared Lexara's subject-match and evidence threshold/i);
   assert.match(verifiedPrompt, /do not call it a guess/i);
 
+
+  const mergedSubject = subject.mergeCompatibleLexaraBackgroundSubjects(
+    { name: 'Example of Hartley', kind: 'person', identifiable: true, location: 'Hartley, Iowa' },
+    { name: 'Avery Loretta Example of Hartley', kind: 'person', identifiable: true, location: 'Hartley, Iowa' },
+  );
+  assert.equal(mergedSubject.name, 'Avery Loretta Example of Hartley',
+    'a shorter compatible subject must never replace the fuller identity from the user turn');
+
+  reset('delayed-general');
+  const broadBackground = await investigator.investigateLexaraBackgroundQuestion(
+    'What do you know about Avery Loretta Example of Hartley, Iowa?',
+    {
+      resolvedSubject: { name: 'Example of Hartley', kind: 'person', identifiable: true, location: 'Hartley, Iowa' },
+      researchDecision: {
+        needed: true,
+        reason: 'external-fact-question',
+        objective: 'Find the background facts the user is asking about for Avery Loretta Example of Hartley.',
+        objectiveKind: 'external-fact',
+        intent: 'factual',
+        requestedFact: 'general-public-record',
+        sourceCategories: ['general-public-records'],
+        subject: 'Example of Hartley',
+        subjectKind: 'person',
+        standaloneQuery: 'Avery Loretta Example Hartley Iowa background',
+        inferred: true,
+      },
+    },
+  );
+  assert.equal(state.retrievalCalls[0].length, 4,
+    'broad live person background restores the last-known-good four-target first pass');
+  assert.equal(state.claudeCalls[0].subject.name, 'Avery Loretta Example',
+    'the full compatible identity reaches the Claude background lane after location cleanup');
+  assert.equal(broadBackground.endpoint, 'evidence-sufficient',
+    'native exhaustion must leave the remaining live budget for the already-running Claude web lane');
+  assert(broadBackground.discoveryLanes.includes('claude-web-search'));
+  assert.match(broadBackground.evidenceSummary, /2024 civil filing/i);
 
   reset('custom-general');
   const customGeneral = await investigator.investigateLexaraBackgroundQuestion(
