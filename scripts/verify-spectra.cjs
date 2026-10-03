@@ -40,6 +40,7 @@ const providerNormalizer = read('server/services/spectra/SpectraProviderTelemetr
 const advancedRadioNormalizer = read('server/services/spectra/SpectraAdvancedRadioNormalizer.ts');
 const externalLocationNormalizer = read('server/services/spectra/SpectraExternalLocationNormalizer.ts');
 const liveConfidence = read('server/services/spectra/SpectraLiveConfidence.ts');
+const constraintSolver = read('server/services/spectra/SpectraConstraintSolver.ts');
 const gnssIntegrity = read('server/services/spectra/SpectraGnssIntegrity.ts');
 const identityBinding = read('server/services/spectra/SpectraIdentityBinding.ts');
 const posteriorCalibration = read('scripts/verify-spectra-posterior-calibration.ts');
@@ -373,6 +374,18 @@ test('SPECTRA active acquisition uses managed-device identifiers and canonical t
   adapterRegistry.includes("id: 'active-provider-adapters'") &&
   activeAcquisition.includes('SPECTRA_ANDROID_MDM_LOCATION_URL_TEMPLATE') &&
   activeAcquisition.includes('SPECTRA_APPLE_MDM_LOCATION_URL_TEMPLATE'));
+test('Constraint solver is wired before posterior confidence and Futurecast',
+  geoconsoleRoutes.includes('solveSpectraConstraintLayer(quality.points)') &&
+  geoconsoleRoutes.indexOf('solveSpectraConstraintLayer(quality.points)') <
+    geoconsoleRoutes.indexOf('assessSpectraLiveLocation(constrainedPoints)') &&
+  geoconsoleRoutes.includes('hybridGeoconsole.processLocationData(constrainedPoints, sessionId)') &&
+  constraintSolver.includes('buildSpectraSpatialConstraints') &&
+  constraintSolver.includes('dependencyGraph') &&
+  constraintSolver.includes('spectra_forward_backward_motion_smoother'));
+test('Ranging keeps anchor geometry for the common constraint layer',
+  geoconsoleRoutes.includes('constraintAnchors: anchors.map(anchor => ({') &&
+  geoconsoleRoutes.includes('bearingUncertaintyDegrees: anchor.raw.bearingUncertaintyDegrees'));
+
 test('Configured anchor identities are resolved before trusted ranging multilateration',
   anchorRegistry.includes('SPECTRA_ANCHOR_CATALOG_JSON') &&
   anchorRegistry.includes('resolveConfiguredSpectraAnchor') &&
