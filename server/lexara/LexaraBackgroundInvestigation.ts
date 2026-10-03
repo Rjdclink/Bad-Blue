@@ -888,6 +888,60 @@ export async function investigateLexaraBackgroundQuestion(
           });
         }
       }
+
+      // A max-token Claude turn can still return completed web-search source
+      // URLs without a final cited prose block. Retrieve those already-found
+      // sources inside the remaining live budget instead of discarding them.
+      if (![...assessed.values()].some(item => item.confidence >= PARTIAL_EVIDENCE_THRESHOLD)
+        && claudeParallel.candidates.length
+        && Date.now() < deadlineAt) {
+        const claudeTargets = claudeParallel.candidates
+          .filter(item => !seenUrls.has(item.url))
+          .slice(0, targetsPerPass);
+        if (claudeTargets.length) {
+          claudeTargets.forEach(item => seenUrls.add(item.url));
+          const remainingMs = Math.max(1, deadlineAt - Date.now());
+          const retrievalController = new AbortController();
+          const relayRetrievalAbort = () => retrievalController.abort(laneSignal.reason);
+          if (laneSignal.aborted) retrievalController.abort(laneSignal.reason);
+          else laneSignal.addEventListener('abort', relayRetrievalAbort, { once: true });
+          const retrievalTimer = setTimeout(
+            () => retrievalController.abort(new Error('lexara_claude_source_retrieval_budget_exhausted')),
+            remainingMs,
+          );
+          try {
+            const retrieval = await lexaraRetrievalAdapter.retrieve({
+              purpose: 'lexara_legal_research',
+              targets: claudeTargets.map(item => item.url),
+              signal: retrievalController.signal,
+            }).catch(() => ({ evidence: [] }));
+            for (const evidence of retrieval.evidence) {
+              const evaluation = assessEvidence(
+                evidence.content,
+                evidence.target,
+                evidence.retrievedAt,
+                subject,
+                decision,
+                prompt,
+              );
+              if (!evaluation) continue;
+              const existing = assessed.get(evidence.target);
+              if (!existing || evaluation.confidence > existing.confidence) {
+                assessed.set(evidence.target, evaluation);
+              }
+              context.onProgress?.({
+                type: 'evidence',
+                pass: recursionPasses,
+                confidence: evaluation.confidence,
+                sourceUrl: evaluation.url,
+              });
+            }
+          } finally {
+            clearTimeout(retrievalTimer);
+            laneSignal.removeEventListener('abort', relayRetrievalAbort);
+          }
+        }
+      }
     }
 
     const ranked = [...assessed.values()].sort((a, b) => b.confidence - a.confidence);
