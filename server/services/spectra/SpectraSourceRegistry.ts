@@ -46,6 +46,14 @@ export const SPECTRA_DISCOVERY_POLICY: SpectraDiscoveryPolicy = {
   diminishingReturnFloor: 0.12,
 };
 
+/**
+ * Compatibility exports retained for callers that imported the old static
+ * catalog. SPECTRA now builds targets dynamically, so the static catalog is
+ * intentionally empty rather than Pantheon-derived.
+ */
+export const SPECTRA_SOURCE_CATALOG: SpectraSourceTarget[] = [];
+export const SPECTRA_SOURCE_CATALOG_BY_ID = new Map<string, SpectraSourceTarget>();
+
 function safeText(value: string): string {
   return value
     .replace(/[\uD800-\uDFFF]/g, '\uFFFD')
