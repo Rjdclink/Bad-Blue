@@ -413,8 +413,24 @@ test('Apple Nearby Interaction adapter covers UWB, EDM, DL-TDOA and Bluetooth Ch
   advancedRadioNormalizer.includes("'uwb-edm'") &&
   advancedRadioNormalizer.includes("'dl-tdoa'") &&
   advancedRadioNormalizer.includes("'bluetooth-channel-sounding'") &&
-  advancedRadioNormalizer.includes("source: 'uwb_range'") &&
-  advancedRadioNormalizer.includes("source: mode === 'dl-tdoa' ? 'uwb_direction' : 'uwb_range'"));
+  advancedRadioNormalizer.includes("'bluetooth_proximity'") &&
+  advancedRadioNormalizer.includes("'uwb_direction'") &&
+  advancedRadioNormalizer.includes("'uwb_range'") &&
+  geoconsoleRoutes.includes("'uwb_range', 'uwb_direction', 'bluetooth_proximity'"));
+test('CDMA cell identity preserves SID NID and BID through the canonical radio schema',
+  advancedRadioNormalizer.includes('cell.systemId ?? cell.sid') &&
+  advancedRadioNormalizer.includes('cell.networkId ?? cell.nid') &&
+  advancedRadioNormalizer.includes('cell.baseStationId ?? cell.bid') &&
+  advancedRadioNormalizer.includes("type === 'cdma' ? systemId") &&
+  advancedRadioNormalizer.includes("type === 'cdma' ? networkId") &&
+  advancedRadioNormalizer.includes("type === 'cdma' ? baseStationId"));
+test('Universal radio-log importer recognizes CSV and Android GNSS Logger Raw records',
+  advancedRadioNormalizer.includes("import { parse as parseCsv } from 'csv-parse/sync'") &&
+  advancedRadioNormalizer.includes('/^#\\s*Raw,/i') &&
+  advancedRadioNormalizer.includes("recordType: 'gnsslogger-raw'") &&
+  advancedRadioNormalizer.includes('UtcTimeMillis') &&
+  advancedRadioNormalizer.includes('CarrierFrequencyHz') &&
+  advancedRadioNormalizer.includes('AccumulatedDeltaRangeMeters'));
 test('BLE gateway, LoRa and universal radio-log lanes are registered and bounded',
   adapterRegistry.includes("id: 'ble-gateway-ingest'") &&
   adapterRegistry.includes("id: 'lorawan-observation-ingest'") &&
