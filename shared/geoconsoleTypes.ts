@@ -165,6 +165,16 @@ export interface GeoconsoleProcessResponse {
       fusionMethod: string;
       qualityScore: number;
     }>;
+    stateEstimatedPoints?: GPSPoint[];
+    constraintState?: {
+      algorithm: 'constant_velocity_kalman_rts';
+      inputCount: number;
+      smoothedCount: number;
+      segmentCount: number;
+      robustlyDownweightedCount: number;
+      latestPosteriorSigmaMeters?: number;
+      latestConfidenceRadius95Meters?: number;
+    };
     trail: {
       id: string;
       pointCount: number;
