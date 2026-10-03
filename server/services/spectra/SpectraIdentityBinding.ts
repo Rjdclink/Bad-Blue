@@ -23,6 +23,17 @@ function clamp(value: number): number {
   return Math.max(0, Math.min(1, value));
 }
 
+export function conservativeJointConfidence(
+  firstProbability: number,
+  secondProbability: number,
+): number {
+  const first = clamp(firstProbability);
+  const second = clamp(secondProbability);
+  // Fréchet-Hoeffding lower bound: P(A∩B) >= max(0, P(A)+P(B)-1).
+  // This avoids assuming identity and spatial errors are independent.
+  return clamp(first + second - 1);
+}
+
 function metadataKind(evidence: SpectraIdentityBindingEvidence): string {
   return String(evidence.metadata.providerKind || '').trim().toLowerCase();
 }
