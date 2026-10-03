@@ -331,6 +331,45 @@ async function freeSearch(query: string, signal?: AbortSignal): Promise<LegalMes
   }
 }
 
+async function firstUsefulParallelSearch(
+  queries: readonly string[],
+  seen: ReadonlySet<string>,
+  providerPrefix: 'supplemental' | 'planned',
+  signal?: AbortSignal,
+): Promise<LegalMeshCandidate[]> {
+  if (!queries.length) return [];
+
+  const controller = new AbortController();
+  const relayAbort = () => controller.abort(signal?.reason);
+  if (signal?.aborted) controller.abort(signal.reason);
+  else signal?.addEventListener('abort', relayAbort, { once: true });
+
+  try {
+    const attempts = queries.map(query =>
+      freeSearch(query, controller.signal).then(results => {
+        const fresh = results
+          .filter(item => !seen.has(item.url))
+          .map(item => ({ ...item, tier: 5 as const, provider: `${providerPrefix}-${item.provider}` }));
+        if (!fresh.length) throw new Error('Lexara search variant returned no fresh candidates');
+        return diversify(fresh, 12);
+      }),
+    );
+
+    const firstUseful = await Promise.any(attempts);
+    controller.abort(new Error('Lexara first useful supplemental result selected'));
+    return firstUseful;
+  } catch (error) {
+    if (signal?.aborted) {
+      const reason = signal.reason;
+      if (reason instanceof Error || reason instanceof DOMException) throw reason;
+      throw new DOMException(typeof reason === 'string' ? reason : 'Lexara discovery cancelled', 'AbortError');
+    }
+    return [];
+  } finally {
+    signal?.removeEventListener('abort', relayAbort);
+  }
+}
+
 export async function discoverLegalMeshTier3(
   query: string,
   signal?: AbortSignal,
@@ -375,14 +414,11 @@ export async function discoverLegalMeshSupplemental(
 
   const learnedPatterns=await getLexaraLearnedQueryPatterns(options.categories||[],options.jurisdiction,2);
   if(learnedPatterns.length){
-    const learnedOutcomes=await Promise.allSettled(
-      learnedPatterns.map(pattern=>freeSearch(`${query} ${pattern}`,signal)),
-    );
-    const learnedFresh=diversify(
-      learnedOutcomes.flatMap(outcome=>outcome.status==='fulfilled' ? outcome.value : [])
-        .filter(item=>!seen.has(item.url))
-        .map(item=>({...item,tier:5 as const,provider:`supplemental-${item.provider}`})),
-      12,
+    const learnedFresh=await firstUsefulParallelSearch(
+      learnedPatterns.map(pattern=>`${query} ${pattern}`),
+      seen,
+      'supplemental',
+      signal,
     );
     if(learnedFresh.length) return learnedFresh;
   }
@@ -397,14 +433,11 @@ export async function discoverLegalMeshSupplemental(
     signal,
   });
   if(planned.queries.length){
-    const plannedOutcomes=await Promise.allSettled(
-      planned.queries.map(alternate=>freeSearch(alternate,signal)),
-    );
-    const plannedFresh=diversify(
-      plannedOutcomes.flatMap(outcome=>outcome.status==='fulfilled' ? outcome.value : [])
-        .filter(item=>!seen.has(item.url))
-        .map(item=>({...item,tier:5 as const,provider:`planned-${item.provider}`})),
-      12,
+    const plannedFresh=await firstUsefulParallelSearch(
+      planned.queries,
+      seen,
+      'planned',
+      signal,
     );
     if(plannedFresh.length) return plannedFresh;
   }
