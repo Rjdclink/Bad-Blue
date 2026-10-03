@@ -1716,6 +1716,127 @@ function normalizeAndroidCellular(
       ),
     };
 
+    const configuredCellAnchor = resolveConfiguredSpectraAnchor({
+      mcc,
+      mnc,
+      lacTac,
+      cellId,
+      nci,
+      pci,
+      arfcn,
+      mobileCountryCode: mcc,
+      mobileNetworkCode: mnc,
+      locationAreaCode: lacTac,
+      newRadioCellId: nci,
+      physicalCellId: pci,
+    });
+
+    if (configuredCellAnchor) {
+      const anchorMetadata = record(configuredCellAnchor.metadata);
+      const sectorAzimuthDegrees = bounded(
+        anchorMetadata.sectorAzimuthDegrees,
+        0,
+        360,
+      );
+      const sectorWidthDegrees = bounded(
+        anchorMetadata.sectorWidthDegrees,
+        0.1,
+        360,
+      );
+      const explicitDistanceMeters = finite(
+        cell.distanceMeters
+        ?? cell.rangeMeters
+        ?? cell.timingAdvanceDistanceMeters
+      );
+      const explicitDistanceUncertaintyMeters = finite(
+        cell.distanceUncertaintyMeters
+        ?? cell.rangeStdDevMeters
+        ?? cell.timingAdvanceDistanceUncertaintyMeters
+      );
+      const anchorDefinition = {
+        id: configuredCellAnchor.id,
+        latitude: configuredCellAnchor.latitude,
+        longitude: configuredCellAnchor.longitude,
+        accuracyMeters: configuredCellAnchor.accuracyMeters,
+      };
+      const geometryConstraints: Array<Record<string, unknown>> = [];
+      const geometryDomain =
+        `cell-geometry:${wrapped.providerId}:${configuredCellAnchor.id}`;
+
+      if (sectorAzimuthDegrees !== null && sectorWidthDegrees !== null) {
+        geometryConstraints.push({
+          type: 'sector',
+          id: `${configuredCellAnchor.id}:sector`,
+          anchor: anchorDefinition,
+          centerBearingDegrees: sectorAzimuthDegrees,
+          halfWidthDegrees: Math.max(
+            0.05,
+            Math.min(180, sectorWidthDegrees / 2),
+          ),
+          minRangeMeters:
+            finite(anchorMetadata.minRangeMeters) ?? undefined,
+          maxRangeMeters:
+            finite(anchorMetadata.maxRangeMeters) ?? undefined,
+          uncertaintyMeters:
+            finite(anchorMetadata.rangeUncertaintyMeters)
+            ?? undefined,
+          confidence: Boolean(cell.registered ?? cell.isRegistered)
+            ? 0.68
+            : 0.52,
+          correlationGroup: geometryDomain,
+        });
+      }
+
+      if (explicitDistanceMeters !== null && explicitDistanceMeters >= 0) {
+        geometryConstraints.push({
+          type: 'range',
+          id: `${configuredCellAnchor.id}:range`,
+          anchor: anchorDefinition,
+          distanceMeters: Math.max(
+            0.01,
+            Math.min(1_000_000, explicitDistanceMeters),
+          ),
+          uncertaintyMeters: Math.max(
+            1,
+            explicitDistanceUncertaintyMeters
+            ?? Math.max(25, explicitDistanceMeters * 0.15),
+          ),
+          confidence: 0.72,
+          correlationGroup: geometryDomain,
+        });
+      }
+
+      if (geometryConstraints.length) {
+        measurements.push({
+          kind: 'constraint',
+          source: 'cellular',
+          timestamp,
+          provider: wrapped.providerId,
+          correlationGroup:
+            `cell-geometry:${wrapped.providerId}:${timestamp}`,
+          constraints: geometryConstraints,
+          metadata: {
+            providerKind: 'android-cellular-anchor-geometry',
+            radioType: type,
+            registered: Boolean(cell.registered ?? cell.isRegistered),
+            anchorId: configuredCellAnchor.id,
+            sourceIdentifiers: {
+              mcc,
+              mnc,
+              lacTac,
+              cellId,
+              nci,
+              pci,
+              arfcn,
+            },
+            timingAdvanceRaw: signal.timingAdvance,
+            timingAdvanceDistanceUsed:
+              explicitDistanceMeters !== null,
+          },
+        });
+      }
+    }
+
     measurements.push({
       kind: 'radio',
       timestamp,
