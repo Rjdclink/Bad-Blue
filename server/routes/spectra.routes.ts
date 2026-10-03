@@ -72,6 +72,7 @@ const acquireSchema = z.object({
   target: z.string().trim().min(1).max(500),
   details: z.string().trim().min(1).max(12_000),
   sessionId: z.string().trim().min(1).max(200).optional(),
+  originSessionId: z.string().trim().min(1).max(200).optional(),
   directEvidence: z.array(directEvidenceSchema).max(20).default([]),
 });
 
@@ -770,7 +771,13 @@ router.post('/acquire', async (req: Request, res: Response) => {
     });
   }
 
-  const { target, details, directEvidence, sessionId: requestedSessionId } = parsed.data;
+  const {
+    target,
+    details,
+    directEvidence,
+    sessionId: requestedSessionId,
+    originSessionId,
+  } = parsed.data;
   const userId = getPlatformUserId(req.user as any);
   if (!userId) {
     return res.status(401).json({ success: false, error: 'Authentication required.' });
@@ -1186,6 +1193,7 @@ router.post('/acquire', async (req: Request, res: Response) => {
         discoveryQueriesFailed,
         contextSourceFamilies: contextEvidence.sourceFamilies,
         contextEvidenceItemCount,
+        originSessionId: originSessionId || null,
         lastAcquiredAt: new Date().toISOString(),
       },
     }).catch(error => {
