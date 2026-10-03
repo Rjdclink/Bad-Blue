@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import type { GPSPoint } from '../server/services/geoconsole/types';
-import { estimateSpectraTrajectory } from '../server/services/spectra/SpectraTrajectoryEstimator';
+import {
+  estimateSpectraTrajectory,
+  selectSpectraTrajectoryFuturecastSeed,
+} from '../server/services/spectra/SpectraTrajectoryEstimator';
 
 const BASE_LAT = 43.5446;
 const BASE_LON = -96.7311;
@@ -115,6 +118,7 @@ assert.ok(estimate.diagnostics.contradictionCount >= 1);
 assert.ok(Number.isFinite(estimate.diagnostics.latestRadius99Meters));
 assert.ok((estimate.diagnostics.latestRadius99Meters ?? Infinity) > 0);
 assert.ok(Number.isFinite(estimate.diagnostics.latestSpeedMps));
+assert.ok((estimate.diagnostics.latestSpeedMps ?? Infinity) <= 90 + 1e-9);
 
 const truthLatest = offset(600, 0);
 const latestError = distanceMeters(estimate.latest!, truthLatest);
@@ -160,6 +164,11 @@ const motionEstimate = estimateSpectraTrajectory([
   accelerationSigmaMps2: 4,
 });
 assert.ok(motionEstimate.diagnostics.motionConstraintViolations >= 1);
+const fallbackSeed = [points[0], points[2], points[4]];
+assert.equal(
+  selectSpectraTrajectoryFuturecastSeed(motionEstimate, fallbackSeed),
+  fallbackSeed,
+);
 
 const single = estimateSpectraTrajectory([points[0]]);
 assert.equal(single.states.length, 1);
