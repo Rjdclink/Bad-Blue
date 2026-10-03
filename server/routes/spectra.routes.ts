@@ -43,6 +43,7 @@ import {
 } from '../services/spectra/SpectraAcquisitionPersistence';
 import { acquireSpectraPlaceContext } from '../services/spectra/SpectraPlaceContext';
 import { retrieveSpectraPublicEvidence } from '../services/spectra/SpectraPublicRetrieval';
+import { acquireConfiguredSpectraCameras } from '../services/spectra/SpectraCameraDirectoryAdapters';
 
 const router = Router();
 router.use(isAuthenticated);
@@ -720,6 +721,7 @@ async function collectSpectraContextEvidence(input: {
     acquireSpectraPlaceContext(input.latitude, input.longitude, 2_000),
     trafficLandCameras(input.latitude, input.longitude, 10),
     arcGisCameras(input.latitude, input.longitude, 10),
+    acquireConfiguredSpectraCameras(input.latitude, input.longitude, 10),
     wikimediaNearbyMedia(input.latitude, input.longitude, 5_000),
     flickrNearbyMedia(input.latitude, input.longitude, 5),
     weatherRelevant
@@ -731,16 +733,19 @@ async function collectSpectraContextEvidence(input: {
   const places = outcomes[0].status === 'fulfilled' ? outcomes[0].value : [];
   const trafficLand = outcomes[1].status === 'fulfilled' ? outcomes[1].value : [];
   const arcGis = outcomes[2].status === 'fulfilled' ? outcomes[2].value : [];
-  const wikimedia = outcomes[3].status === 'fulfilled' ? outcomes[3].value : [];
-  const flickr = outcomes[4].status === 'fulfilled' ? outcomes[4].value : [];
-  const weather = outcomes[5].status === 'fulfilled' && outcomes[5].value
-    ? outcomes[5].value
+  const externalCameras = outcomes[3].status === 'fulfilled' ? outcomes[3].value : [];
+  const wikimedia = outcomes[4].status === 'fulfilled' ? outcomes[4].value : [];
+  const flickr = outcomes[5].status === 'fulfilled' ? outcomes[5].value : [];
+  const weather = outcomes[6].status === 'fulfilled' && outcomes[6].value
+    ? outcomes[6].value
     : undefined;
-  const earthObservation = outcomes[6].status === 'fulfilled' ? outcomes[6].value : [];
+  const earthObservation = outcomes[7].status === 'fulfilled' ? outcomes[7].value : [];
 
   const sourceFamilies: string[] = [];
   if (places.length) sourceFamilies.push('place-context');
-  if (trafficLand.length || arcGis.length) sourceFamilies.push('public-camera');
+  if (trafficLand.length || arcGis.length || externalCameras.length) {
+    sourceFamilies.push('public-camera');
+  }
   if (wikimedia.length || flickr.length) sourceFamilies.push('geotagged-media');
   if (weather) sourceFamilies.push('weather');
   if (earthObservation.length) sourceFamilies.push('earth-observation');
@@ -754,7 +759,7 @@ async function collectSpectraContextEvidence(input: {
       basis: input.basis,
     },
     places: places.slice(0, 80),
-    cameras: [...trafficLand, ...arcGis].slice(0, 120),
+    cameras: [...trafficLand, ...arcGis, ...externalCameras].slice(0, 160),
     geotaggedMedia: [...wikimedia, ...flickr].slice(0, 120),
     weather,
     earthObservation: earthObservation.slice(0, 20),
