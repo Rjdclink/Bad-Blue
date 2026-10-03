@@ -59,7 +59,11 @@ function stringValue(value: unknown, maxLength = 300): string | undefined {
 
 function timestampValue(value: unknown): string | null {
   if (typeof value !== 'string' && typeof value !== 'number' && !(value instanceof Date)) return null;
-  const date = new Date(value as any);
+  const normalizedValue =
+    typeof value === 'string' && /^-?\d+(?:\.\d+)?$/.test(value.trim())
+      ? Number(value)
+      : value;
+  const date = new Date(normalizedValue as any);
   const time = date.getTime();
   if (!Number.isFinite(time)) return null;
   if (time < Date.UTC(1900, 0, 1) || time > Date.now() + 24 * 60 * 60_000) return null;
@@ -255,7 +259,7 @@ function normalizeBluetoothChannelSounding(
     if (anchor) {
       measurements.push({
         kind: 'ranging',
-        source: 'bluetooth_proximity',
+        source: 'bluetooth_channel_sounding',
         timestamp,
         provider: wrapped.providerId,
         correlationGroup:
@@ -393,7 +397,7 @@ function normalizeBleDirectionFinding(
 
       measurements.push({
         kind: 'ranging',
-        source: 'ble_aoa',
+        source: method === 'aod' ? 'ble_aod' : 'ble_aoa',
         timestamp,
         provider: wrapped.providerId,
         correlationGroup:
@@ -967,7 +971,7 @@ function normalizeAppleNearbyInteraction(
         kind: 'position',
         source:
           mode === 'bluetooth-channel-sounding'
-            ? 'bluetooth_proximity'
+            ? 'bluetooth_channel_sounding'
             : mode === 'dl-tdoa'
               ? 'uwb_direction'
               : 'uwb_range',
@@ -1017,7 +1021,7 @@ function normalizeAppleNearbyInteraction(
         kind: 'ranging',
         source:
           mode === 'bluetooth-channel-sounding'
-            ? 'bluetooth_proximity'
+            ? 'bluetooth_channel_sounding'
             : bearingDegrees !== null
               ? 'uwb_direction'
               : 'uwb_range',
@@ -1150,7 +1154,10 @@ function normalizeBleGateway(
 
       measurements.push({
         kind: 'ranging',
-        source: bearingDegrees !== null ? 'ble_aoa' : 'ble_rssi',
+        source:
+          bearingDegrees !== null
+            ? directionMethod === 'aod' ? 'ble_aod' : 'ble_aoa'
+            : 'ble_rssi',
         timestamp,
         provider: wrapped.providerId,
         correlationGroup:
