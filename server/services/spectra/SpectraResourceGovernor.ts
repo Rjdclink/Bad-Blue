@@ -74,13 +74,24 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   }
 
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(resolve, ms);
+    let settled = false;
+    const cleanup = () => signal?.removeEventListener('abort', abort);
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve();
+    };
     const abort = () => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
+      cleanup();
       reject(signal?.reason instanceof Error
         ? signal.reason
         : new Error('SPECTRA resource wait aborted'));
     };
+    const timer = setTimeout(finish, ms);
     signal?.addEventListener('abort', abort, { once: true });
   });
 }
@@ -138,6 +149,7 @@ async function tryPostgresPermit(
       release: async () => {
         if (released) return;
         released = true;
+        let releaseError: Error | undefined;
         try {
           await client.query(
             'SELECT pg_advisory_unlock($1::integer, $2::integer)',
@@ -147,8 +159,11 @@ async function tryPostgresPermit(
             'SELECT pg_advisory_unlock($1::integer, $2::integer)',
             [GLOBAL_NAMESPACE, globalSlot],
           );
+        } catch (error) {
+          releaseError = error instanceof Error ? error : new Error(String(error));
+          throw releaseError;
         } finally {
-          client.release();
+          client.release(releaseError);
         }
       },
     };
