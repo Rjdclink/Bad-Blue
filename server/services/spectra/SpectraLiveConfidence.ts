@@ -615,7 +615,7 @@ export function assessSpectraLiveLocation(
   });
 
   if (!representatives.length) {
-    const hadSupportedSources = [...grouped.values()].some(points => points.length > 0);
+    const hadSupportedSources = [...grouped.values()].some(group => group.points.length > 0);
     return {
       status: hadSupportedSources ? 'stale' : 'unavailable',
       isLive: false,
