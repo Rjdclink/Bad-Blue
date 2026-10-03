@@ -1,5 +1,6 @@
 export interface SpectraAcquisitionLease {
   signal: AbortSignal;
+  cancel: (reason?: string) => void;
   release: () => void;
   stopped: () => boolean;
 }
@@ -56,6 +57,12 @@ export function registerSpectraAcquisitionRequest(
     controller.abort(new Error('SPECTRA acquisition session stopped'));
   }
 
+  const cancel = (reason = 'SPECTRA acquisition request cancelled') => {
+    if (!controller.signal.aborted) {
+      controller.abort(new Error(reason));
+    }
+  };
+
   let released = false;
   const release = () => {
     if (released) return;
@@ -66,6 +73,7 @@ export function registerSpectraAcquisitionRequest(
 
   return {
     signal: controller.signal,
+    cancel,
     release,
     stopped: () => state.stopped || controller.signal.aborted,
   };
