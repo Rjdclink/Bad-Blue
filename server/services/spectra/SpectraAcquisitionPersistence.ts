@@ -392,18 +392,19 @@ export async function persistSpectraAcquisition(input: {
        FOR UPDATE`,
       [sessionId],
     );
-    let claimingPreviouslyUnownedSession = false;
     if (existing.rows.length) {
       const existingUserId = String(existing.rows[0]?.user_id || '');
       const existingSubject = normalizeClue(String(existing.rows[0]?.subject_label || ''));
       const incomingSubject = normalizeClue(input.subjectLabel);
-      if (existingUserId && existingUserId !== input.userId) {
+      if (!existingUserId) {
+        throw new Error('SPECTRA unowned legacy session cannot be claimed by a user request');
+      }
+      if (existingUserId !== input.userId) {
         throw new Error('SPECTRA session ownership mismatch');
       }
       if (!subjectsCompatible(existingSubject, incomingSubject)) {
         throw new Error('SPECTRA session subject mismatch');
       }
-      claimingPreviouslyUnownedSession = !existingUserId;
     }
 
     const investigation = await client.query(
@@ -446,21 +447,6 @@ export async function persistSpectraAcquisition(input: {
          SET subject_label = $2, updated_at = now()
          WHERE id = $1::uuid`,
         [investigationId, input.subjectLabel],
-      );
-    }
-
-    if (claimingPreviouslyUnownedSession) {
-      await client.query(
-        `UPDATE public.spectra_telemetry_events
-         SET user_id = $2
-         WHERE session_id = $1 AND user_id IS NULL`,
-        [sessionId, input.userId],
-      );
-      await client.query(
-        `UPDATE public.spectra_location_observations
-         SET user_id = $2
-         WHERE session_id = $1 AND user_id IS NULL`,
-        [sessionId, input.userId],
       );
     }
 
