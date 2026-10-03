@@ -313,6 +313,7 @@ function discoveryResultFromCandidate(candidate: LegalMeshCandidate): SpectraDis
 async function runDiscoveryPass(
   queries: string[],
   context: { subject?: string; location?: string } = {},
+  externalSignal?: AbortSignal,
 ): Promise<{
   results: SpectraDiscoveryResult[];
   attempted: number;
@@ -326,8 +327,16 @@ async function runDiscoveryPass(
   }
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(new Error('SPECTRA discovery pass timeout')), 15_000);
+  const relayAbort = () => controller.abort(externalSignal?.reason);
+  if (externalSignal?.aborted) relayAbort();
+  else externalSignal?.addEventListener('abort', relayAbort, { once: true });
+
+  const timer = setTimeout(
+    () => controller.abort(new Error('SPECTRA discovery pass timeout')),
+    15_000,
+  );
   try {
+    throwIfAcquisitionStopped(controller.signal);
     const nativePromise = Promise.allSettled(uniqueQueries.map(query =>
       discoverLegalMeshTier3(query, controller.signal, {
         categories: [
@@ -488,6 +497,7 @@ async function runDiscoveryPass(
     };
   } finally {
     clearTimeout(timer);
+    externalSignal?.removeEventListener('abort', relayAbort);
   }
 }
 
