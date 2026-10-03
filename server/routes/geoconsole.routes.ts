@@ -55,7 +55,11 @@ import {
 } from '../services/spectra/SpectraProviderTelemetryNormalizer';
 import { assessSpectraLiveLocation } from '../services/spectra/SpectraLiveConfidence';
 import { solveSpectraConstraintLayer } from '../services/spectra/SpectraConstraintSolver';
-import { loadSpectraSessionObservations } from '../services/spectra/SpectraAcquisitionPersistence';
+import {
+  loadSpectraSessionObservationPage,
+  loadSpectraSessionObservationRange,
+  loadSpectraSessionObservations,
+} from '../services/spectra/SpectraAcquisitionPersistence';
 import { spectraMetricsProviderEvent } from '../services/spectra/SpectraObservability';
 import {
   startSpectraProviderStreams,
@@ -1950,6 +1954,20 @@ router.get('/telemetry-history/:sessionId', async (req: Request, res: Response) 
     return res.status(400).json({ success: false, error: 'Invalid telemetry session.' });
   }
 
+  const query = z.object({
+    after: z.string().datetime().optional(),
+    before: z.string().datetime().optional(),
+    cursor: z.string().trim().min(1).max(1_000).optional(),
+    limit: z.coerce.number().int().min(1).max(2_000).default(500),
+  }).safeParse(req.query);
+  if (!query.success) {
+    return res.status(400).json({
+      success: false,
+      error: 'Invalid telemetry history range or cursor.',
+      details: query.error.errors,
+    });
+  }
+
   try {
     const owner = await pool.query(
       `SELECT id
@@ -1962,48 +1980,41 @@ router.get('/telemetry-history/:sessionId', async (req: Request, res: Response) 
       return res.status(404).json({ success: false, error: 'Telemetry session not found.' });
     }
 
-    const history = await pool.query(
-      `SELECT
-         source_type, provider, latitude, longitude, altitude, accuracy_meters,
-         confidence, observation_kind, evidence_class,
-         subject_match_confidence, timestamp_confidence, acquisition_method, source_url,
-         observed_at, received_at, correlation_group, provenance, metadata
-       FROM public.spectra_location_observations
-       WHERE session_id = $1 AND user_id = $2
-       ORDER BY observed_at ASC
-       LIMIT 2000`,
-      [sessionId, userId],
-    );
+    const page = await loadSpectraSessionObservationPage(userId, sessionId, {
+      limit: query.data.limit,
+      after: query.data.after ? new Date(query.data.after) : undefined,
+      before: query.data.before ? new Date(query.data.before) : undefined,
+      cursor: query.data.cursor,
+    });
 
     return res.json({
       success: true,
-      data: history.rows.map((row: any) => ({
-        latitude: Number(row.latitude),
-        longitude: Number(row.longitude),
-        altitude: row.altitude == null ? undefined : Number(row.altitude),
-        accuracy: row.accuracy_meters == null ? undefined : Number(row.accuracy_meters),
-        timestamp: new Date(row.observed_at).toISOString(),
-        receivedAt: new Date(row.received_at).toISOString(),
-        source: row.source_type,
-        confidence: Number(row.confidence),
-        observationKind: row.observation_kind,
-        evidenceClass: row.evidence_class,
-        subjectMatchConfidence: row.subject_match_confidence == null
-          ? undefined
-          : Number(row.subject_match_confidence),
-        timestampConfidence: row.timestamp_confidence == null
-          ? undefined
-          : Number(row.timestamp_confidence),
-        acquisitionMethod: row.acquisition_method || undefined,
-        sourceUrl: row.source_url || undefined,
-        correlationGroup: row.correlation_group || undefined,
-        provenance: row.provenance || undefined,
-        metadata: row.metadata || {},
+      data: page.points.map(point => ({
+        ...point,
+        timestamp: point.timestamp.toISOString(),
+        receivedAt: point.receivedAt?.toISOString(),
+        provenance: point.provenance
+          ? {
+              ...point.provenance,
+              capturedAt: point.provenance.capturedAt instanceof Date
+                ? point.provenance.capturedAt.toISOString()
+                : point.provenance.capturedAt,
+            }
+          : undefined,
       })),
+      pagination: {
+        order: 'newest-first',
+        limit: query.data.limit,
+        hasMore: page.hasMore,
+        nextCursor: page.nextCursor,
+      },
     });
   } catch (error: any) {
     if (error?.code === '42P01') {
       return res.status(503).json({ success: false, error: 'SPECTRA persistence is not initialized.' });
+    }
+    if (/cursor|range/i.test(String(error?.message || ''))) {
+      return res.status(400).json({ success: false, error: error.message });
     }
     log.error('Telemetry history load failed', { error, userId, sessionId });
     return res.status(500).json({ success: false, error: 'Telemetry history could not be loaded.' });
@@ -3357,14 +3368,22 @@ router.post('/report', spectraResourceMiddleware, async (req: Request, res: Resp
     // The canonical history is durable PostgreSQL/Supabase state. Rehydrate
     // derived in-memory caches on every report request so a restart or cache
     // clear cannot erase reportability.
-    const durableHistory = await loadSpectraSessionObservations(userId, sessionId, 2_000);
-    if (!durableHistory.length) {
+    const durableRange = await loadSpectraSessionObservationRange(
+      userId,
+      sessionId,
+      {
+        start: timeRange?.start,
+        end: timeRange?.end,
+        maxPoints: 20_000,
+      },
+    );
+    if (!durableRange.points.length) {
       return res.status(404).json({
         success: false,
-        error: 'No durable SPECTRA observations were found for this session.',
+        error: 'No durable SPECTRA observations were found for this session and range.',
       });
     }
-    await hybridGeoconsole.processLocationData(durableHistory, sessionId);
+    await hybridGeoconsole.processLocationData(durableRange.points, sessionId);
 
     const report = await hybridGeoconsole.generateIntelligenceReport(
       sessionId,
@@ -3376,6 +3395,8 @@ router.post('/report', spectraResourceMiddleware, async (req: Request, res: Resp
       success: true,
       data: report,
       metadata: {
+        durableObservationCount: durableRange.points.length,
+        durableHistoryTruncated: durableRange.truncated,
         timestamp: new Date(),
         processingTime: Date.now() - startTime,
         cacheHit: false,
