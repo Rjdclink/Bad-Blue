@@ -195,7 +195,7 @@ export async function persistSpectraAcquisition(input: {
        DO UPDATE SET
          user_id = COALESCE(public.spectra_investigations.user_id, EXCLUDED.user_id),
          subject_label = COALESCE(public.spectra_investigations.subject_label, EXCLUDED.subject_label),
-         clues = public.spectra_investigations.clues || EXCLUDED.clues,
+         clues = EXCLUDED.clues,
          state = public.spectra_investigations.state || EXCLUDED.state,
          updated_at = now()
        RETURNING id`,
