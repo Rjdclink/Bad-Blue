@@ -857,6 +857,7 @@ async function telemetryPoint(
   if (measurement.kind === 'radio') return radioPoint(measurement);
   if (measurement.kind === 'ranging') return rangingPoint(measurement);
 
+  const inputMetadata = measurement.metadata || {};
   const candidate: GPSPoint = {
     latitude: measurement.latitude,
     longitude: measurement.longitude,
@@ -884,16 +885,19 @@ async function telemetryPoint(
       transformedBy: ['spectra_telemetry_ingest'],
     },
     metadata: {
-      ...(measurement.metadata || {}),
-      trackId: measurement.trackId,
-      cameraId: measurement.cameraId,
-      objectClass: measurement.objectClass,
+      ...inputMetadata,
+      trackId: measurement.trackId
+        ?? (typeof inputMetadata.trackId === 'string' ? inputMetadata.trackId : undefined),
+      cameraId: measurement.cameraId
+        ?? (typeof inputMetadata.cameraId === 'string' ? inputMetadata.cameraId : undefined),
+      objectClass: measurement.objectClass
+        ?? (typeof inputMetadata.objectClass === 'string' ? inputMetadata.objectClass : undefined),
       velocity: (
         measurement.speed !== undefined || measurement.heading !== undefined
       ) ? {
         speed: measurement.speed,
         heading: measurement.heading,
-      } : undefined,
+      } : inputMetadata.velocity,
     },
   };
 
