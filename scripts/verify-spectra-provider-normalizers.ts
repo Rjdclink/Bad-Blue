@@ -904,6 +904,37 @@ function measurement(batch: ReturnType<typeof normalizeSpectraProviderPayload>, 
 
 {
   const batch = normalizeSpectraProviderPayload(
+    'arcore-geospatial-pose',
+    'arcore-vps',
+    {
+      deviceRef: 'device-1',
+      vpsAvailability: 'AVAILABLE',
+      trackingState: 'TRACKING',
+      poses: [{
+        timestamp: '2026-10-02T20:59:55Z',
+        geospatialPose: {
+          latitude: 43.5446003,
+          longitude: -96.7311002,
+          altitude: 410.2,
+          horizontalAccuracy: 1.2,
+          verticalAccuracy: 2.5,
+          orientationYawAccuracy: 2.0,
+        },
+      }],
+    },
+  );
+  const point = measurement(batch);
+  assert.equal(point.kind, 'position');
+  assert.equal(point.source, 'visual_positioning');
+  assert.equal(point.accuracy, 1.2);
+  assert.equal(point.metadata.providerKind, 'arcore-geospatial-pose');
+  assert.equal(point.metadata.accuracyConfidenceLevel, 0.68);
+  assert.equal(point.metadata.correlationDomain, 'device-1');
+  assert.equal(point.metadata.vpsUsed, true);
+}
+
+{
+  const batch = normalizeSpectraProviderPayload(
     'connected-vehicle-location',
     'tesla-fleet',
     {
@@ -978,6 +1009,7 @@ for (const kind of [
   'meraki-scanning',
   'cisco-spaces-location',
   'aws-iot-device-location',
+  'arcore-geospatial-pose',
   'connected-vehicle-location',
 ]) {
   assert.ok(
