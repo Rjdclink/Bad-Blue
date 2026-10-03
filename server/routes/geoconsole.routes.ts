@@ -360,6 +360,27 @@ function infrastructureWebhookAuthorized(req: Request, providerId: string): bool
     );
     if (!entry) return false;
 
+    const mode = String(entry?.mode || 'static-header').trim().toLowerCase();
+    if (mode === 'mist-hmac-sha256') {
+      const secretEnv = String(entry?.secretEnv || entry?.tokenEnv || '').trim();
+      const secret = String(process.env[secretEnv] || '').trim();
+      const signature = String(req.header('x-mist-signature-v2') || '').trim().toLowerCase();
+      const rawBody = (req as any).rawBody;
+      if (
+        !secret
+        || !Buffer.isBuffer(rawBody)
+        || !/^[a-f0-9]{64}$/.test(signature)
+      ) return false;
+
+      const expected = createHmac('sha256', secret)
+        .update(rawBody)
+        .digest('hex');
+      const actualBuffer = Buffer.from(signature, 'hex');
+      const expectedBuffer = Buffer.from(expected, 'hex');
+      return actualBuffer.length === expectedBuffer.length
+        && timingSafeEqual(actualBuffer, expectedBuffer);
+    }
+
     const headerName = String(entry?.header || 'authorization').trim().toLowerCase();
     const tokenEnv = String(entry?.tokenEnv || '').trim();
     if (!headerName || !tokenEnv) return false;
