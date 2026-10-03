@@ -281,6 +281,7 @@ export function useGeoRuntime(
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           hours: FUTURECAST_HOURS,
+          sessionId: sessionId || configuredSessionId || undefined,
           recentPoints: recent.map(frame => ({
             latitude: frame.position.latitude,
             longitude: frame.position.longitude,
@@ -312,7 +313,12 @@ export function useGeoRuntime(
       if (requestId !== futurecastRequestRef.current) return;
       setFuturecastFrames([]);
     }
-  }, [cfg.predictiveEnabled, predictionPayloadToFrames]);
+  }, [
+    cfg.predictiveEnabled,
+    configuredSessionId,
+    predictionPayloadToFrames,
+    sessionId,
+  ]);
 
   // Load data through the canonical server fusion pipeline automatically.
   const loadData = useCallback(async (points: GPSPoint[]) => {
@@ -454,7 +460,16 @@ export function useGeoRuntime(
 
       if (canonicalFuturecast && canonicalFuturecast.length > 0) {
         setFuturecastFrames(canonicalFuturecast);
-      } else {
+      }
+      // When an investigation session exists, refresh through the dedicated
+      // Futurecast route so recent camera/vehicle flow context can refine the
+      // prediction without becoming target evidence.
+      if (
+        configuredSessionId
+        || sessionId
+        || !canonicalFuturecast
+        || canonicalFuturecast.length === 0
+      ) {
         void requestAuthoritativeFuturecast(newFrames);
       }
 
@@ -469,6 +484,7 @@ export function useGeoRuntime(
     configuredSessionId,
     predictionPayloadToFrames,
     requestAuthoritativeFuturecast,
+    sessionId,
   ]);
 
 
