@@ -50,11 +50,15 @@ interface ConversationMessage {
   };
 }
 
+const NON_PERSON_SPECTRA_TARGET_RE = /^(?:(?:the|this|that|a|an|my|your)\s+)?(?:document|form|law|statute|case|website|page|button|map|file|letter|motion|complaint|petition|contract|calendar|deadline|answer|response|evidence|photo|video|address|property|vehicle|car|truck|business|company|organization|phone|device)(?:\b|$)/i;
+
 function spectraTargetFromPrompt(value: string): string | null {
   const normalized = value.replace(/\s+/g, ' ').trim();
-  const match = normalized.match(/^(?:please\s+)?(?:show\s+me|where\s+(?:is|'s))\s+(.+?)[?.!]*$/i);
+  const match = normalized.match(/^(?:please\s+)?(?:show\s+me|where\s+is|where's)\s+(.+?)[?.!]*$/i);
   const target = match?.[1]?.trim().replace(/[?.!]+$/g, '').trim() || '';
-  return target.length >= 2 && target.length <= 500 ? target : null;
+  if (target.length < 2 || target.length > 500) return null;
+  if (NON_PERSON_SPECTRA_TARGET_RE.test(target)) return null;
+  return target;
 }
 
 type ConversationPhase =
