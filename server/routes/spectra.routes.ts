@@ -916,9 +916,25 @@ router.post('/acquire', async (req: Request, res: Response) => {
     });
     const sourceWaves = buildSpectraDiscoveryWaves(resolvedTargetLabel, details);
     const waveQueries = sourceWaves.flatMap(wave => wave.targets.map(source => source.query));
+    const outerPass = Math.max(0, recursivePass);
+    const waveStart = waveQueries.length
+      ? (outerPass * 4) % waveQueries.length
+      : 0;
+    const outerAdaptiveQuery = buildSpectraAdaptiveQuery(
+      resolvedTargetLabel,
+      details,
+      outerPass % 8,
+      outerPass > 0
+        ? ['fresh source', 'recent location signal', 'newly available evidence']
+        : [],
+    );
     const initialQueries = [...new Set([
+      outerAdaptiveQuery,
       ...discoveryQueries.firstPass,
-      ...waveQueries.slice(0, 4),
+      ...waveQueries.slice(waveStart, waveStart + 4),
+      ...(waveStart + 4 > waveQueries.length
+        ? waveQueries.slice(0, Math.max(0, waveStart + 4 - waveQueries.length))
+        : []),
     ])];
 
     const backgroundPromise = settleWithin(
@@ -1040,11 +1056,14 @@ router.post('/acquire', async (req: Request, res: Response) => {
         break;
       }
 
-      const waveOffset = pass * 4;
+      const combinedPass = outerPass + pass;
+      const waveOffset = waveQueries.length
+        ? (combinedPass * 4) % waveQueries.length
+        : 0;
       const recursiveQuery = buildSpectraAdaptiveQuery(
         resolvedTargetLabel,
         details,
-        pass,
+        combinedPass % 8,
         [
           independentSources.size < SPECTRA_DISCOVERY_POLICY.minIndependentSources
             ? 'independent source'
@@ -1056,6 +1075,9 @@ router.post('/acquire', async (req: Request, res: Response) => {
         recursiveQuery,
         ...discoveryQueries.secondPass.slice(Math.max(0, pass - 1), pass + 1),
         ...waveQueries.slice(waveOffset, waveOffset + 4),
+        ...(waveOffset + 4 > waveQueries.length
+          ? waveQueries.slice(0, Math.max(0, waveOffset + 4 - waveQueries.length))
+          : []),
       ])].filter(Boolean);
 
       if (!nextQueries.length) break;
