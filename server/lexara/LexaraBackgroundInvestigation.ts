@@ -432,21 +432,19 @@ export async function investigateLexaraBackgroundQuestion(
   // the locked subject name, enrich it from the raw turn only if the normalized
   // prompt subject is the same identity; never let conversational filler replace it.
   const decisionResolved = decision.subject
-    ? cleanSubject(resolveLexaraBackgroundSubject(decision.subject, priorTurns, context.jurisdiction)
+    ? resolveLexaraBackgroundSubject(decision.subject, priorTurns, context.jurisdiction)
       || {
         name: decision.subject,
         kind: decision.subjectKind || 'person' as const,
         identifiable: decision.subjectKind === 'organization' || decision.subjectKind === 'entity',
         location: context.jurisdiction,
-      })
+      }
     : null;
   const promptResolved = resolveLexaraBackgroundSubject(prompt, priorTurns, context.jurisdiction);
-  const promptNormalized = promptResolved ? cleanSubject(promptResolved) : null;
-  const lockedResolved = context.resolvedSubject ? cleanSubject(context.resolvedSubject) : null;
   const resolved = mergeCompatibleLexaraBackgroundSubjects(
-    lockedResolved || decisionResolved,
-    promptNormalized,
-  ) || decisionResolved || promptNormalized;
+    context.resolvedSubject || decisionResolved,
+    promptResolved,
+  ) || decisionResolved || promptResolved;
   if (!resolved) {
     const categories = backgroundCategories(prompt, decision);
     const initialQuery = decision.standaloneQuery || decision.objective || prompt;
