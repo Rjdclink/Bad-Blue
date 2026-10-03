@@ -217,6 +217,50 @@ function configuredAdapters(): ActiveProviderConfig[] {
   }
 }
 
+function builtInAndroidMdmAdapter(): ActiveProviderConfig | null {
+  const url = String(process.env.SPECTRA_ANDROID_MDM_LOCATION_URL_TEMPLATE || '').trim();
+  const token = String(process.env.SPECTRA_ANDROID_MDM_LOCATION_TOKEN || '').trim();
+  const validationUrl = url
+    .replace(/\{\{deviceRef\}\}/g, 'managed-device')
+    .replace(/\{\{sessionId\}\}/g, 'session');
+  if (!httpsUrl(validationUrl) || !token) return null;
+
+  return {
+    id: 'android-managed-location-active',
+    label: 'Android managed-device latest location',
+    url,
+    method: 'GET',
+    normalizerKind: 'android-managed-lost-mode',
+    target: 'device',
+    headersFromEnv: {
+      Authorization: 'SPECTRA_ANDROID_MDM_LOCATION_TOKEN',
+    },
+    timeoutMs: timeoutMs(process.env.SPECTRA_ANDROID_MDM_LOCATION_TIMEOUT_MS),
+  };
+}
+
+function builtInAppleMdmAdapter(): ActiveProviderConfig | null {
+  const url = String(process.env.SPECTRA_APPLE_MDM_LOCATION_URL_TEMPLATE || '').trim();
+  const token = String(process.env.SPECTRA_APPLE_MDM_LOCATION_TOKEN || '').trim();
+  const validationUrl = url
+    .replace(/\{\{deviceRef\}\}/g, 'managed-device')
+    .replace(/\{\{sessionId\}\}/g, 'session');
+  if (!httpsUrl(validationUrl) || !token) return null;
+
+  return {
+    id: 'apple-managed-location-active',
+    label: 'Apple supervised-device latest location',
+    url,
+    method: 'GET',
+    normalizerKind: 'apple-managed-lost-mode',
+    target: 'device',
+    headersFromEnv: {
+      Authorization: 'SPECTRA_APPLE_MDM_LOCATION_TOKEN',
+    },
+    timeoutMs: timeoutMs(process.env.SPECTRA_APPLE_MDM_LOCATION_TIMEOUT_MS),
+  };
+}
+
 function builtInCiscoSpacesAdapter(): ActiveProviderConfig | null {
   const url = String(process.env.SPECTRA_CISCO_SPACES_DEVICE_URL_TEMPLATE || '').trim();
   const token = String(process.env.SPECTRA_CISCO_SPACES_TOKEN || '').trim();
@@ -260,7 +304,11 @@ async function fetchAdapter(
 
   const headers = headersFromConfig(config);
   if (
-    config.id === 'cisco-spaces-active-location'
+    [
+      'cisco-spaces-active-location',
+      'android-managed-location-active',
+      'apple-managed-location-active',
+    ].includes(config.id)
     && headers.Authorization
     && !/^(?:Bearer|Basic)\s+/i.test(headers.Authorization)
   ) {
@@ -292,6 +340,8 @@ export function getSpectraActiveAcquisitionCapabilities(): Array<{
   target: SpectraActiveAcquisitionTarget;
 }> {
   return [
+    builtInAndroidMdmAdapter(),
+    builtInAppleMdmAdapter(),
     builtInCiscoSpacesAdapter(),
     ...configuredAdapters(),
   ].filter((item): item is ActiveProviderConfig => Boolean(item))
@@ -307,6 +357,8 @@ export async function acquireSpectraActiveTelemetry(
   input: SpectraActiveAcquisitionInput,
 ): Promise<SpectraActiveAcquisitionResult> {
   const adapters = [
+    builtInAndroidMdmAdapter(),
+    builtInAppleMdmAdapter(),
     builtInCiscoSpacesAdapter(),
     ...configuredAdapters(),
   ].filter((item): item is ActiveProviderConfig => Boolean(item));
