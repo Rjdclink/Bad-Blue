@@ -129,6 +129,13 @@ interface AcquireTargetOptions {
   queryStartedAt?: string;
 }
 
+function jitteredAcquisitionDelay(baseMs: number): number {
+  const bounded = Math.max(500, Math.min(60_000, Math.floor(baseMs)));
+  const spread = Math.max(50, Math.floor(bounded * 0.2));
+  const jitter = Math.floor((Math.random() * (spread * 2 + 1)) - spread);
+  return Math.max(500, bounded + jitter);
+}
+
 function createSpectraSessionId(): string {
   try {
     if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -691,7 +698,7 @@ export default function SpectraPage() {
         if (continuousAcquisitionActiveRef.current) {
           continuousAcquisitionTimerRef.current = setTimeout(
             () => void runPass(),
-            continuousRetryDelayRef.current,
+            jitteredAcquisitionDelay(continuousRetryDelayRef.current),
           );
         }
       }
@@ -700,7 +707,7 @@ export default function SpectraPage() {
     continuousRetryDelayRef.current = CONTINUOUS_ACQUISITION_DELAY_MS;
     continuousAcquisitionTimerRef.current = setTimeout(
       () => void runPass(),
-      continuousRetryDelayRef.current,
+      jitteredAcquisitionDelay(continuousRetryDelayRef.current),
     );
   }, [acquireTarget]);
 
