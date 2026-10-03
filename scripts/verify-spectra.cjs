@@ -40,8 +40,11 @@ const telemetryImport = read('server/services/spectra/SpectraTelemetryImport.ts'
 const acquisitionPersistence = read('server/services/spectra/SpectraAcquisitionPersistence.ts');
 const placeContext = read('server/services/spectra/SpectraPlaceContext.ts');
 const publicRetrieval = read('server/services/spectra/SpectraPublicRetrieval.ts');
+const cameraDirectories = read('server/services/spectra/SpectraCameraDirectoryAdapters.ts');
+const motionContext = read('server/services/spectra/SpectraMotionContext.ts');
 const lexaraConversation = read('client/src/components/LexaraConversation.tsx');
 const spectraMigration = read('server/migrations/064_spectra_durable_observations.sql');
+const motionContextMigration = read('server/migrations/065_spectra_motion_context.sql');
 const spectraAccessMigration = read('server/migrations/065_spectra_server_only_access.sql');
 const spectraIndexMigration = read('server/migrations/066_spectra_foreign_key_indexes.sql');
 const landing = read('client/src/pages/landing.tsx');
@@ -372,6 +375,27 @@ test('Lexara exposes the SPECTRA icon only on matching location command response
   lexaraConversation.includes("sessionStorage.setItem('legalwhat:spectra-launch'") &&
   spectra.includes("sessionStorage.getItem('legalwhat:spectra-launch'") &&
   spectra.includes('void acquireTarget(targetValue, detailsValue)'));
+test('External camera directories are provider-neutral, bounded and spatially filtered',
+  geoconsoleRoutes.includes('acquireConfiguredSpectraCameras') &&
+  cameraDirectories.includes('SPECTRA_CAMERA_JSON_FEEDS') &&
+  cameraDirectories.includes('Camera directory adapters require HTTPS.') &&
+  cameraDirectories.includes('rows.slice(0, 500)') &&
+  cameraDirectories.includes('haversineMeters(latitude, longitude, lat, lon) > radiusMeters'));
+test('Camera directory health marks stale feeds and excludes disabled cameras',
+  geoconsoleRoutes.includes('CAMERA_STALE_MS = 24 * 60 * 60_000') &&
+  geoconsoleRoutes.includes('normalizeCameraFreshness') &&
+  geoconsoleRoutes.includes('camera.status?.disabled === true'));
+test('Aggregate camera motion context is stored separately from target observations',
+  geoconsoleRoutes.includes("router.post('/traffic-context'") &&
+  geoconsoleRoutes.includes("router.post('/traffic-context/provider/:providerId'") &&
+  geoconsoleRoutes.includes("router.get('/traffic-context/:sessionId'") &&
+  motionContext.includes('spectra_motion_context') &&
+  motionContextMigration.includes('CREATE TABLE IF NOT EXISTS public.spectra_motion_context') &&
+  adapterRegistry.includes("id: 'aggregate-camera-motion-context'"));
+test('Aggregate camera traffic context never becomes a target location observation',
+  geoconsoleRoutes.includes("contextKind: 'aggregate_traffic_flow'") &&
+  !motionContext.includes('spectra_location_observations') &&
+  !routes.includes('motionContextApplied'));
 test('SPECTRA API is mounted',
   serverRoutes.includes("app.use('/api/spectra', spectraRoutes.default)"));
 
