@@ -809,10 +809,18 @@ export class HybridGeoconsole extends EventEmitter {
       points.reduce((sum, point) => sum + Math.max(0, Math.min(1, point.confidence)), 0) /
       points.length;
     const independentGroups = new Set(
-      points.map(point =>
-        point.correlationGroup ||
-        `${point.source}:${point.provenance?.provider || 'unknown'}`
-      )
+      points.map(point => {
+        const dependency = String(
+          point.metadata?.correlationDomain
+          ?? point.metadata?.evidenceDependencyId
+          ?? point.metadata?.derivedFromEvidenceGroup
+          ?? ''
+        ).trim().toLowerCase();
+        return dependency
+          ? `domain:${dependency}`
+          : point.correlationGroup
+            || `${point.source}:${point.provenance?.provider || 'unknown'}`;
+      })
     ).size;
     const independenceBonus = Math.min(Math.max(0, independentGroups - 1) * 0.04, 0.12);
 
@@ -835,6 +843,7 @@ export class HybridGeoconsole extends EventEmitter {
    */
   clearCaches(): void {
     this.locationCache.clear();
+    this.evidenceCache.clear();
     this.pathCache.clear();
     this.trailCache.clear();
     this.reportCache.clear();
