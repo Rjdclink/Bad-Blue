@@ -97,7 +97,12 @@ export function assessSpectraIdentityBinding(input: {
   if (input.targetIsPhone) {
     // When the requested subject is the subscription/phone itself, a positive
     // network number-verification result establishes the target binding.
-    if (numberVerified === true) confidence = Math.max(confidence, 0.999);
+    if (numberVerified === true && baselineIdentityConfidence === 0) {
+      // For a phone/subscription target, network verification establishes that
+      // the telemetry is bound to the requested subscription. This is a
+      // categorical binding, not a fabricated probabilistic score.
+      confidence = 1;
+    }
     if (numberVerified === false) confidence = 0;
   } else {
     // For a named person, operator KYC is direct identity evidence. Prefer the
