@@ -244,6 +244,26 @@ const telemetryBatchSchema = z.object({
   metadata: z.record(z.unknown()).optional(),
 });
 
+const trafficContextItemSchema = z.object({
+  observedAt: validDateString,
+  latitude: z.number().min(-90).max(90),
+  longitude: z.number().min(-180).max(180),
+  radiusMeters: z.number().min(5).max(100_000).default(250),
+  confidence: z.number().min(0.05).max(1).default(0.5),
+  vehicleCount: z.number().int().min(0).max(100_000).optional(),
+  averageVehicleSpeedMps: z.number().min(0).max(100).optional(),
+  dominantHeadingDegrees: z.number().min(0).max(360).optional(),
+  congestionRatio: z.number().min(0).max(1).optional(),
+  provider: z.string().trim().min(1).max(200).optional(),
+  sourceId: z.string().trim().min(1).max(200).optional(),
+  metadata: z.record(z.unknown()).optional(),
+});
+
+const trafficContextBatchSchema = z.object({
+  sessionId: z.string().trim().min(1).max(200),
+  contexts: z.array(trafficContextItemSchema).min(1).max(100),
+});
+
 type TelemetryBatch = z.infer<typeof telemetryBatchSchema>;
 type TelemetryMeasurement = z.infer<typeof telemetryMeasurementSchema>;
 
@@ -1170,6 +1190,56 @@ async function processTelemetryBatch(
   };
 }
 
+router.post('/traffic-context/provider/:providerId', async (req: Request, res: Response) => {
+  if (!providerTelemetryAuthorized(req)) {
+    return res.status(401).json({ success: false, error: 'Invalid traffic-context provider signature.' });
+  }
+
+  const validation = trafficContextBatchSchema.safeParse(req.body);
+  if (!validation.success) {
+    return res.status(400).json({
+      success: false,
+      error: 'Invalid traffic-context payload.',
+      details: validation.error.errors,
+    });
+  }
+
+  const providerId = String(req.params.providerId || '').trim().slice(0, 200);
+  const outcomes = await Promise.allSettled(
+    validation.data.contexts.map(context =>
+      persistSpectraMotionContext({
+        sessionId: validation.data.sessionId,
+        provider: context.provider || providerId,
+        sourceId: context.sourceId || providerId,
+        observedAt: context.observedAt,
+        latitude: context.latitude,
+        longitude: context.longitude,
+        radiusMeters: context.radiusMeters,
+        confidence: context.confidence,
+        vehicleCount: context.vehicleCount,
+        averageVehicleSpeedMps: context.averageVehicleSpeedMps,
+        dominantHeadingDegrees: context.dominantHeadingDegrees,
+        congestionRatio: context.congestionRatio,
+        metadata: {
+          ...(context.metadata || {}),
+          contextKind: 'aggregate_traffic_flow',
+        },
+      }),
+    ),
+  );
+
+  return res.json({
+    success: true,
+    data: {
+      sessionId: validation.data.sessionId,
+      accepted: outcomes.filter(outcome =>
+        outcome.status === 'fulfilled' && outcome.value === true
+      ).length,
+      attempted: validation.data.contexts.length,
+    },
+  });
+});
+
 router.post('/telemetry/provider/:providerId', async (req: Request, res: Response) => {
   if (!providerTelemetryAuthorized(req)) {
     return res.status(401).json({ success: false, error: 'Invalid telemetry provider signature.' });
@@ -1217,6 +1287,107 @@ router.post('/telemetry/provider/:providerId', async (req: Request, res: Respons
 
 // Every ordinary GeoConsole/SPECTRA endpoint below remains authenticated.
 router.use(isAuthenticated);
+
+router.post('/traffic-context', async (req: Request, res: Response) => {
+  const userId = getPlatformUserId(req.user as any);
+  if (!userId) return res.status(401).json({ success: false, error: 'Authentication required.' });
+
+  const validation = trafficContextBatchSchema.safeParse(req.body);
+  if (!validation.success) {
+    return res.status(400).json({
+      success: false,
+      error: 'Invalid traffic-context payload.',
+      details: validation.error.errors,
+    });
+  }
+
+  try {
+    const owner = await pool.query(
+      `SELECT user_id
+       FROM public.spectra_investigations
+       WHERE session_id = $1
+       LIMIT 1`,
+      [validation.data.sessionId],
+    );
+    if (owner.rows.length) {
+      const ownerId = String(owner.rows[0]?.user_id || '');
+      if (ownerId && ownerId !== userId) {
+        return res.status(404).json({ success: false, error: 'SPECTRA session not found.' });
+      }
+    }
+
+    const outcomes = await Promise.allSettled(
+      validation.data.contexts.map(context =>
+        persistSpectraMotionContext({
+          userId,
+          sessionId: validation.data.sessionId,
+          provider: context.provider,
+          sourceId: context.sourceId,
+          observedAt: context.observedAt,
+          latitude: context.latitude,
+          longitude: context.longitude,
+          radiusMeters: context.radiusMeters,
+          confidence: context.confidence,
+          vehicleCount: context.vehicleCount,
+          averageVehicleSpeedMps: context.averageVehicleSpeedMps,
+          dominantHeadingDegrees: context.dominantHeadingDegrees,
+          congestionRatio: context.congestionRatio,
+          metadata: {
+            ...(context.metadata || {}),
+            contextKind: 'aggregate_traffic_flow',
+          },
+        }),
+      ),
+    );
+
+    return res.json({
+      success: true,
+      data: {
+        sessionId: validation.data.sessionId,
+        accepted: outcomes.filter(outcome =>
+          outcome.status === 'fulfilled' && outcome.value === true
+        ).length,
+        attempted: validation.data.contexts.length,
+      },
+    });
+  } catch (error) {
+    log.warn('SPECTRA traffic context ingest failed', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return res.status(500).json({ success: false, error: 'Traffic context could not be stored.' });
+  }
+});
+
+router.get('/traffic-context/:sessionId', async (req: Request, res: Response) => {
+  const userId = getPlatformUserId(req.user as any);
+  if (!userId) return res.status(401).json({ success: false, error: 'Authentication required.' });
+
+  const validation = z.object({
+    lat: z.coerce.number().min(-90).max(90),
+    lng: z.coerce.number().min(-180).max(180),
+    maxAgeMinutes: z.coerce.number().min(1).max(180).default(30),
+    maxDistanceMeters: z.coerce.number().min(50).max(50_000).default(10_000),
+  }).safeParse(req.query);
+  if (!validation.success) {
+    return res.status(400).json({ success: false, error: 'Invalid traffic-context query.' });
+  }
+
+  const sessionId = String(req.params.sessionId || '').trim();
+  if (!sessionId || sessionId.length > 200) {
+    return res.status(400).json({ success: false, error: 'Invalid SPECTRA session.' });
+  }
+
+  const data = await loadSpectraMotionContext({
+    userId,
+    sessionId,
+    latitude: validation.data.lat,
+    longitude: validation.data.lng,
+    maxAgeMinutes: validation.data.maxAgeMinutes,
+    maxDistanceMeters: validation.data.maxDistanceMeters,
+  }).catch(() => []);
+
+  return res.json({ success: true, data });
+});
 
 router.get('/telemetry-history/:sessionId', async (req: Request, res: Response) => {
   const userId = getPlatformUserId(req.user as any);
