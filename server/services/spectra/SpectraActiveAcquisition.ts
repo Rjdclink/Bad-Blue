@@ -284,6 +284,29 @@ function builtInCiscoSpacesAdapter(): ActiveProviderConfig | null {
   };
 }
 
+function builtInUniFiAdapter(): ActiveProviderConfig | null {
+  const url = String(process.env.SPECTRA_UNIFI_CLIENT_URL_TEMPLATE || '').trim();
+  const apiKey = String(process.env.SPECTRA_UNIFI_API_KEY || '').trim();
+  const validationUrl = url
+    .replace(/\{\{deviceRef\}\}/g, 'managed-device')
+    .replace(/\{\{sessionId\}\}/g, 'session');
+
+  if (!httpsUrl(validationUrl) || !apiKey) return null;
+
+  return {
+    id: 'unifi-client-location',
+    label: 'UniFi connected-client observation',
+    url,
+    method: 'GET',
+    normalizerKind: 'unifi-client-location',
+    target: 'device',
+    headersFromEnv: {
+      'X-API-Key': 'SPECTRA_UNIFI_API_KEY',
+    },
+    timeoutMs: timeoutMs(process.env.SPECTRA_UNIFI_TIMEOUT_MS),
+  };
+}
+
 function acquisitionBody(
   input: SpectraActiveAcquisitionInput,
 ): Record<string, unknown> {
@@ -343,6 +366,7 @@ export function getSpectraActiveAcquisitionCapabilities(): Array<{
     builtInAndroidMdmAdapter(),
     builtInAppleMdmAdapter(),
     builtInCiscoSpacesAdapter(),
+    builtInUniFiAdapter(),
     ...configuredAdapters(),
   ].filter((item): item is ActiveProviderConfig => Boolean(item))
     .map(item => ({
@@ -360,6 +384,7 @@ export async function acquireSpectraActiveTelemetry(
     builtInAndroidMdmAdapter(),
     builtInAppleMdmAdapter(),
     builtInCiscoSpacesAdapter(),
+    builtInUniFiAdapter(),
     ...configuredAdapters(),
   ].filter((item): item is ActiveProviderConfig => Boolean(item));
 
