@@ -6,6 +6,7 @@ export const SPECTRA_ADVANCED_RADIO_NORMALIZER_KINDS = [
   'ble-direction-finding',
   'android-wifi-ranging',
   'android-ranging-manager',
+  'nr-positioning',
   'android-cellular',
   'android-raw-gnss',
   'gnss-precision-solution',
@@ -689,6 +690,274 @@ function normalizeAndroidRangingManager(
   return normalizerBatch(
     wrapped.providerId,
     'android-ranging-manager',
+    wrapped.sessionId,
+    wrapped.subjectLabel,
+    measurements,
+  );
+}
+
+function normalizeNrPositioning(
+  payload: unknown,
+  providerId: string,
+): SpectraAdvancedNormalizedBatch {
+  const wrapped = envelope(payload, providerId);
+  const results = list(
+    wrapped.body.results
+    || wrapped.body.observations
+    || wrapped.body.measurements
+    || wrapped.body.positions
+  );
+  const inputs = results.length ? results : [wrapped.body];
+  const measurements: Array<Record<string, unknown>> = [];
+
+  for (const raw of inputs.slice(0, 2000)) {
+    const result = record(raw);
+    const observedAt = timestampValue(
+      result.timestamp
+      || result.observedAt
+      || result.measurementTime
+      || result.positionTime
+      || wrapped.body.timestamp
+    );
+    if (!observedAt) continue;
+
+    const methodRaw = String(
+      result.method
+      || result.positioningMethod
+      || result.type
+      || ''
+    ).trim().toLowerCase();
+    const method =
+      /dl.?tdoa|otdoa/.test(methodRaw) ? 'dl-tdoa'
+      : /ul.?tdoa/.test(methodRaw) ? 'ul-tdoa'
+      : /multi.?rtt|round.?trip|rtt/.test(methodRaw) ? 'multi-rtt'
+      : /aoa|angle.?of.?arrival/.test(methodRaw) ? 'aoa'
+      : /aod|angle.?of.?departure/.test(methodRaw) ? 'aod'
+      : /prs|positioning.?reference/.test(methodRaw) ? 'prs'
+      : /carrier.?phase/.test(methodRaw) ? 'carrier-phase'
+      : 'nr-positioning';
+
+    const solution = record(
+      result.solution
+      || result.position
+      || result.location
+      || result
+    );
+    const latitude = bounded(
+      solution.latitude ?? solution.lat,
+      -90,
+      90,
+    );
+    const longitude = bounded(
+      solution.longitude ?? solution.lng ?? solution.lon,
+      -180,
+      180,
+    );
+    const accuracy = finite(
+      solution.horizontalAccuracyMeters
+      ?? solution.accuracyMeters
+      ?? solution.accuracy
+    );
+    const accuracyLevel = bounded(
+      solution.accuracyConfidenceLevel
+      ?? solution.confidenceLevel
+      ?? (solution.confidencePercent !== undefined
+        ? Number(solution.confidencePercent) / 100
+        : undefined),
+      0.2,
+      0.9999,
+    );
+
+    const commonMetadata = {
+      providerKind: 'nr-positioning',
+      method,
+      prsRsrpDbm: finite(result.prsRsrpDbm ?? result.prsRsrp),
+      prsSinrDb: finite(result.prsSinrDb ?? result.prsSinr),
+      referenceSignalTimeDifferenceNanos: finite(
+        result.referenceSignalTimeDifferenceNanos
+        ?? result.rstdNanos
+        ?? result.rstd
+      ),
+      roundTripTimeNanos: finite(
+        result.roundTripTimeNanos
+        ?? result.rttNanos
+      ),
+      aoaAzimuthDegrees: bounded(
+        result.aoaAzimuthDegrees ?? result.azimuthDegrees,
+        0,
+        360,
+      ),
+      aoaElevationDegrees: bounded(
+        result.aoaElevationDegrees ?? result.elevationDegrees,
+        -90,
+        90,
+      ),
+      aodAzimuthDegrees: bounded(
+        result.aodAzimuthDegrees,
+        0,
+        360,
+      ),
+      nlosProbability: bounded(
+        result.nlosProbability
+        ?? result.nonLineOfSightProbability,
+        0,
+        1,
+      ),
+      bandwidthHz: finite(
+        result.bandwidthHz ?? result.prsBandwidthHz
+      ),
+      positioningFrequencyLayers: finite(
+        result.positioningFrequencyLayers ?? result.pflCount
+      ),
+    };
+
+    if (latitude !== null && longitude !== null) {
+      measurements.push({
+        kind: 'position',
+        source: 'nr_positioning',
+        timestamp: observedAt,
+        latitude,
+        longitude,
+        altitude: finite(
+          solution.altitudeMeters ?? solution.altitude
+        ) ?? undefined,
+        accuracy:
+          accuracy !== null && accuracy > 0
+            ? Math.min(5_000_000, accuracy)
+            : undefined,
+        confidence:
+          bounded(solution.confidence, 0, 1)
+          ?? (
+            accuracy !== null && accuracy > 0
+              ? Math.max(0.45, Math.min(0.98, 1 - Math.log10(Math.max(1, accuracy)) / 6))
+              : 0.78
+          ),
+        provider: wrapped.providerId,
+        recordId: stringValue(
+          result.recordId || result.measurementId || result.solutionId,
+          300,
+        ),
+        correlationGroup:
+          stringValue(result.correlationGroup, 300)
+          || `nr-positioning:${wrapped.providerId}`,
+        metadata: {
+          ...commonMetadata,
+          accuracyConfidenceLevel: accuracyLevel ?? 0.68,
+          horizontalProtectionLevelMeters: finite(
+            solution.horizontalProtectionLevelMeters
+            ?? solution.hpl
+          ),
+          covariance: result.covariance || solution.covariance,
+        },
+      });
+      continue;
+    }
+
+    const anchors = list(
+      result.anchors
+      || result.trps
+      || result.transmissionReceptionPoints
+      || result.baseStations
+    ).flatMap(rawAnchor => {
+      const anchor = record(rawAnchor);
+      const coordinates = anchorCoordinates(
+        anchor.location || anchor.position || anchor
+      );
+      if (!coordinates) return [];
+
+      const distanceMeters = finite(
+        anchor.distanceMeters
+        ?? anchor.rangeMeters
+        ?? (
+          anchor.roundTripTimeNanos !== undefined
+            ? Number(anchor.roundTripTimeNanos) * 0.299792458 / 2
+            : undefined
+        )
+      );
+      const rssiDistance = finite(anchor.rssiDistanceMeters);
+      const bearingDegrees = bounded(
+        anchor.bearingDegrees
+        ?? anchor.aoaAzimuthDegrees
+        ?? anchor.aodAzimuthDegrees,
+        0,
+        360,
+      );
+
+      if (distanceMeters === null && rssiDistance === null) return [];
+
+      const normalized: Record<string, unknown> = {
+        id: stringValue(
+          anchor.id || anchor.trpId || anchor.cellId,
+          200,
+        ),
+        latitude: coordinates.latitude,
+        longitude: coordinates.longitude,
+        distanceMeters:
+          distanceMeters !== null
+            ? Math.max(0.01, Math.min(1_000_000, distanceMeters))
+            : Math.max(0.01, Math.min(1_000_000, rssiDistance!)),
+        uncertaintyMeters:
+          finite(anchor.uncertaintyMeters ?? anchor.rangeStdDevMeters)
+          ?? Math.max(0.5, Number(distanceMeters ?? rssiDistance) * 0.05),
+      };
+
+      if (bearingDegrees !== null) {
+        normalized.bearingDegrees = bearingDegrees;
+        normalized.bearingReference = String(
+          anchor.bearingReference || 'true_north'
+        ).toLowerCase() === 'true_north'
+          ? 'true_north'
+          : 'device';
+        const bearingUncertainty = bounded(
+          anchor.bearingUncertaintyDegrees
+          ?? anchor.angleStdDevDegrees,
+          0.01,
+          180,
+        );
+        if (bearingUncertainty !== null) {
+          normalized.bearingUncertaintyDegrees = bearingUncertainty;
+        }
+      }
+
+      return [normalized];
+    });
+
+    if (anchors.length) {
+      measurements.push({
+        kind: 'ranging',
+        source: 'nr_positioning',
+        timestamp: observedAt,
+        provider: wrapped.providerId,
+        correlationGroup:
+          stringValue(result.correlationGroup, 300)
+          || `nr-positioning:${wrapped.providerId}`,
+        anchors,
+        metadata: {
+          ...commonMetadata,
+          anchorCount: anchors.length,
+        },
+      });
+    } else {
+      measurements.push(contextMeasurement(
+        'cellular_signal',
+        observedAt,
+        wrapped.providerId,
+        {
+          prsRsrpDbm: finite(commonMetadata.prsRsrpDbm),
+          prsSinrDb: finite(commonMetadata.prsSinrDb),
+          rstdNanos: finite(commonMetadata.referenceSignalTimeDifferenceNanos),
+          rttNanos: finite(commonMetadata.roundTripTimeNanos),
+          nlosProbability: finite(commonMetadata.nlosProbability),
+          bandwidthHz: finite(commonMetadata.bandwidthHz),
+        },
+        commonMetadata,
+      ));
+    }
+  }
+
+  return normalizerBatch(
+    wrapped.providerId,
+    'nr-positioning',
     wrapped.sessionId,
     wrapped.subjectLabel,
     measurements,
@@ -1872,6 +2141,8 @@ function tryNormalize(
         return normalizeAndroidWifiRanging(payload, providerId);
       case 'android-ranging-manager':
         return normalizeAndroidRangingManager(payload, providerId);
+      case 'nr-positioning':
+        return normalizeNrPositioning(payload, providerId);
       case 'android-cellular':
         return normalizeAndroidCellular(payload, providerId);
       case 'android-raw-gnss':
@@ -2122,6 +2393,8 @@ export function normalizeSpectraAdvancedRadioPayload(
       return normalizeAndroidWifiRanging(payload, normalizedProviderId);
     case 'android-ranging-manager':
       return normalizeAndroidRangingManager(payload, normalizedProviderId);
+    case 'nr-positioning':
+      return normalizeNrPositioning(payload, normalizedProviderId);
     case 'android-cellular':
       return normalizeAndroidCellular(payload, normalizedProviderId);
     case 'android-raw-gnss':
