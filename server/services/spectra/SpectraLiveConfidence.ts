@@ -171,6 +171,7 @@ function sourceFamily(point: GPSPoint): SpectraLiveSourceFamily | null {
     case 'cellular':
     case 'cell_serving':
     case 'cell_neighbor':
+    case 'nr_positioning':
       return 'cellular';
     case 'vehicle_telemetry':
       return 'vehicle';
@@ -280,6 +281,60 @@ function confidenceRadius(sigmaMeters: number, probability: number): number {
   return sigmaMeters * multiplier;
 }
 
+function measurementQualityWeight(point: GPSPoint): number {
+  let weight = 1;
+  const metadata = point.metadata || {};
+
+  const integrity = metadata.integrity;
+  if (integrity && typeof integrity === 'object') {
+    const score = Number((integrity as Record<string, unknown>).integrityScore);
+    if (Number.isFinite(score)) weight *= clamp(score, 0.15, 1);
+  }
+
+  const nlosProbability = Number(metadata.nlosProbability);
+  if (Number.isFinite(nlosProbability)) {
+    weight *= clamp(1 - nlosProbability, 0.05, 1);
+  }
+
+  const nadm = Number(metadata.normalizedAttackDetectorMetric);
+  if (Number.isFinite(nadm) && nadm !== 255) {
+    const nadmWeight =
+      nadm <= 0 ? 1
+      : nadm === 1 ? 0.995
+      : nadm === 2 ? 0.97
+      : nadm === 3 ? 0.70
+      : nadm === 4 ? 0.30
+      : nadm === 5 ? 0.10
+      : 0.03;
+    weight *= nadmWeight;
+  }
+
+  const correctionAgeSeconds = Number(metadata.correctionAgeSeconds);
+  if (Number.isFinite(correctionAgeSeconds) && correctionAgeSeconds >= 0) {
+    weight *= Math.pow(0.5, correctionAgeSeconds / 30);
+  }
+
+  const attempted = Number(metadata.attemptedMeasurements);
+  const successful = Number(metadata.successfulMeasurements);
+  if (
+    Number.isFinite(attempted)
+    && attempted > 0
+    && Number.isFinite(successful)
+    && successful >= 0
+  ) {
+    weight *= clamp(successful / attempted, 0.1, 1);
+  }
+
+  if (
+    metadata.solutionType === 'rtk-fixed'
+    && metadata.ambiguitiesFixed === false
+  ) {
+    weight *= 0.5;
+  }
+
+  return clamp(weight, MIN_EVIDENCE_WEIGHT, 1);
+}
+
 function freshnessWeight(
   ageMs: number,
   family: SpectraLiveSourceFamily,
@@ -339,7 +394,10 @@ function selectFamilyRepresentative(
     const sigma = metadataCovarianceSigma(point) ?? radiusToSigma(accuracy, level);
     const fresh = freshnessWeight(ageMs, family);
     const reliability = clamp(
-      FAMILY_RELIABILITY[family] * clamp(point.confidence, 0.01, 1) * fresh,
+      FAMILY_RELIABILITY[family]
+      * clamp(point.confidence, 0.01, 1)
+      * fresh
+      * measurementQualityWeight(point),
       MIN_EVIDENCE_WEIGHT,
       1,
     );
@@ -482,7 +540,8 @@ export function assessSpectraLiveLocation(
     const reliability = clamp(
       FAMILY_RELIABILITY[family]
       * clamp(point.confidence, 0.01, 1)
-      * fresh,
+      * fresh
+      * measurementQualityWeight(point),
       MIN_EVIDENCE_WEIGHT,
       1,
     );
