@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import {
   normalizeSpectraProviderPayload,
   SPECTRA_PROVIDER_NORMALIZER_KINDS,
@@ -6,11 +5,7 @@ import {
   type SpectraNormalizedProviderBatch,
 } from './SpectraProviderTelemetryNormalizer';
 
-export type SpectraActiveAcquisitionTarget =
-  | 'phone'
-  | 'device'
-  | 'either'
-  | 'none';
+export type SpectraActiveAcquisitionTarget = 'device' | 'none';
 
 interface ActiveProviderConfig {
   id: string;
@@ -24,7 +19,6 @@ interface ActiveProviderConfig {
 }
 
 export interface SpectraActiveAcquisitionInput {
-  phoneNumber?: string;
   deviceRef?: string;
   sessionId?: string;
   subjectLabel?: string;
@@ -48,14 +42,6 @@ function record(value: unknown): Record<string, any> {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, any>
     : {};
-}
-
-function normalizePhoneNumber(value?: string): string | undefined {
-  if (!value) return undefined;
-  const trimmed = value.trim();
-  const digits = trimmed.replace(/\D/g, '');
-  if (digits.length < 7 || digits.length > 15) return undefined;
-  return `+${digits}`;
 }
 
 function normalizeDeviceRef(value?: string): string | undefined {
@@ -88,10 +74,8 @@ function templateUrl(
   raw: string,
   input: SpectraActiveAcquisitionInput,
 ): URL | null {
-  const phoneNumber = normalizePhoneNumber(input.phoneNumber);
   const deviceRef = normalizeDeviceRef(input.deviceRef);
   const expanded = raw
-    .replace(/\{\{phoneNumber\}\}/g, encodeURIComponent(phoneNumber || ''))
     .replace(/\{\{deviceRef\}\}/g, encodeURIComponent(deviceRef || ''))
     .replace(/\{\{sessionId\}\}/g, encodeURIComponent(input.sessionId || ''));
   return httpsUrl(expanded);
@@ -114,12 +98,8 @@ function targetAvailable(
   config: ActiveProviderConfig,
   input: SpectraActiveAcquisitionInput,
 ): boolean {
-  const phone = Boolean(normalizePhoneNumber(input.phoneNumber));
-  const device = Boolean(normalizeDeviceRef(input.deviceRef));
   if (config.target === 'none') return true;
-  if (config.target === 'phone') return phone;
-  if (config.target === 'device') return device;
-  return phone || device;
+  return Boolean(normalizeDeviceRef(input.deviceRef));
 }
 
 function canonicalBatch(
@@ -184,13 +164,17 @@ function configuredAdapters(): ActiveProviderConfig[] {
       const url = String(item?.url || '').trim();
       const normalizerKind = String(item?.normalizerKind || '').trim();
       const method = String(item?.method || 'POST').trim().toUpperCase();
-      const target = String(item?.target || 'either').trim().toLowerCase();
+      const target = String(item?.target || 'device').trim().toLowerCase();
+      const validationUrl = url
+        .replace(/\{\{deviceRef\}\}/g, 'managed-device')
+        .replace(/\{\{sessionId\}\}/g, 'session');
+
       if (
         !id
         || seen.has(id)
-        || !httpsUrl(url)
+        || !httpsUrl(validationUrl)
         || !['GET', 'POST'].includes(method)
-        || !['phone', 'device', 'either', 'none'].includes(target)
+        || !['device', 'none'].includes(target)
         || (
           normalizerKind !== 'canonical-telemetry'
           && !SPECTRA_PROVIDER_NORMALIZER_KINDS.includes(
@@ -224,39 +208,14 @@ function configuredAdapters(): ActiveProviderConfig[] {
   }
 }
 
-function builtInCamaraAdapter(): ActiveProviderConfig | null {
-  const url = String(process.env.SPECTRA_CAMARA_LOCATION_RETRIEVAL_URL || '').trim();
-  const token = String(
-    process.env.SPECTRA_CAMARA_LOCATION_RETRIEVAL_TOKEN
-    || process.env.SPECTRA_CAMARA_BEARER_TOKEN
-    || '',
-  ).trim();
-  if (!httpsUrl(url) || !token) return null;
-  return {
-    id: 'camara-location-retrieval-active',
-    label: 'CAMARA network location retrieval',
-    url,
-    method: 'POST',
-    normalizerKind: 'camara-location-retrieval',
-    target: 'phone',
-    headersFromEnv: {
-      Authorization: process.env.SPECTRA_CAMARA_LOCATION_RETRIEVAL_TOKEN
-        ? 'SPECTRA_CAMARA_LOCATION_RETRIEVAL_TOKEN'
-        : 'SPECTRA_CAMARA_BEARER_TOKEN',
-    },
-    timeoutMs: timeoutMs(process.env.SPECTRA_CAMARA_TIMEOUT_MS),
-  };
-}
-
 function builtInCiscoSpacesAdapter(): ActiveProviderConfig | null {
   const url = String(process.env.SPECTRA_CISCO_SPACES_DEVICE_URL_TEMPLATE || '').trim();
   const token = String(process.env.SPECTRA_CISCO_SPACES_TOKEN || '').trim();
-  if (!httpsUrl(
-    url
-      .replace(/\{\{deviceRef\}\}/g, 'device')
-      .replace(/\{\{phoneNumber\}\}/g, '%2B15555555555')
-      .replace(/\{\{sessionId\}\}/g, 'session'),
-  ) || !token) return null;
+  const validationUrl = url
+    .replace(/\{\{deviceRef\}\}/g, 'managed-device')
+    .replace(/\{\{sessionId\}\}/g, 'session');
+
+  if (!httpsUrl(validationUrl) || !token) return null;
 
   return {
     id: 'cisco-spaces-active-location',
@@ -273,33 +232,10 @@ function builtInCiscoSpacesAdapter(): ActiveProviderConfig | null {
 }
 
 function acquisitionBody(
-  config: ActiveProviderConfig,
   input: SpectraActiveAcquisitionInput,
 ): Record<string, unknown> {
-  const phoneNumber = normalizePhoneNumber(input.phoneNumber);
-  const deviceRef = normalizeDeviceRef(input.deviceRef);
-
-  if (config.id === 'camara-location-retrieval-active') {
-    const maxAge = positiveInteger(
-      process.env.SPECTRA_CAMARA_MAX_AGE_SECONDS,
-      60,
-      86_400,
-    );
-    const maxSurface = positiveInteger(
-      process.env.SPECTRA_CAMARA_MAX_SURFACE_M2,
-      0,
-      2_147_483_647,
-    );
-    return {
-      device: phoneNumber ? { phoneNumber } : undefined,
-      maxAge,
-      ...(maxSurface > 0 ? { maxSurface } : {}),
-    };
-  }
-
   return {
-    phoneNumber,
-    deviceRef,
+    deviceRef: normalizeDeviceRef(input.deviceRef),
     sessionId: input.sessionId,
     subjectLabel: input.subjectLabel,
     requestedAt: new Date().toISOString(),
@@ -315,13 +251,6 @@ async function fetchAdapter(
 
   const headers = headersFromConfig(config);
   if (
-    config.id === 'camara-location-retrieval-active'
-    && headers.Authorization
-    && !/^Bearer\s+/i.test(headers.Authorization)
-  ) {
-    headers.Authorization = `Bearer ${headers.Authorization}`;
-  }
-  if (
     config.id === 'cisco-spaces-active-location'
     && headers.Authorization
     && !/^(?:Bearer|Basic)\s+/i.test(headers.Authorization)
@@ -329,16 +258,12 @@ async function fetchAdapter(
     headers.Authorization = `Bearer ${headers.Authorization}`;
   }
 
-  if (config.id === 'camara-location-retrieval-active') {
-    headers['x-correlator'] = randomUUID();
-  }
-
   const response = await fetch(url, {
     method: config.method,
     headers,
     redirect: 'error',
     body: config.method === 'POST'
-      ? JSON.stringify(acquisitionBody(config, input))
+      ? JSON.stringify(acquisitionBody(input))
       : undefined,
     signal: AbortSignal.timeout(config.timeoutMs),
   });
@@ -358,7 +283,6 @@ export function getSpectraActiveAcquisitionCapabilities(): Array<{
   target: SpectraActiveAcquisitionTarget;
 }> {
   return [
-    builtInCamaraAdapter(),
     builtInCiscoSpacesAdapter(),
     ...configuredAdapters(),
   ].filter((item): item is ActiveProviderConfig => Boolean(item))
@@ -374,7 +298,6 @@ export async function acquireSpectraActiveTelemetry(
   input: SpectraActiveAcquisitionInput,
 ): Promise<SpectraActiveAcquisitionResult> {
   const adapters = [
-    builtInCamaraAdapter(),
     builtInCiscoSpacesAdapter(),
     ...configuredAdapters(),
   ].filter((item): item is ActiveProviderConfig => Boolean(item));
@@ -392,7 +315,7 @@ export async function acquireSpectraActiveTelemetry(
             status: 'skipped' as const,
             normalizerKind: config.normalizerKind,
             measurementCount: 0,
-            reason: 'Required target identifier was not supplied.',
+            reason: 'Required managed-device identifier was not supplied.',
           },
         };
       }
