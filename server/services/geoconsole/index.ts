@@ -80,7 +80,9 @@ export class HybridGeoconsole extends EventEmitter {
   private orchestrationConfig: GeoconsoleOrchestrationConfig;
   private orchestrationState: OrchestrationState;
   
-  // In-memory storage (NO disk writes)
+  // Derived per-process caches only. Canonical SPECTRA investigation evidence
+  // is durable in PostgreSQL/Supabase and report routes rehydrate these caches
+  // from the owned durable observation history after restart or eviction.
   private locationCache: Map<string, GPSPoint[]> = new Map();
   private pathCache: Map<string, InterpolatedPath> = new Map();
   private trailCache: Map<string, MotionTrail> = new Map();
