@@ -152,6 +152,14 @@ function normalizeProviderResponse(
 }
 
 function configuredAdapters(): ActiveProviderConfig[] {
+  const disallowedActiveNormalizers = new Set<string>([
+    'camara-location-retrieval',
+    'camara-location-verification',
+    'camara-reachability',
+    'camara-number-verification',
+    'camara-device-identifier',
+    'camara-kyc-match',
+  ]);
   const raw = String(process.env.SPECTRA_ACTIVE_PROVIDER_ADAPTERS || '').trim();
   if (!raw) return [];
   try {
@@ -175,6 +183,7 @@ function configuredAdapters(): ActiveProviderConfig[] {
         || !httpsUrl(validationUrl)
         || !['GET', 'POST'].includes(method)
         || !['device', 'none'].includes(target)
+        || disallowedActiveNormalizers.has(normalizerKind)
         || (
           normalizerKind !== 'canonical-telemetry'
           && !SPECTRA_PROVIDER_NORMALIZER_KINDS.includes(
