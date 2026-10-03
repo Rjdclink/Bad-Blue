@@ -52,6 +52,9 @@ const publicRetrieval = read('server/services/spectra/SpectraPublicRetrieval.ts'
 const cameraDirectories = read('server/services/spectra/SpectraCameraDirectoryAdapters.ts');
 const motionContext = read('server/services/spectra/SpectraMotionContext.ts');
 const monteCarlo = read('server/services/geoconsole/monteCarloPathEngine.ts');
+const geoconsole = read('server/services/geoconsole/index.ts');
+const constraintEstimator = read('server/services/spectra/SpectraConstraintStateEstimator.ts');
+const constraintEstimatorVerifier = read('scripts/verify-spectra-constraint-state-estimator.ts');
 const lexaraConversation = read('client/src/components/LexaraConversation.tsx');
 const spectraMigration = read('server/migrations/064_spectra_durable_observations.sql');
 const motionContextMigration = read('server/migrations/067_spectra_motion_context.sql');
@@ -719,6 +722,37 @@ test('Generic vehicle/camera feeds preserve track identity and velocity context'
   geoconsoleRoutes.includes(': inputMetadata.velocity'));
 test('SPECTRA API is mounted',
   serverRoutes.includes("app.use('/api/spectra', spectraRoutes.default)"));
+test('SPECTRA treats the target path as a hidden state across telemetry updates',
+  constraintEstimator.includes("algorithm: 'constant_velocity_kalman_rts'") &&
+  constraintEstimator.includes('MAX_NIS_BEFORE_ROBUST_INFLATION') &&
+  constraintEstimator.includes('spectra_backward_rts_smoother') &&
+  constraintEstimator.includes('robustMeasurementInflation') &&
+  geoconsole.includes('mergeSessionEvidence') &&
+  geoconsole.includes('estimateSpectraConstraintState') &&
+  geoconsole.includes('stateEstimatedPoints'));
+test('SPECTRA keeps bounded recent evidence across batches without reusing predictions as observations',
+  geoconsole.includes('historyCutoff = minimumIncomingTime - 15 * 60_000') &&
+  geoconsole.includes('cacheCutoff = maximumIncomingTime - 60 * 60_000') &&
+  geoconsole.includes('.slice(-500)') &&
+  geoconsole.includes("point.observationKind !== 'predicted'") &&
+  geoconsole.includes("point.observationKind !== 'interpolated'"));
+test('SPECTRA dependency graph prevents republished evidence from earning false independence',
+  fusion.includes('evidenceDependencyId') &&
+  fusion.includes('derivedFromEvidenceGroup') &&
+  fusion.includes('correlationDomain') &&
+  fusion.includes("return `domain:${dependency}`") &&
+  geoconsole.includes('evidenceDependencyId') &&
+  geoconsole.includes('derivedFromEvidenceGroup'));
+test('GeoConsole exposes the state estimator while preserving canonical fused evidence',
+  geoconsoleRoutes.includes('stateEstimatedPoints: signedStateEstimatedPoints') &&
+  geoconsoleRoutes.includes('constraintState: result.constraintState') &&
+  geoconsoleRoutes.includes("hiddenStateEstimation: 'constant_velocity_kalman_rts'") &&
+  geoconsoleRoutes.includes('backwardTrajectorySmoothing: true') &&
+  geoconsoleRoutes.includes('correlationDependencyGraph: true'));
+test('Constraint-state behavior has executable regression coverage',
+  constraintEstimatorVerifier.includes('robustlyDownweightedCount >= 1') &&
+  constraintEstimatorVerifier.includes('segmentCount, 2') &&
+  constraintEstimatorVerifier.includes("backwardSmoothed, true"));
 
 console.log(`\nPassed: ${passed}  Failed: ${failed}\n`);
 process.exit(failed === 0 ? 0 : 1);
