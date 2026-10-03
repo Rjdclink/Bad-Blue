@@ -43,6 +43,7 @@ import {
 } from '../services/spectra/SpectraAcquisitionPersistence';
 import { acquireSpectraPlaceContext } from '../services/spectra/SpectraPlaceContext';
 import { retrieveSpectraPublicEvidence } from '../services/spectra/SpectraPublicRetrieval';
+import { assessSpectraLiveLocation } from '../services/spectra/SpectraLiveConfidence';
 import { acquireConfiguredSpectraCameras } from '../services/spectra/SpectraCameraDirectoryAdapters';
 
 const router = Router();
@@ -1120,9 +1121,13 @@ router.post('/acquire', async (req: Request, res: Response) => {
           (b.point.accuracy ?? Number.MAX_SAFE_INTEGER)
       )[0];
 
-    const locationConfidence = canonicalLatest?.qualityScore
+    const baselineLocationConfidence = canonicalLatest?.qualityScore
       ?? candidateLocations[0]?.confidence
       ?? 0;
+    const liveLocationAssessment = assessSpectraLiveLocation(qualityLocationObservations);
+    const locationConfidence = liveLocationAssessment.isLive
+      ? liveLocationAssessment.confidenceScore
+      : baselineLocationConfidence;
 
     const sourceKeys = new Set<string>();
     for (const point of directEvidence) {
@@ -1192,6 +1197,12 @@ router.post('/acquire', async (req: Request, res: Response) => {
       state: {
         identityConfidence,
         locationConfidence,
+        liveLocationStatus: liveLocationAssessment.status,
+        liveLocationConfidence: liveLocationAssessment.confidenceScore,
+        liveLocationExceedsNinetyNinePercent: liveLocationAssessment.exceedsNinetyNinePercent,
+        liveLocationSourceFamilies: liveLocationAssessment.independentFamilyCount,
+        liveLocationStrongFamilies: liveLocationAssessment.strongConsensusFamilyCount,
+        liveLocationContradictions: liveLocationAssessment.contradictionCount,
         sourceCount: sourceKeys.size,
         discoveryPasses,
         discoveryQueriesAttempted,
@@ -1221,6 +1232,13 @@ router.post('/acquire', async (req: Request, res: Response) => {
       acquisition: {
         identityConfidence,
         locationConfidence,
+        liveLocationStatus: liveLocationAssessment.status,
+        liveLocationConfidence: liveLocationAssessment.confidenceScore,
+        liveLocationExceedsNinetyNinePercent: liveLocationAssessment.exceedsNinetyNinePercent,
+        liveLocationSourceFamilies: liveLocationAssessment.independentFamilyCount,
+        liveLocationStrongFamilies: liveLocationAssessment.strongConsensusFamilyCount,
+        liveLocationContradictions: liveLocationAssessment.contradictionCount,
+        liveLocationFreshestAgeMs: liveLocationAssessment.freshestAgeMs,
         sourceCount: sourceKeys.size,
         evidenceItemCount:
           directEvidence.length +
@@ -1240,6 +1258,7 @@ router.post('/acquire', async (req: Request, res: Response) => {
       locationObservations,
       candidateLocations,
       contextEvidence,
+      liveLocationAssessment,
       evidence: {
         contactInformation: report.contactInformation || [],
         locationHistory: report.locationHistory || [],
