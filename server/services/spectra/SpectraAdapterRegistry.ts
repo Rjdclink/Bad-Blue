@@ -146,6 +146,16 @@ export const SPECTRA_ADAPTER_CAPABILITIES: SpectraAdapterCapability[] = [
     notes: 'Preserves GNSS clock, pseudorange/rate, ADR/carrier-frequency and C/N0 metadata; supplied fixes enter canonical fusion.',
   },
   {
+    id: 'gnss-precision-solution-ingest',
+    label: 'RTK / PPP precision GNSS solution ingest',
+    mode: 'provider-webhook',
+    sourceTypes: ['gnss_fix','gnss_raw'],
+    configured: () => anyEnv('SPECTRA_TELEMETRY_HMAC_SECRET'),
+    priority: 'critical',
+    supportsRealtime: true,
+    notes: 'Normalizes RTK/NRTK/VRS/PPP/PPP-RTK/SBAS/DGNSS solutions with NTRIP/RTCM correction age, covariance, ambiguity status and protection levels.',
+  },
+  {
     id: 'apple-nearby-interaction-ingest',
     label: 'Apple Nearby Interaction ingest',
     mode: 'provider-webhook',
