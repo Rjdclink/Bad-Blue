@@ -1,12 +1,20 @@
+import {
+  normalizeSpectraAdvancedRadioPayload,
+  SPECTRA_ADVANCED_RADIO_NORMALIZER_KINDS,
+  type SpectraAdvancedRadioNormalizerKind,
+} from './SpectraAdvancedRadioNormalizer';
+
 export type SpectraProviderNormalizerKind =
   | 'camara-location-retrieval'
   | 'bluetooth-scanner'
-  | 'accessory-network';
+  | 'accessory-network'
+  | SpectraAdvancedRadioNormalizerKind;
 
 export const SPECTRA_PROVIDER_NORMALIZER_KINDS: readonly SpectraProviderNormalizerKind[] = [
   'camara-location-retrieval',
   'bluetooth-scanner',
   'accessory-network',
+  ...SPECTRA_ADVANCED_RADIO_NORMALIZER_KINDS,
 ] as const;
 
 export interface SpectraNormalizedProviderBatch {
@@ -390,6 +398,13 @@ export function normalizeSpectraProviderPayload(
     case 'accessory-network':
       return normalizeAccessoryNetwork(payload, normalizedProviderId);
     default:
+      if ((SPECTRA_ADVANCED_RADIO_NORMALIZER_KINDS as readonly string[]).includes(kind)) {
+        return normalizeSpectraAdvancedRadioPayload(
+          kind as SpectraAdvancedRadioNormalizerKind,
+          normalizedProviderId,
+          payload,
+        );
+      }
       throw new SpectraProviderNormalizationError('Unsupported SPECTRA provider normalizer.');
   }
 }
