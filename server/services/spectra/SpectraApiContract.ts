@@ -82,6 +82,23 @@ export function getSpectraOpenApiDocument() {
           },
         },
       },
+      '/live': {
+        get: {
+          operationId: 'spectraLive',
+          summary: 'Lightweight liveness probe with no dependency checks',
+          responses: { '200': { description: 'Process is live' } },
+        },
+      },
+      '/ready': {
+        get: {
+          operationId: 'spectraReady',
+          summary: 'Readiness probe for critical persistence dependency',
+          responses: {
+            '200': { description: 'Ready to accept SPECTRA work' },
+            '503': { description: 'Critical persistence dependency unavailable' },
+          },
+        },
+      },
       '/health': {
         get: {
           operationId: 'spectraHealth',
