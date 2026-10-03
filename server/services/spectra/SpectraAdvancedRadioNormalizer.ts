@@ -1,3 +1,5 @@
+import { parse as parseCsv } from 'csv-parse/sync';
+
 export const SPECTRA_ADVANCED_RADIO_NORMALIZER_KINDS = [
   'bluetooth-channel-sounding',
   'ble-direction-finding',
@@ -584,12 +586,29 @@ function normalizeAndroidCellular(
     if (!type || !timestamp) continue;
 
     const mcc = bounded(cell.mcc ?? cell.mobileCountryCode, 0, 999);
-    const mnc = bounded(cell.mnc ?? cell.mobileNetworkCode, 0, 32767);
+    const systemId = finite(cell.systemId ?? cell.sid);
+    const networkId = finite(cell.networkId ?? cell.nid);
+    const baseStationId = finite(cell.baseStationId ?? cell.bid);
+    const mnc = bounded(
+      cell.mnc
+      ?? cell.mobileNetworkCode
+      ?? (type === 'cdma' ? systemId : undefined),
+      0,
+      32767,
+    );
     const lacTac = finite(
-      cell.lac ?? cell.tac ?? cell.locationAreaCode ?? cell.trackingAreaCode
+      cell.lac
+      ?? cell.tac
+      ?? cell.locationAreaCode
+      ?? cell.trackingAreaCode
+      ?? (type === 'cdma' ? networkId : undefined)
     );
     const cellId = finite(
-      cell.cellId ?? cell.cid ?? cell.ci ?? cell.eci ?? cell.baseStationId
+      cell.cellId
+      ?? cell.cid
+      ?? cell.ci
+      ?? cell.eci
+      ?? (type === 'cdma' ? baseStationId : cell.baseStationId)
     );
     const nci = finite(cell.nci ?? cell.newRadioCellId);
     const pci = finite(cell.pci ?? cell.physicalCellId ?? cell.psc);
@@ -691,7 +710,21 @@ function normalizeAndroidCellular(
           pci,
           arfcn,
           radioType: type,
+          systemId: type === 'cdma' ? systemId : undefined,
+          networkId: type === 'cdma' ? networkId : undefined,
+          baseStationId: type === 'cdma' ? baseStationId : undefined,
         },
+        csiCqiReport: (() => {
+          const signalRecord = record(cell.signal || cell.signalStrength || {});
+          const report =
+            (Array.isArray(signalRecord.csiCqiReport) ? signalRecord.csiCqiReport : null)
+            || (Array.isArray(signalRecord.cqiReport) ? signalRecord.cqiReport : null)
+            || (Array.isArray(cell.csiCqiReport) ? cell.csiCqiReport : null)
+            || (Array.isArray(cell.cqiReport) ? cell.cqiReport : null);
+          return report
+            ? report.map((value: unknown) => finite(value)).filter((value): value is number => value !== null).slice(0, 32)
+            : undefined;
+        })(),
       },
     });
   }
@@ -718,44 +751,70 @@ function normalizeAndroidRawGnss(
   for (const raw of epochs.slice(0, 1000)) {
     const epoch = record(raw);
     const timestamp = timestampValue(
-      epoch.timestamp || epoch.observedAt || epoch.utcTime || wrapped.body.timestamp
+      epoch.timestamp
+      || epoch.observedAt
+      || epoch.utcTime
+      || epoch.utcTimeMillis
+      || epoch.UtcTimeMillis
+      || wrapped.body.timestamp
     );
     if (!timestamp) continue;
 
-    const clock = record(epoch.clock);
-    const satellites = list(epoch.satellites || epoch.gnssMeasurements).slice(0, 128)
+    const epochClock = record(epoch.clock);
+    const clock = Object.keys(epochClock).length ? epochClock : epoch;
+    const rawSatellites = list(epoch.satellites || epoch.gnssMeasurements);
+    const satellites = (rawSatellites.length ? rawSatellites : [epoch]).slice(0, 128)
       .map(rawSatellite => {
         const satellite = record(rawSatellite);
         return {
-          svid: finite(satellite.svid),
+          svid: finite(satellite.svid ?? satellite.Svid),
           constellationType: finite(
-            satellite.constellationType ?? satellite.constellation
+            satellite.constellationType
+            ?? satellite.ConstellationType
+            ?? satellite.constellation
           ),
-          receivedSvTimeNanos: finite(satellite.receivedSvTimeNanos),
+          receivedSvTimeNanos: finite(
+            satellite.receivedSvTimeNanos ?? satellite.ReceivedSvTimeNanos
+          ),
           receivedSvTimeUncertaintyNanos: finite(
             satellite.receivedSvTimeUncertaintyNanos
+            ?? satellite.ReceivedSvTimeUncertaintyNanos
           ),
-          pseudorangeMeters: finite(satellite.pseudorangeMeters),
+          pseudorangeMeters: finite(
+            satellite.pseudorangeMeters ?? satellite.PseudorangeMeters
+          ),
           pseudorangeRateMetersPerSecond: finite(
             satellite.pseudorangeRateMetersPerSecond
+            ?? satellite.PseudorangeRateMetersPerSecond
           ),
           pseudorangeRateUncertaintyMetersPerSecond: finite(
             satellite.pseudorangeRateUncertaintyMetersPerSecond
+            ?? satellite.PseudorangeRateUncertaintyMetersPerSecond
           ),
           accumulatedDeltaRangeMeters: finite(
             satellite.accumulatedDeltaRangeMeters
+            ?? satellite.AccumulatedDeltaRangeMeters
           ),
           accumulatedDeltaRangeUncertaintyMeters: finite(
             satellite.accumulatedDeltaRangeUncertaintyMeters
+            ?? satellite.AccumulatedDeltaRangeUncertaintyMeters
           ),
-          carrierFrequencyHz: finite(satellite.carrierFrequencyHz),
-          cn0DbHz: finite(satellite.cn0DbHz),
-          basebandCn0DbHz: finite(satellite.basebandCn0DbHz),
-          codeType: stringValue(satellite.codeType, 40),
-          multipathIndicator: finite(satellite.multipathIndicator),
-          state: finite(satellite.state),
+          carrierFrequencyHz: finite(
+            satellite.carrierFrequencyHz ?? satellite.CarrierFrequencyHz
+          ),
+          cn0DbHz: finite(satellite.cn0DbHz ?? satellite.Cn0DbHz),
+          basebandCn0DbHz: finite(
+            satellite.basebandCn0DbHz ?? satellite.BasebandCn0DbHz
+          ),
+          codeType: stringValue(satellite.codeType ?? satellite.CodeType, 40),
+          multipathIndicator: finite(
+            satellite.multipathIndicator ?? satellite.MultipathIndicator
+          ),
+          state: finite(satellite.state ?? satellite.State),
           adrState: finite(
-            satellite.accumulatedDeltaRangeState ?? satellite.adrState
+            satellite.accumulatedDeltaRangeState
+            ?? satellite.AccumulatedDeltaRangeState
+            ?? satellite.adrState
           ),
         };
       });
@@ -774,17 +833,17 @@ function normalizeAndroidRawGnss(
     const rawMetadata = {
       providerKind: 'android-raw-gnss',
       clock: {
-        timeNanos: finite(clock.timeNanos),
-        fullBiasNanos: finite(clock.fullBiasNanos),
-        biasNanos: finite(clock.biasNanos),
-        biasUncertaintyNanos: finite(clock.biasUncertaintyNanos),
-        timeUncertaintyNanos: finite(clock.timeUncertaintyNanos),
-        driftNanosPerSecond: finite(clock.driftNanosPerSecond),
+        timeNanos: finite(clock.timeNanos ?? clock.TimeNanos),
+        fullBiasNanos: finite(clock.fullBiasNanos ?? clock.FullBiasNanos),
+        biasNanos: finite(clock.biasNanos ?? clock.BiasNanos),
+        biasUncertaintyNanos: finite(clock.biasUncertaintyNanos ?? clock.BiasUncertaintyNanos),
+        timeUncertaintyNanos: finite(clock.timeUncertaintyNanos ?? clock.TimeUncertaintyNanos),
+        driftNanosPerSecond: finite(clock.driftNanosPerSecond ?? clock.DriftNanosPerSecond),
         driftUncertaintyNanosPerSecond: finite(
-          clock.driftUncertaintyNanosPerSecond
+          clock.driftUncertaintyNanosPerSecond ?? clock.DriftUncertaintyNanosPerSecond
         ),
         hardwareClockDiscontinuityCount: finite(
-          clock.hardwareClockDiscontinuityCount
+          clock.hardwareClockDiscontinuityCount ?? clock.HardwareClockDiscontinuityCount
         ),
       },
       satellites,
@@ -906,7 +965,12 @@ function normalizeAppleNearbyInteraction(
       );
       measurements.push({
         kind: 'position',
-        source: mode === 'dl-tdoa' ? 'uwb_direction' : 'uwb_range',
+        source:
+          mode === 'bluetooth-channel-sounding'
+            ? 'bluetooth_proximity'
+            : mode === 'dl-tdoa'
+              ? 'uwb_direction'
+              : 'uwb_range',
         timestamp,
         latitude: solutionLatitude,
         longitude: solutionLongitude,
@@ -1337,13 +1401,71 @@ function inferRecordKind(row: Record<string, any>): Exclude<
   return null;
 }
 
+function parseCsvRecords(text: string): Record<string, any>[] {
+  const lines = text.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  if (!lines.length) return [];
+
+  const gnssHeader = lines.find(line => /^#\s*Raw,/i.test(line));
+  if (gnssHeader) {
+    const header = gnssHeader.replace(/^#\s*/, '');
+    const rawLines = lines.filter(line => /^Raw,/i.test(line)).slice(0, 5000);
+    const parsed: Record<string, any>[] = [];
+    for (const rawLine of rawLines) {
+      try {
+        const rows = parseCsv(`${header}\n${rawLine}`, {
+          columns: true,
+          skip_empty_lines: true,
+          trim: true,
+          relax_column_count: true,
+        }) as Record<string, any>[];
+        for (const row of rows) {
+          parsed.push({
+            ...row,
+            kind: 'gnss-raw',
+            recordType: 'gnsslogger-raw',
+            timestamp:
+              row.UtcTimeMillis
+              ?? row.utcTimeMillis
+              ?? row.utcTime
+              ?? row.timestamp,
+          });
+        }
+      } catch {
+        // Ignore malformed rows while preserving other valid logger records.
+      }
+    }
+    if (parsed.length) return parsed;
+  }
+
+  try {
+    const parsed = parseCsv(text, {
+      columns: true,
+      skip_empty_lines: true,
+      trim: true,
+      relax_column_count: true,
+      comment: '#',
+    }) as Record<string, any>[];
+    return parsed.slice(0, 5000);
+  } catch {
+    return [];
+  }
+}
+
 function parseUniversalRecords(body: Record<string, any>): Record<string, any>[] {
   if (Array.isArray(body.records)) return body.records.map(record);
   if (Array.isArray(body.rows)) return body.rows.map(record);
   if (Array.isArray(body.measurements)) return body.measurements.map(record);
 
   if (typeof body.text === 'string') {
-    const lines = body.text.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+    const text = body.text.trim();
+    if (!text) return [];
+
+    if (text.includes(',')) {
+      const csvRecords = parseCsvRecords(text);
+      if (csvRecords.length) return csvRecords;
+    }
+
+    const lines = text.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
     const parsed: Record<string, any>[] = [];
     for (const line of lines.slice(0, 5000)) {
       try {
@@ -1352,7 +1474,7 @@ function parseUniversalRecords(body: Record<string, any>): Record<string, any>[]
           parsed.push(record(value));
         }
       } catch {
-        // Preserve unknown plain-text lines as context records rather than guessing fields.
+        // Preserve unknown plain-text rows without guessing a location or timestamp.
         parsed.push({ kind: 'raw-log-line', raw: line });
       }
     }
