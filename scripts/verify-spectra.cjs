@@ -125,12 +125,11 @@ test('Regional candidates remain separate from timed observations',
 test('One-hour previous/future timeline remains available',
   dashboard.includes('min={-60}') && dashboard.includes('max={60}'));
 
-test('SPECTRA remains visible but disabled while normal LegalWhat access is restored',
-  welcome.includes('SPECTRA') &&
-  welcome.includes('disabled') &&
-  welcome.includes('aria-disabled="true"') &&
-  welcome.includes('Temporarily out of order. Contact contact.badblue@gmail.com for assistance.') &&
-  !welcome.includes("setLocation('/spectra')"));
+test('SPECTRA stays hidden from the normal library and launches contextually from Lexara',
+  !welcome.includes('name: "SPECTRA"') &&
+  !welcome.includes('route: "/spectra"') &&
+  lexaraConversation.includes('data-testid="lexara-spectra-launch"') &&
+  lexaraConversation.includes("setLocation('/spectra')"));
 test('Landing acknowledgement restores signup/Square flow while master access still bypasses payment',
   landing.includes("onClick={() => setLocation('/login')}") &&
   !landing.includes("onClick={() => setLocation('/welcome')}") &&
