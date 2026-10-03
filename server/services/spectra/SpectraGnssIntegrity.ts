@@ -65,6 +65,14 @@ const ADR_STATE_CYCLE_SLIP = 4;
 const MULTIPATH_DETECTED = 1;
 
 function finite(value: unknown): number | null {
+  if (
+    value === null
+    || value === undefined
+    || value === ''
+    || typeof value === 'boolean'
+  ) {
+    return null;
+  }
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 }
