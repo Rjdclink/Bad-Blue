@@ -72,8 +72,10 @@ import {
   findSpectraPublicGtfsRealtimeFeeds,
   getSpectraPublicFeedCatalogSource,
 } from '../services/spectra/SpectraPublicFeedRegistry';
+import { spectraApiVersionHeaders } from '../services/spectra/SpectraApiContract';
 
 const router = Router();
+router.use(spectraApiVersionHeaders);
 const log = createLogger('GeoconsoleRoutes');
 const telemetryImportUpload = multer({
   storage: multer.memoryStorage(),
