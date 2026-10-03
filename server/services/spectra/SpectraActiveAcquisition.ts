@@ -22,6 +22,7 @@ export interface SpectraActiveAcquisitionInput {
   deviceRef?: string;
   sessionId?: string;
   subjectLabel?: string;
+  signal?: AbortSignal;
 }
 
 export interface SpectraActiveAcquisitionAttempt {
@@ -338,22 +339,35 @@ async function fetchAdapter(
     headers.Authorization = `Bearer ${headers.Authorization}`;
   }
 
-  const response = await fetch(url, {
-    method: config.method,
-    headers,
-    redirect: 'error',
-    body: config.method === 'POST'
-      ? JSON.stringify(acquisitionBody(input))
-      : undefined,
-    signal: AbortSignal.timeout(config.timeoutMs),
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => {
+    controller.abort(new Error(`SPECTRA active-provider timeout after ${config.timeoutMs}ms`));
+  }, config.timeoutMs);
+  const relayAbort = () => controller.abort(input.signal?.reason);
+  if (input.signal?.aborted) relayAbort();
+  else input.signal?.addEventListener('abort', relayAbort, { once: true });
 
-  if (!response.ok) {
-    throw new Error(`Active provider returned HTTP ${response.status}.`);
+  try {
+    const response = await fetch(url, {
+      method: config.method,
+      headers,
+      redirect: 'error',
+      body: config.method === 'POST'
+        ? JSON.stringify(acquisitionBody(input))
+        : undefined,
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      throw new Error(`Active provider returned HTTP ${response.status}.`);
+    }
+
+    const payload = await response.json();
+    return normalizeProviderResponse(payload, config, input);
+  } finally {
+    clearTimeout(timeout);
+    input.signal?.removeEventListener('abort', relayAbort);
   }
-
-  const payload = await response.json();
-  return normalizeProviderResponse(payload, config, input);
 }
 
 export function getSpectraActiveAcquisitionCapabilities(): Array<{
