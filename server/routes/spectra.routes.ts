@@ -70,7 +70,7 @@ const directEvidenceSchema = z.object({
 
 const acquireSchema = z.object({
   target: z.string().trim().min(1).max(500),
-  details: z.string().trim().min(1).max(4000),
+  details: z.string().trim().min(1).max(12_000),
   sessionId: z.string().trim().min(1).max(200).optional(),
   directEvidence: z.array(directEvidenceSchema).max(20).default([]),
 });
