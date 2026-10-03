@@ -8,6 +8,10 @@ import { normalizeSpectraProviderPayload } from '../server/services/spectra/Spec
 
 const originalFetch = globalThis.fetch;
 const savedEnv = {
+  androidUrl: process.env.SPECTRA_ANDROID_MDM_LOCATION_URL_TEMPLATE,
+  androidToken: process.env.SPECTRA_ANDROID_MDM_LOCATION_TOKEN,
+  appleUrl: process.env.SPECTRA_APPLE_MDM_LOCATION_URL_TEMPLATE,
+  appleToken: process.env.SPECTRA_APPLE_MDM_LOCATION_TOKEN,
   ciscoUrl: process.env.SPECTRA_CISCO_SPACES_DEVICE_URL_TEMPLATE,
   ciscoToken: process.env.SPECTRA_CISCO_SPACES_TOKEN,
   activeAdapters: process.env.SPECTRA_ACTIVE_PROVIDER_ADAPTERS,
@@ -20,6 +24,92 @@ function restoreEnv(name: string, value: string | undefined) {
 }
 
 try {
+  process.env.SPECTRA_ANDROID_MDM_LOCATION_URL_TEMPLATE =
+    'https://emm.example/devices/{{deviceRef}}/latest-location';
+  process.env.SPECTRA_ANDROID_MDM_LOCATION_TOKEN = 'android-token';
+  delete process.env.SPECTRA_APPLE_MDM_LOCATION_URL_TEMPLATE;
+  delete process.env.SPECTRA_APPLE_MDM_LOCATION_TOKEN;
+  delete process.env.SPECTRA_CISCO_SPACES_DEVICE_URL_TEMPLATE;
+  delete process.env.SPECTRA_CISCO_SPACES_TOKEN;
+  process.env.SPECTRA_ACTIVE_PROVIDER_ADAPTERS = '[]';
+
+  globalThis.fetch = async (input: any, init?: RequestInit) => {
+    assert.equal(String(input), 'https://emm.example/devices/android-a/latest-location');
+    assert.equal(
+      (init?.headers as Record<string, string>)?.Authorization,
+      'Bearer android-token',
+    );
+    return new Response(JSON.stringify({
+      usageLogEvents: [{
+        eventTime: '2026-10-03T14:58:00Z',
+        eventId: 'android-event-1',
+        lostModeLocationEvent: {
+          batteryLevel: 72,
+          location: {
+            latitude: 43.549,
+            longitude: -96.729,
+          },
+        },
+      }],
+      device: 'enterprises/e/devices/android-a',
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const android = await acquireSpectraActiveTelemetry({
+    deviceRef: 'android-a',
+    sessionId: 'fixture-session',
+    subjectLabel: 'managed android',
+  });
+  assert.equal(android.batches.length, 1);
+  assert.equal(android.batches[0]?.measurements[0]?.source, 'device_gps');
+  assert.equal(
+    (android.batches[0]?.measurements[0]?.metadata as any)?.providerKind,
+    'android-managed-lost-mode',
+  );
+
+  delete process.env.SPECTRA_ANDROID_MDM_LOCATION_URL_TEMPLATE;
+  delete process.env.SPECTRA_ANDROID_MDM_LOCATION_TOKEN;
+  process.env.SPECTRA_APPLE_MDM_LOCATION_URL_TEMPLATE =
+    'https://mdm.example/devices/{{deviceRef}}/latest-location';
+  process.env.SPECTRA_APPLE_MDM_LOCATION_TOKEN = 'apple-token';
+
+  globalThis.fetch = async (input: any, init?: RequestInit) => {
+    assert.equal(String(input), 'https://mdm.example/devices/apple-a/latest-location');
+    assert.equal(
+      (init?.headers as Record<string, string>)?.Authorization,
+      'Bearer apple-token',
+    );
+    return new Response(JSON.stringify({
+      UDID: 'apple-a',
+      Status: 'Acknowledged',
+      Timestamp: '2026-10-03T14:59:00Z',
+      Latitude: 43.550,
+      Longitude: -96.730,
+      HorizontalAccuracy: 3.5,
+      VerticalAccuracy: 5,
+      Speed: 1.2,
+      Course: 180,
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const apple = await acquireSpectraActiveTelemetry({
+    deviceRef: 'apple-a',
+    sessionId: 'fixture-session',
+    subjectLabel: 'supervised apple',
+  });
+  assert.equal(apple.batches.length, 1);
+  assert.equal(apple.batches[0]?.measurements[0]?.source, 'device_gps');
+  assert.equal(apple.batches[0]?.measurements[0]?.speed, 1.2);
+  assert.equal(apple.batches[0]?.measurements[0]?.heading, 180);
+
+  delete process.env.SPECTRA_APPLE_MDM_LOCATION_URL_TEMPLATE;
+  delete process.env.SPECTRA_APPLE_MDM_LOCATION_TOKEN;
   process.env.SPECTRA_CISCO_SPACES_DEVICE_URL_TEMPLATE =
     'https://dnaspaces.example/api/location/v1/clients/{{deviceRef}}';
   process.env.SPECTRA_CISCO_SPACES_TOKEN = 'fixture-cisco-token';
@@ -172,6 +262,22 @@ try {
   console.log('SPECTRA managed-device active acquisition and anchor verification passed.');
 } finally {
   globalThis.fetch = originalFetch;
+  restoreEnv(
+    'SPECTRA_ANDROID_MDM_LOCATION_URL_TEMPLATE',
+    savedEnv.androidUrl,
+  );
+  restoreEnv(
+    'SPECTRA_ANDROID_MDM_LOCATION_TOKEN',
+    savedEnv.androidToken,
+  );
+  restoreEnv(
+    'SPECTRA_APPLE_MDM_LOCATION_URL_TEMPLATE',
+    savedEnv.appleUrl,
+  );
+  restoreEnv(
+    'SPECTRA_APPLE_MDM_LOCATION_TOKEN',
+    savedEnv.appleToken,
+  );
   restoreEnv(
     'SPECTRA_CISCO_SPACES_DEVICE_URL_TEMPLATE',
     savedEnv.ciscoUrl,
