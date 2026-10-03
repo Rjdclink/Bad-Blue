@@ -1982,6 +1982,35 @@ function normalizeGnssPrecisionSolution(
       || solution.correctionFormat,
       80,
     );
+    const correctionService = stringValue(
+      correction.service
+      || correction.serviceName
+      || solution.correctionService,
+      120,
+    );
+    const correctionServiceLevel = stringValue(
+      correction.serviceLevel
+      || correction.level
+      || solution.correctionServiceLevel,
+      80,
+    );
+    const correctionConvergenceSeconds = finite(
+      correction.convergenceSeconds
+      ?? correction.convergenceTimeSeconds
+      ?? solution.correctionConvergenceSeconds
+    );
+    const correctionCapabilities = {
+      orbitCorrections: correction.orbitCorrections === true
+        || correction.hasOrbitCorrections === true,
+      clockCorrections: correction.clockCorrections === true
+        || correction.hasClockCorrections === true,
+      codeBiasCorrections: correction.codeBiasCorrections === true
+        || correction.hasCodeBiasCorrections === true,
+      phaseBiasCorrections: correction.phaseBiasCorrections === true
+        || correction.hasPhaseBiasCorrections === true,
+      ionosphericCorrections: correction.ionosphericCorrections === true
+        || correction.hasIonosphericCorrections === true,
+    };
 
     measurements.push({
       kind: 'position',
@@ -2054,6 +2083,10 @@ function normalizeGnssPrecisionSolution(
         correctionAgeSeconds,
         correctionTransport,
         correctionFormat,
+        correctionService,
+        correctionServiceLevel,
+        correctionConvergenceSeconds,
+        correctionCapabilities,
         ntripMountpoint: stringValue(
           correction.mountpoint || solution.ntripMountpoint,
           200,
@@ -2086,6 +2119,7 @@ function normalizeGnssPrecisionSolution(
       correctionAgeSeconds !== null
       || correctionTransport
       || correctionFormat
+      || correctionService
     ) {
       measurements.push(contextMeasurement(
         'gnss_corrections',
@@ -2104,6 +2138,10 @@ function normalizeGnssPrecisionSolution(
           solutionType,
           correctionTransport,
           correctionFormat,
+          correctionService,
+          correctionServiceLevel,
+          correctionConvergenceSeconds,
+          correctionCapabilities,
           ntripMountpoint: stringValue(
             correction.mountpoint || solution.ntripMountpoint,
             200,
