@@ -452,16 +452,19 @@ test('CAMARA verification and reachability remain corroboration context rather t
   externalLocationNormalizer.includes("'location_verification'") &&
   externalLocationNormalizer.includes("'network_reachability'") &&
   geoconsoleRoutes.includes("'location_verification', 'network_reachability'"));
-test('SPECTRA live confidence requires fresh independent consensus and collapses on contradiction',
+test('SPECTRA live confidence is posterior/covariance driven with no hard-coded 99 percent gate',
   routes.includes('assessSpectraLiveLocation(qualityLocationObservations)') &&
   routes.includes('liveLocationAssessment.confidenceScore') &&
-  liveConfidence.includes('consensusAssessments.length < 2') &&
-  liveConfidence.includes('strongConsensus.length < 3') &&
-  liveConfidence.includes('precisionFamilyCount < 2') &&
-  liveConfidence.includes('freshestAgeMs > 30_000') &&
-  liveConfidence.includes('score = Math.min(score, 0.69)') &&
-  liveConfidence.includes('score = Math.max(score, 0.991)') &&
-  liveConfidence.includes('exceedsNinetyNinePercent'));
+  routes.includes('liveLocationRadius99Meters') &&
+  liveConfidence.includes('radiusToSigma') &&
+  liveConfidence.includes('confidenceRadius(posteriorSigma, 0.99)') &&
+  liveConfidence.includes('chiSquareSurvivalApprox') &&
+  liveConfidence.includes('Huber-style continuous down-weighting') &&
+  liveConfidence.includes('combinedIndependentReliability') &&
+  !liveConfidence.includes('0.991') &&
+  !liveConfidence.includes('exceedsNinetyNinePercent') &&
+  !liveConfidence.includes('strongConsensus.length < 3') &&
+  !liveConfidence.includes('precisionFamilyCount < 2'));
 test('CDMA cell identity preserves SID NID and BID through the canonical radio schema',
   advancedRadioNormalizer.includes('cell.systemId ?? cell.sid') &&
   advancedRadioNormalizer.includes('cell.networkId ?? cell.nid') &&
