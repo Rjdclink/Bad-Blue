@@ -204,6 +204,35 @@ function measurement(batch: ReturnType<typeof normalizeSpectraProviderPayload>, 
 
 {
   const batch = normalizeSpectraProviderPayload(
+    'android-ranging-manager',
+    'android-ranging',
+    {
+      results: [{
+        timestamp: '2026-10-02T20:59:55Z',
+        technology: 'UWB',
+        peerId: 'uwb-peer',
+        anchor: { latitude: 43.5446, longitude: -96.7311 },
+        distanceMeters: 7.5,
+        distanceUncertaintyMeters: 0.2,
+        azimuthDegrees: 35,
+        bearingReference: 'true_north',
+      }, {
+        timestamp: '2026-10-02T20:59:55Z',
+        technology: 'Bluetooth Channel Sounding',
+        peerId: 'bt-peer',
+        anchor: { latitude: 43.5447, longitude: -96.7310 },
+        distanceMeters: 5.2,
+        distanceUncertaintyMeters: 0.15,
+      }],
+    },
+  );
+  assert.equal(measurement(batch, 0).source, 'uwb_direction');
+  assert.equal(measurement(batch, 1).source, 'bluetooth_channel_sounding');
+  assert.equal(measurement(batch, 0).metadata.providerKind, 'android-ranging-manager');
+}
+
+{
+  const batch = normalizeSpectraProviderPayload(
     'android-cellular',
     'android-telephony',
     {
@@ -659,6 +688,7 @@ for (const kind of [
   'bluetooth-channel-sounding',
   'ble-direction-finding',
   'android-wifi-ranging',
+  'android-ranging-manager',
   'android-cellular',
   'android-raw-gnss',
   'apple-nearby-interaction',
