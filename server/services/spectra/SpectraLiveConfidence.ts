@@ -64,11 +64,15 @@ interface PreparedMeasurement {
   reliabilityWeight: number;
   baseWeight: number;
   robustWeight: number;
+  correlationKey: string;
+  correlationWeight: number;
+  protectionLevelMeters?: number;
 }
 
 const EARTH_RADIUS_METERS = 6_371_000;
 const DEFAULT_ACCURACY_CONFIDENCE = 0.68;
 const MIN_EVIDENCE_WEIGHT = 1e-6;
+const MIN_LIVE_FRESHNESS_WEIGHT = 0.125;
 const MAX_CONFIDENCE_SCORE = 0.999999;
 
 const FAMILY_FRESHNESS_HALF_LIFE_MS: Record<SpectraLiveSourceFamily, number> = {
@@ -223,6 +227,45 @@ function accuracyConfidenceLevel(
   return DEFAULT_ACCURACY_CONFIDENCE;
 }
 
+function metadataCovarianceSigma(point: GPSPoint): number | null {
+  const covariance = point.metadata?.covariance;
+  if (!covariance || typeof covariance !== 'object') return null;
+  const record = covariance as Record<string, unknown>;
+  const east = Number(record.eastVariance ?? record.xx);
+  const north = Number(record.northVariance ?? record.yy);
+  if (!Number.isFinite(east) || !Number.isFinite(north) || east < 0 || north < 0) {
+    return null;
+  }
+  return Math.sqrt(Math.max(0.0025, (east + north) / 2));
+}
+
+function horizontalProtectionLevel(point: GPSPoint): number | undefined {
+  const value = Number(
+    point.metadata?.horizontalProtectionLevelMeters
+    ?? point.metadata?.hpl
+  );
+  return Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+function correlationKey(
+  point: GPSPoint,
+  family: SpectraLiveSourceFamily,
+): string {
+  const domain = String(
+    point.metadata?.correlationDomain
+    ?? point.metadata?.deviceRef
+    ?? point.metadata?.vehicleRef
+    ?? point.metadata?.peerRef
+    ?? ''
+  ).trim().toLowerCase();
+  if (domain) return `domain:${domain}`;
+
+  const provider = String(point.provenance?.provider || '').trim().toLowerCase();
+  if (provider) return `provider:${provider}`;
+
+  return `family:${family}`;
+}
+
 function radiusToSigma(radiusMeters: number, confidenceLevel: number): number {
   const denominator = Math.sqrt(
     Math.max(1e-12, -2 * Math.log(Math.max(1e-12, 1 - confidenceLevel))),
@@ -293,7 +336,7 @@ function selectFamilyRepresentative(
     const ageMs = Math.max(0, nowMs - timestampMs);
     const accuracy = effectiveAccuracy(point, family);
     const level = accuracyConfidenceLevel(point, family);
-    const sigma = radiusToSigma(accuracy, level);
+    const sigma = metadataCovarianceSigma(point) ?? radiusToSigma(accuracy, level);
     const fresh = freshnessWeight(ageMs, family);
     const reliability = clamp(
       FAMILY_RELIABILITY[family] * clamp(point.confidence, 0.01, 1) * fresh,
@@ -352,13 +395,24 @@ function chiSquareSurvivalApprox(statistic: number, degreesOfFreedom: number): n
 function combinedIndependentReliability(
   measurements: PreparedMeasurement[],
 ): number {
-  let missProbability = 1;
+  const strongestByDomain = new Map<string, number>();
+
   for (const measurement of measurements) {
     const effective = clamp(
-      measurement.reliabilityWeight * measurement.robustWeight,
+      measurement.reliabilityWeight
+      * measurement.robustWeight
+      * measurement.correlationWeight,
       0,
       0.999999,
     );
+    strongestByDomain.set(
+      measurement.correlationKey,
+      Math.max(strongestByDomain.get(measurement.correlationKey) || 0, effective),
+    );
+  }
+
+  let missProbability = 1;
+  for (const effective of strongestByDomain.values()) {
     missProbability *= 1 - effective;
   }
   return clamp(1 - missProbability, 0, MAX_CONFIDENCE_SCORE);
@@ -444,8 +498,24 @@ export function assessSpectraLiveLocation(
       reliabilityWeight: reliability,
       baseWeight: reliability / Math.max(0.0025, sigma ** 2),
       robustWeight: 1,
+      correlationKey: correlationKey(point, family),
+      correlationWeight: 1,
+      protectionLevelMeters: horizontalProtectionLevel(point),
     };
   });
+
+  const correlationCounts = new Map<string, number>();
+  for (const measurement of prepared) {
+    correlationCounts.set(
+      measurement.correlationKey,
+      (correlationCounts.get(measurement.correlationKey) || 0) + 1,
+    );
+  }
+  for (const measurement of prepared) {
+    const count = correlationCounts.get(measurement.correlationKey) || 1;
+    measurement.correlationWeight = 1 / count;
+    measurement.baseWeight *= measurement.correlationWeight;
+  }
 
   let centerX = 0;
   let centerY = 0;
@@ -540,6 +610,10 @@ export function assessSpectraLiveLocation(
     ? nominalPosteriorSigma * residualScale
     : Number.POSITIVE_INFINITY;
 
+  const protectionLevelFloor = prepared.reduce((maximum, measurement) =>
+    Math.max(maximum, measurement.protectionLevelMeters || 0)
+  , 0);
+
   const center = geoFromLocalMeters(
     centerX,
     centerY,
@@ -574,25 +648,40 @@ export function assessSpectraLiveLocation(
   if (residualScale > 2) {
     reasons.push('Posterior uncertainty was inflated because source residuals exceed their reported uncertainty.');
   }
+  if (correlationCounts.size < prepared.length) {
+    reasons.push('Correlated upstream observations were de-weighted to prevent confidence double-counting.');
+  }
+  if (protectionLevelFloor > 0) {
+    reasons.push('The reported 99% radius is not allowed below the supplied horizontal protection level.');
+  }
 
   const freshestAgeMs = Math.min(
     ...sourceAssessments.map(source => source.ageMs),
   );
 
+  const maxFreshnessWeight = Math.max(
+    ...prepared.map(measurement => measurement.freshnessWeight),
+  );
+  const isLive = maxFreshnessWeight >= MIN_LIVE_FRESHNESS_WEIGHT;
+
   const status: SpectraLiveLocationAssessment['status'] =
-    consistencyScore < 0.01 ? 'conflicted'
+    !isLive ? 'stale'
+    : consistencyScore < 0.01 ? 'conflicted'
     : prepared.length >= 2 ? 'corroborated'
     : 'estimated';
 
   return {
     status,
-    isLive: freshnessScore > MIN_EVIDENCE_WEIGHT,
+    isLive,
     confidenceScore: Number(confidenceScore.toFixed(6)),
     confidenceRadiusMeters95: Number(
       confidenceRadius(posteriorSigma, 0.95).toFixed(3),
     ),
     confidenceRadiusMeters99: Number(
-      confidenceRadius(posteriorSigma, 0.99).toFixed(3),
+      Math.max(
+        confidenceRadius(posteriorSigma, 0.99),
+        protectionLevelFloor,
+      ).toFixed(3),
     ),
     posteriorSigmaMeters: Number(posteriorSigma.toFixed(3)),
     effectiveSourceCount: Number(effectiveCount.toFixed(3)),
