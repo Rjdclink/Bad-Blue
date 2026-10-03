@@ -932,6 +932,14 @@ function pointMetadataString(point: GPSPoint, ...keys: string[]): string | null 
   return null;
 }
 
+const GENERIC_TELEMETRY_SUBJECT_RE = /^(?:person|individual|target|device|vehicle|car|truck|business|company|organization|object|place|address|thing|property|phone|phone number)$/i;
+
+function telemetrySubjectsCompatible(existing: string, incoming: string): boolean {
+  if (!existing || !incoming || existing === incoming) return true;
+  if (GENERIC_TELEMETRY_SUBJECT_RE.test(existing) || GENERIC_TELEMETRY_SUBJECT_RE.test(incoming)) return true;
+  return existing.includes(incoming) || incoming.includes(existing);
+}
+
 async function persistTelemetryBatch(input: {
   batch: TelemetryBatch;
   sessionId: string;
@@ -964,7 +972,7 @@ async function persistTelemetryBatch(input: {
         .replace(/\s+/g, ' ')
         .trim()
         .toLowerCase();
-      if (existingSubject && incomingSubject && existingSubject !== incomingSubject) {
+      if (!telemetrySubjectsCompatible(existingSubject, incomingSubject)) {
         throw new Error('SPECTRA telemetry session subject mismatch');
       }
     }
