@@ -130,6 +130,7 @@ COPY --from=builder /app/server/migrations/062_pantheon_discovery_learning.sql .
 COPY --from=builder /app/server/migrations/063_pantheon_generalized_source_learning.sql ./dist/migrations/063_pantheon_generalized_source_learning.sql
 COPY --from=builder /app/server/migrations/064_spectra_durable_observations.sql ./dist/migrations/064_spectra_durable_observations.sql
 COPY --from=builder /app/server/migrations/065_spectra_server_only_access.sql ./dist/migrations/065_spectra_server_only_access.sql
+COPY --from=builder /app/server/migrations/066_spectra_foreign_key_indexes.sql ./dist/migrations/066_spectra_foreign_key_indexes.sql
 COPY --from=builder /app/server/migrations/overflow/001_cryptara_comp_cache.sql ./dist/migrations/overflow/001_cryptara_comp_cache.sql
 COPY --from=builder /app/server/migrations/overflow/002_cryptara_parallel_proxy.sql ./dist/migrations/overflow/002_cryptara_parallel_proxy.sql
 COPY --from=builder /app/server/migrations/overflow/003_cryptocrawler_runtime_prerequisites.sql ./dist/migrations/overflow/003_cryptocrawler_runtime_prerequisites.sql
