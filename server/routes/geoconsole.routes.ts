@@ -1475,6 +1475,9 @@ router.post('/telemetry/provider/:providerId/normalize/:kind', async (req: Reque
           point: signServerEvidence(location.point),
         })) || [],
         trail: processed.result?.trail || null,
+        stateEstimatedPoints:
+          processed.result?.stateEstimatedPoints.map(signServerEvidence) || [],
+        constraintState: processed.result?.constraintState || null,
         futurecast: processed.result?.futurecast.map(signServerEvidence) || [],
         liveAssessment: processed.liveAssessment,
         inputQuality: {
@@ -1521,6 +1524,9 @@ router.post('/telemetry/provider/:providerId', async (req: Request, res: Respons
           point: signServerEvidence(location.point),
         })) || [],
         trail: processed.result?.trail || null,
+        stateEstimatedPoints:
+          processed.result?.stateEstimatedPoints.map(signServerEvidence) || [],
+        constraintState: processed.result?.constraintState || null,
         futurecast: processed.result?.futurecast.map(signServerEvidence) || [],
         liveAssessment: processed.liveAssessment,
         inputQuality: {
@@ -2100,6 +2106,9 @@ router.post('/telemetry/pull/:adapterId', async (req: Request, res: Response) =>
           ...location,
           point: signServerEvidence(location.point),
         })) || [],
+        stateEstimatedPoints:
+          processed.result?.stateEstimatedPoints.map(signServerEvidence) || [],
+        constraintState: processed.result?.constraintState || null,
         futurecast: processed.result?.futurecast.map(signServerEvidence) || [],
         liveAssessment: processed.liveAssessment,
         inputQuality: {
@@ -2146,6 +2155,9 @@ router.post('/telemetry-ingest', async (req: Request, res: Response) => {
           point: signServerEvidence(location.point),
         })) || [],
         trail: processed.result?.trail || null,
+        stateEstimatedPoints:
+          processed.result?.stateEstimatedPoints.map(signServerEvidence) || [],
+        constraintState: processed.result?.constraintState || null,
         futurecast: processed.result?.futurecast.map(signServerEvidence) || [],
         liveAssessment: processed.liveAssessment,
         inputQuality: {
@@ -2935,6 +2947,7 @@ router.post('/process', async (req: Request, res: Response) => {
       ...location,
       point: signServerEvidence(location.point),
     }));
+    const signedStateEstimatedPoints = result.stateEstimatedPoints.map(signServerEvidence);
     const signedTrailPoints = result.trail.points.map(trailPoint => ({
       ...trailPoint,
       position: signServerEvidence(trailPoint.position),
@@ -2947,6 +2960,8 @@ router.post('/process', async (req: Request, res: Response) => {
         sessionId: effectiveSessionId,
         fusedLocations: signedFusedLocations,
         primaryFusedLocations: signedPrimaryFusedLocations,
+        stateEstimatedPoints: signedStateEstimatedPoints,
+        constraintState: result.constraintState,
         trail: {
           id: result.trail.id,
           pointCount: signedTrailPoints.length,
@@ -3045,6 +3060,10 @@ router.get('/status', async (req: Request, res: Response) => {
         capabilities: {
           multimodalFusion: true,
           uncertaintyAwareFusion: true,
+          correlationDependencyGraph: true,
+          hiddenStateEstimation: 'constant_velocity_kalman_rts',
+          backwardTrajectorySmoothing: true,
+          boundedSessionEvidenceMemory: true,
           monteCarloInterpolation: true,
           futurecastPrediction: true,
           mapRenderer: 'maplibre',
