@@ -35,6 +35,7 @@ const geocoder = read('server/services/geoconsole/city-state-geocoder.ts');
 const geoconsoleRoutes = read('server/routes/geoconsole.routes.ts');
 const adapterRegistry = read('server/services/spectra/SpectraAdapterRegistry.ts');
 const providerNormalizer = read('server/services/spectra/SpectraProviderTelemetryNormalizer.ts');
+const advancedRadioNormalizer = read('server/services/spectra/SpectraAdvancedRadioNormalizer.ts');
 const genericPull = read('server/services/spectra/SpectraGenericPullAdapters.ts');
 const realtimeBridge = read('server/services/spectra/SpectraRealtimeBridge.ts');
 const telemetryImport = read('server/services/spectra/SpectraTelemetryImport.ts');
@@ -361,6 +362,74 @@ test('SPECTRA signed provider bridge normalizes carrier, BLE and accessory-netwo
   providerNormalizer.includes("'accessory-network'") &&
   providerNormalizer.includes("source: 'network_region'") &&
   providerNormalizer.includes("kind: 'ranging'"));
+test('Advanced radio normalizers stay on the signed canonical provider bridge',
+  geoconsoleRoutes.includes("router.post('/telemetry/provider/:providerId/normalize/:kind'") &&
+  providerNormalizer.includes('SPECTRA_ADVANCED_RADIO_NORMALIZER_KINDS') &&
+  providerNormalizer.includes('normalizeSpectraAdvancedRadioPayload') &&
+  advancedRadioNormalizer.includes("'bluetooth-channel-sounding'") &&
+  advancedRadioNormalizer.includes("'ble-direction-finding'") &&
+  advancedRadioNormalizer.includes("'android-wifi-ranging'") &&
+  advancedRadioNormalizer.includes("'android-cellular'") &&
+  advancedRadioNormalizer.includes("'android-raw-gnss'") &&
+  advancedRadioNormalizer.includes("'apple-nearby-interaction'") &&
+  advancedRadioNormalizer.includes("'android-radio-collector'") &&
+  advancedRadioNormalizer.includes("'ble-gateway'") &&
+  advancedRadioNormalizer.includes("'lorawan-observation'") &&
+  advancedRadioNormalizer.includes("'universal-radio-log'"));
+test('Bluetooth adapters preserve Channel Sounding PBR/RTT plus AoA/AoD direction data',
+  advancedRadioNormalizer.includes('pbrDistanceMeters') &&
+  advancedRadioNormalizer.includes('rttDistanceMeters') &&
+  advancedRadioNormalizer.includes("methodRaw === 'aod'") &&
+  advancedRadioNormalizer.includes('antennaArrayId') &&
+  advancedRadioNormalizer.includes("source: 'ble_aoa'"));
+test('Android Wi-Fi adapter preserves 802.11az NTB, responder location and Wi-Fi Aware context',
+  advancedRadioNormalizer.includes("'802.11az-ntb'") &&
+  advancedRadioNormalizer.includes('responderLocation') &&
+  advancedRadioNormalizer.includes('wifiAwarePeer') &&
+  advancedRadioNormalizer.includes("source: 'wifi_rtt'"));
+test('Rich cellular schema preserves radio generation, PCI/ARFCN and NR/legacy signal metrics',
+  geoconsoleRoutes.includes('physicalCellId: z.number()') &&
+  geoconsoleRoutes.includes('arfcn: z.number()') &&
+  geoconsoleRoutes.includes('ssRsrpDbm: z.number()') &&
+  geoconsoleRoutes.includes('csiRsrpDbm: z.number()') &&
+  geoconsoleRoutes.includes('csiSinrDb: z.number()') &&
+  geoconsoleRoutes.includes('cqi: z.number()') &&
+  geoconsoleRoutes.includes('rscpDbm: z.number()') &&
+  geoconsoleRoutes.includes('bitErrorRate: z.number()') &&
+  geoconsoleRoutes.includes('sanitizedCellTowers') &&
+  advancedRadioNormalizer.includes('newRadioCellId') &&
+  advancedRadioNormalizer.includes('physicalCellId') &&
+  advancedRadioNormalizer.includes('signalMetrics'));
+test('Raw GNSS adapter preserves clock, pseudorange/rate, ADR, carrier frequency and C/N0',
+  advancedRadioNormalizer.includes('fullBiasNanos') &&
+  advancedRadioNormalizer.includes('biasUncertaintyNanos') &&
+  advancedRadioNormalizer.includes('pseudorangeMeters') &&
+  advancedRadioNormalizer.includes('pseudorangeRateMetersPerSecond') &&
+  advancedRadioNormalizer.includes('accumulatedDeltaRangeMeters') &&
+  advancedRadioNormalizer.includes('carrierFrequencyHz') &&
+  advancedRadioNormalizer.includes('cn0DbHz') &&
+  geoconsoleRoutes.includes("'gnss_raw'"));
+test('Apple Nearby Interaction adapter covers UWB, EDM, DL-TDOA and Bluetooth Channel Sounding',
+  advancedRadioNormalizer.includes("'uwb-edm'") &&
+  advancedRadioNormalizer.includes("'dl-tdoa'") &&
+  advancedRadioNormalizer.includes("'bluetooth-channel-sounding'") &&
+  advancedRadioNormalizer.includes("source: 'uwb_range'") &&
+  advancedRadioNormalizer.includes("source: mode === 'dl-tdoa' ? 'uwb_direction' : 'uwb_range'"));
+test('BLE gateway, LoRa and universal radio-log lanes are registered and bounded',
+  adapterRegistry.includes("id: 'ble-gateway-ingest'") &&
+  adapterRegistry.includes("id: 'lorawan-observation-ingest'") &&
+  adapterRegistry.includes("id: 'universal-radio-log-ingest'") &&
+  advancedRadioNormalizer.includes('observations.slice(0, 4000)') &&
+  advancedRadioNormalizer.includes('uplinks.slice(0, 1024)') &&
+  advancedRadioNormalizer.includes('rows.slice(0, 5000)'));
+test('Advanced adapter registry exposes all requested radio families',
+  adapterRegistry.includes("id: 'bluetooth-channel-sounding-ingest'") &&
+  adapterRegistry.includes("id: 'ble-direction-finding-ingest'") &&
+  adapterRegistry.includes("id: 'android-wifi-ranging-ingest'") &&
+  adapterRegistry.includes("id: 'android-cellular-measurements-ingest'") &&
+  adapterRegistry.includes("id: 'android-raw-gnss-ingest'") &&
+  adapterRegistry.includes("id: 'apple-nearby-interaction-ingest'") &&
+  adapterRegistry.includes("id: 'android-radio-collector-ingest'"));
 test('CAMARA provider normalization preserves circle and polygon uncertainty',
   providerNormalizer.includes("areaType === 'CIRCLE'") &&
   providerNormalizer.includes("areaType === 'POLYGON'") &&
