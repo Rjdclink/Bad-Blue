@@ -38,6 +38,7 @@ const providerNormalizer = read('server/services/spectra/SpectraProviderTelemetr
 const advancedRadioNormalizer = read('server/services/spectra/SpectraAdvancedRadioNormalizer.ts');
 const externalLocationNormalizer = read('server/services/spectra/SpectraExternalLocationNormalizer.ts');
 const liveConfidence = read('server/services/spectra/SpectraLiveConfidence.ts');
+const gnssIntegrity = read('server/services/spectra/SpectraGnssIntegrity.ts');
 const genericPull = read('server/services/spectra/SpectraGenericPullAdapters.ts');
 const realtimeBridge = read('server/services/spectra/SpectraRealtimeBridge.ts');
 const telemetryImport = read('server/services/spectra/SpectraTelemetryImport.ts');
@@ -400,6 +401,23 @@ test('Android RangingManager adapter unifies UWB, Channel Sounding, Wi-Fi NAN RT
   advancedRadioNormalizer.includes("'uwb_direction'") &&
   advancedRadioNormalizer.includes("'ble_rssi'") &&
   adapterRegistry.includes("id: 'android-ranging-manager-ingest'"));
+test('5G NR positioning adapter preserves PRS TDOA RTT angle and NLOS evidence',
+  advancedRadioNormalizer.includes("'nr-positioning'") &&
+  advancedRadioNormalizer.includes("'dl-tdoa'") &&
+  advancedRadioNormalizer.includes("'ul-tdoa'") &&
+  advancedRadioNormalizer.includes("'multi-rtt'") &&
+  advancedRadioNormalizer.includes("'carrier-phase'") &&
+  advancedRadioNormalizer.includes('prsRsrpDbm') &&
+  advancedRadioNormalizer.includes('referenceSignalTimeDifferenceNanos') &&
+  advancedRadioNormalizer.includes('nlosProbability') &&
+  advancedRadioNormalizer.includes("source: 'nr_positioning'") &&
+  adapterRegistry.includes("id: 'nr-positioning-ingest'"));
+test('Android UWB sensor fusion distinguishes precise imprecise and drifting estimates',
+  advancedRadioNormalizer.includes("'android-uwb-sensor-fusion'") &&
+  advancedRadioNormalizer.includes("estimateType === 'drifting'") &&
+  advancedRadioNormalizer.includes("providerKind: 'android-uwb-sensor-fusion'") &&
+  advancedRadioNormalizer.includes('dataStalenessThresholdMillis') &&
+  adapterRegistry.includes("id: 'android-uwb-sensor-fusion-ingest'"));
 test('Rich cellular schema preserves radio generation, PCI/ARFCN and NR/legacy signal metrics',
   geoconsoleRoutes.includes('physicalCellId: z.number()') &&
   geoconsoleRoutes.includes('arfcn: z.number()') &&
@@ -422,6 +440,27 @@ test('Raw GNSS adapter preserves clock, pseudorange/rate, ADR, carrier frequency
   advancedRadioNormalizer.includes('carrierFrequencyHz') &&
   advancedRadioNormalizer.includes('cn0DbHz') &&
   geoconsoleRoutes.includes("'gnss_raw'"));
+test('GNSS integrity evaluates ADR continuity multipath authentication and interference',
+  advancedRadioNormalizer.includes('assessSpectraGnssIntegrity') &&
+  gnssIntegrity.includes('ADR_STATE_CYCLE_SLIP') &&
+  gnssIntegrity.includes('MULTIPATH_DETECTED') &&
+  gnssIntegrity.includes('carrierPhaseReady') &&
+  gnssIntegrity.includes('dualFrequencyReady') &&
+  gnssIntegrity.includes('multiConstellationReady') &&
+  gnssIntegrity.includes('navigationAuthenticationStatus') &&
+  gnssIntegrity.includes('spoofingSuspected') &&
+  gnssIntegrity.includes('jammingSuspected'));
+test('Precision GNSS adapter preserves RTK PPP NTRIP RTCM covariance and protection levels',
+  advancedRadioNormalizer.includes("'gnss-precision-solution'") &&
+  advancedRadioNormalizer.includes("'rtk-fixed'") &&
+  advancedRadioNormalizer.includes("'network-rtk'") &&
+  advancedRadioNormalizer.includes("'ppp-rtk'") &&
+  advancedRadioNormalizer.includes('correctionAgeSeconds') &&
+  advancedRadioNormalizer.includes('ntripMountpoint') &&
+  advancedRadioNormalizer.includes('rtcmMessages') &&
+  advancedRadioNormalizer.includes('ambiguityRatio') &&
+  advancedRadioNormalizer.includes('horizontalProtectionLevelMeters') &&
+  adapterRegistry.includes("id: 'gnss-precision-solution-ingest'"));
 test('Apple Nearby Interaction adapter covers UWB, EDM, DL-TDOA and Bluetooth Channel Sounding',
   advancedRadioNormalizer.includes("'uwb-edm'") &&
   advancedRadioNormalizer.includes("'dl-tdoa'") &&
@@ -457,10 +496,15 @@ test('SPECTRA live confidence is posterior/covariance driven with no hard-coded 
   routes.includes('liveLocationAssessment.confidenceScore') &&
   routes.includes('liveLocationRadius99Meters') &&
   liveConfidence.includes('radiusToSigma') &&
+  liveConfidence.includes('metadataCovarianceSigma') &&
   liveConfidence.includes('confidenceRadius(posteriorSigma, 0.99)') &&
   liveConfidence.includes('chiSquareSurvivalApprox') &&
   liveConfidence.includes('Huber-style continuous down-weighting') &&
   liveConfidence.includes('combinedIndependentReliability') &&
+  liveConfidence.includes('correlationWeight') &&
+  liveConfidence.includes('protectionLevelFloor') &&
+  liveConfidence.includes('temporalInflationMeters') &&
+  liveConfidence.includes('measurementQualityWeight') &&
   !liveConfidence.includes('0.991') &&
   !liveConfidence.includes('exceedsNinetyNinePercent') &&
   !liveConfidence.includes('strongConsensus.length < 3') &&
