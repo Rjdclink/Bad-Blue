@@ -55,6 +55,7 @@ import {
 } from '../services/spectra/SpectraProviderTelemetryNormalizer';
 import { assessSpectraLiveLocation } from '../services/spectra/SpectraLiveConfidence';
 import { solveSpectraConstraintLayer } from '../services/spectra/SpectraConstraintSolver';
+import { discoverPublicArcGisCameraLayers } from '../services/spectra/SpectraArcGisPublicCameraDiscovery';
 
 const router = Router();
 const log = createLogger('GeoconsoleRoutes');
@@ -2392,7 +2393,15 @@ export async function arcGisCameras(
   lng: number,
   radiusMiles: number,
 ): Promise<PublicCameraResult[]> {
-  const layers = configuredArcGisCameraLayers();
+  const discoveredLayers = await discoverPublicArcGisCameraLayers(lat, lng, radiusMiles);
+  const configuredLayers = configuredArcGisCameraLayers();
+  const seenLayers = new Set<string>();
+  const layers = [...configuredLayers, ...discoveredLayers].filter(layer => {
+    const key = String(layer.url || '').toLowerCase();
+    if (!key || seenLayers.has(key)) return false;
+    seenLayers.add(key);
+    return true;
+  });
   if (!layers.length) return [];
 
   const box = cameraBoundingBox(lat, lng, radiusMiles);
