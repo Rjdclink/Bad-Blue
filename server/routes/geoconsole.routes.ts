@@ -1278,6 +1278,29 @@ function coalesceTrustedRangingMeasurements(
   return [...passthrough, ...groups.values()];
 }
 
+export async function resolveSpectraNormalizedTelemetryBatch(
+  value: unknown,
+  trustedProvider = true,
+): Promise<{
+  batch: TelemetryBatch;
+  points: GPSPoint[];
+  quality: ReturnType<typeof assessLocationQuality>;
+}> {
+  const validation = telemetryBatchSchema.safeParse(value);
+  if (!validation.success) {
+    throw new Error('Active SPECTRA provider telemetry did not match the canonical schema.');
+  }
+  const resolved = await resolveSpectraTelemetryBatchPoints(
+    validation.data,
+    trustedProvider,
+  );
+  return {
+    batch: validation.data,
+    points: resolved.points,
+    quality: resolved.quality,
+  };
+}
+
 export async function resolveSpectraTelemetryBatchPoints(
   batch: TelemetryBatch,
   trustedProvider: boolean,
