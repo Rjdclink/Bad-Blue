@@ -34,6 +34,7 @@ const DEFAULT_SOURCE_CONFIGS: DataSourceConfig[] = [
   { source: 'cellular', enabled: true, priority: 4, confidenceWeight: 0.45 },
   { source: 'cell_serving', enabled: true, priority: 5, confidenceWeight: 0.52 },
   { source: 'cell_neighbor', enabled: true, priority: 4, confidenceWeight: 0.44 },
+  { source: 'nr_positioning', enabled: true, priority: 8, confidenceWeight: 0.84 },
   { source: 'uwb_range', enabled: true, priority: 10, confidenceWeight: 0.98 },
   { source: 'uwb_direction', enabled: true, priority: 10, confidenceWeight: 0.98 },
   { source: 'bluetooth_proximity', enabled: true, priority: 4, confidenceWeight: 0.45 },
@@ -120,6 +121,7 @@ export class InputFusionEngine {
       case 'wifi_rssi':
       case 'wifi_handoff': return 80;
       case 'vehicle_telemetry': return 20;
+      case 'nr_positioning': return 5;
       case 'cell_serving':
       case 'cell_neighbor':
       case 'cellular': return 1500;
@@ -149,6 +151,7 @@ export class InputFusionEngine {
       case 'device_gps':
       case 'browser_geolocation': return 3;
       case 'vehicle_telemetry': return 3;
+      case 'nr_positioning': return 0.5;
       case 'exif_photo':
       case 'exif_video':
       case 'xmp_sidecar':
