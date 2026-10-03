@@ -307,6 +307,10 @@ export default function SpectraPage() {
   ]);
 
   const resetSession = useCallback(() => {
+    hardStopRef.current('new_target', true);
+    queryStartedAtRef.current = new Date().toISOString();
+    recursivePassRef.current = 0;
+    spectraSessionIdRef.current = null;
     requestRef.current += 1;
     launchedFromLexaraRef.current = false;
     originLexaraSessionIdRef.current = null;
@@ -1069,7 +1073,10 @@ export default function SpectraPage() {
         <Button
           variant="ghost"
           size="sm"
-          onClick={() => setLocation('/lexara-consent')}
+          onClick={() => {
+            hardStopRef.current('back_button', true);
+            setLocation('/lexara-consent');
+          }}
           className="text-slate-300 hover:text-white"
         >
           <ArrowLeft className="h-4 w-4 mr-1" />
