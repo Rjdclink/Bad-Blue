@@ -117,7 +117,7 @@ export const SPECTRA_ADAPTER_CAPABILITIES: SpectraAdapterCapability[] = [
     configured: () => true,
     priority: 'critical',
     supportsRealtime: true,
-    notes: 'Uses three or more georeferenced anchors and measurement uncertainty.',
+    notes: 'Uses three or more range anchors for multilateration, or absolute true-north directional anchors when available, with measurement uncertainty.',
   },
   {
     id: 'structured-telemetry-import',
