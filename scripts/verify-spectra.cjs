@@ -331,11 +331,13 @@ test('Realtime observations work locally and across replicas when Supabase Realt
   geoconsoleRoutes.includes('telemetryPushEmitter') &&
   geoconsoleRoutes.includes('subscribeSpectraDatabaseObservations') &&
   realtimeBridge.includes("table: 'spectra_location_observations'"));
-test('SPECTRA acquisition session stays attached to GeoRuntime and telemetry updates',
+test('SPECTRA acquisition session stays attached to GeoRuntime without callback churn',
   spectra.includes('sessionId={spectraSessionId}') &&
   spectra.includes('sessionId: sessionOverride || spectraSessionId || undefined') &&
   dashboard.includes('sessionId?: string | null') &&
   dashboard.includes('sessionId: sessionId || undefined') &&
+  runtime.includes('const sessionIdRef = useRef<string | null>') &&
+  runtime.includes('sessionIdRef.current = canonicalSessionId') &&
   runtime.includes("sessionId: configuredSessionId || undefined") &&
   runtime.includes('/api/geoconsole/telemetry-stream/'));
 test('SPECTRA adapter capability registry truthfully exposes optional and built-in lanes',
@@ -408,10 +410,11 @@ test('Aggregate camera traffic context never becomes a target location observati
 test('Aggregate vehicle-flow context can refine Futurecast only behind a vehicle-motion gate',
   geoconsoleRoutes.includes('loadSpectraMotionContext') &&
   geoconsoleRoutes.includes('motionContextApplied') &&
+  geoconsoleRoutes.includes('WHERE session_id = $1 AND user_id = $2') &&
   monteCarlo.includes('const likelyVehicleMotion = usable.some(vehicleClass)') &&
   monteCarlo.includes('motionContextInfluence = Math.min(0.35') &&
   monteCarlo.includes('motionContextCongestionRatio') &&
-  runtime.includes('sessionId: sessionId || configuredSessionId || undefined'));
+  runtime.includes('sessionId: sessionIdRef.current || configuredSessionId || undefined'));
 test('WorldCam discovery is additive and camera-directory integration stays provider-neutral',
   spectraSources.includes("sourceId") &&
   spectraSources.includes("'worldcam-directory'") &&
@@ -426,7 +429,10 @@ test('Generic vehicle/camera feeds preserve track identity and velocity context'
   genericPull.includes('headingPath?: string') &&
   geoconsoleRoutes.includes('trackId: z.string()') &&
   geoconsoleRoutes.includes('cameraId: z.string()') &&
-  geoconsoleRoutes.includes('objectClass: z.string()'));
+  geoconsoleRoutes.includes('objectClass: z.string()') &&
+  geoconsoleRoutes.includes("typeof inputMetadata.trackId === 'string'") &&
+  geoconsoleRoutes.includes('velocity: (') &&
+  geoconsoleRoutes.includes(': inputMetadata.velocity'));
 test('SPECTRA API is mounted',
   serverRoutes.includes("app.use('/api/spectra', spectraRoutes.default)"));
 
