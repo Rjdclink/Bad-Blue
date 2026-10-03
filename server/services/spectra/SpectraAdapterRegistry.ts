@@ -44,7 +44,7 @@ export const SPECTRA_ADAPTER_CAPABILITIES: SpectraAdapterCapability[] = [
     label: 'Signed telemetry provider webhook',
     mode: 'provider-webhook',
     sourceTypes: [
-      'device_gps','gnss_fix','gnss_raw','vehicle_telemetry',
+      'device_gps','gnss_fix','gnss_raw','vehicle_telemetry','visual_positioning',
       'visual_detection','network_region',
       'wifi_fingerprint','cellular','wifi_rtt','wifi_rssi','uwb_range','uwb_direction',
       'bluetooth_proximity','bluetooth_channel_sounding','ble_rssi','ble_aoa','ble_aod',
