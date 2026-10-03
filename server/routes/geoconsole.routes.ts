@@ -79,7 +79,7 @@ const gpsPointSchema = z.object({
     'device_gps', 'gnss_fix', 'gnss_raw',
     'exif_photo', 'exif_video', 'xmp_sidecar', 'json_sidecar',
     'wifi_handoff', 'wifi_rssi', 'wifi_rtt', 'wifi_fingerprint',
-    'cellular', 'cell_serving', 'cell_neighbor',
+    'cellular', 'cell_serving', 'cell_neighbor', 'nr_positioning',
     'uwb_range', 'uwb_direction',
     'bluetooth_proximity', 'bluetooth_channel_sounding',
     'ble_rssi', 'ble_aoa', 'ble_aod',
@@ -145,7 +145,7 @@ const telemetryAbsoluteSchema = z.object({
     'device_gps', 'gnss_fix', 'gnss_raw', 'browser_geolocation',
     'vehicle_telemetry', 'exif_photo', 'exif_video', 'xmp_sidecar',
     'json_sidecar', 'social_geotag', 'visual_detection', 'network_region',
-    'wifi_fingerprint', 'cellular',
+    'wifi_fingerprint', 'cellular', 'nr_positioning',
     'uwb_range', 'uwb_direction', 'bluetooth_proximity',
     'bluetooth_channel_sounding', 'ble_aoa', 'ble_aod',
     'public_camera', 'traffic_cam', 'satellite_imagery', 'historical_location', 'public_record',
@@ -250,7 +250,7 @@ const telemetryRangingAnchorSchema = z.object({
 const telemetryRangingSchema = z.object({
   kind: z.literal('ranging'),
   source: z.enum([
-    'wifi_rtt', 'wifi_rssi', 'uwb_range', 'uwb_direction',
+    'wifi_rtt', 'wifi_rssi', 'nr_positioning', 'uwb_range', 'uwb_direction',
     'bluetooth_proximity', 'bluetooth_channel_sounding',
     'ble_rssi', 'ble_aoa', 'ble_aod',
   ]),
