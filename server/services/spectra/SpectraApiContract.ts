@@ -125,15 +125,42 @@ export function getSpectraOpenApiDocument() {
       '/telemetry-history/{sessionId}': {
         get: {
           operationId: 'spectraTelemetryHistory',
-          summary: 'Read durable location observations for an owned session',
-          parameters: [{
-            name: 'sessionId',
-            in: 'path',
-            required: true,
-            schema: { type: 'string', minLength: 1, maxLength: 200 },
-          }],
+          summary: 'Read cursor-paged durable location observations for an owned session',
+          parameters: [
+            {
+              name: 'sessionId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', minLength: 1, maxLength: 200 },
+            },
+            {
+              name: 'after',
+              in: 'query',
+              required: false,
+              schema: { type: 'string', format: 'date-time' },
+            },
+            {
+              name: 'before',
+              in: 'query',
+              required: false,
+              schema: { type: 'string', format: 'date-time' },
+            },
+            {
+              name: 'cursor',
+              in: 'query',
+              required: false,
+              schema: { type: 'string', minLength: 1, maxLength: 1000 },
+            },
+            {
+              name: 'limit',
+              in: 'query',
+              required: false,
+              schema: { type: 'integer', minimum: 1, maximum: 2000, default: 500 },
+            },
+          ],
           responses: {
-            '200': { description: 'Durable telemetry history' },
+            '200': { description: 'Newest-first durable telemetry page with opaque nextCursor' },
+            '400': { description: 'Invalid range or cursor' },
             '404': { description: 'Session not found for tenant' },
           },
         },
