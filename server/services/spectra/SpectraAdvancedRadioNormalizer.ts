@@ -2613,6 +2613,7 @@ function inferRecordKind(row: Record<string, any>): Exclude<
     row.kind || row.recordType || row.type || row.source || row.technology || ''
   ).toLowerCase();
 
+  if (/rtklib|rtk.?solution|ppp.?solution|precision.?gnss/.test(explicit)) return 'gnss-precision-solution';
   if (/channel.?sounding|pbr|bluetooth.?cs/.test(explicit)) return 'bluetooth-channel-sounding';
   if (/aoa|aod|direction/.test(explicit)) return 'ble-direction-finding';
   if (/wifi.*rtt|802\.11az|802\.11mc|ftm/.test(explicit)) return 'android-wifi-ranging';
@@ -2691,6 +2692,120 @@ function parseCsvRecords(text: string): Record<string, any>[] {
   }
 }
 
+function parseRtklibPosRecords(text: string): Record<string, any>[] {
+  const lines = text.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  const header = lines.find(line =>
+    /^%/.test(line)
+    && /latitude\(deg\)/i.test(line)
+    && /longitude\(deg\)/i.test(line)
+    && /\bQ\b/i.test(line)
+  );
+  if (!header) return [];
+
+  const qualityName = (quality: number): string => {
+    switch (quality) {
+      case 1: return 'rtk-fixed';
+      case 2: return 'rtk-float';
+      case 3: return 'sbas';
+      case 4: return 'dgnss';
+      case 5: return 'gnss';
+      case 6: return 'ppp';
+      case 7: return 'dead-reckoning';
+      default: return 'gnss';
+    }
+  };
+
+  const records: Record<string, any>[] = [];
+  for (const line of lines.slice(0, 5000)) {
+    if (!line || line.startsWith('%')) continue;
+    const fields = line.split(/\s+/).filter(Boolean);
+    if (fields.length < 9) continue;
+
+    let index = 0;
+    let timestamp: string | undefined;
+
+    if (/^\d{4}\/\d{2}\/\d{2}$/.test(fields[0] || '') && /^\d{2}:\d{2}:\d{2}/.test(fields[1] || '')) {
+      const [year, month, day] = fields[0].split('/').map(Number);
+      const timeMatch = fields[1].match(/^(\d{2}):(\d{2}):(\d{2}(?:\.\d+)?)$/);
+      if (!timeMatch) continue;
+      const hour = Number(timeMatch[1]);
+      const minute = Number(timeMatch[2]);
+      const secondFloat = Number(timeMatch[3]);
+      const second = Math.floor(secondFloat);
+      const millisecond = Math.round((secondFloat - second) * 1000);
+      timestamp = new Date(Date.UTC(year, month - 1, day, hour, minute, second, millisecond)).toISOString();
+      index = 2;
+    } else {
+      // Time-of-week-only RTKLIB output cannot be converted to UTC without GPS week;
+      // preserve it as context rather than inventing an absolute timestamp.
+      continue;
+    }
+
+    const latitude = Number(fields[index++]);
+    const longitude = Number(fields[index++]);
+    const altitude = Number(fields[index++]);
+    const quality = Number(fields[index++]);
+    const satellitesUsed = Number(fields[index++]);
+    const sdn = Number(fields[index++]);
+    const sde = Number(fields[index++]);
+    const sdu = Number(fields[index++]);
+    const sdne = Number(fields[index++]);
+    const sdeu = Number(fields[index++]);
+    const sdun = Number(fields[index++]);
+    const correctionAgeSeconds = Number(fields[index++]);
+    const ambiguityRatio = Number(fields[index++]);
+
+    if (
+      !Number.isFinite(latitude)
+      || !Number.isFinite(longitude)
+      || latitude < -90 || latitude > 90
+      || longitude < -180 || longitude > 180
+    ) continue;
+
+    const sigmaHorizontal = (
+      Number.isFinite(sdn) && sdn >= 0
+      && Number.isFinite(sde) && sde >= 0
+    )
+      ? Math.sqrt((sdn ** 2 + sde ** 2) / 2)
+      : null;
+    const horizontalAccuracyMeters = sigmaHorizontal !== null
+      ? sigmaHorizontal * Math.sqrt(-2 * Math.log(1 - 0.68))
+      : undefined;
+
+    records.push({
+      kind: 'rtklib-solution',
+      recordType: 'rtklib-pos',
+      timestamp,
+      latitude,
+      longitude,
+      altitudeMeters: Number.isFinite(altitude) ? altitude : undefined,
+      solutionType: qualityName(quality),
+      rtklibQuality: Number.isFinite(quality) ? quality : undefined,
+      satellitesUsed: Number.isFinite(satellitesUsed) ? satellitesUsed : undefined,
+      horizontalAccuracyMeters,
+      verticalAccuracyMeters: Number.isFinite(sdu) && sdu >= 0 ? sdu : undefined,
+      accuracyConfidenceLevel: 0.68,
+      ambiguityRatio: Number.isFinite(ambiguityRatio) ? ambiguityRatio : undefined,
+      ambiguitiesFixed: quality === 1,
+      corrections: {
+        transport: 'RTKLIB',
+        format: 'RTKLIB-POS',
+        ageSeconds: Number.isFinite(correctionAgeSeconds) ? correctionAgeSeconds : undefined,
+      },
+      covariance: {
+        northVariance: Number.isFinite(sdn) && sdn >= 0 ? sdn ** 2 : undefined,
+        eastVariance: Number.isFinite(sde) && sde >= 0 ? sde ** 2 : undefined,
+        eastNorthCovariance: Number.isFinite(sdne) ? sdne : undefined,
+        eastUpCovariance: Number.isFinite(sdeu) ? sdeu : undefined,
+        northUpCovariance: Number.isFinite(sdun) ? sdun : undefined,
+      },
+      providerKind: 'rtklib-solution',
+    });
+  }
+
+  return records;
+}
+
 function parseUniversalRecords(body: Record<string, any>): Record<string, any>[] {
   if (Array.isArray(body.records)) return body.records.map(record);
   if (Array.isArray(body.rows)) return body.rows.map(record);
@@ -2699,6 +2814,9 @@ function parseUniversalRecords(body: Record<string, any>): Record<string, any>[]
   if (typeof body.text === 'string') {
     const text = body.text.trim();
     if (!text) return [];
+
+    const rtklibRecords = parseRtklibPosRecords(text);
+    if (rtklibRecords.length) return rtklibRecords;
 
     if (text.includes(',')) {
       const csvRecords = parseCsvRecords(text);
@@ -2757,6 +2875,7 @@ function normalizeUniversalRadioLog(
     const candidate =
       kind === 'android-cellular' ? { cells: [row], timestamp: row.timestamp }
       : kind === 'android-raw-gnss' ? { epochs: [row], timestamp: row.timestamp }
+      : kind === 'gnss-precision-solution' ? { solutions: [row], timestamp: row.timestamp }
       : kind === 'android-wifi-ranging' ? { results: [row], timestamp: row.timestamp }
       : { observations: [row], timestamp: row.timestamp };
     const batch = tryNormalize(kind, wrapped.providerId, candidate);
