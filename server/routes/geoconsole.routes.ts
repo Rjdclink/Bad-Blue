@@ -1597,6 +1597,13 @@ router.post('/traffic-context/provider/:providerId', async (req: Request, res: R
       sessionId: validation.data.sessionId,
     });
 
+    if (!ownerTenantId) {
+      return res.status(404).json({
+        success: false,
+        error: 'Traffic-context target session is not an owned SPECTRA investigation.',
+      });
+    }
+
     if (!binding?.tenantId) {
       return res.status(403).json({
         success: false,
@@ -1604,21 +1611,18 @@ router.post('/traffic-context/provider/:providerId', async (req: Request, res: R
       });
     }
 
-    if (
-      ownerTenantId
-      && !providerMayWriteOwnedSpectraSession({
-        providerId,
-        sessionId: validation.data.sessionId,
-        ownerTenantId,
-      })
-    ) {
+    if (!providerMayWriteOwnedSpectraSession({
+      providerId,
+      sessionId: validation.data.sessionId,
+      ownerTenantId,
+    })) {
       return res.status(403).json({
         success: false,
         error: 'Traffic-context provider is not bound to this tenant session.',
       });
     }
 
-    boundTenantId = ownerTenantId || binding.tenantId;
+    boundTenantId = ownerTenantId;
   } catch (error: any) {
     if (error?.code !== '42P01') {
       log.warn('SPECTRA traffic-context tenant binding check failed', {
@@ -1863,11 +1867,9 @@ router.post('/traffic-context', async (req: Request, res: Response) => {
        LIMIT 1`,
       [validation.data.sessionId],
     );
-    if (owner.rows.length) {
-      const ownerId = String(owner.rows[0]?.user_id || '');
-      if (ownerId && ownerId !== userId) {
-        return res.status(404).json({ success: false, error: 'SPECTRA session not found.' });
-      }
+    const ownerId = String(owner.rows[0]?.user_id || '');
+    if (!owner.rows.length || ownerId !== userId) {
+      return res.status(404).json({ success: false, error: 'SPECTRA session not found.' });
     }
 
     const outcomes = await Promise.allSettled(
