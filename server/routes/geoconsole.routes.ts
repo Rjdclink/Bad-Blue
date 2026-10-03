@@ -2990,9 +2990,9 @@ router.post('/futurecast', async (req: Request, res: Response) => {
       })
     );
 
-    const latestPoint = [...gpsPoints]
-      .sort((left, right) => left.timestamp.getTime() - right.timestamp.getTime())
-      .at(-1);
+    const sortedGpsPoints = [...gpsPoints]
+      .sort((left, right) => left.timestamp.getTime() - right.timestamp.getTime());
+    const latestPoint = sortedGpsPoints[sortedGpsPoints.length - 1];
     const motionContext = (
       sessionId
       && userId
