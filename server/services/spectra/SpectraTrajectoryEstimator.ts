@@ -820,8 +820,15 @@ export function estimateSpectraTrajectory(
     const northVariance = Math.max(0.01, yState.covariance[0][0]);
     const radialSigma = Math.sqrt(Math.max(eastVariance, northVariance));
     const radius99 = RADIAL_99_FACTOR * radialSigma;
-    const velocityEast = xState.state[1];
-    const velocityNorth = yState.state[1];
+    const rawVelocityEast = xState.state[1];
+    const rawVelocityNorth = yState.state[1];
+    const rawSpeed = Math.hypot(rawVelocityEast, rawVelocityNorth);
+    const velocityScale =
+      rawSpeed > maxSpeedMps && rawSpeed > 0
+        ? maxSpeedMps / rawSpeed
+        : 1;
+    const velocityEast = rawVelocityEast * velocityScale;
+    const velocityNorth = rawVelocityNorth * velocityScale;
     const speed = Math.hypot(velocityEast, velocityNorth);
     const heading = speed > 0.05
       ? (Math.atan2(velocityEast, velocityNorth) * 180 / Math.PI + 360) % 360
@@ -873,6 +880,8 @@ export function estimateSpectraTrajectory(
           northMps: velocityNorth,
           speed,
           heading,
+          rawSpeedMps: rawSpeed,
+          velocityClamped: velocityScale < 1,
         },
         supportPointCount: measurement.supportPointCount,
         supportDomainCount: measurement.supportDomainCount,
@@ -903,3 +912,47 @@ export function estimateSpectraTrajectory(
     diagnostics: baseDiagnostics,
   };
 }
+
+export function selectSpectraTrajectoryFuturecastSeed(
+  estimate: SpectraTrajectoryEstimate,
+  fallback: GPSPoint[],
+  maxGapSeconds = 120,
+): GPSPoint[] {
+  if (estimate.states.length < 3) return fallback;
+
+  const sorted = [...estimate.states]
+    .sort((left, right) => left.timestamp.getTime() - right.timestamp.getTime());
+
+  let continuous: GPSPoint[] = [];
+  for (const state of sorted) {
+    const previous = continuous[continuous.length - 1];
+    const motionViolation = state.metadata?.motionConstraintViolation === true;
+    const validState =
+      !motionViolation
+      && Number.isFinite(state.latitude)
+      && Number.isFinite(state.longitude)
+      && Number.isFinite(state.timestamp.getTime())
+      && state.confidence >= 0.05;
+
+    if (!validState) {
+      continuous = [];
+      continue;
+    }
+
+    if (previous) {
+      const gapSeconds =
+        (state.timestamp.getTime() - previous.timestamp.getTime()) / 1000;
+      if (gapSeconds <= 0 || gapSeconds > maxGapSeconds) {
+        continuous = [state];
+        continue;
+      }
+    }
+
+    continuous.push(state);
+  }
+
+  return continuous.length >= 3
+    ? continuous.slice(-20)
+    : fallback;
+}
+
