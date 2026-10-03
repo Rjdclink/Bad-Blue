@@ -42,20 +42,6 @@ export const SPECTRA_ADAPTER_CAPABILITIES: SpectraAdapterCapability[] = [
     notes: 'Client watchPosition observations are normalized and fused server-side.',
   },
   {
-    id: 'camara-location-retrieval-active',
-    label: 'CAMARA active network location retrieval',
-    mode: 'provider-pull',
-    sourceTypes: ['network_region'],
-    configured: () => anyEnv(
-      'SPECTRA_CAMARA_LOCATION_RETRIEVAL_URL',
-      'SPECTRA_CAMARA_LOCATION_RETRIEVAL_TOKEN',
-      'SPECTRA_CAMARA_BEARER_TOKEN',
-    ),
-    priority: 'critical',
-    supportsRealtime: true,
-    notes: 'Actively requests configured CAMARA Device Location Retrieval for a supplied phone-number target, preserving provider freshness and uncertainty.',
-  },
-  {
     id: 'cisco-spaces-active-location',
     label: 'Cisco Spaces active device location',
     mode: 'provider-pull',
