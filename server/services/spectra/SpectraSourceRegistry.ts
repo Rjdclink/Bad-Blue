@@ -164,6 +164,24 @@ export function buildSpectraPriorityTargets(
       ['camera', 'map', 'location'],
     ),
     target(
+      'worldcam-directory',
+      'WorldCam directory discovery',
+      'supporting',
+      'discover location-relevant WorldCam camera pages without treating the directory itself as target evidence',
+      [cleanClues, 'site:worldcam.io webcam camera live'].filter(Boolean).join(' '),
+      ['camera', 'map', 'location'],
+    ),
+    clueKinds.includes('vehicle')
+      ? target(
+          'vehicle-camera-continuity',
+          'vehicle and camera continuity',
+          'high',
+          'find dated camera, roadway, vehicle, route, and telemetry clues that can strengthen motion continuity',
+          [identity, cleanClues, 'vehicle traffic camera route telemetry timestamp'].filter(Boolean).join(' '),
+          ['identity', 'vehicle', 'camera', 'location'],
+        )
+      : null,
+    target(
       'map-context',
       'map and place context',
       'supporting',
@@ -235,8 +253,8 @@ export function buildSpectraAdaptiveQuery(
     'photo video metadata place timestamp',
     'record filing directory archive',
     'independent corroboration contradiction',
-    'street imagery camera map context',
-    'additional independent source location',
+    'street imagery traffic camera vehicle route map context',
+    'additional independent source location camera telemetry',
   ][Math.max(0, Math.min(7, pass))];
 
   return [identity, cleanClues, unresolvedText, expansion]
