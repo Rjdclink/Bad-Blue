@@ -60,6 +60,11 @@ import {
   getSpectraProviderStreamHealth,
   getConfiguredSpectraProviderStreams,
 } from '../services/spectra/SpectraProviderStreamCoordinator';
+import {
+  startSpectraMqttProviderStreams,
+  getSpectraMqttProviderHealth,
+  getConfiguredSpectraMqttProviders,
+} from '../services/spectra/SpectraMqttProviderCoordinator';
 import { discoverPublicArcGisCameraLayers } from '../services/spectra/SpectraArcGisPublicCameraDiscovery';
 import {
   findSpectraPublicGtfsRealtimeFeeds,
@@ -1439,6 +1444,9 @@ export async function processSpectraTelemetryBatch(
 startSpectraProviderStreams(async (batch, providerId) => {
   await processSpectraTelemetryBatch(batch as TelemetryBatch, true, undefined, providerId);
 });
+startSpectraMqttProviderStreams(async (batch, providerId) => {
+  await processSpectraTelemetryBatch(batch as TelemetryBatch, true, undefined, providerId);
+});
 
 router.post('/traffic-context/provider/:providerId', async (req: Request, res: Response) => {
   if (!providerTelemetryAuthorized(req)) {
@@ -1914,7 +1922,7 @@ router.get('/telemetry-capabilities', (_req: Request, res: Response) => {
   return res.json({
     success: true,
     data: {
-      transports: ['https-json', 'signed-webhook', 'wss-provider-stream', 'structured-import'],
+      transports: ['https-json', 'signed-webhook', 'wss-provider-stream', 'mqtts-provider-stream', 'structured-import'],
       positionSources: [
         'browser_geolocation', 'device_gps', 'gnss_fix', 'gnss_raw',
         'vehicle_telemetry', 'exif_photo', 'exif_video', 'social_geotag',
@@ -1953,6 +1961,10 @@ router.get('/telemetry-capabilities', (_req: Request, res: Response) => {
       providerStreams: {
         configured: getConfiguredSpectraProviderStreams(),
         health: getSpectraProviderStreamHealth(),
+      },
+      mqttProviderStreams: {
+        configured: getConfiguredSpectraMqttProviders(),
+        health: getSpectraMqttProviderHealth(),
       },
     },
   });
