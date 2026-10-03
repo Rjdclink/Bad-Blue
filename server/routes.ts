@@ -1031,12 +1031,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // SPECTRA ROUTES - Unified target acquisition
   // ============================================
   const spectraRoutes = await import('./routes/spectra.routes');
+  app.use('/api/spectra/v1', spectraRoutes.default);
   app.use('/api/spectra', spectraRoutes.default);
 
   // ============================================
   // GEOCONSOLE ROUTES - Hybrid GPS Intelligence
   // ============================================
   const geoconsoleRoutes = await import('./routes/geoconsole.routes');
+  app.use('/api/geoconsole/v1', geoconsoleRoutes.default);
   app.use('/api/geoconsole', geoconsoleRoutes.default);
 
   // ============================================
