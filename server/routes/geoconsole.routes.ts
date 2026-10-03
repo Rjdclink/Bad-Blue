@@ -1501,6 +1501,43 @@ router.post('/traffic-context/provider/:providerId', async (req: Request, res: R
   }
 
   const providerId = String(req.params.providerId || '').trim().slice(0, 200);
+
+  try {
+    const owner = await pool.query(
+      `SELECT user_id
+       FROM public.spectra_investigations
+       WHERE session_id = $1
+       LIMIT 1`,
+      [validation.data.sessionId],
+    );
+    const ownerTenantId = String(owner.rows[0]?.user_id || '');
+    if (
+      ownerTenantId
+      && !providerMayWriteOwnedSpectraSession({
+        providerId,
+        sessionId: validation.data.sessionId,
+        ownerTenantId,
+      })
+    ) {
+      return res.status(403).json({
+        success: false,
+        error: 'Traffic-context provider is not bound to this tenant session.',
+      });
+    }
+  } catch (error: any) {
+    if (error?.code !== '42P01') {
+      log.warn('SPECTRA traffic-context tenant binding check failed', {
+        providerId,
+        sessionId: validation.data.sessionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return res.status(503).json({
+        success: false,
+        error: 'SPECTRA tenant binding check unavailable.',
+      });
+    }
+  }
+
   const outcomes = await Promise.allSettled(
     validation.data.contexts.map(context =>
       persistSpectraMotionContext({
