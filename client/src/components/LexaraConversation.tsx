@@ -2117,6 +2117,18 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
                 )}
               >
                 {message.content}
+                {message.role === 'lexara' && message.spectraLaunch && (
+                  <button
+                    type="button"
+                    data-testid="lexara-spectra-launch"
+                    onClick={() => openSpectra(message.spectraLaunch!)}
+                    className="mt-3 flex items-center gap-2 rounded-full border border-cyan-500/30 bg-cyan-500/10 px-3 py-1.5 text-xs font-medium text-cyan-700 transition hover:bg-cyan-500/15 dark:text-cyan-300"
+                    title="Open this location investigation in SPECTRA"
+                  >
+                    <MapPin className="h-3.5 w-3.5" />
+                    SPECTRA
+                  </button>
+                )}
               </div>
             </div>
           ))}
