@@ -39,6 +39,7 @@ interface LocalMeasurement {
   supportPointCount: number;
   supportDomainCount: number;
   spreadMeters: number;
+  domainContradictionCount: number;
 }
 
 interface AxisRecord {
@@ -205,6 +206,15 @@ function dependencyGroups(points: GPSPoint[]): SpectraTrajectoryDependencyGroup[
     );
 }
 
+function median(values: number[]): number {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((left, right) => left - right);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 1
+    ? sorted[middle]
+    : (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
 function aggregateTemporalBucket(
   points: GPSPoint[],
   originLatitude: number,
@@ -228,59 +238,139 @@ function aggregateTemporalBucket(
     };
   });
 
-  const domainTotals = new Map<string, { total: number; strongest: number }>();
+  const grouped = new Map<string, typeof perPoint>();
   for (const item of perPoint) {
-    const current = domainTotals.get(item.domain) || { total: 0, strongest: 0 };
-    current.total += item.information;
-    current.strongest = Math.max(current.strongest, item.information);
-    domainTotals.set(item.domain, current);
+    const group = grouped.get(item.domain) || [];
+    group.push(item);
+    grouped.set(item.domain, group);
+  }
+
+  const representatives = [...grouped.entries()].map(([domain, items]) => {
+    const totalRawInformation = items.reduce(
+      (sum, item) => sum + item.information,
+      0,
+    );
+    const strongestInformation = Math.max(
+      ...items.map(item => item.information),
+    );
+    // Correlated observations remain geometrically useful, but the whole
+    // dependency domain can contribute no more probability information than
+    // its strongest member.
+    const domainScale =
+      totalRawInformation > 0
+        ? strongestInformation / totalRawInformation
+        : 1;
+    let information = 0;
+    let weightedX = 0;
+    let weightedY = 0;
+    let weightedConfidence = 0;
+    let weightedTimestamp = 0;
+
+    for (const item of items) {
+      const effectiveInformation = item.information * domainScale;
+      information += effectiveInformation;
+      weightedX += item.position.x * effectiveInformation;
+      weightedY += item.position.y * effectiveInformation;
+      weightedConfidence += item.point.confidence * effectiveInformation;
+      weightedTimestamp += item.point.timestamp.getTime() * effectiveInformation;
+    }
+
+    const safeInformation = Math.max(1e-9, information);
+    return {
+      domain,
+      x: weightedX / safeInformation,
+      y: weightedY / safeInformation,
+      variance: Math.max(0.01, 1 / safeInformation),
+      information: safeInformation,
+      confidence: clamp(weightedConfidence / safeInformation, 0.01, 1),
+      timestampMs: weightedTimestamp / safeInformation,
+    };
+  });
+
+  // A coordinate-wise median is deliberately used as the robust seed. A
+  // precise-looking but contradictory domain must not pull the first estimate
+  // away from several mutually consistent independent domains.
+  let centerX = median(representatives.map(item => item.x));
+  let centerY = median(representatives.map(item => item.y));
+
+  const robustWeights = new Map<string, number>();
+  for (let iteration = 0; iteration < 5; iteration += 1) {
+    let totalInformation = 0;
+    let weightedX = 0;
+    let weightedY = 0;
+
+    for (const representative of representatives) {
+      const residual = Math.hypot(
+        representative.x - centerX,
+        representative.y - centerY,
+      );
+      const sigma = Math.sqrt(Math.max(0.01, representative.variance));
+      const normalizedResidual = residual / Math.max(1, sigma);
+      // Cauchy-style robust loss. Unlike a hard rejection, contradictory
+      // domains retain a tiny geometric contribution while being prevented
+      // from dominating a consistent multi-source solution.
+      const robustWeight = 1 / (1 + (normalizedResidual / 3) ** 2);
+      robustWeights.set(representative.domain, robustWeight);
+      const information = representative.information * robustWeight;
+      totalInformation += information;
+      weightedX += representative.x * information;
+      weightedY += representative.y * information;
+    }
+
+    if (totalInformation <= 0) break;
+    centerX = weightedX / totalInformation;
+    centerY = weightedY / totalInformation;
   }
 
   let totalInformation = 0;
-  let weightedX = 0;
-  let weightedY = 0;
   let weightedConfidence = 0;
+  let weightedTimestamp = 0;
+  let weightedResidualSquare = 0;
+  let domainContradictionCount = 0;
 
-  for (const item of perPoint) {
-    const domain = domainTotals.get(item.domain)!;
-    const domainScale = domain.total > 0 ? domain.strongest / domain.total : 1;
-    const effectiveInformation = item.information * domainScale;
-    totalInformation += effectiveInformation;
-    weightedX += item.position.x * effectiveInformation;
-    weightedY += item.position.y * effectiveInformation;
-    weightedConfidence += item.point.confidence * effectiveInformation;
+  for (const representative of representatives) {
+    const robustWeight = robustWeights.get(representative.domain) ?? 1;
+    const information = representative.information * robustWeight;
+    const residual = Math.hypot(
+      representative.x - centerX,
+      representative.y - centerY,
+    );
+    const sigma = Math.sqrt(Math.max(0.01, representative.variance));
+    if (residual / Math.max(1, sigma) > 5) domainContradictionCount += 1;
+    totalInformation += information;
+    weightedConfidence += representative.confidence * information;
+    weightedTimestamp += representative.timestampMs * information;
+    weightedResidualSquare += residual * residual * information;
   }
 
   if (totalInformation <= 0) {
     totalInformation = 1 / Math.max(1, sourceAccuracyDefault(points[0]) ** 2);
   }
 
-  const x = weightedX / totalInformation;
-  const y = weightedY / totalInformation;
-  const variance = Math.max(0.01, 1 / totalInformation);
-  const spreadMeters = Math.sqrt(
-    perPoint.reduce((sum, item) => {
-      const dx = item.position.x - x;
-      const dy = item.position.y - y;
-      return sum + dx * dx + dy * dy;
-    }, 0) / Math.max(1, perPoint.length),
+  const statisticalVariance = Math.max(0.01, 1 / totalInformation);
+  const robustResidualVariance =
+    weightedResidualSquare / Math.max(1e-9, totalInformation);
+  const variance = Math.max(
+    statisticalVariance,
+    robustResidualVariance / Math.max(1, representatives.length),
   );
 
   return {
     timestamp: new Date(
-      Math.round(
-        perPoint.reduce((sum, item) =>
-          sum + item.point.timestamp.getTime() * item.information
-        , 0) / Math.max(1e-9, perPoint.reduce((sum, item) => sum + item.information, 0))
-      )
+      Math.round(weightedTimestamp / Math.max(1e-9, totalInformation)),
     ),
-    x,
-    y,
+    x: centerX,
+    y: centerY,
     variance,
-    confidence: clamp(weightedConfidence / totalInformation, 0.05, 0.995),
+    confidence: clamp(
+      weightedConfidence / Math.max(1e-9, totalInformation),
+      0.05,
+      0.995,
+    ),
     supportPointCount: points.length,
-    supportDomainCount: domainTotals.size,
-    spreadMeters,
+    supportDomainCount: representatives.length,
+    spreadMeters: Math.sqrt(Math.max(0, robustResidualVariance)),
+    domainContradictionCount,
   };
 }
 
@@ -706,10 +796,16 @@ export function estimateSpectraTrajectory(
 
   const xSmoothed = smoothAxis(xRecords);
   const ySmoothed = smoothAxis(yRecords);
-  const contradictionCount = Math.max(
+  const temporalContradictionCount = Math.max(
     xRecords.filter(record => record.contradiction).length,
     yRecords.filter(record => record.contradiction).length,
   );
+  const bucketContradictionCount = measurements.reduce(
+    (sum, measurement) => sum + measurement.domainContradictionCount,
+    0,
+  );
+  const contradictionCount =
+    temporalContradictionCount + bucketContradictionCount;
 
   const states: GPSPoint[] = measurements.map((measurement, index) => {
     const xState = xSmoothed[index];
@@ -781,6 +877,7 @@ export function estimateSpectraTrajectory(
         supportPointCount: measurement.supportPointCount,
         supportDomainCount: measurement.supportDomainCount,
         measurementSpreadMeters: measurement.spreadMeters,
+        domainContradictionCount: measurement.domainContradictionCount,
         robustInflation: Math.max(
           xRecords[index].robustInflation,
           yRecords[index].robustInflation,
