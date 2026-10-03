@@ -55,6 +55,11 @@ import {
 } from '../services/spectra/SpectraProviderTelemetryNormalizer';
 import { assessSpectraLiveLocation } from '../services/spectra/SpectraLiveConfidence';
 import { solveSpectraConstraintLayer } from '../services/spectra/SpectraConstraintSolver';
+import {
+  startSpectraProviderStreams,
+  getSpectraProviderStreamHealth,
+  getConfiguredSpectraProviderStreams,
+} from '../services/spectra/SpectraProviderStreamCoordinator';
 import { discoverPublicArcGisCameraLayers } from '../services/spectra/SpectraArcGisPublicCameraDiscovery';
 import {
   findSpectraPublicGtfsRealtimeFeeds,
@@ -1397,6 +1402,10 @@ export async function processSpectraTelemetryBatch(
   };
 }
 
+startSpectraProviderStreams(async (batch, providerId) => {
+  await processSpectraTelemetryBatch(batch as TelemetryBatch, true, undefined, providerId);
+});
+
 router.post('/traffic-context/provider/:providerId', async (req: Request, res: Response) => {
   if (!providerTelemetryAuthorized(req)) {
     return res.status(401).json({ success: false, error: 'Invalid traffic-context provider signature.' });
@@ -1816,7 +1825,7 @@ router.get('/telemetry-capabilities', (_req: Request, res: Response) => {
   return res.json({
     success: true,
     data: {
-      transports: ['https-json', 'signed-webhook', 'structured-import'],
+      transports: ['https-json', 'signed-webhook', 'wss-provider-stream', 'structured-import'],
       positionSources: [
         'browser_geolocation', 'device_gps', 'gnss_fix', 'gnss_raw',
         'vehicle_telemetry', 'exif_photo', 'exif_video', 'social_geotag',
@@ -1852,6 +1861,10 @@ router.get('/telemetry-capabilities', (_req: Request, res: Response) => {
       activeAcquisitionAdapters: getSpectraActiveAcquisitionCapabilities(),
       configuredAnchorCount: getConfiguredSpectraAnchorCount(),
       genericPullAdapters: getSpectraGenericPullAdapters(),
+      providerStreams: {
+        configured: getConfiguredSpectraProviderStreams(),
+        health: getSpectraProviderStreamHealth(),
+      },
     },
   });
 });
