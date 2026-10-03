@@ -1979,6 +1979,25 @@ interface PublicCameraResult {
 
 const cameraCache = new Map<string, { expiresAt: number; items: PublicCameraResult[] }>();
 const CAMERA_CACHE_MS = 30 * 60_000;
+const CAMERA_STALE_MS = 24 * 60 * 60_000;
+
+function normalizeCameraFreshness(camera: PublicCameraResult): PublicCameraResult {
+  const observedMs = camera.observedAt ? Date.parse(camera.observedAt) : NaN;
+  const ageMs = Number.isFinite(observedMs) ? Math.max(0, Date.now() - observedMs) : undefined;
+  const stale = ageMs !== undefined ? ageMs > CAMERA_STALE_MS : false;
+  return {
+    ...camera,
+    status: {
+      ...(camera.status || {}),
+      qualityWarning: camera.status?.qualityWarning === true || stale,
+    },
+    metadata: {
+      ...(camera.metadata || {}),
+      freshnessAgeMs: ageMs,
+      stale,
+    },
+  };
+}
 
 function cameraCacheKey(lat: number, lng: number, radiusMiles: number): string {
   return `${lat.toFixed(3)}:${lng.toFixed(3)}:${radiusMiles.toFixed(1)}`;
@@ -2204,7 +2223,9 @@ router.get('/public-cameras', async (req: Request, res: Response) => {
   const seen = new Set<string>();
   const cameras = settled
     .flatMap(result => result.status === 'fulfilled' ? result.value : [])
+    .map(camera => normalizeCameraFreshness(camera))
     .filter(camera => {
+      if (camera.status?.disabled === true) return false;
       const key = `${camera.provider}:${camera.id}`;
       if (seen.has(key)) return false;
       seen.add(key);
