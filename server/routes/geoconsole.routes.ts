@@ -2997,12 +2997,18 @@ router.post('/futurecast', async (req: Request, res: Response) => {
     const sortedGpsPoints = [...gpsPoints]
       .sort((left, right) => left.timestamp.getTime() - right.timestamp.getTime());
     const latestPoint = sortedGpsPoints[sortedGpsPoints.length - 1];
-    const motionContext = (
-      sessionId
-      && userId
-      && latestPoint
-    )
-      ? await loadSpectraMotionContext({
+    let motionContext: SpectraMotionContext[] = [];
+    if (sessionId && userId && latestPoint) {
+      const ownedSession = await pool.query(
+        `SELECT 1
+         FROM public.spectra_investigations
+         WHERE session_id = $1 AND user_id = $2
+         LIMIT 1`,
+        [sessionId, userId],
+      ).catch(() => ({ rows: [] as any[] }));
+
+      if (ownedSession.rows.length) {
+        motionContext = await loadSpectraMotionContext({
           userId,
           sessionId,
           latitude: latestPoint.latitude,
@@ -3010,8 +3016,9 @@ router.post('/futurecast', async (req: Request, res: Response) => {
           maxAgeMinutes: 30,
           maxDistanceMeters: 10_000,
           limit: 40,
-        }).catch(() => [])
-      : [];
+        }).catch(() => []);
+      }
+    }
 
     const futurecast = await monteCarloPathEngine.generateFuturecast(
       gpsPoints,
