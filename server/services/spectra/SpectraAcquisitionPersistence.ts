@@ -165,6 +165,7 @@ export async function persistSpectraAcquisition(input: {
        FOR UPDATE`,
       [sessionId],
     );
+    let claimingPreviouslyUnownedSession = false;
     if (existing.rows.length) {
       const existingUserId = String(existing.rows[0]?.user_id || '');
       const existingSubject = normalizeClue(String(existing.rows[0]?.subject_label || ''));
@@ -175,6 +176,7 @@ export async function persistSpectraAcquisition(input: {
       if (existingSubject && incomingSubject && existingSubject !== incomingSubject) {
         throw new Error('SPECTRA session subject mismatch');
       }
+      claimingPreviouslyUnownedSession = !existingUserId;
     }
 
     const investigation = await client.query(
@@ -198,6 +200,21 @@ export async function persistSpectraAcquisition(input: {
       ],
     );
     const investigationId = String(investigation.rows[0]?.id || '');
+
+    if (claimingPreviouslyUnownedSession) {
+      await client.query(
+        `UPDATE public.spectra_telemetry_events
+         SET user_id = $2
+         WHERE session_id = $1 AND user_id IS NULL`,
+        [sessionId, input.userId],
+      );
+      await client.query(
+        `UPDATE public.spectra_location_observations
+         SET user_id = $2
+         WHERE session_id = $1 AND user_id IS NULL`,
+        [sessionId, input.userId],
+      );
+    }
 
     for (const rawValue of input.clues) {
       const raw = rawValue.replace(/\s+/g, ' ').trim();
