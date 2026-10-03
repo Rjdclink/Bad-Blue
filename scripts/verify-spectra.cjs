@@ -399,9 +399,9 @@ test('Motion-context schema is packaged after the existing SPECTRA 065/066 migra
   motionContextMigration.includes('TO service_role'));
 test('Aggregate camera traffic context never becomes a target location observation',
   geoconsoleRoutes.includes("contextKind: 'aggregate_traffic_flow'") &&
+  geoconsoleRoutes.includes('persistSpectraMotionContext({') &&
   !motionContext.includes('spectra_location_observations') &&
-  !routes.includes('observations.push(...motionContext') &&
-  !geoconsoleRoutes.includes('spectra_location_observations') === false);
+  !routes.includes('observations.push(...motionContext'));
 test('Aggregate vehicle-flow context can refine Futurecast only behind a vehicle-motion gate',
   geoconsoleRoutes.includes('loadSpectraMotionContext') &&
   geoconsoleRoutes.includes('motionContextApplied') &&
