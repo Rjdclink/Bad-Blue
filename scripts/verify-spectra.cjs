@@ -46,6 +46,7 @@ const monteCarlo = read('server/services/geoconsole/monteCarloPathEngine.ts');
 const lexaraConversation = read('client/src/components/LexaraConversation.tsx');
 const spectraMigration = read('server/migrations/064_spectra_durable_observations.sql');
 const motionContextMigration = read('server/migrations/067_spectra_motion_context.sql');
+const motionContextAccessMigration = read('server/migrations/068_spectra_motion_context_server_only_access.sql');
 const spectraAccessMigration = read('server/migrations/065_spectra_server_only_access.sql');
 const spectraIndexMigration = read('server/migrations/066_spectra_foreign_key_indexes.sql');
 const landing = read('client/src/pages/landing.tsx');
@@ -392,11 +393,13 @@ test('Aggregate camera motion context is stored separately from target observati
   motionContext.includes('spectra_motion_context') &&
   motionContextMigration.includes('CREATE TABLE IF NOT EXISTS public.spectra_motion_context') &&
   adapterRegistry.includes("id: 'aggregate-camera-motion-context'"));
-test('Motion-context schema is packaged after the existing SPECTRA 065/066 migrations and is server-only',
+test('Motion-context schema and access migrations are packaged in order and remain server-only',
   dockerfile.includes('067_spectra_motion_context.sql') &&
-  motionContextMigration.includes('REVOKE ALL ON TABLE public.spectra_motion_context') &&
-  motionContextMigration.includes('FROM PUBLIC, anon, authenticated') &&
-  motionContextMigration.includes('TO service_role'));
+  dockerfile.includes('068_spectra_motion_context_server_only_access.sql') &&
+  motionContextMigration.includes('CREATE TABLE IF NOT EXISTS public.spectra_motion_context') &&
+  motionContextAccessMigration.includes('REVOKE ALL ON TABLE public.spectra_motion_context') &&
+  motionContextAccessMigration.includes('FROM PUBLIC, anon, authenticated') &&
+  motionContextAccessMigration.includes('TO service_role'));
 test('Aggregate camera traffic context never becomes a target location observation',
   geoconsoleRoutes.includes("contextKind: 'aggregate_traffic_flow'") &&
   geoconsoleRoutes.includes('persistSpectraMotionContext({') &&
