@@ -22,6 +22,11 @@ export interface SpectraGenericPullAdapterConfig {
   accuracyPath?: string;
   altitudePath?: string;
   recordIdPath?: string;
+  trackIdPath?: string;
+  cameraIdPath?: string;
+  objectClassPath?: string;
+  speedPath?: string;
+  headingPath?: string;
   headersFromEnv?: Record<string, string>;
   confidenceCeiling?: number;
 }
@@ -130,6 +135,11 @@ function parseConfig(): SpectraGenericPullAdapterConfig[] {
         accuracyPath: item?.accuracyPath ? String(item.accuracyPath) : undefined,
         altitudePath: item?.altitudePath ? String(item.altitudePath) : undefined,
         recordIdPath: item?.recordIdPath ? String(item.recordIdPath) : undefined,
+        trackIdPath: item?.trackIdPath ? String(item.trackIdPath) : undefined,
+        cameraIdPath: item?.cameraIdPath ? String(item.cameraIdPath) : undefined,
+        objectClassPath: item?.objectClassPath ? String(item.objectClassPath) : undefined,
+        speedPath: item?.speedPath ? String(item.speedPath) : undefined,
+        headingPath: item?.headingPath ? String(item.headingPath) : undefined,
         headersFromEnv: item?.headersFromEnv && typeof item.headersFromEnv === 'object'
           ? Object.fromEntries(Object.entries(item.headersFromEnv).map(([key, envName]) => [key, String(envName)]))
           : undefined,
@@ -197,6 +207,14 @@ export async function pullSpectraGenericAdapter(adapterId: string): Promise<GPSP
     const accuracyRaw = adapter.accuracyPath ? Number(readPath(row, adapter.accuracyPath)) : NaN;
     const altitudeRaw = adapter.altitudePath ? Number(readPath(row, adapter.altitudePath)) : NaN;
     const recordId = adapter.recordIdPath ? String(readPath(row, adapter.recordIdPath) || '').trim() : '';
+    const trackId = adapter.trackIdPath ? String(readPath(row, adapter.trackIdPath) || '').trim() : '';
+    const cameraId = adapter.cameraIdPath ? String(readPath(row, adapter.cameraIdPath) || '').trim() : '';
+    const objectClass = adapter.objectClassPath ? String(readPath(row, adapter.objectClassPath) || '').trim() : '';
+    const speedRaw = adapter.speedPath ? Number(readPath(row, adapter.speedPath)) : NaN;
+    const headingRaw = adapter.headingPath ? Number(readPath(row, adapter.headingPath)) : NaN;
+    const heading = Number.isFinite(headingRaw)
+      ? ((headingRaw % 360) + 360) % 360
+      : undefined;
 
     return [{
       latitude,
@@ -211,7 +229,9 @@ export async function pullSpectraGenericAdapter(adapterId: string): Promise<GPSP
         adapter.source === 'historical_location' || adapter.source === 'public_record'
           ? 'historical'
           : 'observed',
-      correlationGroup: `pull:${adapter.id}`,
+      correlationGroup: trackId
+        ? `pull-track:${adapter.id}:${trackId}`
+        : `pull:${adapter.id}`,
       provenance: {
         provider: adapter.label || adapter.id,
         recordId: recordId || undefined,
@@ -220,6 +240,15 @@ export async function pullSpectraGenericAdapter(adapterId: string): Promise<GPSP
       },
       metadata: {
         adapterId: adapter.id,
+        trackId: trackId || undefined,
+        cameraId: cameraId || undefined,
+        objectClass: objectClass || undefined,
+        velocity: (
+          Number.isFinite(speedRaw) || heading !== undefined
+        ) ? {
+          speed: Number.isFinite(speedRaw) ? Math.max(0, speedRaw) : undefined,
+          heading,
+        } : undefined,
       },
     } satisfies GPSPoint];
   });
