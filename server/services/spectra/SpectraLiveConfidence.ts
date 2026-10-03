@@ -10,6 +10,7 @@ export type SpectraLiveSourceFamily =
   | 'cellular'
   | 'enterprise-sensor'
   | 'iot-solver'
+  | 'visual-positioning'
   | 'vehicle';
 
 export interface SpectraLiveSourceAssessment {
@@ -42,6 +43,7 @@ export interface SpectraLiveLocationAssessment {
   posteriorSigmaMeters?: number;
   effectiveSourceCount: number;
   independentFamilyCount: number;
+  independentDomainCount: number;
   residualScale: number;
   consistencyScore: number;
   consistencyPenalty: number;
@@ -90,6 +92,7 @@ const FAMILY_FRESHNESS_HALF_LIFE_MS: Record<SpectraLiveSourceFamily, number> = {
   cellular: 90_000,
   'enterprise-sensor': 60_000,
   'iot-solver': 90_000,
+  'visual-positioning': 20_000,
   vehicle: 30_000,
 };
 
@@ -103,6 +106,7 @@ const FAMILY_RELIABILITY: Record<SpectraLiveSourceFamily, number> = {
   cellular: 0.80,
   'enterprise-sensor': 0.93,
   'iot-solver': 0.94,
+  'visual-positioning': 0.97,
   vehicle: 0.97,
 };
 
@@ -154,6 +158,11 @@ function sourceFamily(point: GPSPoint): SpectraLiveSourceFamily | null {
   ) return 'enterprise-sensor';
   if (kind.includes('aws-iot-device-location')) return 'iot-solver';
   if (kind.includes('connected-vehicle-location')) return 'vehicle';
+  if (
+    kind.includes('arcore-geospatial-pose')
+    || kind.includes('visual-positioning')
+    || point.source === 'visual_positioning'
+  ) return 'visual-positioning';
 
   switch (point.source) {
     case 'device_gps':
@@ -202,6 +211,7 @@ function effectiveAccuracy(point: GPSPoint, family: SpectraLiveSourceFamily): nu
     case 'vehicle': return 30;
     case 'enterprise-sensor': return 50;
     case 'iot-solver': return 100;
+    case 'visual-positioning': return 5;
     case 'cellular': return 2_000;
     case 'carrier-network': return 25_000;
   }
@@ -396,7 +406,8 @@ function accelerationSigmaMetersPerSecondSquared(
     case 'wifi':
     case 'uwb':
     case 'bluetooth':
-    case 'enterprise-sensor': return 1.5;
+    case 'enterprise-sensor':
+    case 'visual-positioning': return 1.5;
     case 'cellular':
     case 'carrier-network':
     case 'iot-solver': return 2.5;
@@ -410,6 +421,7 @@ function unknownMotionSigmaMetersPerSecond(
     case 'vehicle': return 8;
     case 'cellular':
     case 'carrier-network': return 6;
+    case 'visual-positioning': return 2;
     default: return 2.5;
   }
 }
@@ -551,17 +563,25 @@ export function assessSpectraLiveLocation(
   now: Date = new Date(),
 ): SpectraLiveLocationAssessment {
   const nowMs = now.getTime();
-  const grouped = new Map<SpectraLiveSourceFamily, GPSPoint[]>();
+  const grouped = new Map<
+    string,
+    { family: SpectraLiveSourceFamily; points: GPSPoint[] }
+  >();
 
   for (const point of observations) {
     const family = sourceFamily(point);
     if (!family) continue;
-    const bucket = grouped.get(family) || [];
-    bucket.push(point);
-    grouped.set(family, bucket);
+    const domain = correlationKey(point, family);
+    const key = `${family}|${domain}`;
+    const existing = grouped.get(key);
+    if (existing) {
+      existing.points.push(point);
+    } else {
+      grouped.set(key, { family, points: [point] });
+    }
   }
 
-  const representatives = [...grouped.entries()].flatMap(([family, points]) => {
+  const representatives = [...grouped.values()].flatMap(({ family, points }) => {
     const point = selectFamilyRepresentative(points, family, nowMs);
     return point ? [{ family, point }] : [];
   });
@@ -574,6 +594,7 @@ export function assessSpectraLiveLocation(
       confidenceScore: 0,
       effectiveSourceCount: 0,
       independentFamilyCount: 0,
+      independentDomainCount: 0,
       residualScale: 0,
       consistencyScore: 0,
       consistencyPenalty: 0,
@@ -864,7 +885,8 @@ export function assessSpectraLiveLocation(
     ),
     posteriorSigmaMeters: Number(posteriorSigma.toFixed(3)),
     effectiveSourceCount: Number(effectiveCount.toFixed(3)),
-    independentFamilyCount: prepared.length,
+    independentFamilyCount: new Set(prepared.map(item => item.family)).size,
+    independentDomainCount: new Set(prepared.map(item => item.correlationKey)).size,
     residualScale: Number(residualScale.toFixed(3)),
     consistencyScore: Number(consistencyScore.toFixed(6)),
     consistencyPenalty: Number(consistencyPenalty.toFixed(6)),
