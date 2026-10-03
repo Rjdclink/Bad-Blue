@@ -56,6 +56,15 @@ const arcGisCameraDiscovery = read('server/services/spectra/SpectraArcGisPublicC
 const floorplanTransformer = read('server/services/spectra/SpectraFloorplanTransformer.ts');
 const infrastructureIdentity = read('server/services/spectra/SpectraInfrastructureIdentity.ts');
 const acquisitionControl = read('server/services/spectra/SpectraAcquisitionControl.ts');
+const apiContract = read('server/services/spectra/SpectraApiContract.ts');
+const resourceGovernor = read('server/services/spectra/SpectraResourceGovernor.ts');
+const observability = read('server/services/spectra/SpectraObservability.ts');
+const tenantScope = read('server/services/spectra/SpectraTenantScope.ts');
+const providerSessionAccess = read('server/services/spectra/SpectraProviderSessionAccess.ts');
+const mapRendererAdapter = read('client/src/components/geoconsole/MapRendererAdapter.ts');
+const geoconsoleCore = read('server/services/geoconsole/index.ts');
+const railwayEnvExample = read('.env.railway.example');
+const legalProviderMesh = read('server/lexara/LegalProviderMesh.ts');
 const infrastructureNormalizer = read('server/services/spectra/SpectraInfrastructureProviderNormalizer.ts');
 const arubaStreamDecoder = read('server/services/spectra/SpectraArubaStreamDecoder.ts');
 const providerStreamCoordinator = read('server/services/spectra/SpectraProviderStreamCoordinator.ts');
@@ -85,7 +94,7 @@ test('Second question waits for first response',
   spectra.includes("addMessage('spectra', DETAILS_PROMPT)"));
 test('Acquisition begins only after details phase',
   spectra.includes("if (phase === 'awaiting_details')") &&
-  spectra.includes("await acquireTarget(target, message)"));
+  spectra.includes("await acquireTarget(targetRef.current || target, message)"));
 test('SPECTRA uses one canonical GeoConsole map',
   spectra.includes('<GeoconsoleRadarDashboard') &&
   spectra.includes('spectraShell'));
@@ -701,6 +710,82 @@ test('Infrastructure floorplan and identity helper utilities remain bounded and 
   infrastructureIdentity.includes('SPECTRA_INFRASTRUCTURE_SUBJECT_BINDINGS') &&
   infrastructureIdentity.includes('infrastructureCorrelationGroup'));
 
+test('SPECTRA exposes a pinned v1 interface with OpenAPI and compatibility mounts',
+  apiContract.includes("export const SPECTRA_API_VERSION = '1'") &&
+  apiContract.includes("openapi: '3.1.0'") &&
+  apiContract.includes("'/acquire'") &&
+  apiContract.includes("'/telemetry-history/{sessionId}'") &&
+  routes.includes("router.get('/openapi.json'") &&
+  serverRoutes.includes("app.use('/api/spectra/v1', spectraRoutes.default)") &&
+  serverRoutes.includes("app.use('/api/geoconsole/v1', geoconsoleRoutes.default)"));
+test('SPECTRA API responses advertise stable API and schema versions',
+  apiContract.includes('X-Spectra-Api-Version') &&
+  apiContract.includes('X-Spectra-Schema-Version') &&
+  routes.includes('spectraApiVersionHeaders') &&
+  geoconsoleRoutes.includes('spectraApiVersionHeaders'));
+test('Durable observations are canonical and reports rehydrate after cache loss or restart',
+  spectraMigration.includes('CREATE TABLE IF NOT EXISTS public.spectra_location_observations') &&
+  acquisitionPersistence.includes('loadSpectraSessionObservations') &&
+  geoconsoleRoutes.includes('const durableHistory = await loadSpectraSessionObservations') &&
+  geoconsoleRoutes.includes('await hybridGeoconsole.processLocationData(durableHistory, sessionId)') &&
+  geoconsoleRoutes.includes('durable SPECTRA observations remain in PostgreSQL/Supabase'));
+test('Provider and renderer layers are replaceable rather than hard-wired',
+  adapterRegistry.includes("id: 'generic-https-json-pull'") &&
+  providerNormalizer.includes('SPECTRA_PROVIDER_NORMALIZER_KINDS') &&
+  legalProviderMesh.includes('export interface LegalMeshCandidate') &&
+  legalProviderMesh.includes("provider:'tavily'") &&
+  legalProviderMesh.includes("provider:'searxng'") &&
+  mapRendererAdapter.includes("export interface GeoconsoleMapRendererAdapter") &&
+  mapRendererAdapter.includes("id: 'maplibre'") &&
+  mapRendererAdapter.includes("id: 'mapbox-global'") &&
+  intelligenceMap.includes('resolveGeoconsoleMapRenderer'));
+test('Cross-replica resource governance uses PostgreSQL advisory locks with bounded waiting',
+  resourceGovernor.includes('pg_try_advisory_lock') &&
+  resourceGovernor.includes('SPECTRA_MAX_CONCURRENT_ACQUISITIONS') &&
+  resourceGovernor.includes('SPECTRA_MAX_CONCURRENT_ACQUISITIONS_PER_TENANT') &&
+  resourceGovernor.includes('SPECTRA_RESOURCE_ACQUIRE_TIMEOUT_MS') &&
+  routes.includes('acquireSpectraResourcePermit') &&
+  routes.includes("res.status(429)") &&
+  spectra.includes("response.status === 429") &&
+  spectra.includes("response.headers.get('Retry-After')"));
+test('GeoConsole max concurrency and compute budget are active controls, not descriptive settings',
+  geoconsoleCore.includes('acquireProcessingPermit') &&
+  geoconsoleCore.includes('this.orchestrationState.activeTasks += 1') &&
+  geoconsoleCore.includes('this.orchestrationState.computeUsage += units') &&
+  geoconsoleCore.includes('this.orchestrationConfig.maxConcurrentOperations') &&
+  geoconsoleCore.includes('this.orchestrationConfig.computeBudget') &&
+  geoconsoleCore.includes('GeoConsole processing queue is saturated'));
+test('Railway-facing resource controls are documented for reproducible configuration',
+  railwayEnvExample.includes('SPECTRA_MAX_CONCURRENT_ACQUISITIONS=4') &&
+  railwayEnvExample.includes('SPECTRA_MAX_CONCURRENT_ACQUISITIONS_PER_TENANT=2') &&
+  railwayEnvExample.includes('SPECTRA_RESOURCE_ACQUIRE_TIMEOUT_MS=1500'));
+test('SPECTRA exposes liveness, readiness, detailed health and Prometheus metrics',
+  routes.includes("router.get('/live'") &&
+  routes.includes("router.get('/ready'") &&
+  routes.includes("router.get('/health'") &&
+  routes.includes("router.get('/metrics'") &&
+  routes.includes("pool.query('SELECT 1 AS ok')") &&
+  observability.includes('# TYPE spectra_acquisitions_total counter') &&
+  observability.includes('# TYPE spectra_acquisition_active gauge') &&
+  observability.includes('# TYPE spectra_provider_events_total counter'));
+test('Provider health includes active pulls plus WSS and MQTT stream state',
+  activeAcquisition.includes('getSpectraActiveAcquisitionHealth') &&
+  routes.includes('getSpectraActiveAcquisitionHealth') &&
+  routes.includes('getSpectraProviderStreamHealth') &&
+  routes.includes('getSpectraMqttProviderHealth'));
+test('Tenant isolation is explicit and all owned provider writes require a provider-session binding',
+  tenantScope.includes("model: 'user-v1'") &&
+  acquisitionPersistence.includes('WHERE session_id = $1 AND user_id = $2') &&
+  geoconsoleRoutes.includes('providerMayWriteOwnedSpectraSession') &&
+  providerSessionAccess.includes('SPECTRA_PROVIDER_SESSION_BINDINGS') &&
+  providerSessionAccess.includes('ownerTenantId') &&
+  spectraAccessMigration.includes('FROM PUBLIC, anon, authenticated') &&
+  spectraAccessMigration.includes('TO service_role'));
+test('Provider traffic context cannot attach to an owned tenant session without an explicit binding',
+  geoconsoleRoutes.includes('Traffic-context provider is not bound to this tenant session.') &&
+  geoconsoleRoutes.includes('providerMayWriteOwnedSpectraSession({') &&
+  railwayEnvExample.includes('SPECTRA_PROVIDER_SESSION_BINDINGS=[]'));
+
 test('SPECTRA recursively reacquires until page exit with one stable session',
   spectra.includes('CONTINUOUS_ACQUISITION_DELAY_MS') &&
   spectra.includes('startContinuousAcquisition') &&
@@ -881,8 +966,11 @@ test('Generic vehicle/camera feeds preserve track identity and velocity context'
   geoconsoleRoutes.includes("typeof inputMetadata.trackId === 'string'") &&
   geoconsoleRoutes.includes('velocity: (') &&
   geoconsoleRoutes.includes(': inputMetadata.velocity'));
-test('SPECTRA API is mounted',
-  serverRoutes.includes("app.use('/api/spectra', spectraRoutes.default)"));
+test('SPECTRA API is mounted with legacy and stable v1 compatibility paths',
+  serverRoutes.includes("app.use('/api/spectra/v1', spectraRoutes.default)") &&
+  serverRoutes.includes("app.use('/api/spectra', spectraRoutes.default)") &&
+  serverRoutes.includes("app.use('/api/geoconsole/v1', geoconsoleRoutes.default)") &&
+  serverRoutes.includes("app.use('/api/geoconsole', geoconsoleRoutes.default)"));
 
 console.log(`\nPassed: ${passed}  Failed: ${failed}\n`);
 process.exit(failed === 0 ? 0 : 1);
