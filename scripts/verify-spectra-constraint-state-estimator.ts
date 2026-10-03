@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { estimateSpectraConstraintState } from '../server/services/spectra/SpectraConstraintStateEstimator';
+import { MonteCarloPathEngine } from '../server/services/geoconsole/monteCarloPathEngine';
 import type { GPSPoint } from '../server/services/geoconsole/types';
 
 function point(
@@ -108,5 +109,13 @@ const discontinuityTrajectory = [
 ];
 const discontinuityResult = estimateSpectraConstraintState(discontinuityTrajectory);
 assert.equal(discontinuityResult.summary.segmentCount, 2);
+
+const futurecastEngine = new MonteCarloPathEngine();
+const futurecast = await futurecastEngine.generateFuturecast(smoothResult.points, 1);
+assert.ok(futurecast.length > 0);
+assert.equal(futurecast[0].metadata?.stateEstimatorSeeded, true);
+assert.ok(Number(futurecast[0].metadata?.stateEstimatorInfluence) >= 0.2);
+assert.ok(Number(futurecast[0].metadata?.stateEstimatorInfluence) <= 0.7);
+assert.ok(Number(futurecast[0].metadata?.stateEstimatorRadius95Meters) > 0);
 
 console.log('SPECTRA constraint-state estimator verification passed');
