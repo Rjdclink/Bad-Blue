@@ -55,6 +55,7 @@ const gtfsRealtimeContext = read('server/services/spectra/SpectraGtfsRealtimeCon
 const arcGisCameraDiscovery = read('server/services/spectra/SpectraArcGisPublicCameraDiscovery.ts');
 const floorplanTransformer = read('server/services/spectra/SpectraFloorplanTransformer.ts');
 const infrastructureIdentity = read('server/services/spectra/SpectraInfrastructureIdentity.ts');
+const acquisitionControl = read('server/services/spectra/SpectraAcquisitionControl.ts');
 const infrastructureNormalizer = read('server/services/spectra/SpectraInfrastructureProviderNormalizer.ts');
 const arubaStreamDecoder = read('server/services/spectra/SpectraArubaStreamDecoder.ts');
 const providerStreamCoordinator = read('server/services/spectra/SpectraProviderStreamCoordinator.ts');
@@ -699,6 +700,41 @@ test('Infrastructure floorplan and identity helper utilities remain bounded and 
   floorplanTransformer.includes('affine-three-point') &&
   infrastructureIdentity.includes('SPECTRA_INFRASTRUCTURE_SUBJECT_BINDINGS') &&
   infrastructureIdentity.includes('infrastructureCorrelationGroup'));
+
+test('SPECTRA recursively reacquires until page exit with one stable session',
+  spectra.includes('CONTINUOUS_ACQUISITION_DELAY_MS') &&
+  spectra.includes('startContinuousAcquisition') &&
+  spectra.includes('continuousAcquisitionActiveRef.current') &&
+  spectra.includes('recursivePassRef.current') &&
+  spectra.includes('queryStartedAtRef.current') &&
+  spectra.includes("backgroundPass: true") &&
+  spectra.includes("sessionId: resolvedSessionId"));
+test('SPECTRA hard-stops local and server acquisition when the viewer exits',
+  spectra.includes("window.addEventListener('pagehide'") &&
+  spectra.includes("navigator.sendBeacon('/api/spectra/acquisition/stop'") &&
+  spectra.includes("keepalive: true") &&
+  spectra.includes("hardStopRef.current('back_button', true)") &&
+  spectra.includes("hardStopRef.current('new_target', true)") &&
+  routes.includes("router.post('/acquisition/stop'") &&
+  routes.includes('stopSpectraAcquisitionSession'));
+test('Hard stop aborts in-flight and delayed server acquisition requests',
+  acquisitionControl.includes('controllers: Set<AbortController>') &&
+  acquisitionControl.includes('controller.abort') &&
+  acquisitionControl.includes('state.stopped') &&
+  routes.includes('registerSpectraAcquisitionRequest') &&
+  routes.includes('acquisitionLease.cancel') &&
+  routes.includes('throwIfAcquisitionStopped(acquisitionLease.signal)'));
+test('Recursive discovery and active provider pulls inherit the acquisition abort signal',
+  routes.includes('externalSignal?: AbortSignal') &&
+  routes.includes("signal: acquisitionLease.signal") &&
+  routes.includes('acquisitionLease.signal') &&
+  activeAcquisition.includes('signal?: AbortSignal') &&
+  activeAcquisition.includes("input.signal?.addEventListener('abort'"));
+test('Continuous passes broaden source-wave and adaptive-query coverage instead of freezing on pass zero',
+  routes.includes('const outerPass = Math.max(0, recursivePass)') &&
+  routes.includes('(outerPass * 4) % waveQueries.length') &&
+  routes.includes('combinedPass % 8') &&
+  routes.includes("'newly available evidence'"));
 
 test('Major infrastructure feeds normalize through the canonical SPECTRA provider path',
   infrastructureNormalizer.includes("'mist-location'") &&
