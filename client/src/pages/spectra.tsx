@@ -582,6 +582,128 @@ export default function SpectraPage() {
     }
   }, [addMessage, directEvidence, speakIfEnabled]);
 
+  const stopContinuousAcquisition = useCallback((
+    reason = 'viewer_exit',
+    notifyServer = true,
+  ) => {
+    continuousAcquisitionActiveRef.current = false;
+
+    if (continuousAcquisitionTimerRef.current) {
+      clearTimeout(continuousAcquisitionTimerRef.current);
+      continuousAcquisitionTimerRef.current = null;
+    }
+
+    if (activeAcquisitionAbortRef.current) {
+      activeAcquisitionAbortRef.current.abort(new Error(`SPECTRA acquisition stopped: ${reason}`));
+      activeAcquisitionAbortRef.current = null;
+    }
+
+    requestRef.current += 1;
+
+    const sessionId = spectraSessionIdRef.current;
+    if (!notifyServer || !sessionId || typeof window === 'undefined') return;
+
+    const body = JSON.stringify({ sessionId });
+    try {
+      if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
+        const blob = new Blob([body], { type: 'application/json' });
+        if (navigator.sendBeacon('/api/spectra/acquisition/stop', blob)) return;
+      }
+    } catch {
+      // Keepalive fetch below is the fallback.
+    }
+
+    void fetch('/api/spectra/acquisition/stop', {
+      method: 'POST',
+      credentials: 'include',
+      keepalive: true,
+      headers: { 'Content-Type': 'application/json' },
+      body,
+    }).catch(() => undefined);
+  }, []);
+
+  hardStopRef.current = stopContinuousAcquisition;
+
+  const startContinuousAcquisition = useCallback(() => {
+    if (
+      continuousAcquisitionActiveRef.current
+      || !targetRef.current.trim()
+      || !detailsRef.current.trim()
+      || !spectraSessionIdRef.current
+    ) {
+      return;
+    }
+
+    continuousAcquisitionActiveRef.current = true;
+
+    const runPass = async () => {
+      if (!continuousAcquisitionActiveRef.current) return;
+
+      const controller = new AbortController();
+      activeAcquisitionAbortRef.current = controller;
+      const pass = ++recursivePassRef.current;
+
+      try {
+        await acquireTarget(
+          targetRef.current,
+          detailsRef.current,
+          directEvidenceRef.current,
+          spectraSessionIdRef.current || undefined,
+          {
+            backgroundPass: true,
+            signal: controller.signal,
+            recursivePass: pass,
+            queryStartedAt: queryStartedAtRef.current,
+          },
+        );
+      } finally {
+        if (activeAcquisitionAbortRef.current === controller) {
+          activeAcquisitionAbortRef.current = null;
+        }
+
+        if (continuousAcquisitionActiveRef.current) {
+          continuousAcquisitionTimerRef.current = setTimeout(
+            () => void runPass(),
+            CONTINUOUS_ACQUISITION_DELAY_MS,
+          );
+        }
+      }
+    };
+
+    continuousAcquisitionTimerRef.current = setTimeout(
+      () => void runPass(),
+      CONTINUOUS_ACQUISITION_DELAY_MS,
+    );
+  }, [acquireTarget]);
+
+  useEffect(() => {
+    if (
+      (phase === 'active' || phase === 'error')
+      && target.trim()
+      && details.trim()
+      && spectraSessionId
+    ) {
+      startContinuousAcquisition();
+    }
+  }, [details, phase, spectraSessionId, startContinuousAcquisition, target]);
+
+  useEffect(() => {
+    const onPageHide = () => {
+      stopContinuousAcquisition('page_exit', true);
+    };
+
+    window.addEventListener('pagehide', onPageHide);
+    return () => {
+      window.removeEventListener('pagehide', onPageHide);
+      if (
+        continuousAcquisitionActiveRef.current
+        || activeAcquisitionAbortRef.current
+      ) {
+        stopContinuousAcquisition('spectra_unmounted', true);
+      }
+    };
+  }, [stopContinuousAcquisition]);
+
   useEffect(() => {
     const launch = lexaraLaunchRef.current;
     if (!launch) return;
