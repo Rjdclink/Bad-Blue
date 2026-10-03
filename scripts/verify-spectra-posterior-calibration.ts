@@ -178,4 +178,122 @@ assert.ok(
   `Expected a sub-meter average 99% radius, observed ${averageRadius99Meters.toFixed(3)} m`,
 );
 
+// Correlated-modality calibration: GNSS and VPS can share device/common-mode
+// errors. SPECTRA keeps them geometrically useful but assigns a common
+// correlationDomain so their probability evidence is not double-counted.
+const CORRELATED_TRIALS = 5_000;
+const correlatedRandom = new SeededRandom();
+let correlatedContained99 = 0;
+let correlatedPosteriorAbove99 = 0;
+let correlatedRadiusSum = 0;
+const CORRELATION = 0.70;
+const INDEPENDENT_COMPONENT = Math.sqrt(1 - CORRELATION ** 2);
+
+for (let trial = 0; trial < CORRELATED_TRIALS; trial += 1) {
+  const [commonEast, commonNorth] = correlatedRandom.normalPair();
+  const [gnssEast, gnssNorth] = correlatedRandom.normalPair();
+  const [vpsEast, vpsNorth] = correlatedRandom.normalPair();
+  const [uwbEast, uwbNorth] = correlatedRandom.normalPair();
+
+  const gnssSigma = sigmaForRadius(0.5);
+  const vpsSigma = sigmaForRadius(1.0);
+  const uwbSigma = sigmaForRadius(0.2);
+
+  const gnssCoordinate = offsetCoordinate(
+    (CORRELATION * commonEast + INDEPENDENT_COMPONENT * gnssEast) * gnssSigma,
+    (CORRELATION * commonNorth + INDEPENDENT_COMPONENT * gnssNorth) * gnssSigma,
+  );
+  const vpsCoordinate = offsetCoordinate(
+    (CORRELATION * commonEast + INDEPENDENT_COMPONENT * vpsEast) * vpsSigma,
+    (CORRELATION * commonNorth + INDEPENDENT_COMPONENT * vpsNorth) * vpsSigma,
+  );
+  const uwbCoordinate = offsetCoordinate(
+    uwbEast * uwbSigma,
+    uwbNorth * uwbSigma,
+  );
+
+  const observations: GPSPoint[] = [
+    {
+      ...gnssCoordinate,
+      accuracy: 0.5,
+      timestamp: NOW,
+      confidence: 0.998,
+      source: 'gnss_fix',
+      observationKind: 'observed',
+      provenance: { provider: 'same-device-gnss' },
+      metadata: {
+        accuracyConfidenceLevel: 0.68,
+        correlationDomain: 'same-device-a',
+      },
+    },
+    {
+      ...vpsCoordinate,
+      accuracy: 1.0,
+      timestamp: new Date(NOW.getTime() - 5),
+      confidence: 0.98,
+      source: 'visual_positioning',
+      observationKind: 'observed',
+      provenance: { provider: 'same-device-vps' },
+      metadata: {
+        providerKind: 'arcore-geospatial-pose',
+        accuracyConfidenceLevel: 0.68,
+        correlationDomain: 'same-device-a',
+        vpsUsed: true,
+      },
+    },
+    {
+      ...uwbCoordinate,
+      accuracy: 0.2,
+      timestamp: new Date(NOW.getTime() - 10),
+      confidence: 0.999,
+      source: 'uwb_range',
+      observationKind: 'observed',
+      provenance: { provider: 'independent-uwb-network' },
+      metadata: {
+        accuracyConfidenceLevel: 0.68,
+        correlationDomain: 'independent-uwb-a',
+      },
+    },
+  ];
+
+  const assessment = assessSpectraLiveLocation(observations, NOW);
+  assert.ok(assessment.consensusCenter);
+  assert.equal(assessment.independentDomainCount, 2);
+
+  const errorMeters = distanceMeters(
+    assessment.consensusCenter!.latitude,
+    assessment.consensusCenter!.longitude,
+    BASE_LATITUDE,
+    BASE_LONGITUDE,
+  );
+  const radius99 = assessment.confidenceRadiusMeters99!;
+
+  if (errorMeters <= radius99) correlatedContained99 += 1;
+  if (assessment.confidenceScore > 0.99) correlatedPosteriorAbove99 += 1;
+  correlatedRadiusSum += radius99;
+}
+
+const correlatedContainment = correlatedContained99 / CORRELATED_TRIALS;
+const correlatedPosteriorAbove99Rate =
+  correlatedPosteriorAbove99 / CORRELATED_TRIALS;
+const correlatedAverageRadius99Meters =
+  correlatedRadiusSum / CORRELATED_TRIALS;
+
+console.log({
+  correlatedTrials: CORRELATED_TRIALS,
+  correlatedContainment,
+  correlatedPosteriorAbove99Rate,
+  correlatedAverageRadius99Meters,
+});
+
+assert.ok(
+  correlatedContainment >= 0.99,
+  `Expected >=99% empirical coverage with correlated same-device GNSS/VPS, observed ${(correlatedContainment * 100).toFixed(3)}%`,
+);
+
+assert.ok(
+  correlatedPosteriorAbove99Rate >= 0.95,
+  `Expected correlated precision configuration to naturally exceed 99% posterior confidence in >=95% of trials; observed ${(correlatedPosteriorAbove99Rate * 100).toFixed(3)}%`,
+);
+
 console.log('SPECTRA posterior calibration checks passed.');
