@@ -62,6 +62,15 @@ const MAX_HEATMAP_AXIS_CELLS = 512;
 const MIN_HEATMAP_RESOLUTION_METERS = 20;
 const OPERATOR_TRAIL_WINDOW_MS = 60 * 60 * 1000;
 
+export interface FuturecastMotionContext {
+  observedAt?: Date;
+  confidence: number;
+  averageVehicleSpeedMps?: number;
+  dominantHeadingDegrees?: number;
+  congestionRatio?: number;
+  distanceMeters?: number;
+}
+
 /**
  * Monte Carlo Path Interpolation Engine
  */
@@ -786,7 +795,8 @@ export class MonteCarloPathEngine {
    */
   async generateFuturecast(
     recentPoints: GPSPoint[],
-    hours: number = 1
+    hours: number = 1,
+    motionContext: FuturecastMotionContext[] = [],
   ): Promise<GPSPoint[]> {
     if (recentPoints.length < 3) return [];
 
@@ -848,9 +858,115 @@ export class MonteCarloPathEngine {
 
     if (totalWeight <= 0) return [];
 
-    const avgSpeed = Math.max(0, Math.min(maxPlausibleSpeed, weightedSpeed / totalWeight));
-    const avgHeading = (Math.atan2(headingY, headingX) * 180 / Math.PI + 360) % 360;
+    const evidenceSpeed = Math.max(0, Math.min(maxPlausibleSpeed, weightedSpeed / totalWeight));
+    const evidenceHeading = (Math.atan2(headingY, headingX) * 180 / Math.PI + 360) % 360;
     const latest = usable[usable.length - 1];
+
+    const vehicleClass = (point: GPSPoint): boolean => {
+      if (point.source === 'vehicle_telemetry') return true;
+      const objectClass = String(
+        point.metadata?.objectClass
+        ?? point.metadata?.trackClass
+        ?? point.metadata?.motionClass
+        ?? ''
+      ).toLowerCase();
+      return /^(?:vehicle|car|truck|bus|motorcycle|motorbike|van|suv)$/.test(objectClass);
+    };
+    const likelyVehicleMotion = usable.some(vehicleClass);
+
+    const contextRows = likelyVehicleMotion
+      ? motionContext.filter(context =>
+          Number.isFinite(context.confidence)
+          && context.confidence > 0
+          && (
+            Number.isFinite(context.averageVehicleSpeedMps)
+            || Number.isFinite(context.dominantHeadingDegrees)
+          )
+        )
+      : [];
+
+    let avgSpeed = evidenceSpeed;
+    let avgHeading = evidenceHeading;
+    let motionContextInfluence = 0;
+    let motionContextSpeed: number | undefined;
+    let motionContextHeading: number | undefined;
+    let motionContextCongestion: number | undefined;
+
+    if (contextRows.length) {
+      let contextWeight = 0;
+      let contextSpeedWeight = 0;
+      let contextSpeedSum = 0;
+      let contextHeadingX = 0;
+      let contextHeadingY = 0;
+      let congestionWeight = 0;
+      let congestionSum = 0;
+      const nowMs = Date.now();
+
+      for (const context of contextRows) {
+        const ageMinutes = context.observedAt instanceof Date
+          ? Math.max(0, (nowMs - context.observedAt.getTime()) / 60_000)
+          : 0;
+        const recency = Math.exp(-ageMinutes / 30);
+        const proximity = Number.isFinite(context.distanceMeters)
+          ? Math.exp(-Math.max(0, Number(context.distanceMeters)) / 10_000)
+          : 1;
+        const weight = Math.max(0, Math.min(1, context.confidence)) * recency * proximity;
+        if (weight <= 0) continue;
+
+        contextWeight += weight;
+        if (Number.isFinite(context.averageVehicleSpeedMps)) {
+          contextSpeedSum += Number(context.averageVehicleSpeedMps) * weight;
+          contextSpeedWeight += weight;
+        }
+        if (Number.isFinite(context.dominantHeadingDegrees)) {
+          const radians = Number(context.dominantHeadingDegrees) * DEG_TO_RAD;
+          contextHeadingX += Math.cos(radians) * weight;
+          contextHeadingY += Math.sin(radians) * weight;
+        }
+        if (Number.isFinite(context.congestionRatio)) {
+          congestionSum += Math.max(0, Math.min(1, Number(context.congestionRatio))) * weight;
+          congestionWeight += weight;
+        }
+      }
+
+      if (contextWeight > 0) {
+        motionContextInfluence = Math.min(0.35, 0.12 + 0.23 * Math.min(1, contextWeight));
+        motionContextSpeed = contextSpeedWeight > 0
+          ? Math.max(0, Math.min(maxPlausibleSpeed, contextSpeedSum / contextSpeedWeight))
+          : undefined;
+        motionContextHeading = (
+          Math.abs(contextHeadingX) + Math.abs(contextHeadingY) > 1e-9
+        )
+          ? (Math.atan2(contextHeadingY, contextHeadingX) * 180 / Math.PI + 360) % 360
+          : undefined;
+        motionContextCongestion = congestionWeight > 0
+          ? Math.max(0, Math.min(1, congestionSum / congestionWeight))
+          : undefined;
+
+        if (motionContextSpeed !== undefined) {
+          avgSpeed = Math.max(
+            0,
+            Math.min(
+              maxPlausibleSpeed,
+              evidenceSpeed * (1 - motionContextInfluence)
+              + motionContextSpeed * motionContextInfluence,
+            ),
+          );
+        }
+
+        if (motionContextHeading !== undefined) {
+          const evidenceRadians = evidenceHeading * DEG_TO_RAD;
+          const contextRadians = motionContextHeading * DEG_TO_RAD;
+          const blendedX =
+            Math.cos(evidenceRadians) * (1 - motionContextInfluence)
+            + Math.cos(contextRadians) * motionContextInfluence;
+          const blendedY =
+            Math.sin(evidenceRadians) * (1 - motionContextInfluence)
+            + Math.sin(contextRadians) * motionContextInfluence;
+          avgHeading = (Math.atan2(blendedY, blendedX) * 180 / Math.PI + 360) % 360;
+        }
+      }
+    }
     const baseTime = latest.timestamp.getTime();
     const stepMinutes = 5;
     const steps = Math.max(1, Math.min(12, Math.floor((Math.min(hours, 1) * 60) / stepMinutes)));
@@ -869,7 +985,14 @@ export class MonteCarloPathEngine {
       const futurePoint: GPSPoint = {
         latitude: newPos.lat,
         longitude: newPos.lng,
-        accuracy: baseAccuracy + Math.max(25, distance * 0.08) * i,
+        accuracy:
+          baseAccuracy
+          + Math.max(25, distance * 0.08) * i
+          + (
+            motionContextInfluence > 0
+              ? Math.max(10, distance * (0.04 + 0.08 * (motionContextCongestion ?? 0))) * i
+              : 0
+          ),
         timestamp: new Date(baseTime + i * stepMinutes * 60 * 1000),
         receivedAt: new Date(),
         source: 'predicted',
@@ -887,6 +1010,12 @@ export class MonteCarloPathEngine {
           averageSpeedMps: avgSpeed,
           averageHeadingDegrees: avgHeading,
           weightedTransitions: totalWeight,
+          motionContextApplied: motionContextInfluence > 0,
+          motionContextInfluence,
+          motionContextSpeedMps: motionContextSpeed,
+          motionContextHeadingDegrees: motionContextHeading,
+          motionContextCongestionRatio: motionContextCongestion,
+          motionContextCount: contextRows.length,
         },
       };
 

@@ -32,6 +32,30 @@ const exifTool = read('server/services/locationIntelligence/ExifToolExtractor.ts
 const spectraSources = read('server/services/spectra/SpectraSourceRegistry.ts');
 const pantheonSources = read('server/services/pantheon/PantheonSovereignSourceRegistry.ts');
 const geocoder = read('server/services/geoconsole/city-state-geocoder.ts');
+const geoconsoleRoutes = read('server/routes/geoconsole.routes.ts');
+const adapterRegistry = read('server/services/spectra/SpectraAdapterRegistry.ts');
+const providerNormalizer = read('server/services/spectra/SpectraProviderTelemetryNormalizer.ts');
+const advancedRadioNormalizer = read('server/services/spectra/SpectraAdvancedRadioNormalizer.ts');
+const externalLocationNormalizer = read('server/services/spectra/SpectraExternalLocationNormalizer.ts');
+const liveConfidence = read('server/services/spectra/SpectraLiveConfidence.ts');
+const gnssIntegrity = read('server/services/spectra/SpectraGnssIntegrity.ts');
+const identityBinding = read('server/services/spectra/SpectraIdentityBinding.ts');
+const posteriorCalibration = read('scripts/verify-spectra-posterior-calibration.ts');
+const genericPull = read('server/services/spectra/SpectraGenericPullAdapters.ts');
+const realtimeBridge = read('server/services/spectra/SpectraRealtimeBridge.ts');
+const telemetryImport = read('server/services/spectra/SpectraTelemetryImport.ts');
+const acquisitionPersistence = read('server/services/spectra/SpectraAcquisitionPersistence.ts');
+const placeContext = read('server/services/spectra/SpectraPlaceContext.ts');
+const publicRetrieval = read('server/services/spectra/SpectraPublicRetrieval.ts');
+const cameraDirectories = read('server/services/spectra/SpectraCameraDirectoryAdapters.ts');
+const motionContext = read('server/services/spectra/SpectraMotionContext.ts');
+const monteCarlo = read('server/services/geoconsole/monteCarloPathEngine.ts');
+const lexaraConversation = read('client/src/components/LexaraConversation.tsx');
+const spectraMigration = read('server/migrations/064_spectra_durable_observations.sql');
+const motionContextMigration = read('server/migrations/067_spectra_motion_context.sql');
+const motionContextAccessMigration = read('server/migrations/068_spectra_motion_context_server_only_access.sql');
+const spectraAccessMigration = read('server/migrations/065_spectra_server_only_access.sql');
+const spectraIndexMigration = read('server/migrations/066_spectra_foreign_key_indexes.sql');
 const landing = read('client/src/pages/landing.tsx');
 const login = read('client/src/pages/login.tsx');
 
@@ -110,12 +134,11 @@ test('Regional candidates remain separate from timed observations',
 test('One-hour previous/future timeline remains available',
   dashboard.includes('min={-60}') && dashboard.includes('max={60}'));
 
-test('SPECTRA remains visible but disabled while normal LegalWhat access is restored',
-  welcome.includes('SPECTRA') &&
-  welcome.includes('disabled') &&
-  welcome.includes('aria-disabled="true"') &&
-  welcome.includes('Temporarily out of order. Contact contact.badblue@gmail.com for assistance.') &&
-  !welcome.includes("setLocation('/spectra')"));
+test('SPECTRA stays hidden from the normal library and launches contextually from Lexara',
+  !welcome.includes('name: "SPECTRA"') &&
+  !welcome.includes('route: "/spectra"') &&
+  lexaraConversation.includes('data-testid="lexara-spectra-launch"') &&
+  lexaraConversation.includes("setLocation('/spectra')"));
 test('Landing acknowledgement restores signup/Square flow while master access still bypasses payment',
   landing.includes("onClick={() => setLocation('/login')}") &&
   !landing.includes("onClick={() => setLocation('/welcome')}") &&
@@ -157,26 +180,27 @@ test('Folded geospatial tools are not separate master tabs',
 
 test('SPECTRA acquisition API requires authentication',
   routes.includes('router.use(isAuthenticated)'));
-test('SPECTRA acquisition uses existing OSINT engine with a route-local timeout',
-  routes.includes('conductFullOSINT') &&
+test('SPECTRA uses a route-local research budget and Lexara-native background lane',
+  routes.includes('investigateLexaraBackgroundQuestion') &&
   routes.includes('settleWithin(') &&
   routes.includes('SPECTRA_OSINT_TIMEOUT_MS'));
-test('SPECTRA broad discovery runs independently of deep OSINT',
+test('SPECTRA broad discovery runs through independent native and Claude research lanes',
   routes.includes('runDiscoveryPass') &&
   routes.includes('Promise.allSettled') &&
-  routes.includes('unifiedSearch') &&
-  routes.includes("category: 'general'"));
-test('SPECTRA automatically broadens when the first discovery pass is narrow',
-  routes.includes('firstPassSourceCount < 12') &&
-  routes.includes('discoveryQueries.secondPass') &&
-  routes.includes('discoveryPasses += 1'));
+  routes.includes('discoverLegalMeshTier3') &&
+  routes.includes('callClaudeWebSearch') &&
+  routes.includes('allowFetch: true'));
+test('SPECTRA recursively broadens until evidence sufficiency or diminishing returns',
+  routes.includes('SPECTRA_DISCOVERY_POLICY.maxPasses') &&
+  routes.includes('SPECTRA_DISCOVERY_POLICY.sufficientConfidence') &&
+  routes.includes('SPECTRA_DISCOVERY_POLICY.diminishingReturnFloor') &&
+  routes.includes('buildSpectraAdaptiveQuery'));
 test('Generic target classes resolve identity without treating city/state as a person name',
   routes.includes('const genericTarget = GENERIC_TARGET_RE.test(normalizedTarget)') &&
   routes.includes('extractLikelyName(details)') &&
   routes.includes('looksLikeLocation') &&
   routes.includes('extractCityStateHint(firstSegment)') &&
-  routes.includes('resolvedTargetLabel') &&
-  routes.includes('const searchQuery = resolvedName || details'));
+  routes.includes('resolvedTargetLabel'));
 test('SPECTRA only maps qualified explicitly timestamped coordinates',
   routes.includes('explicitTimestamp') &&
   routes.includes('hasLocationContext') &&
@@ -200,10 +224,10 @@ test('Unsigned client location claims cannot manufacture precision',
   evidenceProof.includes('Math.max(5_000, reportedAccuracy)') &&
   evidenceProof.includes("source: 'manual_input'") &&
   evidenceProof.includes('claimedAccuracy: point.accuracy'));
-test('Generic targets do not launch untethered broad discovery',
-  routes.includes('const strongIdentityAnchor = quotedName || quotedPhone') &&
-  routes.includes('const secondPass = strongIdentityAnchor ?') &&
-  routes.includes("? suppliedName || ''"));
+test('All supplied clues may seed discovery without a mandatory name-or-phone gate',
+  routes.includes('const identityAnchor = quotedName || quotedPhone ||') &&
+  routes.includes("[identityAnchor, compactDetails, 'media geotag timestamp']") &&
+  !routes.includes('const secondPass = strongIdentityAnchor ?'));
 test('Failed map providers stay locally disabled across UI updates',
   intelligenceMap.includes("providerStatus.terrain !== 'unavailable'") &&
   intelligenceMap.includes("providerStatus.weather !== 'unavailable'") &&
@@ -239,16 +263,430 @@ test('Independent evidence is preserved while duplicate source counting is preve
 test('Regional geocoder uncertainty is preserved',
   read('server/services/geoconsole/city-state-geocoder.ts').includes('accuracyMeters') &&
   read('client/src/components/geoconsole/MapLibreIntelligenceMap.tsx').includes('spectra-candidate-area'));
-test('SPECTRA is detached from the removed legacy Pantheon inventory', !pantheonSources.includes('PANTHEON_VERIFIED_SOURCE_INVENTORY') && !spectraSources.includes('PANTHEON_VERIFIED_SOURCE_INVENTORY') && spectraSources.includes('buildPantheonBackgroundRegistryTargets'));
-test('SPECTRA source catalog is priority compiled and directly retrievable',
+test('SPECTRA is independent of Pantheon discovery and search routing',
+  !spectraSources.includes('Pantheon') &&
+  !spectraSources.includes('pantheon') &&
+  !routes.includes('conductFullOSINT') &&
+  !routes.includes('unifiedSearch'));
+test('SPECTRA source registry includes the major geospatial evidence families',
   spectraSources.includes("'critical' | 'high' | 'supporting'") &&
-  spectraSources.includes('SPECTRA_SOURCE_CATALOG_BY_ID') &&
-  spectraSources.includes('buildPantheonBackgroundRegistryTargets'));
-test('SPECTRA acquisition pipes prioritized source waves into discovery',
+  spectraSources.includes("'media-location'") &&
+  spectraSources.includes("'camera-context'") &&
+  spectraSources.includes("'map-context'") &&
+  spectraSources.includes("'weather-context'") &&
+  spectraSources.includes("'earth-observation'"));
+test('SPECTRA acquisition uses adaptive prioritized source waves without fixed 36/24/12 caps',
   routes.includes('buildSpectraDiscoveryWaves') &&
-  routes.includes('criticalSourceQueries') &&
-  routes.includes('highSourceQueries') &&
-  routes.includes('supportingSourceQueries'));
+  routes.includes('buildSpectraAdaptiveQuery') &&
+  routes.includes('SPECTRA_DISCOVERY_POLICY') &&
+  !routes.includes('.slice(0, 36)') &&
+  !routes.includes('.slice(0, 24)') &&
+  !routes.includes('.slice(0, 12)'));
+test('SPECTRA has nationwide public camera adapters with optional provider expansion',
+  geoconsoleRoutes.includes("router.get('/public-cameras'") &&
+  geoconsoleRoutes.includes('api.trafficland.com/v2.2/json/video_feeds/poi') &&
+  geoconsoleRoutes.includes('SPECTRA_CAMERA_ARCGIS_FEEDS'));
+test('SPECTRA has geotagged public-media context adapters',
+  geoconsoleRoutes.includes("router.get('/public-geotagged-media'") &&
+  geoconsoleRoutes.includes('commons.wikimedia.org/w/api.php') &&
+  geoconsoleRoutes.includes('FLICKR_API_KEY'));
+test('SPECTRA has weather and earth-observation context adapters',
+  geoconsoleRoutes.includes("router.get('/environment-context'") &&
+  geoconsoleRoutes.includes('api.weather.gov/stations/') &&
+  geoconsoleRoutes.includes('stac.dataspace.copernicus.eu/v1/search'));
+test('US address geocoding has an independent Census fallback',
+  geocoder.includes('geocoding.geo.census.gov/geocoder/locations/onelineaddress') &&
+  geocoder.includes('queryCensusAddressGeocoder(address)'));
+test('SPECTRA universal telemetry gateway accepts browser, provider, radio and ranging evidence',
+  geoconsoleRoutes.includes("router.post('/telemetry-ingest'") &&
+  geoconsoleRoutes.includes("router.post('/telemetry/provider/:providerId'") &&
+  geoconsoleRoutes.includes('googleRadioPoint') &&
+  geoconsoleRoutes.includes('beaconDbRadioPoint') &&
+  geoconsoleRoutes.includes('openCellIdPoint') &&
+  geoconsoleRoutes.includes('rangingPoint'));
+test('Structured telemetry imports cover the supported interchange formats',
+  geoconsoleRoutes.includes("router.post('/telemetry/import'") &&
+  ['geojson','gpx','kml','nmea','csv','ndjson'].every(format => telemetryImport.includes(`'${format}'`)));
+test('Configured HTTPS pull adapters are bounded and enter the canonical telemetry pipeline',
+  geoconsoleRoutes.includes("router.post('/telemetry/pull/:adapterId'") &&
+  genericPull.includes("Generic SPECTRA pull adapters require HTTPS.") &&
+  genericPull.includes('rows.slice(0, 500)') &&
+  geoconsoleRoutes.includes('processTelemetryBatch(batch, true, userId, adapterId)'));
+test('Durable SPECTRA persistence stores investigations, clues and deduplicated observations',
+  acquisitionPersistence.includes('spectra_investigations') &&
+  acquisitionPersistence.includes('spectra_clues') &&
+  acquisitionPersistence.includes('spectra_location_observations') &&
+  acquisitionPersistence.includes('evidence_fingerprint') &&
+  routes.includes('persistSpectraAcquisition'));
+test('SPECTRA migration enables PostGIS, RLS and guarded Realtime publication',
+  spectraMigration.includes('CREATE EXTENSION IF NOT EXISTS postgis WITH SCHEMA extensions') &&
+  spectraMigration.includes('DO $') &&
+  spectraMigration.includes('ADD TABLE public.spectra_location_observations') &&
+  (spectraMigration.match(/ENABLE ROW LEVEL SECURITY/g) || []).length === 4);
+test('SPECTRA persistence tables remain server-only',
+  spectraAccessMigration.includes('REVOKE ALL ON TABLE') &&
+  spectraAccessMigration.includes('FROM PUBLIC, anon, authenticated') &&
+  spectraAccessMigration.includes('TO service_role') &&
+  dockerfile.includes('065_spectra_server_only_access.sql'));
+test('SPECTRA persistence foreign keys have covering indexes',
+  spectraIndexMigration.includes('spectra_location_observations_investigation_idx') &&
+  spectraIndexMigration.includes('spectra_location_observations_telemetry_event_idx') &&
+  spectraIndexMigration.includes('spectra_telemetry_events_investigation_idx') &&
+  dockerfile.includes('066_spectra_foreign_key_indexes.sql'));
+test('Realtime observations work locally and across replicas when Supabase Realtime is configured',
+  geoconsoleRoutes.includes("router.get('/telemetry-stream/:sessionId'") &&
+  geoconsoleRoutes.includes('telemetryPushEmitter') &&
+  geoconsoleRoutes.includes('subscribeSpectraDatabaseObservations') &&
+  realtimeBridge.includes("table: 'spectra_location_observations'"));
+test('SPECTRA acquisition session stays attached to GeoRuntime without callback churn',
+  spectra.includes('sessionId={spectraSessionId}') &&
+  spectra.includes('sessionId: sessionOverride || spectraSessionId || undefined') &&
+  dashboard.includes('sessionId?: string | null') &&
+  dashboard.includes('sessionId: sessionId || undefined') &&
+  runtime.includes('const sessionIdRef = useRef<string | null>') &&
+  runtime.includes('sessionIdRef.current = canonicalSessionId') &&
+  runtime.includes("sessionId: configuredSessionId || undefined") &&
+  runtime.includes('/api/geoconsole/telemetry-stream/'));
+test('SPECTRA adapter capability registry truthfully exposes optional and built-in lanes',
+  adapterRegistry.includes("id: 'browser-geolocation'") &&
+  adapterRegistry.includes("id: 'signed-provider-webhook'") &&
+  adapterRegistry.includes("id: 'beacondb-radio-geolocation'") &&
+  adapterRegistry.includes("id: 'structured-telemetry-import'") &&
+  adapterRegistry.includes("id: 'trafficland'") &&
+  adapterRegistry.includes("id: 'overpass-place-context'") &&
+  adapterRegistry.includes("id: 'geonames-place-context'"));
+test('SPECTRA signed provider bridge normalizes carrier, BLE and accessory-network telemetry',
+  geoconsoleRoutes.includes("router.post('/telemetry/provider/:providerId/normalize/:kind'") &&
+  geoconsoleRoutes.includes('normalizeSpectraProviderPayload') &&
+  geoconsoleRoutes.includes('providerTelemetryAuthorized(req)') &&
+  adapterRegistry.includes("id: 'camara-location-retrieval-ingest'") &&
+  adapterRegistry.includes("id: 'bluetooth-scanner-ingest'") &&
+  adapterRegistry.includes("id: 'accessory-network-ingest'") &&
+  providerNormalizer.includes("'camara-location-retrieval'") &&
+  providerNormalizer.includes("'bluetooth-scanner'") &&
+  providerNormalizer.includes("'accessory-network'") &&
+  providerNormalizer.includes("source: 'network_region'") &&
+  providerNormalizer.includes("kind: 'ranging'"));
+test('Advanced radio normalizers stay on the signed canonical provider bridge',
+  geoconsoleRoutes.includes("router.post('/telemetry/provider/:providerId/normalize/:kind'") &&
+  providerNormalizer.includes('SPECTRA_ADVANCED_RADIO_NORMALIZER_KINDS') &&
+  providerNormalizer.includes('normalizeSpectraAdvancedRadioPayload') &&
+  advancedRadioNormalizer.includes("'bluetooth-channel-sounding'") &&
+  advancedRadioNormalizer.includes("'ble-direction-finding'") &&
+  advancedRadioNormalizer.includes("'android-wifi-ranging'") &&
+  advancedRadioNormalizer.includes("'android-ranging-manager'") &&
+  advancedRadioNormalizer.includes("'android-cellular'") &&
+  advancedRadioNormalizer.includes("'android-raw-gnss'") &&
+  advancedRadioNormalizer.includes("'apple-nearby-interaction'") &&
+  advancedRadioNormalizer.includes("'android-radio-collector'") &&
+  advancedRadioNormalizer.includes("'ble-gateway'") &&
+  advancedRadioNormalizer.includes("'lorawan-observation'") &&
+  advancedRadioNormalizer.includes("'universal-radio-log'"));
+test('Bluetooth adapters preserve Channel Sounding PBR/RTT plus AoA/AoD direction data',
+  advancedRadioNormalizer.includes('pbrDistanceMeters') &&
+  advancedRadioNormalizer.includes('rttDistanceMeters') &&
+  advancedRadioNormalizer.includes("methodRaw === 'aod'") &&
+  advancedRadioNormalizer.includes('antennaArrayId') &&
+  advancedRadioNormalizer.includes("'bluetooth_channel_sounding'") &&
+  advancedRadioNormalizer.includes("'ble_aod'") &&
+  advancedRadioNormalizer.includes("'ble_aoa'"));
+test('Android Wi-Fi adapter preserves 802.11az NTB, responder location and Wi-Fi Aware context',
+  advancedRadioNormalizer.includes("'802.11az-ntb'") &&
+  advancedRadioNormalizer.includes('responderLocation') &&
+  advancedRadioNormalizer.includes('wifiAwarePeer') &&
+  advancedRadioNormalizer.includes("source: 'wifi_rtt'"));
+test('Android RangingManager adapter unifies UWB, Channel Sounding, Wi-Fi NAN RTT and BLE RSSI',
+  advancedRadioNormalizer.includes("'android-ranging-manager'") &&
+  advancedRadioNormalizer.includes("providerKind: 'android-ranging-manager'") &&
+  advancedRadioNormalizer.includes("'wifi-nan-rtt'") &&
+  advancedRadioNormalizer.includes("'bluetooth_channel_sounding'") &&
+  advancedRadioNormalizer.includes("'uwb_direction'") &&
+  advancedRadioNormalizer.includes("'ble_rssi'") &&
+  adapterRegistry.includes("id: 'android-ranging-manager-ingest'"));
+test('5G NR positioning adapter preserves PRS TDOA RTT angle and NLOS evidence',
+  advancedRadioNormalizer.includes("'nr-positioning'") &&
+  advancedRadioNormalizer.includes("'dl-tdoa'") &&
+  advancedRadioNormalizer.includes("'ul-tdoa'") &&
+  advancedRadioNormalizer.includes("'multi-rtt'") &&
+  advancedRadioNormalizer.includes("'carrier-phase'") &&
+  advancedRadioNormalizer.includes('prsRsrpDbm') &&
+  advancedRadioNormalizer.includes('referenceSignalTimeDifferenceNanos') &&
+  advancedRadioNormalizer.includes('nlosProbability') &&
+  advancedRadioNormalizer.includes("source: 'nr_positioning'") &&
+  adapterRegistry.includes("id: 'nr-positioning-ingest'"));
+test('Android UWB sensor fusion distinguishes precise imprecise and drifting estimates',
+  advancedRadioNormalizer.includes("'android-uwb-sensor-fusion'") &&
+  advancedRadioNormalizer.includes("estimateType === 'drifting'") &&
+  advancedRadioNormalizer.includes("providerKind: 'android-uwb-sensor-fusion'") &&
+  advancedRadioNormalizer.includes('dataStalenessThresholdMillis') &&
+  adapterRegistry.includes("id: 'android-uwb-sensor-fusion-ingest'"));
+test('Rich cellular schema preserves radio generation, PCI/ARFCN and NR/legacy signal metrics',
+  geoconsoleRoutes.includes('physicalCellId: z.number()') &&
+  geoconsoleRoutes.includes('arfcn: z.number()') &&
+  geoconsoleRoutes.includes('ssRsrpDbm: z.number()') &&
+  geoconsoleRoutes.includes('csiRsrpDbm: z.number()') &&
+  geoconsoleRoutes.includes('csiSinrDb: z.number()') &&
+  geoconsoleRoutes.includes('cqi: z.number()') &&
+  geoconsoleRoutes.includes('rscpDbm: z.number()') &&
+  geoconsoleRoutes.includes('bitErrorRate: z.number()') &&
+  geoconsoleRoutes.includes('sanitizedCellTowers') &&
+  advancedRadioNormalizer.includes('newRadioCellId') &&
+  advancedRadioNormalizer.includes('physicalCellId') &&
+  advancedRadioNormalizer.includes('signalMetrics'));
+test('Raw GNSS adapter preserves clock, pseudorange/rate, ADR, carrier frequency and C/N0',
+  advancedRadioNormalizer.includes('fullBiasNanos') &&
+  advancedRadioNormalizer.includes('biasUncertaintyNanos') &&
+  advancedRadioNormalizer.includes('pseudorangeMeters') &&
+  advancedRadioNormalizer.includes('pseudorangeRateMetersPerSecond') &&
+  advancedRadioNormalizer.includes('accumulatedDeltaRangeMeters') &&
+  advancedRadioNormalizer.includes('carrierFrequencyHz') &&
+  advancedRadioNormalizer.includes('cn0DbHz') &&
+  geoconsoleRoutes.includes("'gnss_raw'"));
+test('GNSS integrity evaluates ADR continuity multipath authentication and interference',
+  advancedRadioNormalizer.includes('assessSpectraGnssIntegrity') &&
+  gnssIntegrity.includes('ADR_STATE_CYCLE_SLIP') &&
+  gnssIntegrity.includes('MULTIPATH_DETECTED') &&
+  gnssIntegrity.includes('carrierPhaseReady') &&
+  gnssIntegrity.includes('dualFrequencyReady') &&
+  gnssIntegrity.includes('multiConstellationReady') &&
+  gnssIntegrity.includes('navigationAuthenticationStatus') &&
+  gnssIntegrity.includes('spoofingSuspected') &&
+  gnssIntegrity.includes('jammingSuspected') &&
+  gnssIntegrity.includes('lineOfSightProbability') &&
+  gnssIntegrity.includes('excessPathLengthMeters') &&
+  gnssIntegrity.includes('measurementCorrectionCoverage') &&
+  gnssIntegrity.includes('correlationVectorSatelliteCount') &&
+  advancedRadioNormalizer.includes('probabilityLineOfSight') &&
+  advancedRadioNormalizer.includes('phaseCenterVariationCorrectionCount'));
+test('Precision GNSS adapter preserves RTK PPP NTRIP RTCM HAS covariance and protection levels',
+  advancedRadioNormalizer.includes("'gnss-precision-solution'") &&
+  advancedRadioNormalizer.includes("'rtk-fixed'") &&
+  advancedRadioNormalizer.includes("'network-rtk'") &&
+  advancedRadioNormalizer.includes("'ppp-rtk'") &&
+  advancedRadioNormalizer.includes('correctionAgeSeconds') &&
+  advancedRadioNormalizer.includes('ntripMountpoint') &&
+  advancedRadioNormalizer.includes('rtcmMessages') &&
+  advancedRadioNormalizer.includes('correctionService') &&
+  advancedRadioNormalizer.includes('correctionServiceLevel') &&
+  advancedRadioNormalizer.includes('correctionCapabilities') &&
+  advancedRadioNormalizer.includes('ambiguityRatio') &&
+  advancedRadioNormalizer.includes('horizontalProtectionLevelMeters') &&
+  adapterRegistry.includes("id: 'gnss-precision-solution-ingest'"));
+test('Apple Nearby Interaction adapter covers UWB, EDM, DL-TDOA and Bluetooth Channel Sounding',
+  advancedRadioNormalizer.includes("'uwb-edm'") &&
+  advancedRadioNormalizer.includes("'dl-tdoa'") &&
+  advancedRadioNormalizer.includes("'bluetooth-channel-sounding'") &&
+  advancedRadioNormalizer.includes("'bluetooth_channel_sounding'") &&
+  advancedRadioNormalizer.includes("'uwb_direction'") &&
+  advancedRadioNormalizer.includes("'uwb_range'") &&
+  geoconsoleRoutes.includes("'bluetooth_channel_sounding'") &&
+  geoconsoleRoutes.includes("'ble_aod'"));
+test('Managed-device, enterprise sensor, IoT and vehicle feeds share the signed provider bridge',
+  providerNormalizer.includes('SPECTRA_EXTERNAL_LOCATION_NORMALIZER_KINDS') &&
+  providerNormalizer.includes('normalizeSpectraExternalLocationPayload') &&
+  externalLocationNormalizer.includes("'android-managed-lost-mode'") &&
+  externalLocationNormalizer.includes("'apple-managed-lost-mode'") &&
+  externalLocationNormalizer.includes("'meraki-scanning'") &&
+  externalLocationNormalizer.includes("'cisco-spaces-location'") &&
+  externalLocationNormalizer.includes("'aws-iot-device-location'") &&
+  externalLocationNormalizer.includes("'arcore-geospatial-pose'") &&
+  externalLocationNormalizer.includes("'connected-vehicle-location'") &&
+  adapterRegistry.includes("id: 'android-managed-lost-mode-ingest'") &&
+  adapterRegistry.includes("id: 'apple-managed-lost-mode-ingest'") &&
+  adapterRegistry.includes("id: 'meraki-scanning-ingest'") &&
+  adapterRegistry.includes("id: 'cisco-spaces-location-ingest'") &&
+  adapterRegistry.includes("id: 'aws-iot-device-location-ingest'") &&
+  adapterRegistry.includes("id: 'arcore-geospatial-pose-ingest'") &&
+  adapterRegistry.includes("id: 'connected-vehicle-location-ingest'"));
+test('ARCore Geospatial VPS preserves calibrated visual-positioning accuracy without double-counting same-device GNSS',
+  externalLocationNormalizer.includes("'arcore-geospatial-pose'") &&
+  externalLocationNormalizer.includes("source: 'visual_positioning'") &&
+  externalLocationNormalizer.includes("accuracyConfidenceLevel: 0.68") &&
+  externalLocationNormalizer.includes("correlationDomain: deviceRef") &&
+  adapterRegistry.includes("id: 'arcore-geospatial-pose-ingest'") &&
+  geoconsoleRoutes.includes("'visual_positioning'") &&
+  fusion.includes("source: 'visual_positioning'") &&
+  liveConfidence.includes("point.source === 'visual_positioning'"));
+test('CAMARA verification and reachability remain corroboration context rather than fabricated positions',
+  externalLocationNormalizer.includes("'camara-location-verification'") &&
+  externalLocationNormalizer.includes("'camara-reachability'") &&
+  externalLocationNormalizer.includes("'location_verification'") &&
+  externalLocationNormalizer.includes("'network_reachability'") &&
+  geoconsoleRoutes.includes("'location_verification', 'network_reachability'"));
+test('SPECTRA live confidence is posterior/covariance driven with no hard-coded 99 percent gate',
+  routes.includes('assessSpectraLiveLocation(qualityLocationObservations)') &&
+  routes.includes('liveLocationAssessment.confidenceScore') &&
+  routes.includes('liveLocationRadius99Meters') &&
+  liveConfidence.includes('radiusToSigma') &&
+  liveConfidence.includes('metadataCovarianceSigma') &&
+  liveConfidence.includes('confidenceRadius(posteriorSigma, 0.99)') &&
+  liveConfidence.includes('chiSquareSurvivalApprox') &&
+  liveConfidence.includes('Huber-style continuous down-weighting') &&
+  liveConfidence.includes('combinedIndependentReliability') &&
+  liveConfidence.includes('correlationWeight') &&
+  liveConfidence.includes('protectionLevelFloor') &&
+  liveConfidence.includes('temporalInflationMeters') &&
+  liveConfidence.includes('measurementQualityWeight') &&
+  liveConfidence.includes('independentDomainCount') &&
+  liveConfidence.includes("'visual-positioning'") &&
+  liveConfidence.includes('precisionReadinessScore') &&
+  liveConfidence.includes('ambiguityRatio') &&
+  liveConfidence.includes('satellitesUsed') &&
+  liveConfidence.includes('correctionAgeSeconds') &&
+  !liveConfidence.includes('0.991') &&
+  !liveConfidence.includes('exceedsNinetyNinePercent') &&
+  !liveConfidence.includes('strongConsensus.length < 3') &&
+  !liveConfidence.includes('precisionFamilyCount < 2'));
+test('Carrier identity bindings are persisted, reloaded and fused conservatively with spatial confidence',
+  acquisitionPersistence.includes('loadSpectraSessionIdentityBindings') &&
+  acquisitionPersistence.includes("measurement.source !== 'identity_binding'") &&
+  routes.includes('loadSpectraSessionIdentityBindings') &&
+  routes.includes('assessSpectraIdentityBinding') &&
+  routes.includes('conservativeJointConfidence') &&
+  routes.includes('subjectLiveLocationConfidence') &&
+  identityBinding.includes('camara-number-verification') &&
+  identityBinding.includes('camara-device-identifier') &&
+  identityBinding.includes('camara-kyc-match') &&
+  identityBinding.includes('Fréchet-Hoeffding lower bound'));
+test('Posterior calibration verifies independent and correlated 99 percent containment without a runtime score floor',
+  posteriorCalibration.includes('TRIALS = 10_000') &&
+  posteriorCalibration.includes('empiricalContainment >= 0.99') &&
+  posteriorCalibration.includes('CORRELATED_TRIALS = 5_000') &&
+  posteriorCalibration.includes('correlatedContainment >= 0.99') &&
+  posteriorCalibration.includes("correlationDomain: 'same-device-a'") &&
+  posteriorCalibration.includes('assessment.confidenceScore > 0.99') &&
+  posteriorCalibration.includes('confidenceRadiusMeters99') &&
+  posteriorCalibration.includes('calibration regression test, not a runtime threshold') &&
+  !liveConfidence.includes('Math.max(score, 0.99') &&
+  !liveConfidence.includes('exceedsNinetyNinePercent'));
+test('CDMA cell identity preserves SID NID and BID through the canonical radio schema',
+  advancedRadioNormalizer.includes('cell.systemId ?? cell.sid') &&
+  advancedRadioNormalizer.includes('cell.networkId ?? cell.nid') &&
+  advancedRadioNormalizer.includes('cell.baseStationId ?? cell.bid') &&
+  advancedRadioNormalizer.includes("type === 'cdma' ? systemId") &&
+  advancedRadioNormalizer.includes("type === 'cdma' ? networkId") &&
+  advancedRadioNormalizer.includes("type === 'cdma' ? baseStationId"));
+test('Universal radio-log importer recognizes CSV Android GNSS Logger and RTKLIB precision records',
+  advancedRadioNormalizer.includes("import { parse as parseCsv } from 'csv-parse/sync'") &&
+  advancedRadioNormalizer.includes('/^#\\s*Raw,/i') &&
+  advancedRadioNormalizer.includes("recordType: 'gnsslogger-raw'") &&
+  advancedRadioNormalizer.includes('parseRtklibPosRecords') &&
+  advancedRadioNormalizer.includes("recordType: 'rtklib-pos'") &&
+  advancedRadioNormalizer.includes("kind: 'rtklib-solution'") &&
+  advancedRadioNormalizer.includes('signedSquareRootCovarianceToCovariance') &&
+  advancedRadioNormalizer.includes('rtklibCalendarTimestamp') &&
+  advancedRadioNormalizer.includes("timeSystem: 'GPST' | 'UTC' | 'JST'") &&
+  advancedRadioNormalizer.includes('inputTimeSystem') &&
+  advancedRadioNormalizer.includes("kind === 'gnss-precision-solution' ? { solutions: [row]") &&
+  advancedRadioNormalizer.includes('UtcTimeMillis') &&
+  advancedRadioNormalizer.includes('CarrierFrequencyHz') &&
+  advancedRadioNormalizer.includes('AccumulatedDeltaRangeMeters'));
+test('BLE gateway, LoRa and universal radio-log lanes are registered and bounded',
+  adapterRegistry.includes("id: 'ble-gateway-ingest'") &&
+  adapterRegistry.includes("id: 'lorawan-observation-ingest'") &&
+  adapterRegistry.includes("id: 'universal-radio-log-ingest'") &&
+  advancedRadioNormalizer.includes('observations.slice(0, 4000)') &&
+  advancedRadioNormalizer.includes('uplinks.slice(0, 1024)') &&
+  advancedRadioNormalizer.includes('rows.slice(0, 5000)'));
+test('Advanced adapter registry exposes all requested radio families',
+  adapterRegistry.includes("id: 'bluetooth-channel-sounding-ingest'") &&
+  adapterRegistry.includes("id: 'ble-direction-finding-ingest'") &&
+  adapterRegistry.includes("id: 'android-wifi-ranging-ingest'") &&
+  adapterRegistry.includes("id: 'android-ranging-manager-ingest'") &&
+  adapterRegistry.includes("id: 'android-cellular-measurements-ingest'") &&
+  adapterRegistry.includes("id: 'android-raw-gnss-ingest'") &&
+  adapterRegistry.includes("id: 'apple-nearby-interaction-ingest'") &&
+  adapterRegistry.includes("id: 'android-radio-collector-ingest'"));
+test('CAMARA provider normalization preserves circle and polygon uncertainty',
+  providerNormalizer.includes("areaType === 'CIRCLE'") &&
+  providerNormalizer.includes("areaType === 'POLYGON'") &&
+  providerNormalizer.includes('camaraPolygonCenter') &&
+  providerNormalizer.includes('confidenceForAccuracy'));
+test('Place context uses independent OpenStreetMap and GeoNames lanes',
+  geoconsoleRoutes.includes("router.get('/place-context'") &&
+  placeContext.includes('overpass-api.de/api/interpreter') &&
+  placeContext.includes('secure.geonames.org/findNearbyJSON') &&
+  placeContext.includes('Promise.allSettled'));
+test('Radio positioning has independent Google, beaconDB and OpenCellID lanes',
+  geoconsoleRoutes.includes('www.googleapis.com/geolocation/v1/geolocate') &&
+  geoconsoleRoutes.includes('api.beacondb.net/v1/geolocate') &&
+  geoconsoleRoutes.includes('opencellid.org/cell/get') &&
+  geoconsoleRoutes.includes('Promise.allSettled([') &&
+  adapterRegistry.includes("id: 'beacondb-radio-geolocation'"));
+test('Public discovery retrieves underlying pages before admitting coordinate evidence',
+  routes.includes('retrieveSpectraPublicEvidence') &&
+  publicRetrieval.includes('MAX_TARGETS = 6') &&
+  publicRetrieval.includes('application/ld+json') &&
+  publicRetrieval.includes('json-geospatial-field-extraction') &&
+  routes.includes('subjectMatchConfidence: 0.35') &&
+  routes.includes('timestampConfidence: observation.timestamp ? 0.75 : 0'));
+test('SPECTRA attachment flow accepts both media and structured telemetry files',
+  spectra.includes('/api/gps/extract-upload') &&
+  spectra.includes('/api/geoconsole/telemetry/import-file') &&
+  spectra.includes('handleTargetFile') &&
+  spectra.includes('.geojson,.gpx,.kml,.nmea,.csv,.ndjson,.jsonl,.log,.txt'));
+test('Lexara exposes the SPECTRA icon only on matching location command responses',
+  lexaraConversation.includes('spectraTargetFromPrompt') &&
+  lexaraConversation.includes('data-testid="lexara-spectra-launch"') &&
+  lexaraConversation.includes("message.role === 'lexara' && message.spectraLaunch") &&
+  lexaraConversation.includes("sessionStorage.setItem('legalwhat:spectra-launch'") &&
+  spectra.includes("sessionStorage.getItem('legalwhat:spectra-launch'") &&
+  spectra.includes('void acquireTarget(targetValue, detailsValue)'));
+test('External camera directories are provider-neutral, bounded and spatially filtered',
+  geoconsoleRoutes.includes('acquireConfiguredSpectraCameras') &&
+  cameraDirectories.includes('SPECTRA_CAMERA_JSON_FEEDS') &&
+  cameraDirectories.includes('Camera directory adapters require HTTPS.') &&
+  cameraDirectories.includes('rows.slice(0, 500)') &&
+  cameraDirectories.includes('haversineMeters(latitude, longitude, lat, lon) > radiusMeters'));
+test('Camera directory health marks stale feeds and excludes disabled cameras',
+  geoconsoleRoutes.includes('CAMERA_STALE_MS = 24 * 60 * 60_000') &&
+  geoconsoleRoutes.includes('normalizeCameraFreshness') &&
+  geoconsoleRoutes.includes('camera.status?.disabled === true'));
+test('Aggregate camera motion context is stored separately from target observations',
+  geoconsoleRoutes.includes("router.post('/traffic-context'") &&
+  geoconsoleRoutes.includes("router.post('/traffic-context/provider/:providerId'") &&
+  geoconsoleRoutes.includes("router.get('/traffic-context/:sessionId'") &&
+  motionContext.includes('spectra_motion_context') &&
+  motionContextMigration.includes('CREATE TABLE IF NOT EXISTS public.spectra_motion_context') &&
+  adapterRegistry.includes("id: 'aggregate-camera-motion-context'"));
+test('Motion-context schema and access migrations are packaged in order and remain server-only',
+  dockerfile.includes('067_spectra_motion_context.sql') &&
+  dockerfile.includes('068_spectra_motion_context_server_only_access.sql') &&
+  motionContextMigration.includes('CREATE TABLE IF NOT EXISTS public.spectra_motion_context') &&
+  motionContextAccessMigration.includes('REVOKE ALL ON TABLE public.spectra_motion_context') &&
+  motionContextAccessMigration.includes('FROM PUBLIC, anon, authenticated') &&
+  motionContextAccessMigration.includes('TO service_role'));
+test('Aggregate camera traffic context never becomes a target location observation',
+  geoconsoleRoutes.includes("contextKind: 'aggregate_traffic_flow'") &&
+  geoconsoleRoutes.includes('persistSpectraMotionContext({') &&
+  !motionContext.includes('spectra_location_observations') &&
+  !routes.includes('observations.push(...motionContext'));
+test('Aggregate vehicle-flow context can refine Futurecast only behind a vehicle-motion gate',
+  geoconsoleRoutes.includes('loadSpectraMotionContext') &&
+  geoconsoleRoutes.includes('motionContextApplied') &&
+  geoconsoleRoutes.includes('WHERE session_id = $1 AND user_id = $2') &&
+  monteCarlo.includes('const likelyVehicleMotion = usable.some(vehicleClass)') &&
+  monteCarlo.includes('motionContextInfluence = Math.min(0.35') &&
+  monteCarlo.includes('motionContextCongestionRatio') &&
+  runtime.includes('sessionId: sessionIdRef.current || configuredSessionId || undefined'));
+test('WorldCam discovery is additive and camera-directory integration stays provider-neutral',
+  spectraSources.includes("sourceId") &&
+  spectraSources.includes("'worldcam-directory'") &&
+  spectraSources.includes('site:worldcam.io webcam camera live') &&
+  cameraDirectories.includes('SPECTRA_CAMERA_JSON_FEEDS') &&
+  adapterRegistry.includes("id: 'external-camera-json'"));
+test('Generic vehicle/camera feeds preserve track identity and velocity context',
+  genericPull.includes('trackIdPath?: string') &&
+  genericPull.includes('cameraIdPath?: string') &&
+  genericPull.includes('objectClassPath?: string') &&
+  genericPull.includes('speedPath?: string') &&
+  genericPull.includes('headingPath?: string') &&
+  geoconsoleRoutes.includes('trackId: z.string()') &&
+  geoconsoleRoutes.includes('cameraId: z.string()') &&
+  geoconsoleRoutes.includes('objectClass: z.string()') &&
+  geoconsoleRoutes.includes("typeof inputMetadata.trackId === 'string'") &&
+  geoconsoleRoutes.includes('velocity: (') &&
+  geoconsoleRoutes.includes(': inputMetadata.velocity'));
 test('SPECTRA API is mounted',
   serverRoutes.includes("app.use('/api/spectra', spectraRoutes.default)"));
 

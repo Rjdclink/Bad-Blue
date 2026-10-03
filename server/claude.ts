@@ -215,6 +215,7 @@ export interface ClaudeWebSearchOptions {
   maxUses?: number;
   model?: string;
   signal?: AbortSignal;
+  allowFetch?: boolean;
 }
 
 /**
@@ -236,12 +237,21 @@ export async function callClaudeWebSearch(
   const client = getClaudeClient();
   const model = options.model || CURRENT_AI_MODELS.claudeBalanced;
   const maxUses = Math.max(1, Math.min(options.maxUses || 4, 8));
-  const tools = [{
+  const tools: any[] = [{
     type: 'web_search_20260318',
     name: 'web_search',
     max_uses: maxUses,
     allowed_callers: ['direct'],
   }];
+  if (options.allowFetch === true) {
+    tools.push({
+      type: 'web_fetch_20260318',
+      name: 'web_fetch',
+      max_uses: maxUses,
+      citations: { enabled: true },
+      response_inclusion: 'full',
+    });
+  }
   const messages: any[] = [{ role: 'user', content: prompt }];
   const sourceMap = new Map<string, ClaudeWebSearchSource>();
   const accumulatedText: string[] = [];

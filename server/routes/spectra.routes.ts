@@ -1,8 +1,23 @@
 import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { isAuthenticated } from '../auth';
-import { conductFullOSINT } from '../peopleSearch';
-import { unifiedSearch } from '../webSearchService';
+import {
+  arcGisCameras,
+  copernicusItems,
+  flickrNearbyMedia,
+  nwsLatestObservation,
+  trafficLandCameras,
+  wikimediaNearbyMedia,
+} from './geoconsole.routes';
+import { getPlatformUserId } from '../authIdentity';
+import { callClaudeWebSearch } from '../claude';
+import {
+  discoverLegalMeshTier3,
+  discoverLegalMeshSupplemental,
+  type LegalMeshCandidate,
+} from '../lexara/LegalProviderMesh';
+import { resolveLexaraBackgroundSubject } from '../lexara/LexaraBackgroundSubject';
+import { investigateLexaraBackgroundQuestion } from '../lexara/LexaraBackgroundInvestigation';
 import {
   extractCityStateHint,
   extractFreeformLocationHint,
@@ -17,7 +32,24 @@ import {
 import type { GPSPoint } from '../services/geoconsole/types';
 import { inputFusionEngine } from '../services/geoconsole/inputFusionEngine';
 import { assessLocationQuality } from '../services/geoconsole/location-quality';
-import { buildSpectraDiscoveryWaves } from '../services/spectra/SpectraSourceRegistry';
+import {
+  buildSpectraAdaptiveQuery,
+  buildSpectraDiscoveryWaves,
+  SPECTRA_DISCOVERY_POLICY,
+} from '../services/spectra/SpectraSourceRegistry';
+import {
+  loadSpectraSessionIdentityBindings,
+  loadSpectraSessionObservations,
+  persistSpectraAcquisition,
+} from '../services/spectra/SpectraAcquisitionPersistence';
+import {
+  assessSpectraIdentityBinding,
+  conservativeJointConfidence,
+} from '../services/spectra/SpectraIdentityBinding';
+import { acquireSpectraPlaceContext } from '../services/spectra/SpectraPlaceContext';
+import { retrieveSpectraPublicEvidence } from '../services/spectra/SpectraPublicRetrieval';
+import { assessSpectraLiveLocation } from '../services/spectra/SpectraLiveConfidence';
+import { acquireConfiguredSpectraCameras } from '../services/spectra/SpectraCameraDirectoryAdapters';
 
 const router = Router();
 router.use(isAuthenticated);
@@ -45,7 +77,9 @@ const directEvidenceSchema = z.object({
 
 const acquireSchema = z.object({
   target: z.string().trim().min(1).max(500),
-  details: z.string().trim().min(1).max(4000),
+  details: z.string().trim().min(1).max(12_000),
+  sessionId: z.string().trim().min(1).max(200).optional(),
+  originSessionId: z.string().trim().min(1).max(200).optional(),
   directEvidence: z.array(directEvidenceSchema).max(20).default([]),
 });
 
@@ -182,26 +216,24 @@ function buildDiscoveryQueries(args: {
   const quotedPhone = phone ? `"${phone}"` : '';
   const phoneDigits = phone?.replace(/\D/g, '') || '';
   const compactDetails = details.replace(/\s+/g, ' ').trim();
-  const strongIdentityAnchor = quotedName || quotedPhone;
   const genericTarget = GENERIC_TARGET_RE.test(normalizedTarget);
+  const identityAnchor = quotedName || quotedPhone || (!genericTarget ? normalizedTarget : '');
 
   const firstPass = [
     [quotedName, quotedPhone].filter(Boolean).join(' '),
-    [strongIdentityAnchor, compactDetails].filter(Boolean).join(' '),
-    !genericTarget ? [normalizedTarget, compactDetails].filter(Boolean).join(' ') : compactDetails,
+    [identityAnchor, compactDetails].filter(Boolean).join(' '),
+    [normalizedTarget, compactDetails].filter(Boolean).join(' '),
+    compactDetails,
     phoneDigits.length >= 7 ? `"${phoneDigits}"` : '',
   ].filter(Boolean);
 
-  // Do not launch generic internet-wide "public records" searches when the
-  // operator supplied only a category such as "person" plus a location. Those
-  // queries create noise rather than target evidence. Broadening resumes once
-  // a name or phone anchor exists.
-  const secondPass = strongIdentityAnchor ? [
-    [strongIdentityAnchor, 'public records address location'].join(' '),
-    [strongIdentityAnchor, 'social profile biography location'].join(' '),
-    [strongIdentityAnchor, 'contact directory'].join(' '),
-    [strongIdentityAnchor, 'property court business records'].join(' '),
-  ] : [];
+  const secondPass = [
+    [identityAnchor, compactDetails, 'address location'].filter(Boolean).join(' '),
+    [identityAnchor, compactDetails, 'employment property profile'].filter(Boolean).join(' '),
+    [identityAnchor, compactDetails, 'historical record archive'].filter(Boolean).join(' '),
+    [identityAnchor, compactDetails, 'media geotag timestamp'].filter(Boolean).join(' '),
+    [identityAnchor, compactDetails, 'independent corroboration'].filter(Boolean).join(' '),
+  ].filter(Boolean);
 
   return {
     firstPass: [...new Set(firstPass)],
@@ -209,34 +241,223 @@ function buildDiscoveryQueries(args: {
   };
 }
 
-async function runDiscoveryPass(queries: string[]): Promise<{
-  results: any[];
+interface SpectraDiscoveryResult {
+  title: string;
+  url: string;
+  snippet?: string;
+  provider: string;
+  reliability: 'high' | 'medium' | 'low';
+  relevanceScore: number;
+  metadata?: Record<string, unknown>;
+}
+
+function reliabilityForUrl(rawUrl: string): SpectraDiscoveryResult['reliability'] {
+  try {
+    const host = new URL(rawUrl).hostname.toLowerCase();
+    if (host.endsWith('.gov') || host.endsWith('.mil') || host.endsWith('.uscourts.gov')) return 'high';
+    if (host.includes('courtlistener.com') || host.includes('nursys.com') || host.includes('finra.org')) return 'high';
+    if (host.endsWith('.edu') || host.endsWith('.org')) return 'medium';
+  } catch {
+    return 'low';
+  }
+  return 'medium';
+}
+
+function discoveryResultFromCandidate(candidate: LegalMeshCandidate): SpectraDiscoveryResult {
+  const reliability = reliabilityForUrl(candidate.url);
+  return {
+    title: candidate.title || 'SPECTRA discovery result',
+    url: candidate.url,
+    snippet: candidate.excerpt,
+    provider: candidate.provider || 'native-search',
+    reliability,
+    relevanceScore: reliability === 'high' ? 92 : reliability === 'medium' ? 78 : 62,
+    metadata: {
+      discoveryProvider: candidate.provider || 'native-search',
+      sourceCategory: candidate.sourceCategory,
+    },
+  };
+}
+
+async function runDiscoveryPass(
+  queries: string[],
+  context: { subject?: string; location?: string } = {},
+): Promise<{
+  results: SpectraDiscoveryResult[];
   attempted: number;
   failed: number;
+  claudeNotes: string[];
 }> {
-  const settled = await Promise.allSettled(
-    queries.map(query =>
-      unifiedSearch(query, {
-        limit: 25,
-        category: 'general',
-        freshness: 'all',
-        timeout: 20_000,
-      })
-    )
-  );
-
-  const results: any[] = [];
-  let failed = 0;
-  for (const result of settled) {
-    if (result.status === 'fulfilled') results.push(...result.value);
-    else failed += 1;
+  const uniqueQueries = [...new Set(queries.map(query => query.replace(/\s+/g, ' ').trim()).filter(Boolean))]
+    .slice(0, 6);
+  if (!uniqueQueries.length) {
+    return { results: [], attempted: 0, failed: 0, claudeNotes: [] };
   }
 
-  return {
-    results: dedupeDiscoveryResults(results),
-    attempted: queries.length,
-    failed,
-  };
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(new Error('SPECTRA discovery pass timeout')), 15_000);
+  try {
+    const nativePromise = Promise.allSettled(uniqueQueries.map(query =>
+      discoverLegalMeshTier3(query, controller.signal, {
+        categories: [
+          'identity',
+          'contacts-addresses',
+          'relationships',
+          'social-online',
+          'public-images',
+          'employment',
+          'property',
+          'transportation',
+          'business',
+          'news-history',
+          'relationship-timeline',
+          'general-public-records',
+        ],
+        jurisdiction: context.location,
+        subject: context.subject,
+        requestedFact: 'contact-address',
+      })
+    ));
+
+    const claudePrompt = [
+      'Use web search and fetch strong underlying pages when useful.',
+      'This is an internal SPECTRA location-research pass.',
+      'Resolve the supplied subject and clues, and preserve dates, source distinctions, and uncertainty.',
+      context.subject ? `Subject: ${context.subject}` : '',
+      context.location ? `Location clue: ${context.location}` : '',
+      'Search objectives:',
+      ...uniqueQueries.map((query, index) => `${index + 1}. ${query}`),
+    ].filter(Boolean).join('\n');
+
+    const claudePromise = callClaudeWebSearch(claudePrompt, {
+      maxTokens: 1_200,
+      maxUses: 6,
+      allowFetch: true,
+      signal: controller.signal,
+      systemPrompt: [
+        'You are SPECTRA\'s internal location-research planner.',
+        'Use search rather than model memory for external facts.',
+        'Prefer direct source pages, preserve dates and uncertainty, and keep source families distinct.',
+      ].join(' '),
+    });
+
+    const [nativeSettled, claudeSettled] = await Promise.allSettled([nativePromise, claudePromise]);
+    const results: SpectraDiscoveryResult[] = [];
+    let failed = 0;
+
+    if (nativeSettled.status === 'fulfilled') {
+      for (const queryResult of nativeSettled.value) {
+        if (queryResult.status === 'fulfilled') results.push(...queryResult.value.map(discoveryResultFromCandidate));
+        else failed += 1;
+      }
+    } else {
+      failed += uniqueQueries.length;
+    }
+
+    const existingUrls = [...new Set(results.map(result => result.url).filter(Boolean))];
+    if (existingUrls.length > 0 && uniqueQueries[0]) {
+      const supplemental = await discoverLegalMeshSupplemental(
+        uniqueQueries[0],
+        existingUrls,
+        controller.signal,
+        {
+          categories: ['news-history', 'contacts-addresses', 'social-online', 'public-images', 'property'],
+          jurisdiction: context.location,
+          subject: context.subject,
+          requestedFact: 'contact-address',
+        },
+      ).catch(() => []);
+      results.push(...supplemental.map(discoveryResultFromCandidate));
+    }
+
+    const claudeNotes: string[] = [];
+    if (claudeSettled.status === 'fulfilled') {
+      claudeNotes.push(claudeSettled.value.content);
+      for (const source of claudeSettled.value.sources) {
+        const reliability = reliabilityForUrl(source.url);
+        results.push({
+          title: source.title || 'Claude research source',
+          url: source.url,
+          snippet: source.citedText,
+          provider: 'claude-web-research',
+          reliability,
+          relevanceScore: reliability === 'high' ? 94 : reliability === 'medium' ? 80 : 64,
+          metadata: {
+            discoveryProvider: 'claude-web-research',
+            fetchedOrCitedText: source.citedText,
+          },
+        });
+      }
+    } else {
+      failed += 1;
+    }
+
+    let enrichedResults = dedupeDiscoveryResults(results);
+    const retrievalTargets = [...enrichedResults]
+      .sort((left, right) =>
+        (right.reliability === 'high' ? 2 : right.reliability === 'medium' ? 1 : 0)
+        - (left.reliability === 'high' ? 2 : left.reliability === 'medium' ? 1 : 0)
+        || right.relevanceScore - left.relevanceScore
+      )
+      .slice(0, 6)
+      .map(result => result.url);
+
+    if (retrievalTargets.length) {
+      const retrieved = await retrieveSpectraPublicEvidence(
+        retrievalTargets,
+        controller.signal,
+      ).catch(() => []);
+
+      if (retrieved.length) {
+        const byUrl = new Map(enrichedResults.map(result => [result.url, result]));
+        for (const evidence of retrieved) {
+          const existing = byUrl.get(evidence.url);
+          const locationEvidence = evidence.observations.map(observation => ({
+            ...observation,
+            kind: 'location',
+            subjectMatchConfidence: 0.35,
+            timestampConfidence: observation.timestamp ? 0.75 : 0,
+          }));
+
+          if (existing) {
+            existing.metadata = {
+              ...(existing.metadata || {}),
+              sourceUrl: evidence.url,
+              retrievedAt: evidence.retrievedAt,
+              fetchedTitle: evidence.title,
+              fetchedExcerpt: evidence.textExcerpt,
+              retrievedLocationEvidence: locationEvidence,
+            };
+          } else if (locationEvidence.length) {
+            enrichedResults.push({
+              title: evidence.title || 'SPECTRA retrieved source',
+              url: evidence.url,
+              snippet: evidence.textExcerpt,
+              provider: 'spectra-public-retrieval',
+              reliability: reliabilityForUrl(evidence.url),
+              relevanceScore: 76,
+              metadata: {
+                sourceUrl: evidence.url,
+                retrievedAt: evidence.retrievedAt,
+                fetchedExcerpt: evidence.textExcerpt,
+                retrievedLocationEvidence: locationEvidence,
+              },
+            });
+          }
+        }
+        enrichedResults = dedupeDiscoveryResults(enrichedResults);
+      }
+    }
+
+    return {
+      results: enrichedResults,
+      attempted: uniqueQueries.length + 1,
+      failed,
+      claudeNotes,
+    };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function normalizeConfidence(value: unknown): number {
@@ -390,6 +611,21 @@ function collectCoordinateObservations(
       source === 'public_record' || source === 'historical_location'
         ? 'historical'
         : 'observed';
+    const subjectMatchRaw = Number(object.subjectMatchConfidence);
+    const subjectMatchConfidence =
+      Number.isFinite(subjectMatchRaw) && subjectMatchRaw >= 0 && subjectMatchRaw <= 1
+        ? subjectMatchRaw
+        : undefined;
+    const timestampConfidenceRaw = Number(object.timestampConfidence);
+    const timestampConfidence =
+      Number.isFinite(timestampConfidenceRaw)
+      && timestampConfidenceRaw >= 0
+      && timestampConfidenceRaw <= 1
+        ? timestampConfidenceRaw
+        : undefined;
+    const observationConfidence = subjectMatchConfidence === undefined
+      ? confidence
+      : Math.min(confidence, subjectMatchConfidence);
 
     out.push({
       latitude,
@@ -399,7 +635,7 @@ function collectCoordinateObservations(
       timestamp: timestamp.toISOString(),
       receivedAt: new Date().toISOString(),
       source,
-      confidence,
+      confidence: observationConfidence,
       observationKind,
       correlationGroup: `spectra:${sourceName.toLowerCase().replace(/[^a-z0-9]+/g, '_')}`,
       provenance: {
@@ -409,6 +645,14 @@ function collectCoordinateObservations(
       },
       metadata: {
         sourceName,
+        subjectMatchConfidence,
+        timestampConfidence,
+        acquisitionMethod: typeof object.acquisitionMethod === 'string'
+          ? object.acquisitionMethod
+          : undefined,
+        sourceUrl: typeof object.sourceUrl === 'string'
+          ? object.sourceUrl
+          : undefined,
       },
     });
   }
@@ -448,6 +692,87 @@ function dedupeObservations(points: any[]): any[] {
   });
 }
 
+
+interface SpectraContextEvidence {
+  anchor?: {
+    latitude: number;
+    longitude: number;
+    accuracyMeters?: number;
+    observedAt?: string;
+    basis: 'timestamped_observation' | 'regional_candidate';
+  };
+  places: Awaited<ReturnType<typeof acquireSpectraPlaceContext>>;
+  cameras: any[];
+  geotaggedMedia: any[];
+  weather?: Record<string, unknown>;
+  earthObservation: Array<Record<string, unknown>>;
+  sourceFamilies: string[];
+}
+
+async function collectSpectraContextEvidence(input: {
+  latitude: number;
+  longitude: number;
+  accuracyMeters?: number;
+  observedAt?: Date;
+  basis: 'timestamped_observation' | 'regional_candidate';
+}): Promise<SpectraContextEvidence> {
+  const referenceTime = input.observedAt && Number.isFinite(input.observedAt.getTime())
+    ? input.observedAt
+    : new Date();
+  const earthFrom = new Date(referenceTime.getTime() - 12 * 60 * 60_000);
+  const earthTo = new Date(referenceTime.getTime() + 12 * 60 * 60_000);
+  const weatherRelevant = Math.abs(Date.now() - referenceTime.getTime()) <= 24 * 60 * 60_000;
+
+  const outcomes = await Promise.allSettled([
+    acquireSpectraPlaceContext(input.latitude, input.longitude, 2_000),
+    trafficLandCameras(input.latitude, input.longitude, 10),
+    arcGisCameras(input.latitude, input.longitude, 10),
+    acquireConfiguredSpectraCameras(input.latitude, input.longitude, 10),
+    wikimediaNearbyMedia(input.latitude, input.longitude, 5_000),
+    flickrNearbyMedia(input.latitude, input.longitude, 5),
+    weatherRelevant
+      ? nwsLatestObservation(input.latitude, input.longitude)
+      : Promise.resolve(null),
+    copernicusItems(input.latitude, input.longitude, earthFrom, earthTo),
+  ]);
+
+  const places = outcomes[0].status === 'fulfilled' ? outcomes[0].value : [];
+  const trafficLand = outcomes[1].status === 'fulfilled' ? outcomes[1].value : [];
+  const arcGis = outcomes[2].status === 'fulfilled' ? outcomes[2].value : [];
+  const externalCameras = outcomes[3].status === 'fulfilled' ? outcomes[3].value : [];
+  const wikimedia = outcomes[4].status === 'fulfilled' ? outcomes[4].value : [];
+  const flickr = outcomes[5].status === 'fulfilled' ? outcomes[5].value : [];
+  const weather = outcomes[6].status === 'fulfilled' && outcomes[6].value
+    ? outcomes[6].value
+    : undefined;
+  const earthObservation = outcomes[7].status === 'fulfilled' ? outcomes[7].value : [];
+
+  const sourceFamilies: string[] = [];
+  if (places.length) sourceFamilies.push('place-context');
+  if (trafficLand.length || arcGis.length || externalCameras.length) {
+    sourceFamilies.push('public-camera');
+  }
+  if (wikimedia.length || flickr.length) sourceFamilies.push('geotagged-media');
+  if (weather) sourceFamilies.push('weather');
+  if (earthObservation.length) sourceFamilies.push('earth-observation');
+
+  return {
+    anchor: {
+      latitude: input.latitude,
+      longitude: input.longitude,
+      accuracyMeters: input.accuracyMeters,
+      observedAt: input.observedAt?.toISOString(),
+      basis: input.basis,
+    },
+    places: places.slice(0, 80),
+    cameras: [...trafficLand, ...arcGis, ...externalCameras].slice(0, 160),
+    geotaggedMedia: [...wikimedia, ...flickr].slice(0, 120),
+    weather,
+    earthObservation: earthObservation.slice(0, 20),
+    sourceFamilies,
+  };
+}
+
 router.post('/acquire', async (req: Request, res: Response) => {
   const parsed = acquireSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -457,7 +782,17 @@ router.post('/acquire', async (req: Request, res: Response) => {
     });
   }
 
-  const { target, details, directEvidence } = parsed.data;
+  const {
+    target,
+    details,
+    directEvidence,
+    sessionId: requestedSessionId,
+    originSessionId,
+  } = parsed.data;
+  const userId = getPlatformUserId(req.user as any);
+  if (!userId) {
+    return res.status(401).json({ success: false, error: 'Authentication required.' });
+  }
   const normalizedTarget = normalizeTargetIntent(target);
   const combinedTargetText = [normalizedTarget, details].filter(Boolean).join(' ');
   const phone = extractPhoneNumber(combinedTargetText);
@@ -472,106 +807,195 @@ router.post('/acquire', async (req: Request, res: Response) => {
   const resolvedName = genericTarget || targetIsPhone
     ? suppliedName || ''
     : subject;
-  const searchQuery = resolvedName || details;
   const resolvedTargetLabel = resolvedName || phone || normalizedTarget;
 
   try {
+    const persistedObservationsPromise = requestedSessionId
+      ? loadSpectraSessionObservations(userId, requestedSessionId).catch(() => [])
+      : Promise.resolve([] as GPSPoint[]);
+    const identityBindingsPromise = requestedSessionId
+      ? loadSpectraSessionIdentityBindings(userId, requestedSessionId).catch(() => [])
+      : Promise.resolve([]);
+
+    const semanticSubject = resolveLexaraBackgroundSubject(
+      [target, details].filter(Boolean).join('. '),
+      [],
+    );
+    const resolvedSubjectName = semanticSubject?.name || resolvedName || resolvedTargetLabel;
     const discoveryQueries = buildDiscoveryQueries({
-      resolvedName: resolvedName || '',
+      resolvedName: resolvedSubjectName,
       normalizedTarget,
       details,
       phone,
     });
-    // Catalog broadening requires a concrete identity anchor. This preserves
-    // the generic-target noise guard while still allowing any supplied clue to
-    // participate once a name or phone identifies the subject.
-    const strongIdentityAnchor = Boolean(resolvedName || phone);
-    const sourceWaves = strongIdentityAnchor
-      ? buildSpectraDiscoveryWaves(resolvedTargetLabel, details)
-      : [];
-    const criticalSourceQueries = sourceWaves.find(wave => wave.priority === 'critical')
-      ?.targets.slice(0, 36).map(source => source.query) || [];
-    const highSourceQueries = sourceWaves.find(wave => wave.priority === 'high')
-      ?.targets.slice(0, 24).map(source => source.query) || [];
-    const supportingSourceQueries = sourceWaves.find(wave => wave.priority === 'supporting')
-      ?.targets.slice(0, 12).map(source => source.query) || [];
-    // SPECTRA treats discovery systems as parallel evidence sources. A failure
-    // in one adapter is local and never prevents other acquisition paths.
-    const [osintResult, firstPass] = await Promise.all([
-      settleWithin(
-        conductFullOSINT(searchQuery, {
-          location: details,
-          phone,
-          searchDepth: 4,
-        }),
-        SPECTRA_OSINT_TIMEOUT_MS,
-        'Deep OSINT acquisition',
+    const sourceWaves = buildSpectraDiscoveryWaves(resolvedTargetLabel, details);
+    const waveQueries = sourceWaves.flatMap(wave => wave.targets.map(source => source.query));
+    const initialQueries = [...new Set([
+      ...discoveryQueries.firstPass,
+      ...waveQueries.slice(0, 4),
+    ])];
+
+    const backgroundPromise = settleWithin(
+      investigateLexaraBackgroundQuestion(
+        `Where is ${resolvedTargetLabel}? ${details}`,
+        {
+          previousMessages: [{ role: 'user', content: details }],
+          delegatedByLexara: true,
+          resolvedSubject: semanticSubject || undefined,
+        },
       ),
-      runDiscoveryPass([...new Set([...discoveryQueries.firstPass, ...criticalSourceQueries])]),
+      Math.min(SPECTRA_OSINT_TIMEOUT_MS, 20_000),
+      'SPECTRA background research',
+    );
+
+    const firstPassPromise = runDiscoveryPass(initialQueries, {
+      subject: resolvedSubjectName,
+      location: semanticSubject?.location || details,
+    });
+
+    const [
+      backgroundOutcome,
+      firstPass,
+      persistedObservations,
+      identityBindingEvidence,
+    ] = await Promise.all([
+      backgroundPromise,
+      firstPassPromise,
+      persistedObservationsPromise,
+      identityBindingsPromise,
     ]);
 
-    const report = osintResult.status === 'fulfilled'
-      ? osintResult.value
-      : {
-          identitySummary: { verificationStatus: 'Unknown' },
-          contactInformation: [],
-          locationHistory: [],
-          employmentAndEducation: [],
-          publicRecords: [],
-          onlineMentions: [],
-          socialMediaPresence: [],
-          sources: [],
-          confidenceScore: 0,
-          summary: '',
-        } as any;
+    const background = backgroundOutcome.status === 'fulfilled'
+      ? backgroundOutcome.value
+      : null;
+    const backgroundSources = background?.sources || [];
+    const backgroundConfidence = background?.endpoint === 'evidence-sufficient'
+      ? 0.82
+      : background?.endpoint === 'best-available-evidence'
+        ? 0.68
+        : background?.endpoint === 'partial-evidence'
+          ? 0.52
+          : backgroundSources.length > 0
+            ? 0.42
+            : 0;
+
+    const report = {
+      identitySummary: {
+        verificationStatus: backgroundConfidence >= 0.8
+          ? 'Verified'
+          : backgroundConfidence > 0
+            ? 'Partial'
+            : 'Unknown',
+      },
+      contactInformation: [] as any[],
+      locationHistory: [] as string[],
+      employmentAndEducation: [] as any[],
+      publicRecords: [] as any[],
+      onlineMentions: backgroundSources.map(url => ({
+        title: 'SPECTRA background source',
+        url,
+        snippet: background?.evidenceSummary?.slice(0, 1_200),
+      })),
+      socialMediaPresence: [] as any[],
+      sources: [] as any[],
+      confidenceScore: backgroundConfidence,
+      summary: background?.evidenceSummary || '',
+    };
 
     let discoveryResults = firstPass.results;
     let discoveryQueriesAttempted = firstPass.attempted;
     let discoveryQueriesFailed = firstPass.failed;
-    let discoveryPasses = 1;
+    let discoveryPasses = firstPass.attempted > 0 ? 1 : 0;
+    let stagnationPasses = 0;
 
-    // Broaden automatically when the first discovery wave is still narrow.
-    // Each query is isolated: one failed provider/query never suppresses the
-    // evidence already returned by the other branches.
-    const firstPassSourceCount = new Set(
-      discoveryResults.map(discoverySourceKey).filter(Boolean)
-    ).size;
-    if (
-      discoveryResults.length < 40 ||
-      firstPassSourceCount < 12 ||
-      (Array.isArray(report.sources) ? report.sources.length : 0) < 8
-    ) {
-      const secondPass = await runDiscoveryPass([...new Set([...discoveryQueries.secondPass, ...highSourceQueries])]);
+    for (let pass = 1; pass < SPECTRA_DISCOVERY_POLICY.maxPasses; pass += 1) {
+      const independentSources = new Set(discoveryResults.map(discoverySourceKey).filter(Boolean));
+      const highReliability = discoveryResults.filter(result => result.reliability === 'high').length;
+      const evidenceConfidence = Math.min(
+        0.95,
+        backgroundConfidence
+          + Math.min(0.42, independentSources.size * 0.055)
+          + Math.min(0.18, highReliability * 0.03),
+      );
+
+      if (
+        independentSources.size >= SPECTRA_DISCOVERY_POLICY.minIndependentSources
+        && evidenceConfidence >= SPECTRA_DISCOVERY_POLICY.sufficientConfidence
+      ) {
+        break;
+      }
+      if (
+        discoveryQueriesAttempted >= SPECTRA_DISCOVERY_POLICY.maxQueries
+        || discoveryResults.length >= SPECTRA_DISCOVERY_POLICY.maxCandidates
+      ) {
+        break;
+      }
+
+      const waveOffset = pass * 4;
+      const recursiveQuery = buildSpectraAdaptiveQuery(
+        resolvedTargetLabel,
+        details,
+        pass,
+        [
+          independentSources.size < SPECTRA_DISCOVERY_POLICY.minIndependentSources
+            ? 'independent source'
+            : '',
+          highReliability < 2 ? 'direct source record' : '',
+        ].filter(Boolean),
+      );
+      const nextQueries = [...new Set([
+        recursiveQuery,
+        ...discoveryQueries.secondPass.slice(Math.max(0, pass - 1), pass + 1),
+        ...waveQueries.slice(waveOffset, waveOffset + 4),
+      ])].filter(Boolean);
+
+      if (!nextQueries.length) break;
+
+      const beforeCount = discoveryResults.length;
+      const nextPass = await runDiscoveryPass(nextQueries, {
+        subject: resolvedSubjectName,
+        location: semanticSubject?.location || details,
+      });
+      discoveryQueriesAttempted += nextPass.attempted;
+      discoveryQueriesFailed += nextPass.failed;
+      discoveryPasses += nextPass.attempted > 0 ? 1 : 0;
       discoveryResults = dedupeDiscoveryResults([
         ...discoveryResults,
-        ...secondPass.results,
-      ]);
-      discoveryQueriesAttempted += secondPass.attempted;
-      discoveryQueriesFailed += secondPass.failed;
-      discoveryPasses += 1;
-    }
+        ...nextPass.results,
+      ]).slice(0, SPECTRA_DISCOVERY_POLICY.maxCandidates);
 
-    const broadenedSourceCount = new Set(discoveryResults.map(discoverySourceKey).filter(Boolean)).size;
-    if (
-      supportingSourceQueries.length > 0 &&
-      (discoveryResults.length < 80 || broadenedSourceCount < 24)
-    ) {
-      const supportingPass = await runDiscoveryPass(supportingSourceQueries);
-      discoveryResults = dedupeDiscoveryResults([...discoveryResults, ...supportingPass.results]);
-      discoveryQueriesAttempted += supportingPass.attempted;
-      discoveryQueriesFailed += supportingPass.failed;
-      discoveryPasses += 1;
+      const gained = Math.max(0, discoveryResults.length - beforeCount);
+      const gainRatio = gained / Math.max(1, beforeCount);
+      stagnationPasses = gainRatio < SPECTRA_DISCOVERY_POLICY.diminishingReturnFloor
+        ? stagnationPasses + 1
+        : 0;
+      if (stagnationPasses >= 2) break;
     }
 
     if (
-      osintResult.status === 'rejected' &&
-      discoveryResults.length === 0 &&
-      discoveryQueriesFailed >= discoveryQueriesAttempted
+      discoveryResults.length === 0
+      && backgroundSources.length === 0
+      && discoveryQueriesAttempted > 0
+      && discoveryQueriesFailed >= discoveryQueriesAttempted
     ) {
-      throw osintResult.reason || new Error('All discovery paths failed');
+      throw new Error('All SPECTRA discovery paths failed');
     }
 
-    const observations: any[] = directEvidence.map(point => {
+    const observations: any[] = [
+      ...persistedObservations.map(point => ({
+        ...point,
+        timestamp: point.timestamp.toISOString(),
+        receivedAt: point.receivedAt?.toISOString(),
+        provenance: point.provenance
+          ? {
+              ...point.provenance,
+              capturedAt: point.provenance.capturedAt instanceof Date
+                ? point.provenance.capturedAt.toISOString()
+                : point.provenance.capturedAt,
+            }
+          : undefined,
+      })),
+      ...directEvidence.map(point => {
       const normalized = normalizeClientEvidence({
         ...point,
         timestamp: new Date(point.timestamp),
@@ -599,7 +1023,8 @@ router.post('/acquire', async (req: Request, res: Response) => {
             }
           : undefined,
       };
-    });
+    }),
+    ];
 
     for (const source of report.sources || []) {
       collectCoordinateObservations(
@@ -693,6 +1118,12 @@ router.post('/acquire', async (req: Request, res: Response) => {
     const identityConfidence = Number.isFinite(confidenceRaw)
       ? Math.max(0, Math.min(1, confidenceRaw > 1 ? confidenceRaw / 100 : confidenceRaw))
       : 0;
+    const identityBindingAssessment = assessSpectraIdentityBinding({
+      baselineIdentityConfidence: identityConfidence,
+      targetIsPhone,
+      evidence: identityBindingEvidence,
+    });
+    const boundIdentityConfidence = identityBindingAssessment.confidence;
     const latestFusedTimestamp = fusedLocationEvidence.reduce(
       (latest, location) => Math.max(latest, location.point.timestamp.getTime()),
       Number.NEGATIVE_INFINITY,
@@ -710,9 +1141,21 @@ router.post('/acquire', async (req: Request, res: Response) => {
           (b.point.accuracy ?? Number.MAX_SAFE_INTEGER)
       )[0];
 
-    const locationConfidence = canonicalLatest?.qualityScore
+    const baselineLocationConfidence = canonicalLatest?.qualityScore
       ?? candidateLocations[0]?.confidence
       ?? 0;
+    const liveLocationAssessment = assessSpectraLiveLocation(qualityLocationObservations);
+    const locationConfidence = liveLocationAssessment.isLive
+      ? liveLocationAssessment.confidenceScore
+      : baselineLocationConfidence;
+    // For a person-location claim, both propositions must hold:
+    // (1) the subject/device identity is correct, and
+    // (2) the live spatial estimate is correct. Treat them as separate
+    // evidence dimensions and report the conservative joint confidence.
+    const subjectLiveLocationConfidence = conservativeJointConfidence(
+      boundIdentityConfidence,
+      locationConfidence,
+    );
 
     const sourceKeys = new Set<string>();
     for (const point of directEvidence) {
@@ -727,19 +1170,122 @@ router.post('/acquire', async (req: Request, res: Response) => {
     for (const result of discoveryResults) {
       sourceKeys.add(discoverySourceKey(result));
     }
+    for (const url of backgroundSources) {
+      sourceKeys.add(discoverySourceKey({ url }));
+    }
+
+    let contextEvidence: SpectraContextEvidence = {
+      places: [],
+      cameras: [],
+      geotaggedMedia: [],
+      earthObservation: [],
+      sourceFamilies: [],
+    };
+    const contextAnchor = canonicalLatest?.point
+      ? {
+          latitude: canonicalLatest.point.latitude,
+          longitude: canonicalLatest.point.longitude,
+          accuracyMeters: canonicalLatest.point.accuracy,
+          observedAt: canonicalLatest.point.timestamp,
+          basis: 'timestamped_observation' as const,
+        }
+      : candidateLocations[0]
+        ? {
+            latitude: candidateLocations[0].latitude,
+            longitude: candidateLocations[0].longitude,
+            accuracyMeters: candidateLocations[0].accuracyMeters,
+            basis: 'regional_candidate' as const,
+          }
+        : null;
+
+    if (contextAnchor) {
+      const contextOutcome = await settleWithin(
+        collectSpectraContextEvidence(contextAnchor),
+        8_500,
+        'SPECTRA geographic context',
+      );
+      if (contextOutcome.status === 'fulfilled') {
+        contextEvidence = contextOutcome.value;
+      }
+    }
+
+    const contextEvidenceItemCount =
+      contextEvidence.places.length
+      + contextEvidence.cameras.length
+      + contextEvidence.geotaggedMedia.length
+      + contextEvidence.earthObservation.length
+      + (contextEvidence.weather ? 1 : 0);
+
+    const persistence = await persistSpectraAcquisition({
+      userId,
+      sessionId: requestedSessionId,
+      subjectLabel: resolvedTargetLabel,
+      clues: [target, details],
+      observations: qualityLocationObservations,
+      state: {
+        identityConfidence,
+        boundIdentityConfidence,
+        identityBindingEvidenceCount: identityBindingAssessment.evidenceCount,
+        identityBindingProviders: identityBindingAssessment.providers,
+        locationConfidence,
+        liveLocationStatus: liveLocationAssessment.status,
+        liveLocationConfidence: liveLocationAssessment.confidenceScore,
+        liveLocationSourceFamilies: liveLocationAssessment.independentFamilyCount,
+        liveLocationIndependentDomains: liveLocationAssessment.independentDomainCount,
+        liveLocationEffectiveSources: liveLocationAssessment.effectiveSourceCount,
+        liveLocationPosteriorSigmaMeters: liveLocationAssessment.posteriorSigmaMeters,
+        liveLocationRadius95Meters: liveLocationAssessment.confidenceRadiusMeters95,
+        liveLocationRadius99Meters: liveLocationAssessment.confidenceRadiusMeters99,
+        liveLocationConsistency: liveLocationAssessment.consistencyScore,
+        liveLocationFreshness: liveLocationAssessment.freshnessScore,
+        subjectLiveLocationConfidence,
+        sourceCount: sourceKeys.size,
+        discoveryPasses,
+        discoveryQueriesAttempted,
+        discoveryQueriesFailed,
+        contextSourceFamilies: contextEvidence.sourceFamilies,
+        contextEvidenceItemCount,
+        originSessionId: originSessionId || null,
+        lastAcquiredAt: new Date().toISOString(),
+      },
+    }).catch(error => {
+      console.warn('[SPECTRA] Persistence unavailable', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return {
+        available: false,
+        sessionId: requestedSessionId || '',
+      };
+    });
 
     return res.json({
       success: true,
       target,
       details,
       resolvedTargetLabel,
+      sessionId: persistence.sessionId || requestedSessionId,
+      persistenceAvailable: persistence.available,
       acquisition: {
         identityConfidence,
+        boundIdentityConfidence,
+        identityBindingEvidenceCount: identityBindingAssessment.evidenceCount,
         locationConfidence,
+        liveLocationStatus: liveLocationAssessment.status,
+        liveLocationConfidence: liveLocationAssessment.confidenceScore,
+        liveLocationSourceFamilies: liveLocationAssessment.independentFamilyCount,
+        liveLocationIndependentDomains: liveLocationAssessment.independentDomainCount,
+        liveLocationEffectiveSources: liveLocationAssessment.effectiveSourceCount,
+        liveLocationPosteriorSigmaMeters: liveLocationAssessment.posteriorSigmaMeters,
+        liveLocationRadius95Meters: liveLocationAssessment.confidenceRadiusMeters95,
+        liveLocationRadius99Meters: liveLocationAssessment.confidenceRadiusMeters99,
+        liveLocationConsistency: liveLocationAssessment.consistencyScore,
+        liveLocationFreshness: liveLocationAssessment.freshnessScore,
+        liveLocationFreshestAgeMs: liveLocationAssessment.freshestAgeMs,
+        subjectLiveLocationConfidence,
         sourceCount: sourceKeys.size,
         evidenceItemCount:
           directEvidence.length +
-          (Array.isArray(report.sources) ? report.sources.length : 0) +
+          backgroundSources.length +
           discoveryResults.length,
         observationCount: locationObservations.length,
         rejectedObservationCount: locationQuality.rejectedCount,
@@ -747,11 +1293,16 @@ router.post('/acquire', async (req: Request, res: Response) => {
         discoveryPasses,
         discoveryQueriesAttempted,
         discoveryQueriesFailed,
+        contextSourceFamilies: contextEvidence.sourceFamilies,
+        contextEvidenceItemCount,
         summary: report.summary || '',
         verificationStatus: report.identitySummary?.verificationStatus || 'Unknown',
       },
       locationObservations,
       candidateLocations,
+      contextEvidence,
+      liveLocationAssessment,
+      identityBindingAssessment,
       evidence: {
         contactInformation: report.contactInformation || [],
         locationHistory: report.locationHistory || [],

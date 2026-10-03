@@ -345,6 +345,51 @@ export async function geocodeCityState(input: string): Promise<CityStateLocation
 }
 
 
+async function queryCensusAddressGeocoder(address: AddressHint): Promise<CityStateLocation | null> {
+  const oneLine = [
+    address.street,
+    address.city,
+    address.state,
+    address.postalcode,
+  ].filter(Boolean).join(', ');
+  if (!oneLine) return null;
+
+  const endpoint = new URL('https://geocoding.geo.census.gov/geocoder/locations/onelineaddress');
+  endpoint.searchParams.set('address', oneLine);
+  endpoint.searchParams.set('benchmark', 'Public_AR_Current');
+  endpoint.searchParams.set('format', 'json');
+
+  try {
+    const response = await fetch(endpoint, {
+      headers: {
+        Accept: 'application/json',
+        'User-Agent': 'LegalWhat-SPECTRA-Geocoder/1.0',
+      },
+      signal: AbortSignal.timeout(7000),
+    });
+    if (!response.ok) return null;
+    const payload: any = await response.json();
+    const match = payload?.result?.addressMatches?.[0];
+    const latitude = Number(match?.coordinates?.y);
+    const longitude = Number(match?.coordinates?.x);
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+
+    return {
+      latitude,
+      longitude,
+      displayName: String(match?.matchedAddress || oneLine),
+      city: address.city || '',
+      state: address.state || '',
+      // Census street coordinates are address-range interpolations. Preserve
+      // uncertainty instead of presenting them as device-level point fixes.
+      accuracyMeters: 250,
+      resolution: 'address',
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function geocodeBestLocation(input: string): Promise<CityStateLocation | null> {
   const text = normalizeSpaces(input);
   if (!text) return null;
@@ -378,8 +423,11 @@ export async function geocodeBestLocation(input: string): Promise<CityStateLocat
         };
       }
     } catch {
-      // Failure is isolated; regional/free-form strategies below remain available.
+      // Failure is isolated; the independent Census address lane remains available.
     }
+
+    const censusAddress = await queryCensusAddressGeocoder(address);
+    if (censusAddress) return censusAddress;
   }
 
   try {

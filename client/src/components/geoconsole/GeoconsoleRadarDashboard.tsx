@@ -35,6 +35,7 @@ interface GeoconsoleProps {
   navMode?: 'timeline' | 'map' | 'satellite';
   spectraShell?: boolean;
   subject?: string;
+  sessionId?: string | null;
 }
 
 interface LayerState {
@@ -93,9 +94,16 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({
   navMode,
   spectraShell = false,
   subject = 'SPECTRA target',
+  sessionId = null,
 }) => {
   // Runtime hook - source of truth for frames
-  const [state, actions] = useGeoRuntime(initialData, { tickInterval: 500, playbackSpeed: 1, interpolationEnabled: true, predictiveEnabled: true });
+  const [state, actions] = useGeoRuntime(initialData, {
+    tickInterval: 500,
+    playbackSpeed: 1,
+    interpolationEnabled: true,
+    predictiveEnabled: true,
+    sessionId: sessionId || undefined,
+  });
 
   useEffect(() => {
     void actions.loadData(initialData);

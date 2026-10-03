@@ -34,11 +34,14 @@ const DEFAULT_SOURCE_CONFIGS: DataSourceConfig[] = [
   { source: 'cellular', enabled: true, priority: 4, confidenceWeight: 0.45 },
   { source: 'cell_serving', enabled: true, priority: 5, confidenceWeight: 0.52 },
   { source: 'cell_neighbor', enabled: true, priority: 4, confidenceWeight: 0.44 },
+  { source: 'nr_positioning', enabled: true, priority: 8, confidenceWeight: 0.84 },
   { source: 'uwb_range', enabled: true, priority: 10, confidenceWeight: 0.98 },
   { source: 'uwb_direction', enabled: true, priority: 10, confidenceWeight: 0.98 },
   { source: 'bluetooth_proximity', enabled: true, priority: 4, confidenceWeight: 0.45 },
+  { source: 'bluetooth_channel_sounding', enabled: true, priority: 9, confidenceWeight: 0.94 },
   { source: 'ble_rssi', enabled: true, priority: 5, confidenceWeight: 0.52 },
   { source: 'ble_aoa', enabled: true, priority: 8, confidenceWeight: 0.86 },
+  { source: 'ble_aod', enabled: true, priority: 8, confidenceWeight: 0.86 },
   { source: 'accelerometer', enabled: true, priority: 3, confidenceWeight: 0.30 },
   { source: 'imu_gyro', enabled: true, priority: 3, confidenceWeight: 0.30 },
   { source: 'magnetometer', enabled: true, priority: 3, confidenceWeight: 0.30 },
@@ -50,6 +53,7 @@ const DEFAULT_SOURCE_CONFIGS: DataSourceConfig[] = [
   { source: 'social_geotag', enabled: true, priority: 6, confidenceWeight: 0.64 },
   { source: 'visual_detection', enabled: true, priority: 6, confidenceWeight: 0.64 },
   { source: 'vehicle_telemetry', enabled: true, priority: 9, confidenceWeight: 0.90 },
+  { source: 'visual_positioning', enabled: true, priority: 9, confidenceWeight: 0.94 },
   { source: 'public_camera', enabled: true, priority: 5, confidenceWeight: 0.56 },
   { source: 'traffic_cam', enabled: true, priority: 5, confidenceWeight: 0.56 },
   { source: 'satellite_imagery', enabled: true, priority: 4, confidenceWeight: 0.42 },
@@ -107,15 +111,19 @@ export class InputFusionEngine {
     switch (source) {
       case 'uwb_range':
       case 'uwb_direction': return 1.5;
+      case 'bluetooth_channel_sounding': return 1;
       case 'wifi_rtt': return 2.5;
       case 'gnss_fix':
       case 'device_gps': return 12;
       case 'browser_geolocation': return 25;
-      case 'ble_aoa': return 8;
+      case 'ble_aoa':
+      case 'ble_aod': return 8;
       case 'wifi_fingerprint': return 35;
       case 'wifi_rssi':
       case 'wifi_handoff': return 80;
       case 'vehicle_telemetry': return 20;
+      case 'visual_positioning': return 5;
+      case 'nr_positioning': return 5;
       case 'cell_serving':
       case 'cell_neighbor':
       case 'cellular': return 1500;
@@ -137,18 +145,22 @@ export class InputFusionEngine {
   private minimumReportedAccuracyMeters(source: DataSource): number {
     switch (source) {
       case 'uwb_range':
-      case 'uwb_direction': return 0.25;
+      case 'uwb_direction':
+      case 'bluetooth_channel_sounding': return 0.25;
       case 'wifi_rtt': return 1;
       case 'gnss_fix':
       case 'gnss_raw': return 1.5;
       case 'device_gps':
       case 'browser_geolocation': return 3;
       case 'vehicle_telemetry': return 3;
+      case 'visual_positioning': return 0.5;
+      case 'nr_positioning': return 0.5;
       case 'exif_photo':
       case 'exif_video':
       case 'xmp_sidecar':
       case 'json_sidecar': return 5;
-      case 'ble_aoa': return 3;
+      case 'ble_aoa':
+      case 'ble_aod': return 3;
       case 'wifi_fingerprint': return 10;
       case 'wifi_rssi':
       case 'wifi_handoff': return 25;
@@ -170,16 +182,59 @@ export class InputFusionEngine {
     }
   }
 
+  private precisionAccuracyFloorMeters(point: GPSPoint): number {
+    const genericFloor = this.minimumReportedAccuracyMeters(point.source);
+    if (
+      point.source !== 'gnss_fix'
+      || String(point.metadata?.providerKind || '') !== 'gnss-precision-solution'
+    ) {
+      return genericFloor;
+    }
+
+    const protectionLevel = Number(
+      point.metadata?.horizontalProtectionLevelMeters
+      ?? point.metadata?.hpl
+    );
+    if (Number.isFinite(protectionLevel) && protectionLevel > 0) {
+      return Math.max(0.01, Math.min(genericFloor, protectionLevel));
+    }
+
+    const covariance = point.metadata?.covariance;
+    if (covariance && typeof covariance === 'object') {
+      const record = covariance as Record<string, unknown>;
+      const eastVariance = Number(record.eastVariance ?? record.xx);
+      const northVariance = Number(record.northVariance ?? record.yy);
+      if (
+        Number.isFinite(eastVariance)
+        && eastVariance >= 0
+        && Number.isFinite(northVariance)
+        && northVariance >= 0
+      ) {
+        const radialSigma = Math.sqrt(
+          Math.max(0.0001, (eastVariance + northVariance) / 2),
+        );
+        // Conservative 99% radial floor for an isotropic 2D Gaussian.
+        const covarianceRadius99 = radialSigma * Math.sqrt(-2 * Math.log(0.01));
+        return Math.max(0.01, Math.min(genericFloor, covarianceRadius99));
+      }
+    }
+
+    // Signed precision-solution feeds may report centimeter/sub-meter accuracy,
+    // but absent a protection level or covariance we still retain a small
+    // anti-zero floor rather than accepting arbitrarily tiny values.
+    return 0.05;
+  }
+
   private effectiveAccuracyMeters(point: GPSPoint): number {
     const modeled = this.defaultAccuracyMeters(point.source);
     const reported = Number(point.accuracy);
     if (!Number.isFinite(reported) || reported <= 0) return modeled;
 
     // Accuracy supplied by third-party metadata is evidence, not authority.
-    // Preserve honest coarse values while preventing a weak source from
-    // claiming precision its source class cannot substantiate.
+    // Preserve honest coarse values while allowing signed precision-GNSS
+    // solutions to retain covariance/protection-level-backed sub-meter accuracy.
     return Math.max(
-      this.minimumReportedAccuracyMeters(point.source),
+      this.precisionAccuracyFloorMeters(point),
       reported,
     );
   }

@@ -26,12 +26,81 @@ interface MediaExtractionResponse {
   error?: string;
 }
 
+interface TelemetryImportResponse {
+  success?: boolean;
+  error?: string;
+  data?: {
+    sessionId?: string;
+    parsedObservationCount?: number;
+    processedObservationCount?: number;
+    persistence?: { available?: boolean };
+  };
+}
+
+function isSpectraTelemetryFile(file: File): boolean {
+  const extension = file.name.toLowerCase().split('.').pop() || '';
+  return ['geojson', 'gpx', 'kml', 'nmea', 'csv', 'ndjson', 'jsonl', 'log', 'txt'].includes(extension);
+}
+
+interface SpectraLaunchPayload {
+  target: string;
+  clues: string;
+  lexaraSessionId?: string;
+  conversation?: Array<{
+    role?: string;
+    content?: string;
+    timestamp?: string;
+  }>;
+}
+
+function readLexaraSpectraLaunch(): SpectraLaunchPayload | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = sessionStorage.getItem('legalwhat:spectra-launch');
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    const target = String(parsed?.target || '').trim();
+    const clues = String(parsed?.clues || '').trim();
+    if (!target || !clues) return null;
+    return {
+      target: target.slice(0, 500),
+      clues: clues.slice(-8_000),
+      lexaraSessionId: typeof parsed?.lexaraSessionId === 'string'
+        ? parsed.lexaraSessionId.slice(0, 200)
+        : undefined,
+      conversation: Array.isArray(parsed?.conversation)
+        ? parsed.conversation.slice(-30)
+        : undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function launchDetails(launch: SpectraLaunchPayload): string {
+  const conversation = (launch.conversation || [])
+    .map(item => {
+      const role = item?.role === 'lexara' ? 'LEXARA' : 'USER';
+      const content = String(item?.content || '').replace(/\s+/g, ' ').trim();
+      return content ? `${role}: ${content}` : '';
+    })
+    .filter(Boolean)
+    .join('\n');
+
+  return [
+    launch.clues,
+    conversation ? `LEXARA conversation context:\n${conversation}` : '',
+  ].filter(Boolean).join('\n\n').slice(-10_000);
+}
+
 interface AcquisitionResponse {
   success: boolean;
   error?: string;
   target?: string;
   details?: string;
   resolvedTargetLabel?: string;
+  sessionId?: string;
+  persistenceAvailable?: boolean;
   acquisition?: {
     identityConfidence: number;
     locationConfidence: number;
@@ -61,11 +130,23 @@ function makeMessage(role: Message['role'], content: string): Message {
 
 export default function SpectraPage() {
   const [, setLocation] = useLocation();
-  const [phase, setPhase] = useState<Phase>('awaiting_target');
-  const [target, setTarget] = useState('');
-  const [details, setDetails] = useState('');
+  const lexaraLaunchRef = useRef<SpectraLaunchPayload | null>(readLexaraSpectraLaunch());
+  const initialLexaraLaunch = lexaraLaunchRef.current;
+  const launchedFromLexaraRef = useRef(Boolean(initialLexaraLaunch));
+  const originLexaraSessionIdRef = useRef<string | null>(
+    initialLexaraLaunch?.lexaraSessionId || null
+  );
+  const [phase, setPhase] = useState<Phase>(
+    initialLexaraLaunch ? 'acquiring' : 'awaiting_target'
+  );
+  const [target, setTarget] = useState(initialLexaraLaunch?.target || '');
+  const [details, setDetails] = useState(
+    initialLexaraLaunch ? launchDetails(initialLexaraLaunch) : ''
+  );
   const [messages, setMessages] = useState<Message[]>([
-    makeMessage('spectra', FIRST_PROMPT),
+    initialLexaraLaunch
+      ? makeMessage('spectra', 'LEXARA context received. Opening the SPECTRA investigation…')
+      : makeMessage('spectra', FIRST_PROMPT),
   ]);
   const [input, setInput] = useState('');
   const [observations, setObservations] = useState<GPSPoint[]>([]);
@@ -73,6 +154,7 @@ export default function SpectraPage() {
   const [directEvidence, setDirectEvidence] = useState<GPSPoint[]>([]);
   const [confidence, setConfidence] = useState<number | null>(null);
   const [sourceCount, setSourceCount] = useState(0);
+  const [spectraSessionId, setSpectraSessionId] = useState<string | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
   const [acquisitionStage, setAcquisitionStage] = useState('Waiting for target');
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -141,6 +223,7 @@ export default function SpectraPage() {
   }, []);
 
   useEffect(() => {
+    if (launchedFromLexaraRef.current) return;
     if (initialVoicePromptRef.current || getLexaraLiveEnabled() !== 'true') return;
     initialVoicePromptRef.current = true;
 
@@ -189,6 +272,8 @@ export default function SpectraPage() {
 
   const resetSession = useCallback(() => {
     requestRef.current += 1;
+    launchedFromLexaraRef.current = false;
+    originLexaraSessionIdRef.current = null;
     setPhase('awaiting_target');
     setTarget('');
     setDetails('');
@@ -197,6 +282,7 @@ export default function SpectraPage() {
     setDirectEvidence([]);
     setConfidence(null);
     setSourceCount(0);
+    setSpectraSessionId(null);
     setLastError(null);
     setAcquisitionStage('Waiting for target');
     setInput('');
@@ -208,6 +294,7 @@ export default function SpectraPage() {
     targetValue: string,
     detailsValue: string,
     extraEvidence: GPSPoint[] = directEvidence,
+    sessionOverride?: string,
   ) => {
     const requestId = ++requestRef.current;
     setPhase('acquiring');
@@ -295,6 +382,8 @@ export default function SpectraPage() {
         body: JSON.stringify({
           target: targetValue,
           details: detailsValue,
+          sessionId: sessionOverride || spectraSessionId || undefined,
+          originSessionId: originLexaraSessionIdRef.current || undefined,
           directEvidence: extraEvidence.map(point => ({
             ...point,
             timestamp: new Date(point.timestamp).toISOString(),
@@ -352,6 +441,9 @@ export default function SpectraPage() {
           : null
       );
       setSourceCount(payload.acquisition?.sourceCount ?? 0);
+      if (typeof payload.sessionId === 'string' && payload.sessionId.trim()) {
+        setSpectraSessionId(payload.sessionId.trim());
+      }
       setPhase('active');
 
       const certainty = points.length > 0 || canonicalLocationConfidence > 0
@@ -380,7 +472,26 @@ export default function SpectraPage() {
       addMessage('spectra', responseText);
       speakIfEnabled(responseText);
     }
-  }, [addMessage, directEvidence, speakIfEnabled]);
+  }, [addMessage, directEvidence, speakIfEnabled, spectraSessionId]);
+
+  useEffect(() => {
+    const launch = lexaraLaunchRef.current;
+    if (!launch) return;
+
+    lexaraLaunchRef.current = null;
+    try {
+      sessionStorage.removeItem('legalwhat:spectra-launch');
+    } catch {
+      // One-time launch context can still proceed if storage cleanup is unavailable.
+    }
+
+    const targetValue = launch.target;
+    const detailsValue = launchDetails(launch);
+    setTarget(targetValue);
+    setDetails(detailsValue);
+    setAcquisitionStage('LEXARA context received; starting SPECTRA acquisition…');
+    void acquireTarget(targetValue, detailsValue);
+  }, [acquireTarget]);
 
   const handleMediaEvidence = useCallback(async (file: File) => {
     if (phase === 'awaiting_target') {
@@ -454,6 +565,151 @@ export default function SpectraPage() {
     speakIfEnabled,
     target,
   ]);
+
+  const handleTelemetryEvidence = useCallback(async (file: File) => {
+    if (phase === 'awaiting_target') {
+      const response = 'Tell me what you want to locate first. Then I can attach that telemetry to the target.';
+      addMessage('spectra', response);
+      speakIfEnabled(response);
+      return;
+    }
+    if (phase === 'acquiring') return;
+
+    addMessage('user', `Shared target telemetry: ${file.name}`);
+    setLastError(null);
+
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      form.append('subjectLabel', target);
+      if (spectraSessionId) form.append('sessionId', spectraSessionId);
+
+      const response = await fetch('/api/geoconsole/telemetry/import-file', {
+        method: 'POST',
+        credentials: 'include',
+        body: form,
+      });
+      const payload = await response.json() as TelemetryImportResponse;
+      if (!response.ok || payload.success !== true) {
+        throw new Error(payload.error || 'Telemetry import failed.');
+      }
+
+      const importedSessionId = String(payload.data?.sessionId || spectraSessionId || '').trim();
+      if (importedSessionId) setSpectraSessionId(importedSessionId);
+
+      if (importedSessionId) {
+        const historyResponse = await fetch(
+          `/api/geoconsole/telemetry-history/${encodeURIComponent(importedSessionId)}`,
+          { credentials: 'include' },
+        );
+        if (historyResponse.ok) {
+          const historyPayload = await historyResponse.json().catch(() => ({}));
+          const history = Array.isArray(historyPayload?.data) ? historyPayload.data : [];
+          const importedPoints: GPSPoint[] = history.flatMap((point: any) => {
+            const timestamp = new Date(point?.timestamp);
+            if (
+              !Number.isFinite(Number(point?.latitude))
+              || !Number.isFinite(Number(point?.longitude))
+              || !Number.isFinite(timestamp.getTime())
+            ) return [];
+            return [{
+              ...point,
+              latitude: Number(point.latitude),
+              longitude: Number(point.longitude),
+              timestamp,
+              receivedAt: point.receivedAt ? new Date(point.receivedAt) : undefined,
+              provenance: point.provenance
+                ? {
+                    ...point.provenance,
+                    capturedAt: point.provenance.capturedAt
+                      ? new Date(point.provenance.capturedAt)
+                      : undefined,
+                  }
+                : undefined,
+            } as GPSPoint];
+          });
+
+          if (importedPoints.length) {
+            setObservations(previous => {
+              const merged = new Map<string, GPSPoint>();
+              for (const point of [...previous, ...importedPoints]) {
+                const evidenceGroup =
+                  point.correlationGroup
+                  || point.provenance?.recordId
+                  || `${point.source}:${point.provenance?.provider || 'unknown'}`;
+                const key = [
+                  Number(point.latitude).toFixed(7),
+                  Number(point.longitude).toFixed(7),
+                  new Date(point.timestamp).toISOString(),
+                  point.source,
+                  evidenceGroup,
+                ].join('|');
+                merged.set(key, point);
+              }
+              return [...merged.values()].sort(
+                (left, right) =>
+                  new Date(left.timestamp).getTime() - new Date(right.timestamp).getTime(),
+              );
+            });
+          }
+        }
+      }
+
+      const parsedCount = Number(payload.data?.parsedObservationCount || 0);
+      const processedCount = Number(payload.data?.processedObservationCount || 0);
+      const evidenceDescription = [
+        `Imported target telemetry: ${file.name}`,
+        `Parsed timestamped observations: ${parsedCount}`,
+        `Accepted location observations: ${processedCount}`,
+      ].join('. ');
+      const expandedDetails = [details, evidenceDescription].filter(Boolean).join('\n');
+      setDetails(expandedDetails);
+
+      const responseText = processedCount > 0
+        ? `I imported ${processedCount} usable location observation${processedCount === 1 ? '' : 's'} from that telemetry and added them to the investigation.`
+        : 'I parsed that telemetry, but it did not contain a usable timestamped location observation.';
+      addMessage('spectra', responseText);
+      speakIfEnabled(responseText);
+
+      await acquireTarget(
+        target,
+        expandedDetails,
+        directEvidence,
+        importedSessionId || undefined,
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Telemetry import failed.';
+      setLastError(message);
+      addMessage('spectra', 'I could not import that telemetry file. You can continue with the target information already supplied.');
+    } finally {
+      if (mediaInputRef.current) mediaInputRef.current.value = '';
+    }
+  }, [
+    acquireTarget,
+    addMessage,
+    details,
+    directEvidence,
+    phase,
+    speakIfEnabled,
+    spectraSessionId,
+    target,
+  ]);
+
+  const handleTargetFile = useCallback((file: File) => {
+    if (isSpectraTelemetryFile(file)) {
+      void handleTelemetryEvidence(file);
+      return;
+    }
+    if (file.type.startsWith('image/') || file.type.startsWith('video/')) {
+      void handleMediaEvidence(file);
+      return;
+    }
+
+    const response = 'That file type is not a supported SPECTRA media or telemetry format.';
+    addMessage('spectra', response);
+    speakIfEnabled(response);
+    if (mediaInputRef.current) mediaInputRef.current.value = '';
+  }, [addMessage, handleMediaEvidence, handleTelemetryEvidence, speakIfEnabled]);
 
   const handleUserMessage = useCallback(async (rawMessage: string) => {
     const message = rawMessage.trim();
@@ -617,6 +873,7 @@ export default function SpectraPage() {
             initialData={observations}
             candidateLocations={candidateLocations}
             subject={target || 'SPECTRA target'}
+            sessionId={spectraSessionId}
             spectraShell
           />
 
@@ -719,11 +976,11 @@ export default function SpectraPage() {
             <input
               ref={mediaInputRef}
               type="file"
-              accept="image/*,video/*"
+              accept="image/*,video/*,.geojson,.gpx,.kml,.nmea,.csv,.ndjson,.jsonl,.log,.txt"
               className="hidden"
               onChange={event => {
                 const file = event.target.files?.[0];
-                if (file) void handleMediaEvidence(file);
+                if (file) handleTargetFile(file);
               }}
             />
             <div
@@ -737,7 +994,7 @@ export default function SpectraPage() {
                 if (phase === 'awaiting_target' || phase === 'acquiring') return;
                 event.preventDefault();
                 const file = event.dataTransfer.files?.[0];
-                if (file) void handleMediaEvidence(file);
+                if (file) handleTargetFile(file);
               }}
             >
               <Button
@@ -747,7 +1004,7 @@ export default function SpectraPage() {
                 disabled={phase === 'awaiting_target' || phase === 'acquiring'}
                 onClick={() => mediaInputRef.current?.click()}
                 className="h-11 w-11 shrink-0 rounded-full text-slate-400 hover:text-cyan-300"
-                title="Add target photo or video"
+                title="Add target media or telemetry"
                 aria-label="Add target photo or video"
               >
                 <Paperclip className="h-4 w-4" />

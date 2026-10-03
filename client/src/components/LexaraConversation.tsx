@@ -1,5 +1,5 @@
 import { type FormEvent, type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, CalendarDays, Download, FileText, Loader2, Mic, MicOff, PenLine, Send, Star, Trash2 } from 'lucide-react';
+import { AlertCircle, CalendarDays, Download, FileText, Loader2, MapPin, Mic, MicOff, PenLine, Send, Star, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
@@ -19,6 +19,7 @@ import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
 import { captureLexaraDeviceLocation, readLexaraDeviceLocation } from '@/lib/lexaraLocation';
 import { lexaraRealtimeVoiceClient } from '@/lib/lexaraRealtimeVoiceClient';
+import { useLocation } from 'wouter';
 
 interface LexaraConversationProps {
   lawTypeId?: string;
@@ -42,6 +43,22 @@ interface ConversationMessage {
   role: 'user' | 'lexara';
   content: string;
   timestamp: Date;
+  spectraLaunch?: {
+    target: string;
+    clues: string;
+    lexaraSessionId: string;
+  };
+}
+
+const NON_PERSON_SPECTRA_TARGET_RE = /^(?:(?:the|this|that|a|an|my|your)\s+)?(?:document|form|law|statute|case|website|page|button|map|file|letter|motion|complaint|petition|contract|calendar|deadline|answer|response|evidence|photo|video|address|property|vehicle|car|truck|business|company|organization|phone|device)(?:\b|$)/i;
+
+function spectraTargetFromPrompt(value: string): string | null {
+  const normalized = value.replace(/\s+/g, ' ').trim();
+  const match = normalized.match(/^(?:please\s+)?(?:show\s+me|where\s+is|where's)\s+(.+?)[?.!]*$/i);
+  const target = match?.[1]?.trim().replace(/[?.!]+$/g, '').trim() || '';
+  if (target.length < 2 || target.length > 500) return null;
+  if (NON_PERSON_SPECTRA_TARGET_RE.test(target)) return null;
+  return target;
 }
 
 type ConversationPhase =
@@ -448,6 +465,7 @@ function emotionFromUserText(text: string): LEXARAEmotionHint {
 }
 
 export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraConversationProps) {
+  const [, setLocation] = useLocation();
   const { user, isLoading: authLoading } = useAuth();
   const isMasterSession = Boolean((user as any)?.isMasterBypass);
   const userId = (user as any)?.id || (user as any)?.claims?.sub;
@@ -837,12 +855,17 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     }
   }, []);
 
-  const appendMessage = useCallback((role: ConversationMessage['role'], content: string): string => {
+  const appendMessage = useCallback((
+    role: ConversationMessage['role'],
+    content: string,
+    spectraLaunch?: ConversationMessage['spectraLaunch'],
+  ): string => {
     const nextMessage: ConversationMessage = {
       id: makeMessageId(role),
       role,
       content,
       timestamp: new Date(),
+      spectraLaunch,
     };
 
     setConversation(previous => {
@@ -862,6 +885,37 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       return next;
     });
   }, []);
+
+  const attachSpectraLaunch = useCallback((
+    id: string,
+    spectraLaunch: NonNullable<ConversationMessage['spectraLaunch']>,
+  ) => {
+    setConversation(previous => {
+      const next = previous.map(message =>
+        message.id === id ? { ...message, spectraLaunch } : message
+      );
+      conversationRef.current = next;
+      return next;
+    });
+  }, []);
+
+  const openSpectra = useCallback((
+    launch: NonNullable<ConversationMessage['spectraLaunch']>,
+  ) => {
+    try {
+      sessionStorage.setItem('legalwhat:spectra-launch', JSON.stringify({
+        ...launch,
+        conversation: conversationRef.current.slice(-30).map(message => ({
+          role: message.role,
+          content: message.content,
+          timestamp: message.timestamp.toISOString(),
+        })),
+      }));
+    } catch {
+      // Navigation remains available even when browser storage is unavailable.
+    }
+    setLocation('/spectra');
+  }, [setLocation]);
 
   const enableVoice = useCallback(async () => {
     try {
@@ -946,6 +1000,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     if (!historyReadyRef.current) return;
     const message = rawMessage.trim();
     if (!message) return;
+    const spectraTarget = spectraTargetFromPrompt(message);
 
     // Speech that arrives while legal analysis is running is a new conversational
     // turn, never a continuation silently grafted onto the prior blue bubble.
@@ -1055,6 +1110,20 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         role: item.role,
         content: item.content,
       }));
+
+    const spectraLaunch: ConversationMessage['spectraLaunch'] = spectraTarget
+      ? {
+          target: spectraTarget,
+          clues: [
+            ...previousMessages
+              .filter(item => item.role === 'user')
+              .slice(-12)
+              .map(item => item.content),
+            message,
+          ].join('\n').slice(-8_000),
+          lexaraSessionId: sessionIdRef.current,
+        }
+      : undefined;
 
     const userEmotion = emotionFromUserText(message);
     responseEmotionRef.current = userEmotion === 'calm' ? 'authoritative' : userEmotion;
@@ -1397,8 +1466,9 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
 
         if (streamedAnswerMessageId) {
           updateMessageContent(streamedAnswerMessageId, answer);
+          if (spectraLaunch) attachSpectraLaunch(streamedAnswerMessageId, spectraLaunch);
         } else {
-          appendMessage('lexara', answer);
+          appendMessage('lexara', answer, spectraLaunch);
         }
         // A document-action turn owns the artifact handoff. Keep the full draft
         // visible in chat, but do not feed document bodies/markup/placeholders
@@ -1464,7 +1534,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         }
       }
     }
-  }, [appendMessage, clearVoiceTurnBuffer, jurisdiction, lawTypeId, lawTypeName, liveEnabled, pendingDocument, representationMatter, resumeListening, setConversationPhase, speakLexara, stopSpeaking, updateMessageContent, voiceReady]);
+  }, [appendMessage, attachSpectraLaunch, clearVoiceTurnBuffer, jurisdiction, lawTypeId, lawTypeName, liveEnabled, pendingDocument, representationMatter, resumeListening, setConversationPhase, speakLexara, stopSpeaking, updateMessageContent, voiceReady]);
 
   handleMessageRef.current = handleUserMessage;
 
@@ -2051,6 +2121,18 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
                 )}
               >
                 {message.content}
+                {message.role === 'lexara' && message.spectraLaunch && (
+                  <button
+                    type="button"
+                    data-testid="lexara-spectra-launch"
+                    onClick={() => openSpectra(message.spectraLaunch!)}
+                    className="mt-3 flex items-center gap-2 rounded-full border border-cyan-500/30 bg-cyan-500/10 px-3 py-1.5 text-xs font-medium text-cyan-700 transition hover:bg-cyan-500/15 dark:text-cyan-300"
+                    title="Open this location investigation in SPECTRA"
+                  >
+                    <MapPin className="h-3.5 w-3.5" />
+                    SPECTRA
+                  </button>
+                )}
               </div>
             </div>
           ))}

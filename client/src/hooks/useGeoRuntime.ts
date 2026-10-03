@@ -42,6 +42,7 @@ export interface GeoRuntimeConfig {
   autoFetch: boolean;
   interpolationEnabled: boolean;
   predictiveEnabled: boolean;
+  sessionId?: string;
 }
 
 export interface GeoRuntimeState {
@@ -130,11 +131,15 @@ export function useGeoRuntime(
   
   // Config (not memoized to avoid stale closures)
   const cfg: GeoRuntimeConfig = { ...DEFAULT_CONFIG, ...config };
+  const configuredSessionId = typeof cfg.sessionId === 'string' && cfg.sessionId.trim()
+    ? cfg.sessionId.trim()
+    : null;
 
   // Core state - frames array (IMMUTABLE updates only)
   const [frames, setFrames] = useState<GeoFrame[]>([]);
   const [futurecastFrames, setFuturecastFrames] = useState<GeoFrame[]>([]);
-  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(configuredSessionId);
+  const sessionIdRef = useRef<string | null>(configuredSessionId);
   
   // Index state - this is what drives frame selection
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -158,6 +163,17 @@ export function useGeoRuntime(
   useEffect(() => {
     framesRef.current = frames;
   }, [frames]);
+
+  useEffect(() => {
+    sessionIdRef.current = sessionId;
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (configuredSessionId) {
+      sessionIdRef.current = configuredSessionId;
+      setSessionId(configuredSessionId);
+    }
+  }, [configuredSessionId]);
 
   // Convert GPS points to frames
   const convertToFrames = useCallback((points: GPSPoint[]): GeoFrame[] => {
@@ -273,6 +289,7 @@ export function useGeoRuntime(
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           hours: FUTURECAST_HOURS,
+          sessionId: sessionIdRef.current || configuredSessionId || undefined,
           recentPoints: recent.map(frame => ({
             latitude: frame.position.latitude,
             longitude: frame.position.longitude,
@@ -304,7 +321,11 @@ export function useGeoRuntime(
       if (requestId !== futurecastRequestRef.current) return;
       setFuturecastFrames([]);
     }
-  }, [cfg.predictiveEnabled, predictionPayloadToFrames]);
+  }, [
+    cfg.predictiveEnabled,
+    configuredSessionId,
+    predictionPayloadToFrames,
+  ]);
 
   // Load data through the canonical server fusion pipeline automatically.
   const loadData = useCallback(async (points: GPSPoint[]) => {
@@ -316,7 +337,8 @@ export function useGeoRuntime(
         framesRef.current = [];
         setFrames([]);
         setFuturecastFrames([]);
-        setSessionId(null);
+        sessionIdRef.current = configuredSessionId;
+        setSessionId(configuredSessionId);
         setCurrentIndex(0);
         setIsPlaying(false);
         setIsLive(false);
@@ -327,7 +349,10 @@ export function useGeoRuntime(
 
       let canonicalPoints = points;
       let canonicalFuturecast: GeoFrame[] | null = null;
-      setSessionId(null);
+      if (!configuredSessionId) {
+        sessionIdRef.current = null;
+        setSessionId(null);
+      }
 
       try {
         const response = await fetch('/api/geoconsole/process', {
@@ -335,6 +360,7 @@ export function useGeoRuntime(
           credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
+            sessionId: configuredSessionId || undefined,
             inputs: points.map(point => ({
               ...point,
               timestamp: new Date(point.timestamp).toISOString(),
@@ -357,6 +383,7 @@ export function useGeoRuntime(
             typeof payload?.data?.sessionId === 'string' && payload.data.sessionId.trim()
               ? payload.data.sessionId
               : null;
+          sessionIdRef.current = canonicalSessionId;
           setSessionId(canonicalSessionId);
 
           const processedTrail = Array.isArray(payload?.data?.trail?.points)
@@ -445,7 +472,16 @@ export function useGeoRuntime(
 
       if (canonicalFuturecast && canonicalFuturecast.length > 0) {
         setFuturecastFrames(canonicalFuturecast);
-      } else {
+      }
+      // When an investigation session exists, refresh through the dedicated
+      // Futurecast route so recent camera/vehicle flow context can refine the
+      // prediction without becoming target evidence.
+      if (
+        configuredSessionId
+        || sessionIdRef.current
+        || !canonicalFuturecast
+        || canonicalFuturecast.length === 0
+      ) {
         void requestAuthoritativeFuturecast(newFrames);
       }
 
@@ -457,6 +493,7 @@ export function useGeoRuntime(
   }, [
     convertToFrames,
     cfg.maxFrameBuffer,
+    configuredSessionId,
     predictionPayloadToFrames,
     requestAuthoritativeFuturecast,
   ]);
@@ -586,6 +623,46 @@ export function useGeoRuntime(
           },
         };
 
+        void fetch('/api/geoconsole/telemetry-ingest', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            sessionId: sessionId || undefined,
+            sourceId: 'browser-geolocation',
+            measurements: [{
+              kind: 'position',
+              source: 'browser_geolocation',
+              timestamp: now.toISOString(),
+              latitude,
+              longitude,
+              altitude,
+              accuracy,
+              verticalAccuracy: Number.isFinite(coords.altitudeAccuracy)
+                ? coords.altitudeAccuracy ?? undefined
+                : undefined,
+              speed,
+              heading,
+              confidence,
+              provider: 'navigator.geolocation',
+              correlationGroup: 'browser:navigator.geolocation',
+              metadata: {
+                live: true,
+                providerSpeedMps: Number.isFinite(coords.speed) ? coords.speed : undefined,
+                providerHeadingDegrees: Number.isFinite(coords.heading) ? coords.heading : undefined,
+              },
+            }],
+          }),
+        })
+          .then(async response => response.ok ? response.json() : null)
+          .then(payload => {
+            const telemetrySessionId = typeof payload?.data?.sessionId === 'string'
+              ? payload.data.sessionId.trim()
+              : '';
+            if (telemetrySessionId && !sessionId) setSessionId(telemetrySessionId);
+          })
+          .catch(() => undefined);
+
         const cutoff = newFrame.timestamp.getTime() - ONE_HOUR_MS;
         const updated = [...framesRef.current, newFrame]
           .filter(frame => frame.timestamp.getTime() >= cutoff);
@@ -625,7 +702,95 @@ export function useGeoRuntime(
         // ignore
       }
     };
-  }, [isLive, cfg.autoFetch, cfg.maxFrameBuffer, requestAuthoritativeFuturecast]);
+  }, [isLive, cfg.autoFetch, cfg.maxFrameBuffer, requestAuthoritativeFuturecast, sessionId]);
+
+  // Server push channel for telemetry arriving from any configured adapter.
+  // Browser-originated points are de-duplicated against the local live frame,
+  // while external provider/radio/ranging observations appear immediately.
+  useEffect(() => {
+    if (!sessionId || typeof EventSource === 'undefined') return;
+
+    const source = new EventSource(
+      `/api/geoconsole/telemetry-stream/${encodeURIComponent(sessionId)}`,
+      { withCredentials: true },
+    );
+
+    const onObservationBatch = (event: MessageEvent) => {
+      try {
+        const payload = JSON.parse(String(event.data || '{}'));
+        const rawPoints = Array.isArray(payload?.points) ? payload.points : [];
+        const points: GPSPoint[] = rawPoints.flatMap((point: any) => {
+          const timestamp = new Date(point?.timestamp);
+          if (
+            !Number.isFinite(Number(point?.latitude))
+            || !Number.isFinite(Number(point?.longitude))
+            || !Number.isFinite(timestamp.getTime())
+          ) return [];
+
+          return [{
+            ...point,
+            latitude: Number(point.latitude),
+            longitude: Number(point.longitude),
+            timestamp,
+            receivedAt: point?.receivedAt ? new Date(point.receivedAt) : undefined,
+            provenance: point?.provenance
+              ? {
+                  ...point.provenance,
+                  capturedAt: point.provenance.capturedAt
+                    ? new Date(point.provenance.capturedAt)
+                    : undefined,
+                }
+              : undefined,
+          } as GPSPoint];
+        });
+        if (!points.length) return;
+
+        const incoming = convertToFrames(points);
+        if (!incoming.length) return;
+
+        const keyFor = (frame: GeoFrame) => [
+          frame.position.latitude.toFixed(7),
+          frame.position.longitude.toFixed(7),
+          frame.timestamp.toISOString(),
+          frame.source,
+          frame.correlationGroup || frame.provenance?.recordId || '',
+        ].join('|');
+
+        const merged = new Map<string, GeoFrame>();
+        for (const frame of [...framesRef.current, ...incoming]) {
+          merged.set(keyFor(frame), frame);
+        }
+
+        let next = [...merged.values()]
+          .sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+        const latestMs = next[next.length - 1]?.timestamp.getTime() ?? Date.now();
+        next = next.filter(frame => frame.timestamp.getTime() >= latestMs - ONE_HOUR_MS);
+        if (next.length > cfg.maxFrameBuffer) next = next.slice(-cfg.maxFrameBuffer);
+
+        framesRef.current = next;
+        setFrames([...next]);
+        setCurrentIndex(Math.max(0, next.length - 1));
+        setVersion(value => value + 1);
+
+        const nowMs = Date.now();
+        if (
+          next.length >= 3
+          && nowMs - liveFuturecastLastRequestRef.current >= 30_000
+        ) {
+          liveFuturecastLastRequestRef.current = nowMs;
+          void requestAuthoritativeFuturecast(next);
+        }
+      } catch {
+        // A malformed provider event is isolated and cannot break the local map.
+      }
+    };
+
+    source.addEventListener('observation-batch', onObservationBatch as EventListener);
+    return () => {
+      source.removeEventListener('observation-batch', onObservationBatch as EventListener);
+      source.close();
+    };
+  }, [cfg.maxFrameBuffer, convertToFrames, requestAuthoritativeFuturecast, sessionId]);
 
   // === DERIVED STATE (computed from index + frames) ===
   
