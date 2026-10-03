@@ -16,7 +16,7 @@ import { GPSPoint, DataSource } from '../services/geoconsole/types';
 import { assessLocationQuality } from '../services/geoconsole/location-quality';
 import { selectCrawlerPlan } from '../services/crawlers/CrawlerSelectionUtility';
 import { createLogger } from '../logger';
-import { isAuthenticated } from '../auth';
+import { adminAuthMiddleware, isAuthenticated } from '../auth';
 import { getPlatformUserId } from '../authIdentity';
 import { pool } from '../db';
 import {
@@ -3385,7 +3385,7 @@ router.get('/status', async (req: Request, res: Response) => {
  * POST /api/geoconsole/config
  * Update system configuration
  */
-router.post('/config', async (req: Request, res: Response) => {
+router.post('/config', adminAuthMiddleware, async (req: Request, res: Response) => {
   try {
     const validation = configUpdateSchema.safeParse(req.body);
     
@@ -3416,7 +3416,7 @@ router.post('/config', async (req: Request, res: Response) => {
  * POST /api/geoconsole/clear-cache
  * Clear all in-memory caches
  */
-router.post('/clear-cache', async (req: Request, res: Response) => {
+router.post('/clear-cache', adminAuthMiddleware, async (req: Request, res: Response) => {
   try {
     hybridGeoconsole.clearCaches();
 
