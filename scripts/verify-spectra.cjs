@@ -737,8 +737,11 @@ test('Provider-neutral MQTT transport uses TLS, subscription, reconnect and QoS1
   mqttProviderCoordinator.includes('scheduleReconnect') &&
   geoconsoleRoutes.includes('startSpectraMqttProviderStreams') &&
   geoconsoleRoutes.includes("'mqtts-provider-stream'"));
-test('Infrastructure webhook ingress uses per-provider configured credentials before normalization',
+test('Infrastructure webhook ingress uses per-provider credentials and Mist SHA-256 validation before normalization',
   geoconsoleRoutes.includes('SPECTRA_INFRASTRUCTURE_WEBHOOK_AUTH') &&
+  geoconsoleRoutes.includes("mode === 'mist-hmac-sha256'") &&
+  geoconsoleRoutes.includes("req.header('x-mist-signature-v2')") &&
+  geoconsoleRoutes.includes("createHmac('sha256', secret)") &&
   geoconsoleRoutes.includes("router.post('/telemetry/infrastructure/:providerId/normalize/:kind'") &&
   geoconsoleRoutes.includes('timingSafeEqual(actualBuffer, expectedBuffer)') &&
   geoconsoleRoutes.includes('normalizeSpectraProviderPayload(kind, providerId, req.body)'));
