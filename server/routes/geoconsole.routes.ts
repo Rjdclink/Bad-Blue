@@ -1344,11 +1344,16 @@ router.get('/telemetry-capabilities', (_req: Request, res: Response) => {
         'bluetooth_proximity', 'ble_rssi', 'ble_aoa',
       ],
       contextSources: ['accelerometer', 'imu_gyro', 'magnetometer', 'barometer'],
-      radioGeolocationConfigured: Boolean(
-        process.env.SPECTRA_GOOGLE_GEOLOCATION_API_KEY
-        || process.env.GOOGLE_GEOLOCATION_API_KEY
-        || process.env.GOOGLE_MAPS_API_KEY
-      ),
+      radioGeolocationConfigured: true,
+      radioGeolocationProviders: {
+        beaconDb: true,
+        google: Boolean(
+          process.env.SPECTRA_GOOGLE_GEOLOCATION_API_KEY
+          || process.env.GOOGLE_GEOLOCATION_API_KEY
+          || process.env.GOOGLE_MAPS_API_KEY
+        ),
+        openCellId: Boolean(process.env.OPENCELLID_API_KEY),
+      },
       providerWebhookConfigured: Boolean(process.env.SPECTRA_TELEMETRY_HMAC_SECRET),
       crossReplicaRealtimeConfigured: spectraRealtimeBridgeConfigured(),
       adapters: getSpectraAdapterCapabilities(),
