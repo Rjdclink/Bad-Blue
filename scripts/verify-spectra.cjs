@@ -458,7 +458,7 @@ test('GNSS integrity evaluates ADR continuity multipath authentication and inter
   gnssIntegrity.includes('correlationVectorSatelliteCount') &&
   advancedRadioNormalizer.includes('probabilityLineOfSight') &&
   advancedRadioNormalizer.includes('phaseCenterVariationCorrectionCount'));
-test('Precision GNSS adapter preserves RTK PPP NTRIP RTCM covariance and protection levels',
+test('Precision GNSS adapter preserves RTK PPP NTRIP RTCM HAS covariance and protection levels',
   advancedRadioNormalizer.includes("'gnss-precision-solution'") &&
   advancedRadioNormalizer.includes("'rtk-fixed'") &&
   advancedRadioNormalizer.includes("'network-rtk'") &&
@@ -466,6 +466,9 @@ test('Precision GNSS adapter preserves RTK PPP NTRIP RTCM covariance and protect
   advancedRadioNormalizer.includes('correctionAgeSeconds') &&
   advancedRadioNormalizer.includes('ntripMountpoint') &&
   advancedRadioNormalizer.includes('rtcmMessages') &&
+  advancedRadioNormalizer.includes('correctionService') &&
+  advancedRadioNormalizer.includes('correctionServiceLevel') &&
+  advancedRadioNormalizer.includes('correctionCapabilities') &&
   advancedRadioNormalizer.includes('ambiguityRatio') &&
   advancedRadioNormalizer.includes('horizontalProtectionLevelMeters') &&
   adapterRegistry.includes("id: 'gnss-precision-solution-ingest'"));
@@ -560,10 +563,14 @@ test('CDMA cell identity preserves SID NID and BID through the canonical radio s
   advancedRadioNormalizer.includes("type === 'cdma' ? systemId") &&
   advancedRadioNormalizer.includes("type === 'cdma' ? networkId") &&
   advancedRadioNormalizer.includes("type === 'cdma' ? baseStationId"));
-test('Universal radio-log importer recognizes CSV and Android GNSS Logger Raw records',
+test('Universal radio-log importer recognizes CSV Android GNSS Logger and RTKLIB precision records',
   advancedRadioNormalizer.includes("import { parse as parseCsv } from 'csv-parse/sync'") &&
   advancedRadioNormalizer.includes('/^#\\s*Raw,/i') &&
   advancedRadioNormalizer.includes("recordType: 'gnsslogger-raw'") &&
+  advancedRadioNormalizer.includes('parseRtklibPosRecords') &&
+  advancedRadioNormalizer.includes("recordType: 'rtklib-pos'") &&
+  advancedRadioNormalizer.includes("kind: 'rtklib-solution'") &&
+  advancedRadioNormalizer.includes("kind === 'gnss-precision-solution' ? { solutions: [row]") &&
   advancedRadioNormalizer.includes('UtcTimeMillis') &&
   advancedRadioNormalizer.includes('CarrierFrequencyHz') &&
   advancedRadioNormalizer.includes('AccumulatedDeltaRangeMeters'));
