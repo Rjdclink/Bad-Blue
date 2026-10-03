@@ -39,6 +39,9 @@ export interface SpectraGnssIntegrityAssessment {
   dualFrequencyReady: boolean;
   multiConstellationReady: boolean;
   interferenceSuspected: boolean;
+  spoofingSuspected: boolean;
+  jammingSuspected: boolean;
+  navigationAuthenticationStatus?: 'authenticated' | 'partial' | 'failed' | 'unknown';
   integrityScore: number;
   precisionReadinessScore: number;
   reasons: string[];
@@ -99,6 +102,17 @@ export function assessSpectraGnssIntegrity(input: {
     levelDb?: number | null;
   }>;
   previousHardwareClockDiscontinuityCount?: number | null;
+  navigationAuthentication?: {
+    status?: string | null;
+    authenticatedSatelliteCount?: number | null;
+    failedSatelliteCount?: number | null;
+  };
+  spoofJamIndicators?: {
+    spoofingSuspected?: boolean;
+    jammingSuspected?: boolean;
+    cn0AnomalyScore?: number | null;
+    agcAnomalyScore?: number | null;
+  };
 }): SpectraGnssIntegrityAssessment {
   const satellites = Array.isArray(input.satellites) ? input.satellites : [];
   const clock = input.clock || {};
@@ -152,6 +166,40 @@ export function assessSpectraGnssIntegrity(input: {
     agcLevels.length >= 2
     && Math.max(...agcLevels) - Math.min(...agcLevels) > 18;
 
+  const authenticationStatusRaw = String(
+    input.navigationAuthentication?.status || 'unknown'
+  ).trim().toLowerCase();
+  const authenticatedSatelliteCount = finite(
+    input.navigationAuthentication?.authenticatedSatelliteCount
+  ) ?? 0;
+  const failedAuthenticationCount = finite(
+    input.navigationAuthentication?.failedSatelliteCount
+  ) ?? 0;
+  const navigationAuthenticationStatus:
+    SpectraGnssIntegrityAssessment['navigationAuthenticationStatus'] =
+      authenticationStatusRaw === 'authenticated'
+      || authenticationStatusRaw === 'verified'
+      || authenticationStatusRaw === 'osnma_verified'
+        ? 'authenticated'
+        : authenticationStatusRaw === 'partial'
+          || authenticationStatusRaw === 'partially_authenticated'
+            ? 'partial'
+            : authenticationStatusRaw === 'failed'
+              || authenticationStatusRaw === 'invalid'
+              || failedAuthenticationCount > 0
+                ? 'failed'
+                : authenticatedSatelliteCount > 0
+                  ? 'partial'
+                  : 'unknown';
+
+  const spoofingSuspected =
+    input.spoofJamIndicators?.spoofingSuspected === true
+    || (finite(input.spoofJamIndicators?.cn0AnomalyScore) ?? 0) >= 0.8;
+  const jammingSuspected =
+    input.spoofJamIndicators?.jammingSuspected === true
+    || interferenceSuspected
+    || (finite(input.spoofJamIndicators?.agcAnomalyScore) ?? 0) >= 0.8;
+
   const satelliteCount = satellites.length;
   const validTrackingCount = validTracking.length;
   const usableAdrCount = usableAdr.length;
@@ -188,6 +236,10 @@ export function assessSpectraGnssIntegrity(input: {
     + 0.10 * clamp(uniqueFrequencyCount / 2);
 
   if (interferenceSuspected) integrityScore *= 0.7;
+  if (jammingSuspected) integrityScore *= 0.65;
+  if (spoofingSuspected) integrityScore *= 0.25;
+  if (navigationAuthenticationStatus === 'failed') integrityScore *= 0.30;
+  if (navigationAuthenticationStatus === 'partial') integrityScore *= 0.90;
   integrityScore = clamp(integrityScore);
 
   let precisionReadinessScore =
@@ -200,6 +252,9 @@ export function assessSpectraGnssIntegrity(input: {
 
   if (!carrierPhaseReady) precisionReadinessScore *= 0.75;
   if (interferenceSuspected) precisionReadinessScore *= 0.7;
+  if (jammingSuspected) precisionReadinessScore *= 0.65;
+  if (spoofingSuspected) precisionReadinessScore *= 0.20;
+  if (navigationAuthenticationStatus === 'failed') precisionReadinessScore *= 0.30;
   precisionReadinessScore = clamp(precisionReadinessScore);
 
   const reasons: string[] = [];
@@ -224,6 +279,15 @@ export function assessSpectraGnssIntegrity(input: {
   if (interferenceSuspected) {
     reasons.push('Automatic gain-control spread indicates possible RF interference.');
   }
+  if (jammingSuspected) {
+    reasons.push('GNSS interference indicators are consistent with possible jamming.');
+  }
+  if (spoofingSuspected) {
+    reasons.push('GNSS signal-quality indicators are consistent with possible spoofing.');
+  }
+  if (navigationAuthenticationStatus === 'failed') {
+    reasons.push('Navigation-message authentication failed for one or more signals.');
+  }
 
   return {
     satelliteCount,
@@ -243,6 +307,9 @@ export function assessSpectraGnssIntegrity(input: {
     dualFrequencyReady,
     multiConstellationReady,
     interferenceSuspected,
+    spoofingSuspected,
+    jammingSuspected,
+    navigationAuthenticationStatus,
     integrityScore,
     precisionReadinessScore,
     reasons,
