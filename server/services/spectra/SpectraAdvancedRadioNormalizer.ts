@@ -1675,8 +1675,19 @@ function normalizeAndroidRawGnss(
       solution.accuracyMeters ?? solution.horizontalAccuracyMeters ?? solution.accuracy
     );
 
+    const rawDeviceRef = stringValue(
+      epoch.deviceRef
+      || epoch.deviceId
+      || epoch.receiverId
+      || wrapped.body.deviceRef
+      || wrapped.body.deviceId,
+      200,
+    );
+
     const rawMetadata = {
       providerKind: 'android-raw-gnss',
+      deviceRef: rawDeviceRef,
+      correlationDomain: rawDeviceRef,
       clock: {
         timeNanos: finite(clock.timeNanos ?? clock.TimeNanos),
         elapsedRealtimeNanos: finite(
@@ -1871,6 +1882,16 @@ function normalizeGnssPrecisionSolution(
       || wrapped.body.integrity
     );
 
+    const precisionDeviceRef = stringValue(
+      solution.deviceRef
+      || solution.deviceId
+      || solution.roverId
+      || solution.receiverId
+      || wrapped.body.deviceRef
+      || wrapped.body.deviceId,
+      200,
+    );
+
     const correctionAgeSeconds = finite(
       correction.ageSeconds
       ?? correction.correctionAgeSeconds
@@ -1959,6 +1980,8 @@ function normalizeGnssPrecisionSolution(
       metadata: {
         providerKind: 'gnss-precision-solution',
         solutionType,
+        deviceRef: precisionDeviceRef,
+        correlationDomain: precisionDeviceRef,
         accuracyConfidenceLevel: accuracyLevel ?? 0.68,
         covariance: {
           eastVariance: finite(
