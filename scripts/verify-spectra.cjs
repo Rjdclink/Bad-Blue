@@ -49,6 +49,12 @@ const realtimeBridge = read('server/services/spectra/SpectraRealtimeBridge.ts');
 const telemetryImport = read('server/services/spectra/SpectraTelemetryImport.ts');
 const acquisitionPersistence = read('server/services/spectra/SpectraAcquisitionPersistence.ts');
 const placeContext = read('server/services/spectra/SpectraPlaceContext.ts');
+const publicInfrastructure = read('server/services/spectra/SpectraPublicInfrastructureContext.ts');
+const publicFeedRegistry = read('server/services/spectra/SpectraPublicFeedRegistry.ts');
+const gtfsRealtimeContext = read('server/services/spectra/SpectraGtfsRealtimeContext.ts');
+const arcGisCameraDiscovery = read('server/services/spectra/SpectraArcGisPublicCameraDiscovery.ts');
+const floorplanTransformer = read('server/services/spectra/SpectraFloorplanTransformer.ts');
+const infrastructureIdentity = read('server/services/spectra/SpectraInfrastructureIdentity.ts');
 const publicRetrieval = read('server/services/spectra/SpectraPublicRetrieval.ts');
 const cameraDirectories = read('server/services/spectra/SpectraCameraDirectoryAdapters.ts');
 const motionContext = read('server/services/spectra/SpectraMotionContext.ts');
@@ -659,6 +665,37 @@ test('CAMARA provider normalization preserves circle and polygon uncertainty',
   providerNormalizer.includes("areaType === 'POLYGON'") &&
   providerNormalizer.includes('camaraPolygonCenter') &&
   providerNormalizer.includes('confidenceForAccuracy'));
+test('Public infrastructure context adds FCC antenna and NOAA CORS sources without promoting them to target observations',
+  publicInfrastructure.includes('FCC Antenna Structure Registration') &&
+  publicInfrastructure.includes('NOAA CORS Network') &&
+  publicInfrastructure.includes('contextOnly: true') &&
+  placeContext.includes('acquireSpectraPublicInfrastructureContext') &&
+  routes.includes("sourceFamilies.push('public-infrastructure')") &&
+  !publicInfrastructure.includes('spectra_location_observations'));
+test('Public GTFS-Realtime catalog discovery is keyless, bounded and context-only',
+  publicFeedRegistry.includes('https://files.mobilitydatabase.org/feeds_v2.csv') &&
+  publicFeedRegistry.includes("authenticationType === 0") &&
+  publicFeedRegistry.includes("record.entityTypes.includes('vp')") &&
+  geoconsoleRoutes.includes("router.get('/public-feed-catalog'") &&
+  geoconsoleRoutes.includes('contextOnly: true') &&
+  routes.includes("sourceFamilies.push('public-mobility-feed')"));
+test('GTFS-Realtime parser is bounded and handles vehicle-position protobuf fields without adding target evidence',
+  gtfsRealtimeContext.includes('class ProtobufReader') &&
+  gtfsRealtimeContext.includes('parseVehiclePosition') &&
+  gtfsRealtimeContext.includes('bytes.length > 8_000_000') &&
+  gtfsRealtimeContext.includes('contextOnly: true'));
+test('ArcGIS public camera discovery searches anonymous public content and remains spatially bounded',
+  arcGisCameraDiscovery.includes('https://www.arcgis.com/sharing/rest/search') &&
+  arcGisCameraDiscovery.includes("endpoint.searchParams.set('bbox'") &&
+  arcGisCameraDiscovery.includes("type:\"Feature Service\"") &&
+  geoconsoleRoutes.includes('discoverPublicArcGisCameraLayers') &&
+  adapterRegistry.includes("id: 'public-arcgis-camera-discovery'"));
+test('Infrastructure floorplan and identity helper utilities remain bounded and configuration-driven',
+  floorplanTransformer.includes('SPECTRA_FLOORPLAN_CALIBRATIONS_JSON') &&
+  floorplanTransformer.includes('affine-three-point') &&
+  infrastructureIdentity.includes('SPECTRA_INFRASTRUCTURE_SUBJECT_BINDINGS') &&
+  infrastructureIdentity.includes('infrastructureCorrelationGroup'));
+
 test('Place context uses independent OpenStreetMap and GeoNames lanes',
   geoconsoleRoutes.includes("router.get('/place-context'") &&
   placeContext.includes('overpass-api.de/api/interpreter') &&
