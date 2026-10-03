@@ -307,8 +307,8 @@ export function normalizeSpectraInfrastructureProviderPayload(
   })();
 
   return {
-    sessionId: wrapped.sessionId || firstBinding.sessionId,
-    subjectLabel: wrapped.subjectLabel || firstBinding.subjectLabel,
+    sessionId: firstBinding.sessionId || wrapped.sessionId,
+    subjectLabel: firstBinding.subjectLabel || wrapped.subjectLabel,
     sourceId: wrapped.providerId,
     measurements,
     metadata: {
