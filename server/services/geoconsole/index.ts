@@ -36,6 +36,7 @@ import { MonteCarloPathEngine, monteCarloPathEngine } from './monteCarloPathEngi
 import { createLogger } from '../../logger';
 import {
   estimateSpectraTrajectory,
+  selectSpectraTrajectoryFuturecastSeed,
   type SpectraTrajectoryEstimate,
 } from '../spectra/SpectraTrajectoryEstimator';
 
@@ -224,9 +225,10 @@ export class HybridGeoconsole extends EventEmitter {
         }
       }
       const recentObservedPoints = interpolatedPoints.slice(continuousStart).slice(-20);
-      const trajectorySeed = trajectory.states.length >= 3
-        ? trajectory.states.slice(-20)
-        : recentObservedPoints;
+      const trajectorySeed = selectSpectraTrajectoryFuturecastSeed(
+        trajectory,
+        recentObservedPoints,
+      );
       const futurecast = await this.monteCarloEngine.generateFuturecast(
         trajectorySeed,
         this.timelineConfig.futurecastHours
