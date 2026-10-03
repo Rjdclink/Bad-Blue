@@ -112,7 +112,6 @@ assert.ok(estimate.latest);
 assert.ok(estimate.diagnostics.independentDomainCount >= 3);
 assert.ok(estimate.diagnostics.correlatedObservationCount > 0);
 assert.ok(estimate.diagnostics.contradictionCount >= 1);
-assert.ok(estimate.diagnostics.motionConstraintViolations >= 1);
 assert.ok(Number.isFinite(estimate.diagnostics.latestRadius99Meters));
 assert.ok((estimate.diagnostics.latestRadius99Meters ?? Infinity) > 0);
 assert.ok(Number.isFinite(estimate.diagnostics.latestSpeedMps));
@@ -130,6 +129,37 @@ const domains = new Set(
 assert.ok(domains.has('device-a'));
 assert.ok(domains.has('wifi-array-a'));
 assert.ok(domains.has('outlier-anchor-domain'));
+
+// Motion gating is independently verified with a temporally isolated jump.
+// The contradictory same-epoch UWB sample above should be rejected by the
+// dependency-domain robust fusion before it ever becomes a false movement.
+const motionEstimate = estimateSpectraTrajectory([
+  {
+    ...points[0],
+    ...offset(0, 0),
+    timestamp: start,
+    correlationGroup: 'motion-test-a',
+    metadata: { accuracyConfidenceLevel: 0.68, correlationDomain: 'motion-test-a' },
+  },
+  {
+    ...points[0],
+    ...offset(100, 0),
+    timestamp: new Date(start.getTime() + 10_000),
+    correlationGroup: 'motion-test-b',
+    metadata: { accuracyConfidenceLevel: 0.68, correlationDomain: 'motion-test-b' },
+  },
+  {
+    ...points[0],
+    ...offset(5_000, 0),
+    timestamp: new Date(start.getTime() + 20_000),
+    correlationGroup: 'motion-test-c',
+    metadata: { accuracyConfidenceLevel: 0.68, correlationDomain: 'motion-test-c' },
+  },
+], {
+  maxSpeedMps: 90,
+  accelerationSigmaMps2: 4,
+});
+assert.ok(motionEstimate.diagnostics.motionConstraintViolations >= 1);
 
 const single = estimateSpectraTrajectory([points[0]]);
 assert.equal(single.states.length, 1);
