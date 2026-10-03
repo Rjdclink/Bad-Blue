@@ -703,7 +703,7 @@ export default function SpectraPage() {
         continuousAcquisitionActiveRef.current
         || activeAcquisitionAbortRef.current
       ) {
-        stopContinuousAcquisition('spectra_unmounted', true);
+        stopContinuousAcquisition('spectra_unmounted', false);
       }
     };
   }, [stopContinuousAcquisition]);
@@ -759,6 +759,7 @@ export default function SpectraPage() {
         : directEvidence;
 
       if (extractedPoint) {
+        directEvidenceRef.current = nextDirectEvidence;
         setDirectEvidence(nextDirectEvidence);
       }
 
@@ -774,6 +775,7 @@ export default function SpectraPage() {
       ].filter(Boolean).join('. ');
 
       const expandedDetails = [details, evidenceDescription].filter(Boolean).join('\n');
+      detailsRef.current = expandedDetails;
       setDetails(expandedDetails);
 
       const responseText = extractedPoint
@@ -829,7 +831,10 @@ export default function SpectraPage() {
       }
 
       const importedSessionId = String(payload.data?.sessionId || spectraSessionId || '').trim();
-      if (importedSessionId) setSpectraSessionId(importedSessionId);
+      if (importedSessionId) {
+        spectraSessionIdRef.current = importedSessionId;
+        setSpectraSessionId(importedSessionId);
+      }
 
       if (importedSessionId) {
         const historyResponse = await fetch(
@@ -897,6 +902,7 @@ export default function SpectraPage() {
         `Accepted location observations: ${processedCount}`,
       ].join('. ');
       const expandedDetails = [details, evidenceDescription].filter(Boolean).join('\n');
+      detailsRef.current = expandedDetails;
       setDetails(expandedDetails);
 
       const responseText = processedCount > 0
