@@ -4,6 +4,7 @@ export const SPECTRA_ADVANCED_RADIO_NORMALIZER_KINDS = [
   'bluetooth-channel-sounding',
   'ble-direction-finding',
   'android-wifi-ranging',
+  'android-ranging-manager',
   'android-cellular',
   'android-raw-gnss',
   'apple-nearby-interaction',
@@ -524,6 +525,168 @@ function normalizeAndroidWifiRanging(
   return normalizerBatch(
     wrapped.providerId,
     'android-wifi-ranging',
+    wrapped.sessionId,
+    wrapped.subjectLabel,
+    measurements,
+  );
+}
+
+function normalizeAndroidRangingManager(
+  payload: unknown,
+  providerId: string,
+): SpectraAdvancedNormalizedBatch {
+  const wrapped = envelope(payload, providerId);
+  const results = list(
+    wrapped.body.results
+    || wrapped.body.measurements
+    || wrapped.body.rangingResults
+    || wrapped.body.updates
+  );
+  const measurements: Array<Record<string, unknown>> = [];
+
+  for (const raw of results.slice(0, 2000)) {
+    const result = record(raw);
+    const observedAt = timestampValue(
+      result.timestamp || result.observedAt || wrapped.body.timestamp
+    );
+    if (!observedAt) continue;
+
+    const technologyRaw = String(
+      result.technology || result.rangingTechnology || result.type || ''
+    ).trim().toLowerCase();
+    const technology =
+      /uwb|ultra.?wide/.test(technologyRaw) ? 'uwb'
+      : /channel.?sounding|bt.?cs|bluetooth.?cs/.test(technologyRaw) ? 'bluetooth-channel-sounding'
+      : /wifi|nan|rtt/.test(technologyRaw) ? 'wifi-nan-rtt'
+      : /ble|bluetooth.*rssi/.test(technologyRaw) ? 'ble-rssi'
+      : null;
+    if (!technology) continue;
+
+    const peer = record(
+      result.anchor
+      || result.peerLocation
+      || result.responderLocation
+      || result.referenceLocation
+    );
+    const anchor = anchorCoordinates(peer);
+    const distance = finite(
+      result.distanceMeters
+      ?? result.distance
+      ?? (result.distanceMm !== undefined ? Number(result.distanceMm) / 1000 : undefined)
+    );
+    const uncertainty = finite(
+      result.distanceUncertaintyMeters
+      ?? result.distanceStdDevMeters
+      ?? result.uncertaintyMeters
+    );
+    const bearingDegrees = bounded(
+      result.bearingDegrees
+      ?? result.azimuthDegrees
+      ?? result.azimuth,
+      0,
+      360,
+    );
+    const bearingUncertaintyDegrees = bounded(
+      result.bearingUncertaintyDegrees
+      ?? result.azimuthUncertaintyDegrees,
+      0.01,
+      180,
+    );
+    const rssiDbm = finite(result.rssiDbm ?? result.rssi);
+    const txPower = finite(
+      result.txPowerAtOneMeterDbm ?? result.txPower ?? result.measuredPower
+    );
+    const peerRef = stringValue(
+      result.peerRef || result.peerId || result.deviceRef || result.macAddress,
+      200,
+    );
+
+    const source =
+      technology === 'uwb'
+        ? bearingDegrees !== null ? 'uwb_direction' : 'uwb_range'
+        : technology === 'bluetooth-channel-sounding'
+          ? 'bluetooth_channel_sounding'
+          : technology === 'wifi-nan-rtt'
+            ? 'wifi_rtt'
+            : 'ble_rssi';
+
+    const metadata = {
+      providerKind: 'android-ranging-manager',
+      technology,
+      peerRef,
+      distanceMeters: distance,
+      bearingDegrees,
+      elevationDegrees: finite(result.elevationDegrees ?? result.elevation),
+      rssiDbm,
+      measurementConfidence: finite(result.confidence ?? result.measurementConfidence),
+    };
+
+    if (
+      anchor
+      && (
+        distance !== null
+        || (rssiDbm !== null && txPower !== null)
+      )
+    ) {
+      const rangedAnchor: Record<string, unknown> = {
+        id: peerRef,
+        latitude: anchor.latitude,
+        longitude: anchor.longitude,
+      };
+      if (distance !== null && distance >= 0) {
+        rangedAnchor.distanceMeters = Math.max(0.01, Math.min(1_000_000, distance));
+      }
+      if (uncertainty !== null && uncertainty > 0) {
+        rangedAnchor.uncertaintyMeters = Math.min(1_000_000, uncertainty);
+      }
+      if (rssiDbm !== null) rangedAnchor.rssiDbm = Math.max(-127, Math.min(0, rssiDbm));
+      if (txPower !== null) {
+        rangedAnchor.txPowerAtOneMeterDbm = Math.max(-127, Math.min(0, txPower));
+      }
+      if (bearingDegrees !== null) {
+        rangedAnchor.bearingDegrees = bearingDegrees;
+        const referenceRaw = String(result.bearingReference || 'device').toLowerCase();
+        rangedAnchor.bearingReference = ['true_north', 'magnetic_north', 'device'].includes(referenceRaw)
+          ? referenceRaw
+          : 'device';
+      }
+      if (bearingUncertaintyDegrees !== null) {
+        rangedAnchor.bearingUncertaintyDegrees = bearingUncertaintyDegrees;
+      }
+
+      measurements.push({
+        kind: 'ranging',
+        source,
+        timestamp: observedAt,
+        provider: wrapped.providerId,
+        correlationGroup:
+          stringValue(result.correlationGroup, 300)
+          || `android-ranging:${wrapped.providerId}:${peerRef || 'peer'}`,
+        anchors: [rangedAnchor],
+        metadata,
+      });
+    } else {
+      measurements.push(contextMeasurement(
+        technology === 'uwb' ? 'uwb_context'
+          : technology === 'wifi-nan-rtt' ? 'wifi_rtt_context'
+          : technology === 'bluetooth-channel-sounding' ? 'bluetooth_channel_sounding'
+          : 'ble_gateway',
+        observedAt,
+        wrapped.providerId,
+        {
+          distanceMeters: distance,
+          uncertaintyMeters: uncertainty,
+          bearingDegrees,
+          rssiDbm,
+        },
+        metadata,
+      ));
+    }
+  }
+
+  return normalizerBatch(
+    wrapped.providerId,
+    'android-ranging-manager',
     wrapped.sessionId,
     wrapped.subjectLabel,
     measurements,
@@ -1325,6 +1488,8 @@ function tryNormalize(
         return normalizeBleDirectionFinding(payload, providerId);
       case 'android-wifi-ranging':
         return normalizeAndroidWifiRanging(payload, providerId);
+      case 'android-ranging-manager':
+        return normalizeAndroidRangingManager(payload, providerId);
       case 'android-cellular':
         return normalizeAndroidCellular(payload, providerId);
       case 'android-raw-gnss':
@@ -1359,6 +1524,7 @@ function normalizeAndroidRadioCollector(
     ['android-cellular', { ...body, cells: body.cells || body.cellInfo }],
     ['android-raw-gnss', { ...body, epochs: body.gnss || body.gnssEpochs || body.gnssMeasurements }],
     ['android-wifi-ranging', { ...body, results: body.wifiRtt || body.wifiRanging }],
+    ['android-ranging-manager', { ...body, results: body.rangingManager || body.androidRanging || body.rangingResults }],
     ['bluetooth-channel-sounding', { ...body, observations: body.bluetoothChannelSounding }],
     ['ble-direction-finding', { ...body, observations: body.bleDirectionFinding }],
     ['ble-gateway', { ...body, observations: body.bleScans || body.bluetoothScans }],
@@ -1570,6 +1736,8 @@ export function normalizeSpectraAdvancedRadioPayload(
       return normalizeBleDirectionFinding(payload, normalizedProviderId);
     case 'android-wifi-ranging':
       return normalizeAndroidWifiRanging(payload, normalizedProviderId);
+    case 'android-ranging-manager':
+      return normalizeAndroidRangingManager(payload, normalizedProviderId);
     case 'android-cellular':
       return normalizeAndroidCellular(payload, normalizedProviderId);
     case 'android-raw-gnss':
