@@ -81,8 +81,10 @@ const mesh = {
       ...Array.from({ length: 5 }, (_, index) => candidate(`https://records.example.test/targeted-${index + 1}`)),
     ];
     if (state.mode === 'custom-general') return [candidate('https://records.example.test/civic-medal')];
-    if (state.mode === 'delayed-general') return Array.from({ length: 6 }, (_, index) =>
-      candidate(`https://records.example.test/broad-${index + 1}`));
+    if (state.mode === 'delayed-general' || state.mode === 'claude-source-only') {
+      return Array.from({ length: 6 }, (_, index) =>
+        candidate(`https://records.example.test/broad-${index + 1}`));
+    }
     if (state.mode === 'age-inference') return [candidate('https://records.example.test/juvenile')];
     if (state.mode === 'converged-inference') return [
       candidate('https://records.example.test/juvenile-a'),
@@ -166,6 +168,14 @@ const retrieval = {
             contentType: 'text/html',
           }];
         }
+        if (target === 'https://claude.example.test/max-token-source') {
+          return [{
+            target,
+            content: 'Public record for Avery Loretta Example of Hartley, Iowa lists a 2024 civil filing.',
+            retrievedAt: '2026-10-02T03:05:55.000Z',
+            contentType: 'text/html',
+          }];
+        }
         if (target.endsWith('/empty')) {
           return [{
             target,
@@ -205,6 +215,14 @@ const claudeParallel = {
           content: 'Public record for Avery Loretta Example of Hartley, Iowa lists a 2024 civil filing.',
           retrievedAt: '2026-10-02T03:05:55.000Z',
         }],
+        searches: 2,
+      };
+    }
+    if (state.mode === 'claude-source-only') {
+      await new Promise(resolve => setTimeout(resolve, 25));
+      return {
+        candidates: [candidate('https://claude.example.test/max-token-source', 'claude-web-search')],
+        citationEvidence: [],
         searches: 2,
       };
     }
@@ -335,6 +353,32 @@ function reset(mode) {
     'native exhaustion must leave the remaining live budget for the already-running Claude web lane');
   assert(broadBackground.discoveryLanes.includes('claude-web-search'));
   assert.match(broadBackground.evidenceSummary, /2024 civil filing/i);
+
+  reset('claude-source-only');
+  const sourceOnlyClaude = await investigator.investigateLexaraBackgroundQuestion(
+    'What do you know about Avery Loretta Example of Hartley, Iowa?',
+    {
+      resolvedSubject: { name: 'Avery Loretta Example of Hartley', kind: 'person', identifiable: true, location: 'Hartley, Iowa' },
+      researchDecision: {
+        needed: true,
+        reason: 'external-fact-question',
+        objective: 'Find the background facts the user is asking about for Avery Loretta Example of Hartley.',
+        objectiveKind: 'external-fact',
+        intent: 'factual',
+        requestedFact: 'general-public-record',
+        sourceCategories: ['general-public-records'],
+        subject: 'Avery Loretta Example of Hartley',
+        subjectKind: 'person',
+        standaloneQuery: 'Avery Loretta Example Hartley Iowa background',
+        inferred: true,
+      },
+    },
+  );
+  assert(state.retrievalCalls.some(call => call.includes('https://claude.example.test/max-token-source')),
+    'Claude source URLs that survive without citation text are retrieved inside the remaining live budget');
+  assert(sourceOnlyClaude.discoveryLanes.includes('claude-web-search'));
+  assert.match(sourceOnlyClaude.evidenceSummary, /2024 civil filing/i,
+    'source-only Claude web results remain usable evidence instead of being discarded');
 
   reset('custom-general');
   const customGeneral = await investigator.investigateLexaraBackgroundQuestion(
