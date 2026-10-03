@@ -233,6 +233,78 @@ function measurement(batch: ReturnType<typeof normalizeSpectraProviderPayload>, 
 
 {
   const batch = normalizeSpectraProviderPayload(
+    'android-uwb-sensor-fusion',
+    'androidx-uwb',
+    {
+      dataStalenessThresholdMillis: 2000,
+      estimates: [{
+        timestamp: '2026-10-02T20:59:55Z',
+        estimateType: 'PreciseEstimate',
+        peerId: 'peer-uwb-1',
+        distanceMeters: 3.5,
+        distanceUncertaintyMeters: 0.08,
+        azimuthDegrees: 24,
+        anchor: { latitude: 43.5446, longitude: -96.7311 },
+        estimateAgeMillis: 40,
+      }, {
+        timestamp: '2026-10-02T20:59:55Z',
+        estimateType: 'DriftingEstimate',
+        peerId: 'peer-uwb-2',
+        distanceMeters: 4.1,
+        estimateAgeMillis: 2500,
+        odometry: { dxMeters: 1.2, dyMeters: 0.4 },
+      }],
+    },
+  );
+  const precise = measurement(batch, 0);
+  const drifting = measurement(batch, 1);
+  assert.equal(precise.kind, 'ranging');
+  assert.equal(precise.source, 'uwb_direction');
+  assert.equal(precise.metadata.estimateType, 'precise');
+  assert.equal(drifting.kind, 'sensor');
+  assert.equal(drifting.source, 'uwb_context');
+  assert.equal(drifting.metadata.estimateType, 'drifting');
+  assert.equal(drifting.metadata.estimateStale, true);
+}
+
+{
+  const batch = normalizeSpectraProviderPayload(
+    'nr-positioning',
+    '5g-lmf',
+    {
+      results: [{
+        timestamp: '2026-10-02T20:59:55Z',
+        positioningMethod: 'multi-RTT',
+        solution: {
+          latitude: 43.5446003,
+          longitude: -96.7310998,
+          horizontalAccuracyMeters: 0.8,
+          accuracyConfidenceLevel: 0.95,
+          horizontalProtectionLevelMeters: 1.4,
+          covariance: {
+            eastVariance: 0.09,
+            northVariance: 0.12,
+          },
+        },
+        prsRsrpDbm: -84,
+        prsSinrDb: 18,
+        nlosProbability: 0.03,
+        bandwidthHz: 100000000,
+        positioningFrequencyLayers: 2,
+      }],
+    },
+  );
+  const position = measurement(batch);
+  assert.equal(position.kind, 'position');
+  assert.equal(position.source, 'nr_positioning');
+  assert.equal(position.metadata.method, 'multi-rtt');
+  assert.equal(position.metadata.nlosProbability, 0.03);
+  assert.equal(position.metadata.horizontalProtectionLevelMeters, 1.4);
+  assert.equal(position.metadata.accuracyConfidenceLevel, 0.95);
+}
+
+{
+  const batch = normalizeSpectraProviderPayload(
     'android-cellular',
     'android-telephony',
     {
@@ -832,6 +904,8 @@ for (const kind of [
   'ble-direction-finding',
   'android-wifi-ranging',
   'android-ranging-manager',
+  'android-uwb-sensor-fusion',
+  'nr-positioning',
   'android-cellular',
   'android-raw-gnss',
   'gnss-precision-solution',
