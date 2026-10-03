@@ -340,6 +340,12 @@ export default function SpectraPage() {
       activeAcquisitionAbortRef.current = null;
     }
 
+    const localController = options.signal ? null : new AbortController();
+    const acquisitionSignal = options.signal || localController?.signal;
+    if (!backgroundPass && localController) {
+      activeAcquisitionAbortRef.current = localController;
+    }
+
     const requestId = ++requestRef.current;
     const resolvedSessionId =
       sessionOverride ||
@@ -398,7 +404,7 @@ export default function SpectraPage() {
                 credentials: 'include',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ location: locationText }),
-                signal: options.signal,
+                signal: acquisitionSignal,
               });
               const previewPayload = await previewResponse.json().catch(() => ({}));
               if (
@@ -428,7 +434,7 @@ export default function SpectraPage() {
                 return;
               }
             } catch (error) {
-              if (options.signal?.aborted) return;
+              if (acquisitionSignal?.aborted) return;
               // Regional preview is advisory and must never block deeper discovery.
             }
           }
@@ -443,7 +449,7 @@ export default function SpectraPage() {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        signal: options.signal,
+        signal: acquisitionSignal,
         body: JSON.stringify({
           target: targetValue,
           details: detailsValue,
@@ -545,7 +551,7 @@ export default function SpectraPage() {
       return payload;
     } catch (error) {
       if (
-        options.signal?.aborted ||
+        acquisitionSignal?.aborted ||
         (error instanceof DOMException && error.name === 'AbortError')
       ) {
         return null;
@@ -566,6 +572,13 @@ export default function SpectraPage() {
       addMessage('spectra', responseText);
       speakIfEnabled(responseText);
       return null;
+    } finally {
+      if (
+        localController
+        && activeAcquisitionAbortRef.current === localController
+      ) {
+        activeAcquisitionAbortRef.current = null;
+      }
     }
   }, [addMessage, directEvidence, speakIfEnabled]);
 
