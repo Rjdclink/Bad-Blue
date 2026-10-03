@@ -19,33 +19,59 @@ export interface SpectraLiveSourceAssessment {
   observedAt: string;
   ageMs: number;
   accuracyMeters: number;
+  accuracyConfidenceLevel: number;
+  sigmaMeters: number;
   confidence: number;
+  freshnessWeight: number;
+  reliabilityWeight: number;
+  robustWeight: number;
+  residualMeters: number;
+  normalizedResidual: number;
   latitude: number;
   longitude: number;
-  supportsConsensus: boolean;
 }
 
 export interface SpectraLiveLocationAssessment {
-  status: 'unavailable' | 'stale' | 'single-source' | 'corroborated' | 'high-confidence' | 'contradicted';
+  status: 'unavailable' | 'stale' | 'estimated' | 'corroborated' | 'conflicted';
   isLive: boolean;
   confidenceScore: number;
-  exceedsNinetyNinePercent: boolean;
+  confidenceRadiusMeters95?: number;
+  confidenceRadiusMeters99?: number;
+  posteriorSigmaMeters?: number;
+  effectiveSourceCount: number;
   independentFamilyCount: number;
-  strongConsensusFamilyCount: number;
-  contradictionCount: number;
+  residualScale: number;
+  consistencyScore: number;
+  freshnessScore: number;
   freshestAgeMs?: number;
   consensusCenter?: {
     latitude: number;
     longitude: number;
-    radiusMeters: number;
   };
   sources: SpectraLiveSourceAssessment[];
   reasons: string[];
 }
 
-const EARTH_RADIUS_METERS = 6_371_000;
+interface PreparedMeasurement {
+  family: SpectraLiveSourceFamily;
+  point: GPSPoint;
+  x: number;
+  y: number;
+  reportedAccuracyMeters: number;
+  accuracyConfidenceLevel: number;
+  sigmaMeters: number;
+  freshnessWeight: number;
+  reliabilityWeight: number;
+  baseWeight: number;
+  robustWeight: number;
+}
 
-const FAMILY_FRESHNESS_MS: Record<SpectraLiveSourceFamily, number> = {
+const EARTH_RADIUS_METERS = 6_371_000;
+const DEFAULT_ACCURACY_CONFIDENCE = 0.68;
+const MIN_EVIDENCE_WEIGHT = 1e-6;
+const MAX_CONFIDENCE_SCORE = 0.999999;
+
+const FAMILY_FRESHNESS_HALF_LIFE_MS: Record<SpectraLiveSourceFamily, number> = {
   gnss: 30_000,
   'managed-device': 90_000,
   'carrier-network': 120_000,
@@ -61,7 +87,7 @@ const FAMILY_FRESHNESS_MS: Record<SpectraLiveSourceFamily, number> = {
 const FAMILY_RELIABILITY: Record<SpectraLiveSourceFamily, number> = {
   gnss: 0.985,
   'managed-device': 0.97,
-  'carrier-network': 0.93,
+  'carrier-network': 0.90,
   wifi: 0.96,
   uwb: 0.99,
   bluetooth: 0.985,
@@ -71,14 +97,9 @@ const FAMILY_RELIABILITY: Record<SpectraLiveSourceFamily, number> = {
   vehicle: 0.97,
 };
 
-const HIGH_PRECISION_FAMILIES = new Set<SpectraLiveSourceFamily>([
-  'gnss',
-  'managed-device',
-  'wifi',
-  'uwb',
-  'bluetooth',
-  'vehicle',
-]);
+function clamp(value: number, minimum: number, maximum: number): number {
+  return Math.max(minimum, Math.min(maximum, value));
+}
 
 function toRadians(value: number): number {
   return value * Math.PI / 180;
@@ -158,7 +179,9 @@ function sourceFamily(point: GPSPoint): SpectraLiveSourceFamily | null {
 
 function effectiveAccuracy(point: GPSPoint, family: SpectraLiveSourceFamily): number {
   const reported = Number(point.accuracy);
-  if (Number.isFinite(reported) && reported > 0) return Math.min(5_000_000, reported);
+  if (Number.isFinite(reported) && reported > 0) {
+    return Math.min(5_000_000, reported);
+  }
 
   switch (family) {
     case 'uwb': return 2;
@@ -174,75 +197,171 @@ function effectiveAccuracy(point: GPSPoint, family: SpectraLiveSourceFamily): nu
   }
 }
 
-function familyRepresentative(
+function accuracyConfidenceLevel(
+  point: GPSPoint,
+  family: SpectraLiveSourceFamily,
+): number {
+  const metadataValue = Number(
+    point.metadata?.accuracyConfidenceLevel
+    ?? point.metadata?.horizontalAccuracyConfidence
+    ?? point.metadata?.confidenceLevel
+  );
+  if (Number.isFinite(metadataValue) && metadataValue > 0 && metadataValue < 1) {
+    return clamp(metadataValue, 0.2, 0.9999);
+  }
+
+  // Android Location horizontal accuracy is documented at the 68th percentile.
+  if (
+    family === 'gnss'
+    || family === 'managed-device'
+    || point.metadata?.androidLocationAccuracy === true
+  ) return 0.68;
+
+  // Network service areas are often geometric bounds, not calibrated Gaussian radii.
+  if (family === 'carrier-network') return 0.50;
+
+  return DEFAULT_ACCURACY_CONFIDENCE;
+}
+
+function radiusToSigma(radiusMeters: number, confidenceLevel: number): number {
+  const denominator = Math.sqrt(
+    Math.max(1e-12, -2 * Math.log(Math.max(1e-12, 1 - confidenceLevel))),
+  );
+  return Math.max(0.05, radiusMeters / denominator);
+}
+
+function confidenceRadius(sigmaMeters: number, probability: number): number {
+  const multiplier = Math.sqrt(
+    Math.max(0, -2 * Math.log(Math.max(1e-12, 1 - probability))),
+  );
+  return sigmaMeters * multiplier;
+}
+
+function freshnessWeight(
+  ageMs: number,
+  family: SpectraLiveSourceFamily,
+): number {
+  if (ageMs <= 0) return 1;
+  const halfLife = FAMILY_FRESHNESS_HALF_LIFE_MS[family];
+  return clamp(Math.pow(0.5, ageMs / halfLife), MIN_EVIDENCE_WEIGHT, 1);
+}
+
+function localMeters(
+  latitude: number,
+  longitude: number,
+  originLatitude: number,
+  originLongitude: number,
+): { x: number; y: number } {
+  const originLatitudeRadians = toRadians(originLatitude);
+  return {
+    x: toRadians(longitude - originLongitude)
+      * EARTH_RADIUS_METERS
+      * Math.max(0.05, Math.cos(originLatitudeRadians)),
+    y: toRadians(latitude - originLatitude) * EARTH_RADIUS_METERS,
+  };
+}
+
+function geoFromLocalMeters(
+  x: number,
+  y: number,
+  originLatitude: number,
+  originLongitude: number,
+): { latitude: number; longitude: number } {
+  const originLatitudeRadians = toRadians(originLatitude);
+  return {
+    latitude: originLatitude + y / EARTH_RADIUS_METERS * 180 / Math.PI,
+    longitude:
+      originLongitude
+      + x
+      / (EARTH_RADIUS_METERS * Math.max(0.05, Math.cos(originLatitudeRadians)))
+      * 180 / Math.PI,
+  };
+}
+
+function selectFamilyRepresentative(
   points: GPSPoint[],
   family: SpectraLiveSourceFamily,
   nowMs: number,
 ): GPSPoint | null {
-  const freshnessLimit = FAMILY_FRESHNESS_MS[family];
-  return points
-    .filter(point => {
-      const timestampMs = point.timestamp.getTime();
-      return Number.isFinite(timestampMs)
-        && timestampMs <= nowMs + 5_000
-        && nowMs - timestampMs <= freshnessLimit;
-    })
-    .sort((left, right) => {
-      const leftAccuracy = effectiveAccuracy(left, family);
-      const rightAccuracy = effectiveAccuracy(right, family);
-      const accuracyDifference = leftAccuracy - rightAccuracy;
-      if (Math.abs(accuracyDifference) > 0.01) return accuracyDifference;
-      const confidenceDifference = right.confidence - left.confidence;
-      if (Math.abs(confidenceDifference) > 0.001) return confidenceDifference;
-      return right.timestamp.getTime() - left.timestamp.getTime();
-    })[0] || null;
+  let selected: GPSPoint | null = null;
+  let selectedInformation = Number.NEGATIVE_INFINITY;
+
+  for (const point of points) {
+    const timestampMs = point.timestamp.getTime();
+    if (!Number.isFinite(timestampMs) || timestampMs > nowMs + 5_000) continue;
+
+    const ageMs = Math.max(0, nowMs - timestampMs);
+    const accuracy = effectiveAccuracy(point, family);
+    const level = accuracyConfidenceLevel(point, family);
+    const sigma = radiusToSigma(accuracy, level);
+    const fresh = freshnessWeight(ageMs, family);
+    const reliability = clamp(
+      FAMILY_RELIABILITY[family] * clamp(point.confidence, 0.01, 1) * fresh,
+      MIN_EVIDENCE_WEIGHT,
+      1,
+    );
+    const information = reliability / Math.max(0.0025, sigma ** 2);
+
+    if (information > selectedInformation) {
+      selected = point;
+      selectedInformation = information;
+    }
+  }
+
+  return selected;
 }
 
-function agreementRadiusMeters(
-  firstAccuracy: number,
-  secondAccuracy: number,
-): number {
-  const combined = Math.sqrt(firstAccuracy ** 2 + secondAccuracy ** 2);
-  return Math.max(10, Math.min(500, combined * 2.25));
+function effectiveSampleSize(weights: number[]): number {
+  const positive = weights.filter(weight => Number.isFinite(weight) && weight > 0);
+  if (!positive.length) return 0;
+  const sum = positive.reduce((total, weight) => total + weight, 0);
+  const sumSquares = positive.reduce((total, weight) => total + weight ** 2, 0);
+  return sumSquares > 0 ? (sum ** 2) / sumSquares : 0;
 }
 
-function contradictionRadiusMeters(
-  firstAccuracy: number,
-  secondAccuracy: number,
-): number {
-  const combined = Math.sqrt(firstAccuracy ** 2 + secondAccuracy ** 2);
-  return Math.max(100, Math.min(2_000, combined * 3.5));
+function normalCdf(z: number): number {
+  // Abramowitz-Stegun approximation to the standard normal CDF.
+  const sign = z < 0 ? -1 : 1;
+  const x = Math.abs(z) / Math.sqrt(2);
+  const t = 1 / (1 + 0.3275911 * x);
+  const erfApprox = 1 - (
+    (
+      (
+        (
+          (1.061405429 * t - 1.453152027) * t
+          + 1.421413741
+        ) * t - 0.284496736
+      ) * t + 0.254829592
+    ) * t
+  ) * Math.exp(-x * x);
+  return 0.5 * (1 + sign * erfApprox);
 }
 
-function combinedIndependentConfidence(
-  assessments: SpectraLiveSourceAssessment[],
-  freshestAgeMs: number,
+function chiSquareSurvivalApprox(statistic: number, degreesOfFreedom: number): number {
+  if (!Number.isFinite(statistic) || statistic < 0) return 0;
+  if (degreesOfFreedom <= 0) return 1;
+  // Wilson-Hilferty transform approximates a chi-square variable with a normal.
+  const k = degreesOfFreedom;
+  const z = (
+    Math.cbrt(statistic / k)
+    - (1 - 2 / (9 * k))
+  ) / Math.sqrt(2 / (9 * k));
+  return clamp(1 - normalCdf(z), 0, 1);
+}
+
+function combinedIndependentReliability(
+  measurements: PreparedMeasurement[],
 ): number {
   let missProbability = 1;
-  for (const assessment of assessments) {
-    const reliability = FAMILY_RELIABILITY[assessment.family];
-    const observationConfidence = Math.max(0.05, Math.min(0.999, assessment.confidence));
-    const accuracyPenalty =
-      assessment.accuracyMeters <= 10 ? 1
-      : assessment.accuracyMeters <= 50 ? 0.98
-      : assessment.accuracyMeters <= 100 ? 0.95
-      : assessment.accuracyMeters <= 500 ? 0.88
-      : assessment.accuracyMeters <= 2_000 ? 0.70
-      : 0.45;
-    const effective = Math.max(
-      0.05,
-      Math.min(0.999, reliability * observationConfidence * accuracyPenalty),
+  for (const measurement of measurements) {
+    const effective = clamp(
+      measurement.reliabilityWeight * measurement.robustWeight,
+      0,
+      0.999999,
     );
     missProbability *= 1 - effective;
   }
-
-  const freshnessPenalty =
-    freshestAgeMs <= 10_000 ? 1
-    : freshestAgeMs <= 30_000 ? 0.995
-    : freshestAgeMs <= 60_000 ? 0.985
-    : 0.96;
-
-  return Math.max(0, Math.min(0.9999, (1 - missProbability) * freshnessPenalty));
+  return clamp(1 - missProbability, 0, MAX_CONFIDENCE_SCORE);
 }
 
 export function assessSpectraLiveLocation(
@@ -261,7 +380,7 @@ export function assessSpectraLiveLocation(
   }
 
   const representatives = [...grouped.entries()].flatMap(([family, points]) => {
-    const point = familyRepresentative(points, family, nowMs);
+    const point = selectFamilyRepresentative(points, family, nowMs);
     return point ? [{ family, point }] : [];
   });
 
@@ -271,163 +390,222 @@ export function assessSpectraLiveLocation(
       status: hadSupportedSources ? 'stale' : 'unavailable',
       isLive: false,
       confidenceScore: 0,
-      exceedsNinetyNinePercent: false,
+      effectiveSourceCount: 0,
       independentFamilyCount: 0,
-      strongConsensusFamilyCount: 0,
-      contradictionCount: 0,
+      residualScale: 0,
+      consistencyScore: 0,
+      freshnessScore: 0,
       sources: [],
       reasons: [
         hadSupportedSources
-          ? 'Supported location evidence exists, but no observation is within its live freshness window.'
-          : 'No supported live-location source families are available.',
+          ? 'Supported location observations exist but their temporal weight has decayed below the live evidence floor.'
+          : 'No supported live-location observations are available.',
       ],
     };
   }
 
-  const sorted = [...representatives].sort((left, right) => {
-    const leftAccuracy = effectiveAccuracy(left.point, left.family);
-    const rightAccuracy = effectiveAccuracy(right.point, right.family);
-    return leftAccuracy - rightAccuracy
-      || right.point.confidence - left.point.confidence
-      || right.point.timestamp.getTime() - left.point.timestamp.getTime();
+  const originLatitude = representatives.reduce(
+    (sum, item) => sum + item.point.latitude,
+    0,
+  ) / representatives.length;
+  const originLongitude = representatives.reduce(
+    (sum, item) => sum + item.point.longitude,
+    0,
+  ) / representatives.length;
+
+  const prepared: PreparedMeasurement[] = representatives.map(({ family, point }) => {
+    const local = localMeters(
+      point.latitude,
+      point.longitude,
+      originLatitude,
+      originLongitude,
+    );
+    const ageMs = Math.max(0, nowMs - point.timestamp.getTime());
+    const accuracy = effectiveAccuracy(point, family);
+    const level = accuracyConfidenceLevel(point, family);
+    const sigma = radiusToSigma(accuracy, level);
+    const fresh = freshnessWeight(ageMs, family);
+    const reliability = clamp(
+      FAMILY_RELIABILITY[family]
+      * clamp(point.confidence, 0.01, 1)
+      * fresh,
+      MIN_EVIDENCE_WEIGHT,
+      1,
+    );
+    return {
+      family,
+      point,
+      x: local.x,
+      y: local.y,
+      reportedAccuracyMeters: accuracy,
+      accuracyConfidenceLevel: level,
+      sigmaMeters: sigma,
+      freshnessWeight: fresh,
+      reliabilityWeight: reliability,
+      baseWeight: reliability / Math.max(0.0025, sigma ** 2),
+      robustWeight: 1,
+    };
   });
 
-  const anchor = sorted[0];
-  const anchorAccuracy = effectiveAccuracy(anchor.point, anchor.family);
-  const assessments: SpectraLiveSourceAssessment[] = [];
-  const consensus: typeof sorted = [];
-  let contradictionCount = 0;
+  let centerX = 0;
+  let centerY = 0;
 
-  for (const candidate of sorted) {
-    const accuracy = effectiveAccuracy(candidate.point, candidate.family);
-    const distance = distanceMeters(
-      anchor.point.latitude,
-      anchor.point.longitude,
-      candidate.point.latitude,
-      candidate.point.longitude,
-    );
-    const agrees = distance <= agreementRadiusMeters(anchorAccuracy, accuracy);
-    const strongConflict =
-      accuracy <= 500
-      && anchorAccuracy <= 500
-      && distance > contradictionRadiusMeters(anchorAccuracy, accuracy);
+  for (let iteration = 0; iteration < 4; iteration += 1) {
+    let totalWeight = 0;
+    let weightedX = 0;
+    let weightedY = 0;
 
-    if (agrees) consensus.push(candidate);
-    if (strongConflict) contradictionCount += 1;
+    for (const measurement of prepared) {
+      const weight = measurement.baseWeight * measurement.robustWeight;
+      totalWeight += weight;
+      weightedX += measurement.x * weight;
+      weightedY += measurement.y * weight;
+    }
 
-    assessments.push({
-      family: candidate.family,
-      source: candidate.point.source,
-      provider: candidate.point.provenance?.provider,
-      observedAt: candidate.point.timestamp.toISOString(),
-      ageMs: Math.max(0, nowMs - candidate.point.timestamp.getTime()),
-      accuracyMeters: accuracy,
-      confidence: candidate.point.confidence,
-      latitude: candidate.point.latitude,
-      longitude: candidate.point.longitude,
-      supportsConsensus: agrees,
-    });
+    if (totalWeight <= 0) break;
+    centerX = weightedX / totalWeight;
+    centerY = weightedY / totalWeight;
+
+    for (const measurement of prepared) {
+      const residual = Math.hypot(
+        measurement.x - centerX,
+        measurement.y - centerY,
+      );
+      const normalizedResidual = residual / Math.max(0.1, measurement.sigmaMeters);
+      // Huber-style continuous down-weighting; no binary inlier threshold.
+      measurement.robustWeight = normalizedResidual <= 1.5
+        ? 1
+        : 1.5 / normalizedResidual;
+    }
   }
 
-  const consensusAssessments = assessments.filter(item => item.supportsConsensus);
-  const strongConsensus = consensusAssessments.filter(item =>
-    item.accuracyMeters <= 100
-    && item.confidence >= 0.65
+  const informationSum = prepared.reduce(
+    (sum, measurement) =>
+      sum + measurement.baseWeight * measurement.robustWeight,
+    0,
   );
-  const precisionFamilyCount = new Set(
-    strongConsensus
-      .filter(item => HIGH_PRECISION_FAMILIES.has(item.family))
-      .map(item => item.family),
-  ).size;
-  const freshestAgeMs = Math.min(...assessments.map(item => item.ageMs));
+  const nominalPosteriorSigma = informationSum > 0
+    ? Math.sqrt(1 / informationSum)
+    : Number.POSITIVE_INFINITY;
 
-  let weightedLatitude = 0;
-  let weightedLongitude = 0;
-  let totalWeight = 0;
-  for (const item of consensusAssessments) {
-    const weight = 1 / Math.max(1, item.accuracyMeters ** 2);
-    weightedLatitude += item.latitude * weight;
-    weightedLongitude += item.longitude * weight;
-    totalWeight += weight;
-  }
-  const center =
-    totalWeight > 0
-      ? {
-          latitude: weightedLatitude / totalWeight,
-          longitude: weightedLongitude / totalWeight,
-        }
-      : {
-          latitude: anchor.point.latitude,
-          longitude: anchor.point.longitude,
-        };
-
-  const consensusRadius = consensusAssessments.reduce((radius, item) => {
-    const spread = distanceMeters(
-      center.latitude,
-      center.longitude,
-      item.latitude,
-      item.longitude,
+  let weightedResidualStatistic = 0;
+  let totalResidualWeight = 0;
+  const sourceAssessments: SpectraLiveSourceAssessment[] = prepared.map(measurement => {
+    const residual = Math.hypot(
+      measurement.x - centerX,
+      measurement.y - centerY,
     );
-    return Math.max(radius, spread + item.accuracyMeters);
-  }, 0);
+    const normalizedResidual = residual / Math.max(0.1, measurement.sigmaMeters);
+    const weight = measurement.reliabilityWeight * measurement.robustWeight;
+    weightedResidualStatistic += normalizedResidual ** 2 * weight;
+    totalResidualWeight += weight;
+
+    return {
+      family: measurement.family,
+      source: measurement.point.source,
+      provider: measurement.point.provenance?.provider,
+      observedAt: measurement.point.timestamp.toISOString(),
+      ageMs: Math.max(0, nowMs - measurement.point.timestamp.getTime()),
+      accuracyMeters: measurement.reportedAccuracyMeters,
+      accuracyConfidenceLevel: measurement.accuracyConfidenceLevel,
+      sigmaMeters: measurement.sigmaMeters,
+      confidence: measurement.point.confidence,
+      freshnessWeight: measurement.freshnessWeight,
+      reliabilityWeight: measurement.reliabilityWeight,
+      robustWeight: measurement.robustWeight,
+      residualMeters: residual,
+      normalizedResidual,
+      latitude: measurement.point.latitude,
+      longitude: measurement.point.longitude,
+    };
+  });
+
+  const effectiveCount = effectiveSampleSize(
+    prepared.map(measurement => measurement.baseWeight * measurement.robustWeight),
+  );
+  const degreesOfFreedom = Math.max(1, 2 * prepared.length - 2);
+  const consistencyScore = chiSquareSurvivalApprox(
+    weightedResidualStatistic,
+    degreesOfFreedom,
+  );
+  const residualScale = Math.max(
+    1,
+    Math.sqrt(
+      weightedResidualStatistic
+      / Math.max(1e-9, totalResidualWeight * Math.max(1, effectiveCount - 1)),
+    ),
+  );
+
+  const posteriorSigma = Number.isFinite(nominalPosteriorSigma)
+    ? nominalPosteriorSigma * residualScale
+    : Number.POSITIVE_INFINITY;
+
+  const center = geoFromLocalMeters(
+    centerX,
+    centerY,
+    originLatitude,
+    originLongitude,
+  );
+
+  const freshnessScore = prepared.reduce(
+    (sum, measurement) => sum + measurement.freshnessWeight,
+    0,
+  ) / prepared.length;
+  const independentReliability = combinedIndependentReliability(prepared);
+
+  const confidenceScore = clamp(
+    independentReliability
+    * Math.sqrt(clamp(consistencyScore, 0, 1))
+    * Math.sqrt(clamp(freshnessScore, 0, 1)),
+    0,
+    MAX_CONFIDENCE_SCORE,
+  );
 
   const reasons: string[] = [];
-  if (contradictionCount > 0) {
-    reasons.push('Fresh high-quality source families materially contradict one another.');
+  if (prepared.length === 1) {
+    reasons.push('The estimate is supported by one independent source family.');
   }
-  if (consensusAssessments.length < 2) {
-    reasons.push('A live fix requires agreement from at least two independent source families.');
+  if (consistencyScore < 0.05) {
+    reasons.push('Independent source residuals are statistically inconsistent.');
   }
-  if (strongConsensus.length < 3) {
-    reasons.push('A score above 99% requires at least three independent high-quality source families within 100 m reported accuracy.');
+  if (freshnessScore < 0.5) {
+    reasons.push('Temporal decay materially reduces the weight of the available observations.');
   }
-  if (precisionFamilyCount < 2) {
-    reasons.push('A score above 99% requires at least two independent precision-ranging/GNSS source families.');
-  }
-  if (freshestAgeMs > 30_000) {
-    reasons.push('The freshest corroborating observation is older than 30 seconds.');
+  if (residualScale > 2) {
+    reasons.push('Posterior uncertainty was inflated because source residuals exceed their reported uncertainty.');
   }
 
-  let score = combinedIndependentConfidence(consensusAssessments, freshestAgeMs);
-
-  if (contradictionCount > 0) {
-    score = Math.min(score, 0.69);
-  } else if (consensusAssessments.length < 2) {
-    score = Math.min(score, 0.89);
-  } else if (strongConsensus.length < 3 || precisionFamilyCount < 2 || freshestAgeMs > 30_000) {
-    score = Math.min(score, 0.989);
-  } else {
-    score = Math.max(score, 0.991);
-  }
-
-  const exceedsNinetyNinePercent =
-    score > 0.99
-    && contradictionCount === 0
-    && strongConsensus.length >= 3
-    && precisionFamilyCount >= 2
-    && freshestAgeMs <= 30_000;
+  const freshestAgeMs = Math.min(
+    ...sourceAssessments.map(source => source.ageMs),
+  );
 
   const status: SpectraLiveLocationAssessment['status'] =
-    contradictionCount > 0 ? 'contradicted'
-    : exceedsNinetyNinePercent ? 'high-confidence'
-    : consensusAssessments.length >= 2 ? 'corroborated'
-    : 'single-source';
+    consistencyScore < 0.01 ? 'conflicted'
+    : prepared.length >= 2 ? 'corroborated'
+    : 'estimated';
 
   return {
     status,
-    isLive: true,
-    confidenceScore: Number(score.toFixed(4)),
-    exceedsNinetyNinePercent,
-    independentFamilyCount: assessments.length,
-    strongConsensusFamilyCount: strongConsensus.length,
-    contradictionCount,
+    isLive: freshnessScore > MIN_EVIDENCE_WEIGHT,
+    confidenceScore: Number(confidenceScore.toFixed(6)),
+    confidenceRadiusMeters95: Number(
+      confidenceRadius(posteriorSigma, 0.95).toFixed(3),
+    ),
+    confidenceRadiusMeters99: Number(
+      confidenceRadius(posteriorSigma, 0.99).toFixed(3),
+    ),
+    posteriorSigmaMeters: Number(posteriorSigma.toFixed(3)),
+    effectiveSourceCount: Number(effectiveCount.toFixed(3)),
+    independentFamilyCount: prepared.length,
+    residualScale: Number(residualScale.toFixed(3)),
+    consistencyScore: Number(consistencyScore.toFixed(6)),
+    freshnessScore: Number(freshnessScore.toFixed(6)),
     freshestAgeMs,
     consensusCenter: {
       latitude: center.latitude,
       longitude: center.longitude,
-      radiusMeters: Math.max(1, consensusRadius),
     },
-    sources: assessments,
+    sources: sourceAssessments,
     reasons,
   };
 }
