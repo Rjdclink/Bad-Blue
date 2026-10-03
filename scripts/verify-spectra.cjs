@@ -548,9 +548,12 @@ test('Carrier identity bindings are persisted, reloaded and fused conservatively
   identityBinding.includes('camara-device-identifier') &&
   identityBinding.includes('camara-kyc-match') &&
   identityBinding.includes('Fréchet-Hoeffding lower bound'));
-test('Posterior calibration verifies empirical 99 percent containment without a runtime score floor',
+test('Posterior calibration verifies independent and correlated 99 percent containment without a runtime score floor',
   posteriorCalibration.includes('TRIALS = 10_000') &&
   posteriorCalibration.includes('empiricalContainment >= 0.99') &&
+  posteriorCalibration.includes('CORRELATED_TRIALS = 5_000') &&
+  posteriorCalibration.includes('correlatedContainment >= 0.99') &&
+  posteriorCalibration.includes("correlationDomain: 'same-device-a'") &&
   posteriorCalibration.includes('assessment.confidenceScore > 0.99') &&
   posteriorCalibration.includes('confidenceRadiusMeters99') &&
   posteriorCalibration.includes('calibration regression test, not a runtime threshold') &&
