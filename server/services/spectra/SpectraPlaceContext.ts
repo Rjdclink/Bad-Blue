@@ -1,9 +1,11 @@
+import { acquireSpectraPublicInfrastructureContext } from './SpectraPublicInfrastructureContext';
+
 export interface SpectraPlaceContextItem {
   id: string;
   name: string;
   latitude: number;
   longitude: number;
-  provider: 'OpenStreetMap Overpass' | 'GeoNames';
+  provider: 'OpenStreetMap Overpass' | 'GeoNames' | 'FCC Antenna Structure Registration' | 'NOAA CORS Network';
   category?: string;
   metadata?: Record<string, unknown>;
 }
@@ -137,15 +139,17 @@ export async function acquireSpectraPlaceContext(
   longitude: number,
   radiusMeters = 2_000,
 ): Promise<SpectraPlaceContextItem[]> {
-  const [osmOutcome, geoNamesOutcome] = await Promise.allSettled([
+  const [osmOutcome, geoNamesOutcome, infrastructureOutcome] = await Promise.allSettled([
     overpassNearbyPlaces(latitude, longitude, radiusMeters),
     geoNamesNearbyPlaces(latitude, longitude, radiusMeters),
+    acquireSpectraPublicInfrastructureContext(latitude, longitude),
   ]);
 
   const seen = new Set<string>();
   return [
     ...(osmOutcome.status === 'fulfilled' ? osmOutcome.value : []),
     ...(geoNamesOutcome.status === 'fulfilled' ? geoNamesOutcome.value : []),
+    ...(infrastructureOutcome.status === 'fulfilled' ? infrastructureOutcome.value : []),
   ].filter(item => {
     const key = `${item.provider}:${item.id}`;
     if (seen.has(key)) return false;
