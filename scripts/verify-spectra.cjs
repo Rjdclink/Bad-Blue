@@ -705,6 +705,11 @@ test('Public GTFS-Realtime catalog discovery is keyless, bounded and context-onl
   geoconsoleRoutes.includes("router.get('/public-feed-catalog'") &&
   geoconsoleRoutes.includes('contextOnly: true') &&
   routes.includes("sourceFamilies.push('public-mobility-feed')"));
+test('Public feed registry preserves missing bounding coordinates instead of coercing blanks to zero',
+  publicFeedRegistry.includes('const raw = value(row, ...keys).trim()') &&
+  publicFeedRegistry.includes('if (!raw) return null;') &&
+  publicFeedRegistry.includes('const parsed = Number(raw)') &&
+  publicFeedRegistry.includes('minLat !== null && maxLat !== null && minLon !== null && maxLon !== null'));
 test('GTFS-Realtime parser is bounded and handles vehicle-position protobuf fields without adding target evidence',
   gtfsRealtimeContext.includes('class ProtobufReader') &&
   gtfsRealtimeContext.includes('parseVehiclePosition') &&
