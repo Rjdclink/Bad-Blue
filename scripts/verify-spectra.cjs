@@ -1063,6 +1063,12 @@ test('Continuous passes broaden source-wave and adaptive-query coverage instead 
   routes.includes('combinedPass % 8') &&
   routes.includes("'newly available evidence'"));
 
+test('Infrastructure client association can fall back to configured AP anchors without inventing AP coordinates',
+  infrastructureNormalizer.includes('resolveConfiguredSpectraAnchor') &&
+  infrastructureNormalizer.includes('const associatedAnchor = ids.apId') &&
+  infrastructureNormalizer.includes("coordinateSource: 'configured-anchor'") &&
+  infrastructureNormalizer.includes('? 0.72') &&
+  providerNormalizer.includes("'unifi-client-location'"));
 test('Major infrastructure feeds normalize through the canonical SPECTRA provider path',
   infrastructureNormalizer.includes("'mist-location'") &&
   infrastructureNormalizer.includes("'extreme-location'") &&
