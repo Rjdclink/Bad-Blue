@@ -111,7 +111,26 @@ function normalizeOwnTracks(
     const verticalAccuracy = finite(row.vac ?? row.verticalAccuracy);
     const speedKmh = finite(row.vel ?? row.velocity);
     const course = bounded(row.cog ?? row.course ?? row.heading, 0, 360);
-    const trackerId = text(row.tid ?? row.device ?? row.deviceId, 120);
+    const mqttTopic = text(
+      row._spectraMqttTopic
+      ?? wrapped.outer._spectraMqttTopic,
+      500,
+    );
+    const topicParts = mqttTopic
+      ? mqttTopic.split('/').map(part => part.trim()).filter(Boolean)
+      : [];
+    const topicDeviceId = topicParts.length >= 3
+      && topicParts[0].toLowerCase() === 'owntracks'
+      ? text(topicParts[topicParts.length - 1], 120)
+      : undefined;
+    const trackerId = text(
+      row.device
+      ?? row.deviceId
+      ?? topicDeviceId
+      ?? row.tid,
+      120,
+    );
+    const displayTrackerId = text(row.tid, 40);
     const recordId = text(row._id ?? row.id ?? row.isotst ?? row.tst, 300);
 
     return [{
@@ -142,6 +161,8 @@ function normalizeOwnTracks(
       metadata: {
         acquisitionMethod: 'owntracks-location',
         ownTracksTrackerId: trackerId,
+        ownTracksDisplayTrackerId: displayTrackerId,
+        ownTracksMqttTopic: mqttTopic,
         ownTracksBattery: finite(row.batt) ?? undefined,
         ownTracksTrigger: text(row.t, 40),
         ownTracksAddress: text(row.addr, 500),
