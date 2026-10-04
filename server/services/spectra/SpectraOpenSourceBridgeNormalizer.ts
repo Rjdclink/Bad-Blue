@@ -6,7 +6,8 @@ export type SpectraOpenSourceBridgeKind =
   | 'find3-location'
   | 'espresense-observation'
   | 'kismet-device-location'
-  | 'openwisp-wifi-session';
+  | 'openwisp-wifi-session'
+  | 'traccar-position';
 
 export interface SpectraOpenSourceBridgeBatch {
   sessionId?: string;
@@ -827,6 +828,114 @@ function normalizeOpenWisp(
   };
 }
 
+function normalizeTraccar(
+  providerId: string,
+  payload: unknown,
+): SpectraOpenSourceBridgeBatch {
+  const wrapped = envelope(payload, providerId);
+  const outer = wrapped.outer;
+  const rows = list(outer.positions).length
+    ? list(outer.positions)
+    : list(outer.data).length
+      ? list(outer.data)
+      : Array.isArray(payload)
+        ? payload as any[]
+        : [outer];
+
+  const measurements = rows.slice(0, 2_000).flatMap(raw => {
+    const row = record(raw);
+    const latitude = bounded(row.latitude ?? row.lat, -90, 90);
+    const longitude = bounded(
+      row.longitude ?? row.lon ?? row.lng,
+      -180,
+      180,
+    );
+    const timestamp = isoTimestamp(
+      row.fixTime
+      ?? row.fix_time
+      ?? row.deviceTime
+      ?? row.device_time
+      ?? row.serverTime
+      ?? row.server_time
+      ?? row.timestamp,
+    );
+    if (latitude === null || longitude === null || !timestamp) return [];
+
+    const accuracy = finite(
+      row.accuracy
+      ?? row.attributes?.accuracy
+      ?? row.attributes?.hdop,
+    );
+    const altitude = finite(row.altitude ?? row.alt);
+    const course = bounded(row.course ?? row.heading, 0, 360);
+    const deviceId = text(
+      row.deviceId
+      ?? row.device_id
+      ?? row.uniqueId
+      ?? row.unique_id,
+      200,
+    );
+    const positionId = text(row.id ?? row.positionId ?? row.position_id, 300);
+    const valid = typeof row.valid === 'boolean' ? row.valid : true;
+
+    return [{
+      kind: 'position',
+      source: 'device_gps',
+      timestamp,
+      latitude,
+      longitude,
+      altitude: altitude ?? undefined,
+      accuracy:
+        accuracy !== null && accuracy > 0
+          ? Math.min(5_000_000, accuracy)
+          : undefined,
+      heading: course ?? undefined,
+      confidence: valid
+        ? confidenceForAccuracy(
+            accuracy !== null && accuracy > 0 ? accuracy : 20,
+            0.96,
+          )
+        : 0.35,
+      provider: wrapped.providerId,
+      recordId: positionId,
+      correlationGroup:
+        `traccar:${wrapped.providerId}:${deviceId || 'device'}`,
+      metadata: {
+        acquisitionMethod: 'traccar-position',
+        traccarDeviceId: deviceId,
+        traccarProtocol: text(row.protocol, 100),
+        traccarValid: valid,
+        traccarOutdated:
+          typeof row.outdated === 'boolean'
+            ? row.outdated
+            : undefined,
+        traccarNetwork: row.network && typeof row.network === 'object'
+          ? row.network
+          : undefined,
+        traccarAttributes: row.attributes && typeof row.attributes === 'object'
+          ? row.attributes
+          : undefined,
+      },
+    }];
+  });
+
+  if (!measurements.length) {
+    throw new Error('Traccar payload contains no usable position observations.');
+  }
+
+  return {
+    sessionId: wrapped.sessionId,
+    subjectLabel: wrapped.subjectLabel,
+    sourceId: wrapped.providerId,
+    measurements,
+    metadata: {
+      normalization: 'traccar-position',
+      observationCount: measurements.length,
+      normalizedAt: new Date().toISOString(),
+    },
+  };
+}
+
 export function normalizeSpectraOpenSourceBridgePayload(
   kind: SpectraOpenSourceBridgeKind,
   providerId: string,
@@ -847,6 +956,8 @@ export function normalizeSpectraOpenSourceBridgePayload(
       return normalizeKismet(providerId, payload);
     case 'openwisp-wifi-session':
       return normalizeOpenWisp(providerId, payload);
+    case 'traccar-position':
+      return normalizeTraccar(providerId, payload);
     default: {
       const exhaustive: never = kind;
       throw new Error(`Unsupported open-source bridge normalizer: ${String(exhaustive)}`);
@@ -862,4 +973,5 @@ export const SPECTRA_OPEN_SOURCE_BRIDGE_KINDS:
     'espresense-observation',
     'kismet-device-location',
     'openwisp-wifi-session',
+    'traccar-position',
   ] as const;
