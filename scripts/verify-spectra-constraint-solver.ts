@@ -183,6 +183,71 @@ function anchor(latitude: number, longitude: number, uncertaintyMeters = 1) {
   assert.ok(solved.points[1].confidence <= b.confidence);
 }
 
+// Contradictory bearings participate in contradiction scoring, not just optimization.
+{
+  const bearingConflict = point({
+    accuracy: 10,
+    metadata: {
+      constraintAnchors: [
+        {
+          latitude: 43.5443,
+          longitude: -96.7311,
+          bearingDegrees: 0,
+          bearingUncertaintyDegrees: 2,
+          uncertaintyMeters: 10,
+          dependencyKey: 'bearing-north',
+        },
+        {
+          latitude: 43.5443,
+          longitude: -96.7311,
+          bearingDegrees: 180,
+          bearingUncertaintyDegrees: 2,
+          uncertaintyMeters: 10,
+          dependencyKey: 'bearing-south',
+        },
+      ],
+    },
+  });
+  const solved = solveSpectraConstraintLayer([bearingConflict]);
+  assert.ok(
+    solved.diagnostics.contradictoryConstraintCount > 0,
+    'mutually opposite high-confidence bearings must surface a contradiction',
+  );
+  assert.ok(solved.diagnostics.meanResidualMeters > 0);
+}
+
+// Distant correlated history must not dilute dependency weight at the current event.
+{
+  const current = point({
+    accuracy: 10,
+    metadata: {
+      dependencyGroup: 'current-radio-domain',
+      constraintAnchors: [{
+        latitude: 43.5446,
+        longitude: -96.7301,
+        distanceMeters: 10,
+        uncertaintyMeters: 10,
+        dependencyKey: 'independent-range-domain',
+      }],
+    },
+  });
+  const alone = solveSpectraConstraintLayer([current]).points[0];
+
+  const distantHistory = Array.from({ length: 40 }, (_, index) => point({
+    timestamp: new Date(now.getTime() + (index + 1) * 10_000),
+    accuracy: 10,
+    metadata: {
+      dependencyGroup: 'current-radio-domain',
+    },
+  }));
+  const withHistory = solveSpectraConstraintLayer([current, ...distantHistory]).points[0];
+
+  assert.ok(
+    distance(alone, withHistory) < 0.5,
+    `temporally irrelevant correlated history changed current solve by ${distance(alone, withHistory)}m`,
+  );
+}
+
 // Road/terrain constraints are represented in the common constraint layer.
 {
   const constrained = point({
