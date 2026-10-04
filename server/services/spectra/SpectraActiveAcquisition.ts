@@ -508,6 +508,30 @@ function builtInOpenWispAdapter(): ActiveProviderConfig | null {
   };
 }
 
+function builtInHomeAssistantAdapter(): ActiveProviderConfig | null {
+  const url = String(
+    process.env.SPECTRA_HOME_ASSISTANT_STATE_URL_TEMPLATE || ''
+  ).trim();
+  const token = String(process.env.SPECTRA_HOME_ASSISTANT_TOKEN || '').trim();
+  const validationUrl = url
+    .replace(/\{\{deviceRef\}\}/g, 'device_tracker.managed_device')
+    .replace(/\{\{sessionId\}\}/g, 'session');
+  if (!httpsUrl(validationUrl) || !token) return null;
+
+  return {
+    id: 'homeassistant-device-tracker',
+    label: 'Home Assistant device tracker',
+    url,
+    method: 'GET',
+    normalizerKind: 'homeassistant-device-tracker',
+    target: 'device',
+    headersFromEnv: {
+      Authorization: 'SPECTRA_HOME_ASSISTANT_TOKEN',
+    },
+    timeoutMs: timeoutMs(process.env.SPECTRA_HOME_ASSISTANT_TIMEOUT_MS),
+  };
+}
+
 function builtInOwnTracksAdapter(): ActiveProviderConfig | null {
   const url = String(process.env.SPECTRA_OWNTRACKS_LOCATION_URL_TEMPLATE || '').trim();
   const validationUrl = url
@@ -562,6 +586,7 @@ async function fetchAdapter(
       'cisco-spaces-active-location',
       'android-managed-location-active',
       'apple-managed-location-active',
+      'homeassistant-device-tracker',
     ].includes(config.id)
     && headers.Authorization
     && !/^(?:Bearer|Basic)\s+/i.test(headers.Authorization)
@@ -616,6 +641,7 @@ export function getSpectraActiveAcquisitionCapabilities(): Array<{
     builtInKismetAdapter(),
     builtInOpenWispAdapter(),
     builtInOwnTracksAdapter(),
+    builtInHomeAssistantAdapter(),
     ...configuredAdapters(),
   ].filter((item): item is ActiveProviderConfig => Boolean(item))
     .map(item => ({
@@ -639,6 +665,7 @@ export async function acquireSpectraActiveTelemetry(
     builtInKismetAdapter(),
     builtInOpenWispAdapter(),
     builtInOwnTracksAdapter(),
+    builtInHomeAssistantAdapter(),
     ...configuredAdapters(),
   ].filter((item): item is ActiveProviderConfig => Boolean(item));
 
