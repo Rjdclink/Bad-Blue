@@ -85,6 +85,7 @@ import {
   resolveSpectraUnwiredRadio,
   spectraUnwiredConfigured,
 } from '../services/spectra/SpectraUnwiredRadioResolver';
+import { resolveSpectraRadioConsensus } from '../services/spectra/SpectraRadioConsensus';
 import {
   acquireSpectraResourcePermit,
   SpectraResourceBusyError,
@@ -1118,30 +1119,32 @@ async function radioPoint(
   );
   if (!candidates.length) return null;
 
-  const selected = [...candidates].sort((left, right) =>
-    (left.accuracy ?? Number.MAX_SAFE_INTEGER) - (right.accuracy ?? Number.MAX_SAFE_INTEGER)
-    || right.confidence - left.confidence
-  )[0];
+  const consensus = resolveSpectraRadioConsensus(candidates);
+  if (!consensus) return null;
 
-  const corroboration = candidates
-    .filter(point => point !== selected)
-    .map(point => {
-      const distance = Math.hypot(
-        (selected.latitude - point.latitude) * 111_320,
-        (selected.longitude - point.longitude)
-          * 111_320
-          * Math.max(0.15, Math.cos(selected.latitude * Math.PI / 180)),
-      );
-      return {
-        provider: point.provenance?.provider || point.source,
-        distanceMeters: Math.round(distance),
-        accuracyMeters: point.accuracy,
-      };
-    });
+  const selected = consensus.point;
+  const corroboration = candidates.map(point => {
+    const phi1 = selected.latitude * Math.PI / 180;
+    const phi2 = point.latitude * Math.PI / 180;
+    const dPhi = (point.latitude - selected.latitude) * Math.PI / 180;
+    const dLambda = (point.longitude - selected.longitude) * Math.PI / 180;
+    const h =
+      Math.sin(dPhi / 2) ** 2
+      + Math.cos(phi1) * Math.cos(phi2) * Math.sin(dLambda / 2) ** 2;
+    const distance = 2 * 6_371_008.8 * Math.asin(Math.min(1, Math.sqrt(h)));
+    return {
+      provider: point.provenance?.provider || point.source,
+      distanceMeters: Math.round(distance),
+      accuracyMeters: point.accuracy,
+    };
+  });
 
   selected.metadata = {
     ...(selected.metadata || {}),
     radioCorroboration: corroboration,
+    radioConsensusAgreeingProviderCount: consensus.agreeingProviderCount,
+    radioConsensusCandidateCount: consensus.candidateCount,
+    radioConsensusExcludedProviderCount: consensus.excludedProviderCount,
   };
   return selected;
 }
