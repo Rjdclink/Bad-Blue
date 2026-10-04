@@ -5,7 +5,8 @@ export type SpectraOpenSourceBridgeKind =
   | 'chirpstack-location'
   | 'find3-location'
   | 'espresense-observation'
-  | 'kismet-device-location';
+  | 'kismet-device-location'
+  | 'openwisp-wifi-session';
 
 export interface SpectraOpenSourceBridgeBatch {
   sessionId?: string;
@@ -708,6 +709,124 @@ function normalizeKismet(
   };
 }
 
+function normalizeOpenWisp(
+  providerId: string,
+  payload: unknown,
+): SpectraOpenSourceBridgeBatch {
+  const wrapped = envelope(payload, providerId);
+  const outer = wrapped.outer;
+  const rows = list(outer.results).length
+    ? list(outer.results)
+    : list(outer.sessions).length
+      ? list(outer.sessions)
+      : list(outer.data).length
+        ? list(outer.data)
+        : Array.isArray(payload)
+          ? payload as any[]
+          : [outer];
+
+  const measurements = rows.slice(0, 2_000).flatMap(raw => {
+    const row = record(raw);
+    const client = record(row.client ?? row.wifi_client);
+    const device = text(
+      row.device
+      ?? row.device_name
+      ?? row.deviceName,
+      200,
+    );
+    const interfaceName = text(
+      row.interface_name
+      ?? row.interfaceName
+      ?? row.interface,
+      200,
+    );
+    const anchor = resolveConfiguredSpectraAnchor({
+      id: device,
+      anchorId: device,
+      deviceId: device,
+      locatorId: interfaceName,
+      aliases: [device, interfaceName].filter(Boolean),
+    });
+    if (!anchor) return [];
+
+    const timestamp = isoTimestamp(
+      row.modified
+      ?? row.stop_time
+      ?? row.stopTime
+      ?? row.start_time
+      ?? row.startTime,
+    );
+    if (!timestamp) return [];
+
+    const clientMac = text(
+      client.mac_address
+      ?? client.macAddress
+      ?? row.mac_address
+      ?? row.macAddress,
+      64,
+    );
+    const coverageMeters = Math.max(
+      20,
+      Math.min(
+        500,
+        finite(
+          row.coverage_meters
+          ?? row.coverageMeters
+          ?? anchor.metadata?.coverageMeters,
+        ) ?? anchor.accuracyMeters ?? 60,
+      ),
+    );
+
+    return [{
+      kind: 'position',
+      source: 'wifi_fingerprint',
+      timestamp,
+      latitude: anchor.latitude,
+      longitude: anchor.longitude,
+      altitude: anchor.altitude,
+      accuracy: coverageMeters,
+      confidence: Math.max(
+        0.35,
+        Math.min(0.72, confidenceForAccuracy(coverageMeters, 0.72)),
+      ),
+      provider: wrapped.providerId,
+      recordId: text(row.id, 300),
+      correlationGroup:
+        `openwisp:${wrapped.providerId}:${clientMac || 'client'}`,
+      metadata: {
+        acquisitionMethod: 'openwisp-wifi-session',
+        infrastructureAssociation: true,
+        openWispDevice: device,
+        openWispInterface: interfaceName,
+        openWispSsid: text(row.ssid, 200),
+        openWispClientMac: clientMac,
+        openWispClientVendor: text(client.vendor, 200),
+        openWispOrganization: text(row.organization, 200),
+        sessionStart: text(row.start_time ?? row.startTime, 80),
+        sessionStop: text(row.stop_time ?? row.stopTime, 80),
+      },
+    }];
+  });
+
+  if (!measurements.length) {
+    throw new Error(
+      'OpenWISP payload contains no Wi-Fi session tied to a configured infrastructure anchor.',
+    );
+  }
+
+  return {
+    sessionId: wrapped.sessionId,
+    subjectLabel: wrapped.subjectLabel,
+    sourceId: wrapped.providerId,
+    measurements,
+    metadata: {
+      normalization: 'openwisp-wifi-session',
+      observationCount: measurements.length,
+      normalizedAt: new Date().toISOString(),
+    },
+  };
+}
+
 export function normalizeSpectraOpenSourceBridgePayload(
   kind: SpectraOpenSourceBridgeKind,
   providerId: string,
@@ -726,6 +845,8 @@ export function normalizeSpectraOpenSourceBridgePayload(
       return normalizeEspresense(providerId, payload);
     case 'kismet-device-location':
       return normalizeKismet(providerId, payload);
+    case 'openwisp-wifi-session':
+      return normalizeOpenWisp(providerId, payload);
     default: {
       const exhaustive: never = kind;
       throw new Error(`Unsupported open-source bridge normalizer: ${String(exhaustive)}`);
@@ -740,4 +861,5 @@ export const SPECTRA_OPEN_SOURCE_BRIDGE_KINDS:
     'find3-location',
     'espresense-observation',
     'kismet-device-location',
+    'openwisp-wifi-session',
   ] as const;
