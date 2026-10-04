@@ -95,15 +95,42 @@ function normalizeOwnTracks(
     if (locations.length) return locations;
     const data = list(outer.data);
     if (data.length) return data;
+    const features = list(outer.features);
+    if (
+      String(outer.type || '').toLowerCase() === 'featurecollection'
+      && features.length
+    ) return features;
     return [outer];
   })();
 
   const measurements = rows.slice(0, 2_000).flatMap(raw => {
-    const row = record(raw);
+    const sourceRow = record(raw);
+    const geometry = record(sourceRow.geometry);
+    const properties = record(sourceRow.properties);
+    const coordinates = Array.isArray(geometry.coordinates)
+      ? geometry.coordinates
+      : [];
+    const row = String(sourceRow.type || '').toLowerCase() === 'feature'
+      ? {
+          ...properties,
+          _spectraGeoJsonFeature: true,
+          latitude: coordinates[1],
+          longitude: coordinates[0],
+          altitude: coordinates[2],
+        }
+      : sourceRow;
+
     if (row._type && row._type !== 'location') return [];
     const latitude = bounded(row.lat ?? row.latitude, -90, 90);
     const longitude = bounded(row.lon ?? row.lng ?? row.longitude, -180, 180);
-    const timestamp = isoTimestamp(row.tst ?? row.timestamp ?? row.fixTime);
+    const timestamp = isoTimestamp(
+      row.tst
+      ?? row.timestamp
+      ?? row.fixTime
+      ?? row.time
+      ?? row.created_at
+      ?? row.createdAt,
+    );
     if (latitude === null || longitude === null || !timestamp) return [];
 
     const accuracy = finite(row.acc ?? row.accuracy);
@@ -166,6 +193,9 @@ function normalizeOwnTracks(
         ownTracksBattery: finite(row.batt) ?? undefined,
         ownTracksTrigger: text(row.t, 40),
         ownTracksAddress: text(row.addr, 500),
+        ownTracksGeoJsonFeature: row._spectraGeoJsonFeature === true
+          ? true
+          : undefined,
       },
     }];
   });
