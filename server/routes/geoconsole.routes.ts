@@ -76,6 +76,7 @@ import {
   getSpectraPublicFeedCatalogSource,
 } from '../services/spectra/SpectraPublicFeedRegistry';
 import { spectraApiVersionHeaders } from '../services/spectra/SpectraApiContract';
+import { resolveSpectraMylnikovRadio } from '../services/spectra/SpectraMylnikovResolver';
 import {
   acquireSpectraResourcePermit,
   SpectraResourceBusyError,
@@ -1016,16 +1017,38 @@ async function googleRadioPoint(
 async function radioPoint(
   measurement: z.infer<typeof telemetryRadioSchema>,
 ): Promise<GPSPoint | null> {
-  const [googleOutcome, beaconOutcome, openCellOutcome] = await Promise.allSettled([
+  const [googleOutcome, beaconOutcome, openCellOutcome, mylnikovOutcome] = await Promise.allSettled([
     googleRadioPoint(measurement),
     beaconDbRadioPoint(measurement),
     openCellIdPoint(measurement),
+    resolveSpectraMylnikovRadio({
+      timestamp: measurement.timestamp,
+      provider: measurement.provider,
+      wifiAccessPoints: sanitizedWifiAccessPoints(measurement),
+      cellTowers: sanitizedCellTowers(measurement).flatMap(tower => {
+        const cellId = tower.newRadioCellId ?? tower.cellId;
+        return (
+          Number.isFinite(tower.mobileCountryCode)
+          && Number.isFinite(tower.mobileNetworkCode)
+          && Number.isFinite(tower.locationAreaCode)
+          && Number.isFinite(cellId)
+        ) ? [{
+          mobileCountryCode: tower.mobileCountryCode,
+          mobileNetworkCode: tower.mobileNetworkCode,
+          locationAreaCode: tower.locationAreaCode,
+          cellId: Number(cellId),
+          signalStrength: tower.signalStrength,
+        }] : [];
+      }),
+      metadata: measurement.metadata,
+    }),
   ]);
 
   const googlePoint = googleOutcome.status === 'fulfilled' ? googleOutcome.value : null;
   const beaconPoint = beaconOutcome.status === 'fulfilled' ? beaconOutcome.value : null;
   const openCellPoint = openCellOutcome.status === 'fulfilled' ? openCellOutcome.value : null;
-  const candidates = [googlePoint, beaconPoint, openCellPoint].filter(
+  const mylnikovPoints = mylnikovOutcome.status === 'fulfilled' ? mylnikovOutcome.value : [];
+  const candidates = [googlePoint, beaconPoint, openCellPoint, ...mylnikovPoints].filter(
     (point): point is GPSPoint => Boolean(point)
   );
   if (!candidates.length) return null;
@@ -2142,6 +2165,7 @@ router.get('/telemetry-capabilities', (_req: Request, res: Response) => {
         noaaCorsContext: true,
       },
       radioGeolocationProviders: {
+        mylnikovOpenData: true,
         beaconDb: true,
         google: Boolean(
           process.env.SPECTRA_GOOGLE_GEOLOCATION_API_KEY
