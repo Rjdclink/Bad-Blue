@@ -30,6 +30,7 @@ export interface SpectraProviderStreamConfig {
   reconnectMinMs: number;
   reconnectMaxMs: number;
   heartbeatMs: number;
+  pongTimeoutMs: number;
 }
 
 export interface SpectraProviderStreamHealth {
@@ -59,6 +60,7 @@ interface RuntimeState {
   health: SpectraProviderStreamHealth;
   socket?: WebSocket;
   timer?: NodeJS.Timeout;
+  pongTimer?: NodeJS.Timeout;
   stopped: boolean;
   reconnectAttempt: number;
   recentKeys: Map<string, number>;
@@ -134,7 +136,18 @@ function loadConfigs(): SpectraProviderStreamConfig[] {
             : undefined,
         reconnectMinMs: positiveInt(item?.reconnectMinMs, 2_000, 500, 60_000),
         reconnectMaxMs: positiveInt(item?.reconnectMaxMs, 60_000, 2_000, 300_000),
-        heartbeatMs: positiveInt(item?.heartbeatMs, 25_000, 5_000, 120_000),
+        heartbeatMs: positiveInt(
+          item?.heartbeatMs,
+          decoder === 'aruba-location-protobuf' ? 10_000 : 25_000,
+          5_000,
+          120_000,
+        ),
+        pongTimeoutMs: positiveInt(
+          item?.pongTimeoutMs,
+          decoder === 'aruba-location-protobuf' ? 5_000 : 10_000,
+          1_000,
+          60_000,
+        ),
       }];
     });
   } catch {
@@ -363,12 +376,30 @@ async function connectRuntime(runtime: RuntimeState): Promise<void> {
   const socket = new WebSocket(runtime.config.url, { headers });
   runtime.socket = socket;
 
+  const clearPongTimer = () => {
+    if (runtime.pongTimer) clearTimeout(runtime.pongTimer);
+    runtime.pongTimer = undefined;
+  };
+
   const heartbeat = setInterval(() => {
-    if (socket.readyState === WebSocket.OPEN) {
-      try { socket.ping(); } catch {}
+    if (socket.readyState !== WebSocket.OPEN) return;
+
+    try {
+      socket.ping();
+      clearPongTimer();
+      runtime.pongTimer = setTimeout(() => {
+        if (runtime.socket === socket && socket.readyState === WebSocket.OPEN) {
+          socket.terminate();
+        }
+      }, runtime.config.pongTimeoutMs);
+      runtime.pongTimer.unref?.();
+    } catch {
+      socket.terminate();
     }
   }, runtime.config.heartbeatMs);
   heartbeat.unref?.();
+
+  socket.on('pong', clearPongTimer);
 
   socket.once('open', () => {
     runtime.reconnectAttempt = 0;
@@ -408,8 +439,19 @@ async function connectRuntime(runtime: RuntimeState): Promise<void> {
     })();
   });
 
+  let disconnected = false;
   const disconnect = (error?: unknown) => {
+    if (disconnected) return;
+    disconnected = true;
     clearInterval(heartbeat);
+    clearPongTimer();
+
+    const errorText = error instanceof Error ? error.message : String(error || '');
+    if (/\b401\b/.test(errorText)) {
+      runtime.accessToken = undefined;
+      runtime.accessTokenExpiresAt = undefined;
+    }
+
     if (runtime.socket === socket) runtime.socket = undefined;
     if (runtime.stopped) {
       updateHealth(runtime, { state: 'stopped' });
@@ -420,7 +462,7 @@ async function connectRuntime(runtime: RuntimeState): Promise<void> {
       state: error ? 'degraded' : 'connecting',
       lastErrorAt: error ? new Date().toISOString() : runtime.health.lastErrorAt,
       lastError: error
-        ? (error instanceof Error ? error.message : String(error)).slice(0, 500)
+        ? errorText.slice(0, 500)
         : runtime.health.lastError,
     });
     scheduleReconnect(runtime);
@@ -461,6 +503,8 @@ export function stopSpectraProviderStreams(): void {
     runtime.stopped = true;
     if (runtime.timer) clearTimeout(runtime.timer);
     runtime.timer = undefined;
+    if (runtime.pongTimer) clearTimeout(runtime.pongTimer);
+    runtime.pongTimer = undefined;
     try { runtime.socket?.close(); } catch {}
     runtime.socket = undefined;
     updateHealth(runtime, { state: 'stopped' });
