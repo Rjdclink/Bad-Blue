@@ -1023,6 +1023,17 @@ test('Provider-neutral MQTT transport uses TLS, subscription, reconnect and QoS1
   mqttProviderCoordinator.includes('scheduleReconnect') &&
   geoconsoleRoutes.includes('startSpectraMqttProviderStreams') &&
   geoconsoleRoutes.includes("'mqtts-provider-stream'"));
+test('Native Meraki Scanning API validator, payload secret and v2 observation shape are supported',
+  geoconsoleRoutes.includes("mode === 'meraki-scanning-secret'") &&
+  geoconsoleRoutes.includes("normalize/meraki-scanning', (req") &&
+  geoconsoleRoutes.includes('entry?.validatorEnv') &&
+  geoconsoleRoutes.includes("String(body.secret || '').trim()") &&
+  externalLocationNormalizer.includes('const singleLocation = record(observation.location)') &&
+  externalLocationNormalizer.includes('?? location.unc') &&
+  externalLocationNormalizer.includes("type.includes('BLUETOOTH')") &&
+  adapterRegistry.includes("id: 'meraki-scanning-ingest'") &&
+  railwayEnvExample.includes('"mode":"meraki-scanning-secret"'));
+
 test('Infrastructure webhook ingress uses per-provider credentials and Mist SHA-256 validation before normalization',
   geoconsoleRoutes.includes('SPECTRA_INFRASTRUCTURE_WEBHOOK_AUTH') &&
   geoconsoleRoutes.includes("mode === 'mist-hmac-sha256'") &&
