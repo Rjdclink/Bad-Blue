@@ -362,6 +362,25 @@ function builtInUniFiAdapter(): ActiveProviderConfig | null {
   };
 }
 
+function builtInFind3Adapter(): ActiveProviderConfig | null {
+  const url = String(process.env.SPECTRA_FIND3_LOCATION_URL_TEMPLATE || '').trim();
+  const validationUrl = url
+    .replace(/\{\{deviceRef\}\}/g, 'managed-device')
+    .replace(/\{\{sessionId\}\}/g, 'session');
+
+  if (!httpsUrl(validationUrl)) return null;
+
+  return {
+    id: 'find3-indoor-positioning',
+    label: 'FIND3 indoor fingerprint location',
+    url,
+    method: 'GET',
+    normalizerKind: 'find3-location',
+    target: 'device',
+    timeoutMs: timeoutMs(process.env.SPECTRA_FIND3_TIMEOUT_MS),
+  };
+}
+
 function acquisitionBody(
   input: SpectraActiveAcquisitionInput,
 ): Record<string, unknown> {
@@ -435,6 +454,7 @@ export function getSpectraActiveAcquisitionCapabilities(): Array<{
     builtInAppleMdmAdapter(),
     builtInCiscoSpacesAdapter(),
     builtInUniFiAdapter(),
+    builtInFind3Adapter(),
     ...configuredAdapters(),
   ].filter((item): item is ActiveProviderConfig => Boolean(item))
     .map(item => ({
@@ -453,6 +473,7 @@ export async function acquireSpectraActiveTelemetry(
     builtInAppleMdmAdapter(),
     builtInCiscoSpacesAdapter(),
     builtInUniFiAdapter(),
+    builtInFind3Adapter(),
     ...configuredAdapters(),
   ].filter((item): item is ActiveProviderConfig => Boolean(item));
 
