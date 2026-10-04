@@ -1015,6 +1015,14 @@ must(
   'live background provider/query races return on first useful evidence without removing optimized breadth',
 );
 must(
+  lexaraLegalMesh.includes('function independentSearchBase') &&
+    lexaraLegalMesh.includes('pantheon-(?:ddgs|searxng|openserp)') &&
+    lexaraLegalMesh.includes('independentSearchBase(process.env.DDGS_URL)') &&
+    lexaraLegalMesh.includes('independentSearchBase(process.env.SEARXNG_URL)') &&
+    lexaraLegalMesh.includes('independentSearchBase(process.env.OPENSERP_URL)'),
+  'retired Pantheon internal search endpoints are rejected while valid independent provider endpoints remain supported',
+);
+must(
   claudeService.includes("response?.stop_reason === 'max_tokens'") &&
     claudeService.includes('sourceMap.size === 0') &&
     claudeService.includes('preserving source evidence after max_tokens stop') &&
