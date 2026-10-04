@@ -6,7 +6,12 @@ export interface SpectraPlaceContextItem {
   name: string;
   latitude: number;
   longitude: number;
-  provider: 'OpenStreetMap Overpass' | 'GeoNames' | 'FCC Antenna Structure Registration' | 'NOAA CORS Network';
+  provider:
+    | 'OpenStreetMap Overpass'
+    | 'GeoNames'
+    | 'FCC Antenna Structure Registration'
+    | 'NOAA CORS Network'
+    | 'Hootenanny';
   category?: string;
   metadata?: Record<string, unknown>;
 }
@@ -152,25 +157,31 @@ export async function acquireSpectraPlaceContext(
     ...(osmOutcome.status === 'fulfilled' ? osmOutcome.value : []),
     ...(geoNamesOutcome.status === 'fulfilled' ? geoNamesOutcome.value : []),
     ...(infrastructureOutcome.status === 'fulfilled' ? infrastructureOutcome.value : []),
-    ...(hootenannyOutcome.status === 'fulfilled' ? hootenannyOutcome.value.map(feature => ({
-      id: `hoot:${feature.type}:${feature.id}`,
-      name: feature.tags.name || feature.tags.amenity || feature.tags.building || feature.tags.highway || 'Hootenanny map feature',
-      latitude: feature.latitude,
-      longitude: feature.longitude,
-      provider: feature.provider,
-      category: feature.tags.building
-        ? 'building'
-        : feature.tags.highway
-          ? 'road'
-          : feature.tags.amenity || feature.tags.shop || feature.tags.office
-            ? 'poi'
-            : 'map_feature',
-      metadata: {
-        tags: feature.tags,
-        contextOnly: true,
-        conflatedMap: true,
-      },
-    })).filter(item => Number.isFinite(item.latitude) && Number.isFinite(item.longitude)) : []),
+    ...(hootenannyOutcome.status === 'fulfilled' ? hootenannyOutcome.value.flatMap(feature => {
+      const featureLatitude = Number(feature.latitude);
+      const featureLongitude = Number(feature.longitude);
+      if (!validCoordinate(featureLatitude, featureLongitude)) return [];
+
+      return [{
+        id: `hoot:${feature.type}:${feature.id}`,
+        name: feature.tags.name || feature.tags.amenity || feature.tags.building || feature.tags.highway || 'Hootenanny map feature',
+        latitude: featureLatitude,
+        longitude: featureLongitude,
+        provider: 'Hootenanny' as const,
+        category: feature.tags.building
+          ? 'building'
+          : feature.tags.highway
+            ? 'road'
+            : feature.tags.amenity || feature.tags.shop || feature.tags.office
+              ? 'poi'
+              : 'map_feature',
+        metadata: {
+          tags: feature.tags,
+          contextOnly: true,
+          conflatedMap: true,
+        },
+      }];
+    }) : []),
   ].filter(item => {
     const key = `${item.provider}:${item.id}`;
     if (seen.has(key)) return false;
