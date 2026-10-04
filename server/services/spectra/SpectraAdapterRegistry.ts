@@ -625,6 +625,33 @@ export const SPECTRA_ADAPTER_CAPABILITIES: SpectraAdapterCapability[] = [
     notes: 'Fixed HTTPS pull adapters normalize provider JSON into SPECTRA observations.',
   },
   {
+    id: 'wigle-bssid-geolocation',
+    label: 'WiGLE exact-BSSID geolocation',
+    mode: 'radio-geolocation',
+    sourceTypes: ['wifi_fingerprint'],
+    configured: () => anyEnv(
+      'SPECTRA_WIGLE_BASIC_AUTH',
+      'SPECTRA_WIGLE_API_NAME',
+      'SPECTRA_WIGLE_API_TOKEN',
+    ),
+    priority: 'high',
+    supportsRealtime: false,
+    notes: 'Queries configured WiGLE API credentials for exact observed BSSIDs and contributes uncertainty-bounded AP-location corroboration to the radio mesh.',
+  },
+  {
+    id: 'unwired-compatible-radio-geolocation',
+    label: 'Unwired-compatible radio geolocation',
+    mode: 'radio-geolocation',
+    sourceTypes: ['wifi_fingerprint','cellular'],
+    configured: () => anyEnv(
+      'SPECTRA_UNWIRED_GEOLOCATION_URL',
+      'SPECTRA_UNWIRED_GEOLOCATION_TOKEN',
+    ),
+    priority: 'high',
+    supportsRealtime: false,
+    notes: 'Traccar-compatible radio resolver adapter for configured HTTPS geolocation services accepting MCC/MNC/LAC/CID and Wi-Fi BSSID observations.',
+  },
+  {
     id: 'mylnikov-open-radio-geolocation',
     label: 'Mylnikov open Wi-Fi/cell geolocation',
     mode: 'radio-geolocation',
