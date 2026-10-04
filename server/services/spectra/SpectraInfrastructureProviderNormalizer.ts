@@ -273,7 +273,7 @@ export function normalizeSpectraInfrastructureProviderPayload(
   const wrapped = envelope(payload, providerId);
   if (!wrapped.providerId) throw new Error('Infrastructure provider ID is required.');
 
-  const measurements = candidateRows(kind, payload)
+  const normalizedEntries = candidateRows(kind, payload)
     .slice(0, 2000)
     .flatMap(raw => {
       const row = record(raw);
@@ -283,74 +283,105 @@ export function normalizeSpectraInfrastructureProviderPayload(
 
       const ids = identifiersForRow(kind, row, wrapped.providerId);
       const binding = resolveSpectraInfrastructureBinding(ids);
-      const source = kind === 'unifi-client-location'
-        ? 'wifi_fingerprint'
-        : 'wifi_fingerprint';
 
       return [{
-        kind: 'position',
-        source,
-        timestamp: observedAt,
-        latitude: coordinates.latitude,
-        longitude: coordinates.longitude,
-        accuracy: coordinates.accuracy,
-        confidence: confidenceForAccuracy(
-          coordinates.accuracy,
-          coordinates.coordinateSource === 'floorplan'
-            ? 0.88
-            : coordinates.coordinateSource === 'configured-anchor'
-              ? 0.72
-              : 0.92,
-        ),
-        provider: wrapped.providerId,
-        recordId: text(
-          row.recordId
-          ?? row.event_id
-          ?? row.eventId
-          ?? row.id
-          ?? row.client_id
-          ?? row.device_id,
-          300,
-        ),
-        correlationGroup: binding.correlationGroup,
-        metadata: {
-          ...spectraInfrastructureIdentityMetadata(ids),
-          providerKind: kind,
-          coordinateSource: coordinates.coordinateSource,
-          associated: typeof row.associated === 'boolean' ? row.associated : undefined,
-          connected: typeof row.connected === 'boolean' ? row.connected : undefined,
-          floorplanX: finite(row.x ?? row.location?.x),
-          floorplanY: finite(row.y ?? row.location?.y),
-          reportingAccessPoints: list(
-            row.reporting_ap_serial
-            || row.reportingAps
-            || row.accessPoints
-            || row.aps
-          ).slice(0, 64),
-        },
+        binding,
+        measurement: {
+          kind: 'position',
+          source: 'wifi_fingerprint',
+          timestamp: observedAt,
+          latitude: coordinates.latitude,
+          longitude: coordinates.longitude,
+          accuracy: coordinates.accuracy,
+          confidence: confidenceForAccuracy(
+            coordinates.accuracy,
+            coordinates.coordinateSource === 'floorplan'
+              ? 0.88
+              : coordinates.coordinateSource === 'configured-anchor'
+                ? 0.72
+                : 0.92,
+          ),
+          provider: wrapped.providerId,
+          recordId: text(
+            row.recordId
+            ?? row.event_id
+            ?? row.eventId
+            ?? row.id
+            ?? row.client_id
+            ?? row.device_id,
+            300,
+          ),
+          correlationGroup: binding.correlationGroup,
+          metadata: {
+            ...spectraInfrastructureIdentityMetadata(ids),
+            providerKind: kind,
+            coordinateSource: coordinates.coordinateSource,
+            associated: typeof row.associated === 'boolean' ? row.associated : undefined,
+            connected: typeof row.connected === 'boolean' ? row.connected : undefined,
+            floorplanX: finite(row.x ?? row.location?.x),
+            floorplanY: finite(row.y ?? row.location?.y),
+            reportingAccessPoints: list(
+              row.reporting_ap_serial
+              || row.reportingAps
+              || row.accessPoints
+              || row.aps
+            ).slice(0, 64),
+          },
+        } as Record<string, unknown>,
       }];
     });
 
-  if (!measurements.length) {
+  if (!normalizedEntries.length) {
     throw new Error('Infrastructure payload contains no usable location observations.');
   }
 
-  const firstBinding = (() => {
-    const first = record(candidateRows(kind, payload)[0]);
-    return resolveSpectraInfrastructureBinding(
-      identifiersForRow(kind, first, wrapped.providerId),
+  const boundEntries = normalizedEntries.filter(entry => Boolean(entry.binding.sessionId));
+  const selectedSessionId =
+    wrapped.sessionId
+    || boundEntries[0]?.binding.sessionId;
+  const selectedSubjectLabel =
+    (
+      selectedSessionId
+        ? boundEntries.find(entry => entry.binding.sessionId === selectedSessionId)
+        : undefined
+    )?.binding.subjectLabel
+    || wrapped.subjectLabel;
+
+  const hasAnyConfiguredBinding = boundEntries.length > 0;
+  const acceptedEntries = normalizedEntries.filter(entry => {
+    if (!selectedSessionId) return !entry.binding.sessionId;
+
+    if (entry.binding.sessionId) {
+      return entry.binding.sessionId === selectedSessionId;
+    }
+
+    // A multi-client infrastructure payload with at least one configured
+    // subject binding must never leak unbound clients into that subject's
+    // batch. An explicit session is allowed to carry unbound rows only when
+    // the entire payload is unbound (e.g. a device-targeted active pull).
+    return !hasAnyConfiguredBinding && wrapped.sessionId === selectedSessionId;
+  });
+
+  if (!acceptedEntries.length) {
+    throw new Error(
+      'Infrastructure payload contains no observations matching the selected subject binding.',
     );
-  })();
+  }
+
+  const droppedMismatchedBindingCount =
+    normalizedEntries.length - acceptedEntries.length;
 
   return {
-    sessionId: firstBinding.sessionId || wrapped.sessionId,
-    subjectLabel: firstBinding.subjectLabel || wrapped.subjectLabel,
+    sessionId: selectedSessionId,
+    subjectLabel: selectedSubjectLabel,
     sourceId: wrapped.providerId,
-    measurements,
+    measurements: acceptedEntries.map(entry => entry.measurement),
     metadata: {
       normalization: kind,
       normalizedAt: new Date().toISOString(),
-      observationCount: measurements.length,
+      observationCount: acceptedEntries.length,
+      droppedMismatchedBindingCount,
+      subjectBindingFiltered: droppedMismatchedBindingCount > 0,
     },
   };
 }
