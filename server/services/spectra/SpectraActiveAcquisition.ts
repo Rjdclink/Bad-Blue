@@ -453,6 +453,27 @@ function builtInOpenWispAdapter(): ActiveProviderConfig | null {
   };
 }
 
+function builtInOwnTracksAdapter(): ActiveProviderConfig | null {
+  const url = String(process.env.SPECTRA_OWNTRACKS_LOCATION_URL_TEMPLATE || '').trim();
+  const validationUrl = url
+    .replace(/\{\{deviceRef\}\}/g, 'managed-device')
+    .replace(/\{\{sessionId\}\}/g, 'session');
+  if (!httpsUrl(validationUrl)) return null;
+
+  return {
+    id: 'owntracks-location-bridge',
+    label: 'OwnTracks Recorder latest location',
+    url,
+    method: 'GET',
+    normalizerKind: 'owntracks-location',
+    target: 'device',
+    headersFromEnv: String(process.env.SPECTRA_OWNTRACKS_AUTHORIZATION || '').trim()
+      ? { Authorization: 'SPECTRA_OWNTRACKS_AUTHORIZATION' }
+      : undefined,
+    timeoutMs: timeoutMs(process.env.SPECTRA_OWNTRACKS_TIMEOUT_MS),
+  };
+}
+
 function acquisitionBody(
   input: SpectraActiveAcquisitionInput,
 ): Record<string, unknown> {
@@ -535,6 +556,7 @@ export function getSpectraActiveAcquisitionCapabilities(): Array<{
     builtInTraccarAdapter(),
     builtInKismetAdapter(),
     builtInOpenWispAdapter(),
+    builtInOwnTracksAdapter(),
     ...configuredAdapters(),
   ].filter((item): item is ActiveProviderConfig => Boolean(item))
     .map(item => ({
@@ -557,6 +579,7 @@ export async function acquireSpectraActiveTelemetry(
     builtInTraccarAdapter(),
     builtInKismetAdapter(),
     builtInOpenWispAdapter(),
+    builtInOwnTracksAdapter(),
     ...configuredAdapters(),
   ].filter((item): item is ActiveProviderConfig => Boolean(item));
 
