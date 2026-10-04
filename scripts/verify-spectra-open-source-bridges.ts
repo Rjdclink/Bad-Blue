@@ -21,6 +21,7 @@ try {
       'meshtastic-position',
       'mqtt-room-presence',
       'omlox-location',
+      'openmqttgateway-ble',
       'openwisp-wifi-session',
       'owntracks-location',
       'traccar-position',
@@ -398,6 +399,27 @@ try {
   assert.equal(omlox.measurements[0].longitude, -95.9349);
   assert.equal(omlox.measurements[0].accuracy, 0.35);
   assert.match(String(omlox.measurements[0].correlationGroup), /trackable-1$/);
+
+  const openMqttGateway = normalizeSpectraOpenSourceBridgePayload(
+    'openmqttgateway-ble',
+    'omg-test',
+    {
+      id: 'ble-target-a',
+      mac: 'AA:BB:CC:DD:EE:22',
+      rssi: -62,
+      distance: 2.75,
+      txpower: -59,
+      gatewayId: 'room-kitchen',
+      timestamp: '2026-10-03T23:03:03.000Z',
+      _spectraMqttTopic: 'home/room-kitchen/BTtoMQTT/AA:BB:CC:DD:EE:22',
+    },
+  );
+  assert.equal(openMqttGateway.measurements.length, 1);
+  assert.equal(openMqttGateway.measurements[0].kind, 'ranging');
+  assert.equal(openMqttGateway.measurements[0].source, 'ble_rssi');
+  assert.equal((openMqttGateway.measurements[0].anchors as any[])[0].id, 'room-kitchen');
+  assert.equal((openMqttGateway.measurements[0].anchors as any[])[0].distanceMeters, 2.75);
+  assert.equal((openMqttGateway.measurements[0].anchors as any[])[0].rssiDbm, -62);
 
   const mqttRoom = normalizeSpectraOpenSourceBridgePayload(
     'mqtt-room-presence',
