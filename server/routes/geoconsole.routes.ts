@@ -78,6 +78,10 @@ import {
 import { spectraApiVersionHeaders } from '../services/spectra/SpectraApiContract';
 import { resolveSpectraMylnikovRadio } from '../services/spectra/SpectraMylnikovResolver';
 import {
+  resolveSpectraWigleWifi,
+  spectraWigleConfigured,
+} from '../services/spectra/SpectraWigleRadioResolver';
+import {
   acquireSpectraResourcePermit,
   SpectraResourceBusyError,
 } from '../services/spectra/SpectraResourceGovernor';
@@ -1042,7 +1046,7 @@ async function googleRadioPoint(
 async function radioPoint(
   measurement: z.infer<typeof telemetryRadioSchema>,
 ): Promise<GPSPoint | null> {
-  const [googleOutcome, beaconOutcome, openCellOutcome, mylnikovOutcome] = await Promise.allSettled([
+  const [googleOutcome, beaconOutcome, openCellOutcome, mylnikovOutcome, wigleOutcome] = await Promise.allSettled([
     googleRadioPoint(measurement),
     beaconDbRadioPoint(measurement),
     openCellIdPoint(measurement),
@@ -1067,13 +1071,20 @@ async function radioPoint(
       }),
       metadata: measurement.metadata,
     }),
+    resolveSpectraWigleWifi({
+      timestamp: measurement.timestamp,
+      provider: measurement.provider,
+      wifiAccessPoints: sanitizedWifiAccessPoints(measurement),
+      metadata: measurement.metadata,
+    }),
   ]);
 
   const googlePoint = googleOutcome.status === 'fulfilled' ? googleOutcome.value : null;
   const beaconPoint = beaconOutcome.status === 'fulfilled' ? beaconOutcome.value : null;
   const openCellPoint = openCellOutcome.status === 'fulfilled' ? openCellOutcome.value : null;
   const mylnikovPoints = mylnikovOutcome.status === 'fulfilled' ? mylnikovOutcome.value : [];
-  const candidates = [googlePoint, beaconPoint, openCellPoint, ...mylnikovPoints].filter(
+  const wiglePoint = wigleOutcome.status === 'fulfilled' ? wigleOutcome.value : null;
+  const candidates = [googlePoint, beaconPoint, openCellPoint, ...mylnikovPoints, wiglePoint].filter(
     (point): point is GPSPoint => Boolean(point)
   );
   if (!candidates.length) return null;
@@ -2220,6 +2231,7 @@ router.get('/telemetry-capabilities', (_req: Request, res: Response) => {
       },
       radioGeolocationProviders: {
         mylnikovOpenData: true,
+        wigle: spectraWigleConfigured(),
         beaconDb: true,
         google: Boolean(
           process.env.SPECTRA_GOOGLE_GEOLOCATION_API_KEY
