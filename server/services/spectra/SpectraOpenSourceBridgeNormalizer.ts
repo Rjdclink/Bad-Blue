@@ -1,5 +1,6 @@
 import * as cheerio from 'cheerio';
 import { resolveConfiguredSpectraAnchor } from './SpectraAnchorRegistry';
+import { resolveSpectraFloorplanCoordinate } from './SpectraFloorplanTransformer';
 import { resolveSpectraInfrastructureBinding } from './SpectraInfrastructureIdentity';
 
 export type SpectraOpenSourceBridgeKind =
@@ -13,7 +14,8 @@ export type SpectraOpenSourceBridgeKind =
   | 'meshtastic-position'
   | 'cot-location'
   | 'homeassistant-device-tracker'
-  | 'gpsd-tpv';
+  | 'gpsd-tpv'
+  | 'omlox-location';
 
 export interface SpectraOpenSourceBridgeBatch {
   sessionId?: string;
@@ -1433,6 +1435,237 @@ function normalizeGpsd(
   };
 }
 
+function normalizeOmlox(
+  providerId: string,
+  payload: unknown,
+): SpectraOpenSourceBridgeBatch {
+  const wrapped = envelope(payload, providerId);
+  const outer = wrapped.outer;
+  const event = text(outer.event, 40)?.toLowerCase();
+  const topic = text(outer.topic, 120)?.toLowerCase();
+
+  if (event && event !== 'message' && event !== 'subscribed') {
+    throw new Error('omlox payload is not a location message.');
+  }
+  if (
+    topic
+    && topic !== 'location_updates'
+    && topic !== 'location_updates:geojson'
+  ) {
+    throw new Error('omlox payload is not a location-update topic.');
+  }
+
+  const rows = (() => {
+    const payloadRows = list(outer.payload);
+    if (payloadRows.length) return payloadRows;
+
+    const dataRows = list(outer.data);
+    if (dataRows.length) return dataRows;
+
+    if (
+      String(outer.type || '').toLowerCase() === 'featurecollection'
+      && list(outer.features).length
+    ) return list(outer.features);
+
+    return [outer];
+  })();
+
+  const measurements = rows.slice(0, 2_000).flatMap(raw => {
+    const sourceRow = record(raw);
+    const geometry = record(
+      sourceRow.position
+      ?? sourceRow.geometry
+      ?? sourceRow.location,
+    );
+    const properties = record(sourceRow.properties);
+    const coordinates = Array.isArray(geometry.coordinates)
+      ? geometry.coordinates
+      : [];
+
+    const row = String(sourceRow.type || '').toLowerCase() === 'feature'
+      ? { ...properties, position: geometry }
+      : sourceRow;
+
+    const position = record(row.position ?? geometry);
+    const pointCoordinates = Array.isArray(position.coordinates)
+      ? position.coordinates
+      : coordinates;
+
+    const crs = String(
+      row.crs
+      ?? properties.crs
+      ?? 'local',
+    ).trim().toLowerCase();
+
+    let latitude = bounded(
+      row.latitude ?? row.lat,
+      -90,
+      90,
+    );
+    let longitude = bounded(
+      row.longitude ?? row.lon ?? row.lng,
+      -180,
+      180,
+    );
+    let altitude = finite(row.altitude ?? row.elevation);
+
+    if (
+      latitude === null
+      && longitude === null
+      && pointCoordinates.length >= 2
+    ) {
+      const x = finite(pointCoordinates[0]);
+      const y = finite(pointCoordinates[1]);
+      const z = finite(pointCoordinates[2]);
+
+      if (
+        x !== null
+        && y !== null
+        && (
+          crs.includes('4326')
+          || crs === 'wgs84'
+          || crs === 'epsg:4326'
+        )
+      ) {
+        longitude = bounded(x, -180, 180);
+        latitude = bounded(y, -90, 90);
+        altitude = z ?? altitude;
+      } else if (x !== null && y !== null) {
+        const transformed = resolveSpectraFloorplanCoordinate({
+          provider: wrapped.providerId,
+          mapId: text(
+            row.source
+            ?? row.zone_id
+            ?? row.zoneId
+            ?? row.provider_id
+            ?? row.providerId,
+            200,
+          ),
+          floorId: text(row.floor, 120),
+          x,
+          y,
+        });
+        if (transformed) {
+          latitude = transformed.latitude;
+          longitude = transformed.longitude;
+          altitude = z ?? altitude;
+        }
+      }
+    }
+
+    const timestamp = isoTimestamp(
+      row.timestamp_generated
+      ?? row.timestampGenerated
+      ?? row.timestamp_sent
+      ?? row.timestampSent
+      ?? row.timestamp
+      ?? outer.timestamp,
+    );
+    if (latitude === null || longitude === null || !timestamp) return [];
+
+    const providerType = text(
+      row.provider_type
+      ?? row.providerType,
+      120,
+    );
+    const providerObjectId = text(
+      row.provider_id
+      ?? row.providerId
+      ?? row.source,
+      240,
+    );
+    const trackables = list(row.trackables)
+      .map(item => text(item, 240))
+      .filter((item): item is string => Boolean(item))
+      .slice(0, 64);
+    const accuracy = finite(row.accuracy);
+    const speed = finite(row.speed);
+    const course = bounded(
+      row.course
+      ?? row.true_heading
+      ?? row.trueHeading
+      ?? row.magnetic_heading
+      ?? row.magneticHeading,
+      0,
+      360,
+    );
+
+    return [{
+      kind: 'position',
+      source: providerType && /uwb/i.test(providerType)
+        ? 'uwb_range'
+        : providerType && /wifi/i.test(providerType)
+          ? 'wifi_fingerprint'
+          : providerType && /ble|bluetooth/i.test(providerType)
+            ? 'bluetooth_proximity'
+            : 'device_gps',
+      timestamp,
+      latitude,
+      longitude,
+      altitude: altitude ?? undefined,
+      accuracy:
+        accuracy !== null && accuracy > 0
+          ? Math.min(5_000_000, accuracy)
+          : undefined,
+      speed:
+        speed !== null && speed >= 0
+          ? speed
+          : undefined,
+      heading: course ?? undefined,
+      confidence: confidenceForAccuracy(
+        accuracy !== null && accuracy > 0 ? accuracy : 20,
+        0.97,
+      ),
+      provider: wrapped.providerId,
+      recordId: text(
+        [
+          providerObjectId,
+          trackables[0],
+          timestamp,
+        ].filter(Boolean).join('@'),
+        300,
+      ),
+      correlationGroup:
+        `omlox:${wrapped.providerId}:${trackables[0] || providerObjectId || 'trackable'}`,
+      metadata: {
+        acquisitionMethod: 'omlox-location-update',
+        omloxTopic: topic,
+        omloxProviderType: providerType,
+        omloxProviderId: providerObjectId,
+        omloxTrackables: trackables,
+        omloxCrs: crs,
+        omloxAssociated:
+          typeof row.associated === 'boolean'
+            ? row.associated
+            : undefined,
+        omloxFloor: finite(row.floor) ?? undefined,
+        omloxHeadingAccuracy:
+          finite(row.heading_accuracy ?? row.headingAccuracy) ?? undefined,
+        omloxElevationReference: text(
+          row.elevation_ref ?? row.elevationRef,
+          80,
+        ),
+      },
+    }];
+  });
+
+  if (!measurements.length) {
+    throw new Error('omlox payload contains no usable location updates.');
+  }
+
+  return {
+    sessionId: wrapped.sessionId,
+    subjectLabel: wrapped.subjectLabel,
+    sourceId: wrapped.providerId,
+    measurements,
+    metadata: {
+      normalization: 'omlox-location',
+      observationCount: measurements.length,
+      normalizedAt: new Date().toISOString(),
+    },
+  };
+}
+
 function normalizeHomeAssistant(
   providerId: string,
   payload: unknown,
@@ -1757,6 +1990,9 @@ export function normalizeSpectraOpenSourceBridgePayload(
     case 'gpsd-tpv':
       batch = normalizeGpsd(providerId, payload);
       break;
+    case 'omlox-location':
+      batch = normalizeOmlox(providerId, payload);
+      break;
     default: {
       const exhaustive: never = kind;
       throw new Error(`Unsupported open-source bridge normalizer: ${String(exhaustive)}`);
@@ -1779,4 +2015,5 @@ export const SPECTRA_OPEN_SOURCE_BRIDGE_KINDS:
     'cot-location',
     'homeassistant-device-tracker',
     'gpsd-tpv',
+    'omlox-location',
   ] as const;
