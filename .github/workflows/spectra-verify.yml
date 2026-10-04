@@ -37,7 +37,7 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm ci --legacy-peer-deps
+        run: npm ci --legacy-peer-deps 2>&1 | tee npm-ci.log
 
       - name: Run SPECTRA regression suite
         run: npm run verify:spectra 2>&1 | tee spectra-verify.log
@@ -52,6 +52,7 @@ jobs:
         with:
           name: spectra-verification-diagnostics
           path: |
+            npm-ci.log
             spectra-verify.log
             typescript-check.log
           if-no-files-found: warn
