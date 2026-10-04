@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from 'express';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
+import { pool } from '../db';
 import { isAuthenticated } from '../auth';
 import {
   arcGisCameras,

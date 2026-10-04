@@ -62,3 +62,6 @@ if (String(process.env.DATABASE_URL || '').trim()) {
 }
 
 console.log('SPECTRA continuous acquisition control verification passed');
+// The shared database module starts a long-lived pool monitor for the server.
+// This standalone verifier has finished its awaited checks and can exit now.
+process.exit(0);

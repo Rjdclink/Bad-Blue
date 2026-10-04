@@ -303,7 +303,7 @@ async function processPublish(runtime: Runtime, flags: number, body: Buffer): Pr
       }
 
       const payload = JSON.parse(payloadBytes.toString('utf8'));
-      const payloadRecord =
+      const payloadRecord: Record<string, unknown> =
         payload && typeof payload === 'object' && !Array.isArray(payload)
           ? payload as Record<string, unknown>
           : Array.isArray(payload)

@@ -618,13 +618,13 @@ test('SPECTRA live confidence is posterior/covariance driven with no hard-coded 
   !liveConfidence.includes('exceedsNinetyNinePercent') &&
   !liveConfidence.includes('strongConsensus.length < 3') &&
   !liveConfidence.includes('precisionFamilyCount < 2'));
-test('Main SPECTRA acquisition uses the constraint solver before fusion confidence and persistence',
+test('Main SPECTRA acquisition uses the constraint solver for fusion and confidence while persisting raw observations',
   routes.includes("import { solveSpectraConstraintLayer } from '../services/spectra/SpectraConstraintSolver'") &&
   routes.includes('const constraintSolution = solveSpectraConstraintLayer(qualityLocationObservations)') &&
   routes.includes('const solvedLocationObservations = constraintSolution.points') &&
   routes.includes('inputFusionEngine.fuseInputs(solvedLocationObservations)') &&
   routes.includes('assessSpectraLiveLocation(solvedLocationObservations)') &&
-  routes.includes('observations: solvedLocationObservations') &&
+  routes.includes('observations: newRawLocationObservations') &&
   routes.includes('constraintSolverDiagnostics: constraintSolution.diagnostics'));
 test('Telemetry persistence and realtime publish the same constrained points used by posterior and Futurecast',
   geoconsoleRoutes.includes('const constrainedPoints = constraintSolution.points') &&
@@ -1126,7 +1126,9 @@ test('Infrastructure client association can fall back to configured AP anchors w
   infrastructureNormalizer.includes('const associatedAnchor = ids.apId') &&
   infrastructureNormalizer.includes("coordinateSource: 'configured-anchor'") &&
   infrastructureNormalizer.includes('? 0.72') &&
-  providerNormalizer.includes("'unifi-client-location'"));
+  infrastructureNormalizer.includes("'unifi-client-location'") &&
+  providerNormalizer.includes('...SPECTRA_INFRASTRUCTURE_PROVIDER_KINDS') &&
+  providerNormalizer.includes('normalizeSpectraInfrastructureProviderPayload('));
 test('Major infrastructure feeds normalize through the canonical SPECTRA provider path',
   infrastructureNormalizer.includes("'mist-location'") &&
   infrastructureNormalizer.includes("'extreme-location'") &&

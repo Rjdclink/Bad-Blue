@@ -930,7 +930,7 @@ function normalizeTraccar(
         ? payload as any[]
         : [outer];
 
-  const measurements = rows.slice(0, 2_000).flatMap(raw => {
+  const measurements: Array<Record<string, unknown>> = rows.slice(0, 2_000).flatMap((raw): Array<Record<string, unknown>> => {
     const row = record(raw);
     const timestamp = isoTimestamp(
       row.fixTime

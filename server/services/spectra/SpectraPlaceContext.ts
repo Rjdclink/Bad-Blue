@@ -177,6 +177,7 @@ export async function acquireSpectraPlaceContext(
               : 'map_feature',
         metadata: {
           tags: feature.tags,
+          geometry: feature.geometry,
           contextOnly: true,
           conflatedMap: true,
         },

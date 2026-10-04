@@ -1,8 +1,11 @@
+import { spectraHootenannyConfigured } from './SpectraHootenannyContext';
+
 export type SpectraAdapterMode =
   | 'live-telemetry'
   | 'provider-webhook'
   | 'provider-pull'
   | 'anchor-resolution'
+  | 'radio-geolocation'
   | 'radio-resolution'
   | 'ranging'
   | 'media'
@@ -899,7 +902,7 @@ export const SPECTRA_ADAPTER_CAPABILITIES: SpectraAdapterCapability[] = [
     label: 'Hootenanny conflated map context',
     mode: 'place-context',
     sourceTypes: ['public_record'],
-    configured: () => anyEnv('SPECTRA_HOOTENANNY_BASE_URL', 'SPECTRA_HOOTENANNY_MAP_ID'),
+    configured: () => spectraHootenannyConfigured(),
     priority: 'high',
     supportsRealtime: false,
     notes: 'Queries a configured Hootenanny conflated map by bounding box so roads, buildings and POIs from multiple source datasets can strengthen map matching without becoming target telemetry.',

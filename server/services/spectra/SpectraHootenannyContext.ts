@@ -5,6 +5,7 @@ export interface SpectraHootenannyFeature {
   type: 'node' | 'way';
   latitude?: number;
   longitude?: number;
+  geometry?: Array<{ latitude: number; longitude: number }>;
   tags: Record<string, string>;
   provider: 'Hootenanny';
   contextOnly: true;
@@ -63,8 +64,14 @@ function bbox(
 }
 
 function numeric(value: string | undefined): number | null {
+  if (value === undefined || value.trim() === '') return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function validCoordinate(latitude: number, longitude: number): boolean {
+  return latitude >= -90 && latitude <= 90
+    && longitude >= -180 && longitude <= 180;
 }
 
 function usefulTags(tags: Record<string, string>): boolean {
@@ -93,7 +100,8 @@ function parseOsmXml(xml: string): SpectraHootenannyFeature[] {
     const id = String(node.attr('id') || '').trim();
     const latitude = numeric(node.attr('lat'));
     const longitude = numeric(node.attr('lon'));
-    if (!id || latitude === null || longitude === null) return;
+    if (!id || latitude === null || longitude === null
+      || !validCoordinate(latitude, longitude)) return;
     nodes.set(id, { latitude, longitude });
   });
 
@@ -144,10 +152,18 @@ function parseOsmXml(xml: string): SpectraHootenannyFeature[] {
       const point = nodes.get(ref);
       return point ? [point] : [];
     });
-    const centroid = coordinates.length
+    if (!coordinates.length) return;
+    const first = coordinates[0];
+    const last = coordinates[coordinates.length - 1];
+    const vertices = coordinates.length > 1
+      && first.latitude === last.latitude
+      && first.longitude === last.longitude
+      ? coordinates.slice(0, -1)
+      : coordinates;
+    const centroid = vertices.length
       ? {
-          latitude: coordinates.reduce((sum, point) => sum + point.latitude, 0) / coordinates.length,
-          longitude: coordinates.reduce((sum, point) => sum + point.longitude, 0) / coordinates.length,
+          latitude: vertices.reduce((sum, point) => sum + point.latitude, 0) / vertices.length,
+          longitude: vertices.reduce((sum, point) => sum + point.longitude, 0) / vertices.length,
         }
       : null;
 
@@ -156,6 +172,7 @@ function parseOsmXml(xml: string): SpectraHootenannyFeature[] {
       type: 'way',
       latitude: centroid?.latitude,
       longitude: centroid?.longitude,
+      geometry: coordinates,
       tags,
       provider: 'Hootenanny',
       contextOnly: true,

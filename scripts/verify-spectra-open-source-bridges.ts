@@ -341,7 +341,7 @@ try {
   );
   assert.equal(meshtastic.measurements.length, 1);
   assert.equal(meshtastic.measurements[0].latitude, 41.2566);
-  assert.equal(meshtastic.measurements[0].longitude, -95.9346);
+  assert.ok(Math.abs(Number(meshtastic.measurements[0].longitude) - (-95.9346)) < 1e-8);
   assert.equal(meshtastic.measurements[0].accuracy, 5);
   assert.equal(meshtastic.measurements[0].speed, 3.2);
   assert.equal(meshtastic.measurements[0].heading, 185);

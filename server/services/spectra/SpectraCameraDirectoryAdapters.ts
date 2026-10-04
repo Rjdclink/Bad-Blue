@@ -155,9 +155,9 @@ function interpolateTemplate(
   radiusMiles: number,
 ): string {
   return template
-    .replaceAll('{{lat}}', encodeURIComponent(String(latitude)))
-    .replaceAll('{{lng}}', encodeURIComponent(String(longitude)))
-    .replaceAll('{{radiusMiles}}', encodeURIComponent(String(radiusMiles)));
+    .split('{{lat}}').join(encodeURIComponent(String(latitude)))
+    .split('{{lng}}').join(encodeURIComponent(String(longitude)))
+    .split('{{radiusMiles}}').join(encodeURIComponent(String(radiusMiles)));
 }
 
 function haversineMeters(lat1: number, lon1: number, lat2: number, lon2: number): number {

@@ -968,7 +968,7 @@ function measurement(batch: ReturnType<typeof normalizeSpectraProviderPayload>, 
   const point = measurement(batch);
   assert.equal(point.source, 'wifi_fingerprint');
   assert.equal(point.accuracy, 7.5);
-  assert.equal(point.provenance?.recordId, '18:fe:34:d7:7c:26');
+  assert.equal(point.recordId, '18:fe:34:d7:7c:26');
 }
 
 {

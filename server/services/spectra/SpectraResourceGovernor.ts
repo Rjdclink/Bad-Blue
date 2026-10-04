@@ -1,4 +1,4 @@
-import { pool } from '../../db';
+import { coordinationPool } from '../../db';
 
 export interface SpectraResourcePermit {
   backend: 'postgres-advisory-lock' | 'local-fallback';
@@ -101,15 +101,44 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 
 async function tryPostgresPermit(
   tenantId: string,
+  deadline: number,
+  signal?: AbortSignal,
 ): Promise<SpectraResourcePermit | null> {
   const { globalLimit, perTenantLimit } = limits();
-  const client = await pool.connect();
+  const remaining = deadline - Date.now();
+  if (remaining <= 0) return null;
+
+  // Session advisory locks must use the session-capable pool. A timed-out
+  // connect may still finish later, so release that client when it arrives.
+  const pendingConnect = coordinationPool.connect();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let abort: (() => void) | undefined;
+  let acquired = false;
+  let client: Awaited<typeof pendingConnect> | null;
+  try {
+    const stopWaiting = new Promise<null>((resolve, reject) => {
+      timer = setTimeout(() => resolve(null), remaining);
+      abort = () => reject(signal?.reason instanceof Error
+        ? signal.reason
+        : new Error('SPECTRA resource acquisition aborted'));
+      signal?.addEventListener('abort', abort, { once: true });
+      if (signal?.aborted) abort();
+    });
+    client = await Promise.race([pendingConnect, stopWaiting]);
+    acquired = client !== null;
+  } finally {
+    if (timer) clearTimeout(timer);
+    if (abort) signal?.removeEventListener('abort', abort);
+    if (!acquired) pendingConnect.then(lateClient => lateClient.release(), () => undefined);
+  }
+  if (!client) return null;
 
   let globalSlot: number | null = null;
   let tenantSlot: number | null = null;
 
   try {
     for (let slot = 0; slot < globalLimit; slot += 1) {
+      if (signal?.aborted || Date.now() >= deadline) break;
       const result = await client.query(
         'SELECT pg_try_advisory_lock($1::integer, $2::integer) AS acquired',
         [GLOBAL_NAMESPACE, slot],
@@ -125,6 +154,7 @@ async function tryPostgresPermit(
     }
 
     for (let slot = 0; slot < perTenantLimit; slot += 1) {
+      if (signal?.aborted || Date.now() >= deadline) break;
       const tenantSlotKey = signedHash32(`${tenantId}:${slot}`);
       const result = await client.query(
         'SELECT pg_try_advisory_lock($1::integer, $2::integer) AS acquired',
@@ -137,12 +167,23 @@ async function tryPostgresPermit(
     }
 
     if (tenantSlot === null) {
-      await client.query(
-        'SELECT pg_advisory_unlock($1::integer, $2::integer)',
-        [GLOBAL_NAMESPACE, globalSlot],
-      ).catch(() => undefined);
-      client.release();
+      let unlockError: Error | undefined;
+      try {
+        await client.query(
+          'SELECT pg_advisory_unlock($1::integer, $2::integer)',
+          [GLOBAL_NAMESPACE, globalSlot],
+        );
+      } catch (error) {
+        unlockError = error instanceof Error ? error : new Error(String(error));
+      }
+      client.release(unlockError);
       return null;
+    }
+
+    if (signal?.aborted || Date.now() >= deadline) {
+      throw signal?.reason instanceof Error
+        ? signal.reason
+        : new Error('SPECTRA resource acquisition expired');
     }
 
     postgresPermitsGranted += 1;
@@ -183,7 +224,7 @@ async function tryPostgresPermit(
         [GLOBAL_NAMESPACE, globalSlot],
       ).catch(() => undefined);
     }
-    client.release();
+    client.release(error instanceof Error ? error : new Error(String(error)));
     throw error;
   }
 }
@@ -231,9 +272,15 @@ export async function acquireSpectraResourcePermit(
       }
 
       try {
-        const permit = await tryPostgresPermit(normalizedTenantId);
+        const permit = await tryPostgresPermit(
+          normalizedTenantId,
+          startedAt + acquireTimeoutMs,
+          signal,
+        );
         if (permit) return permit;
       } catch (error) {
+        if (signal?.aborted) throw error;
+        if (Date.now() - startedAt >= acquireTimeoutMs) break;
         if (limits().localFallbackEnabled) {
           const fallback = tryLocalPermit(normalizedTenantId);
           if (fallback) return fallback;
