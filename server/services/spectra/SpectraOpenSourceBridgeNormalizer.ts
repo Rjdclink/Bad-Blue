@@ -1,7 +1,10 @@
+import { resolveConfiguredSpectraAnchor } from './SpectraAnchorRegistry';
+
 export type SpectraOpenSourceBridgeKind =
   | 'owntracks-location'
   | 'chirpstack-location'
-  | 'find3-location';
+  | 'find3-location'
+  | 'espresense-observation';
 
 export interface SpectraOpenSourceBridgeBatch {
   sessionId?: string;
@@ -373,6 +376,133 @@ function normalizeFind3(
   };
 }
 
+function normalizeEspresense(
+  providerId: string,
+  payload: unknown,
+): SpectraOpenSourceBridgeBatch {
+  const wrapped = envelope(payload, providerId);
+  const outer = wrapped.outer;
+  const rows = list(outer.events).length
+    ? list(outer.events)
+    : list(outer.data).length
+      ? list(outer.data)
+      : [outer];
+
+  const measurements = rows.slice(0, 2_000).flatMap(raw => {
+    const row = record(raw);
+    const room = text(
+      row.room
+      ?? row.roomId
+      ?? row.room_id
+      ?? row.node
+      ?? row.nodeId
+      ?? row.node_id,
+      200,
+    );
+    const anchor = resolveConfiguredSpectraAnchor({
+      id: room,
+      anchorId: room,
+      deviceId: room,
+      locatorId: room,
+      macAddress: row.scannerMac ?? row.scanner_mac,
+    });
+    if (!anchor) return [];
+
+    const timestamp = isoTimestamp(
+      row.timestamp
+      ?? row.time
+      ?? row.tst
+      ?? row.lastSeen
+      ?? row.last_seen
+      ?? Date.now(),
+    );
+    if (!timestamp) return [];
+
+    const distance = finite(
+      row.distance
+      ?? row.distanceMeters
+      ?? row.distance_m
+      ?? row.dist,
+    );
+    const rssi = bounded(row.rssi ?? row.rssiDbm ?? row.rssi_dbm, -127, 0);
+    const txPower = bounded(
+      row.txPower
+      ?? row.tx_power
+      ?? row.measuredPower
+      ?? row.measured_power,
+      -127,
+      0,
+    );
+    if (
+      (distance === null || distance < 0)
+      && (rssi === null || txPower === null)
+    ) return [];
+
+    const deviceId = text(
+      row.id
+      ?? row.device
+      ?? row.deviceId
+      ?? row.device_id
+      ?? row.mac
+      ?? row.macAddress,
+      200,
+    );
+
+    return [{
+      kind: 'ranging',
+      source: 'ble_rssi',
+      timestamp,
+      provider: wrapped.providerId,
+      correlationGroup:
+        `espresense:${wrapped.providerId}:${deviceId || 'device'}`,
+      anchors: [{
+        id: anchor.id,
+        latitude: anchor.latitude,
+        longitude: anchor.longitude,
+        distanceMeters:
+          distance !== null && distance >= 0
+            ? Math.min(1_000_000, distance)
+            : undefined,
+        rssiDbm: rssi ?? undefined,
+        txPowerAtOneMeterDbm: txPower ?? undefined,
+        uncertaintyMeters: anchor.accuracyMeters
+          ? Math.max(0.25, anchor.accuracyMeters)
+          : undefined,
+      }],
+      metadata: {
+        acquisitionMethod: 'espresense-ble-ranging',
+        espresenseRoom: room,
+        espresenseDeviceId: deviceId,
+        espresenseVariance: finite(row.var ?? row.variance) ?? undefined,
+        espresenseVisible:
+          typeof row.vis === 'boolean'
+            ? row.vis
+            : typeof row.visible === 'boolean'
+              ? row.visible
+              : undefined,
+      },
+    }];
+  });
+
+  if (!measurements.length) {
+    throw new Error(
+      'ESPresense payload contains no usable observation with a configured scanner anchor.',
+    );
+  }
+
+  return {
+    sessionId: wrapped.sessionId,
+    subjectLabel: wrapped.subjectLabel,
+    sourceId: wrapped.providerId,
+    measurements,
+    metadata: {
+      normalization: 'espresense-observation',
+      observationCount: measurements.length,
+      normalizedAt: new Date().toISOString(),
+    },
+  };
+}
+
 export function normalizeSpectraOpenSourceBridgePayload(
   kind: SpectraOpenSourceBridgeKind,
   providerId: string,
@@ -387,6 +517,8 @@ export function normalizeSpectraOpenSourceBridgePayload(
       return normalizeChirpStack(providerId, payload);
     case 'find3-location':
       return normalizeFind3(providerId, payload);
+    case 'espresense-observation':
+      return normalizeEspresense(providerId, payload);
     default: {
       const exhaustive: never = kind;
       throw new Error(`Unsupported open-source bridge normalizer: ${String(exhaustive)}`);
@@ -399,4 +531,5 @@ export const SPECTRA_OPEN_SOURCE_BRIDGE_KINDS:
     'owntracks-location',
     'chirpstack-location',
     'find3-location',
+    'espresense-observation',
   ] as const;
