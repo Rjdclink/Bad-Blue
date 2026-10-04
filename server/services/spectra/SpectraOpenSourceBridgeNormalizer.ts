@@ -11,7 +11,8 @@ export type SpectraOpenSourceBridgeKind =
   | 'openwisp-wifi-session'
   | 'traccar-position'
   | 'meshtastic-position'
-  | 'cot-location';
+  | 'cot-location'
+  | 'homeassistant-device-tracker';
 
 export interface SpectraOpenSourceBridgeBatch {
   sessionId?: string;
@@ -1316,6 +1317,142 @@ function normalizeMeshtastic(
   };
 }
 
+function normalizeHomeAssistant(
+  providerId: string,
+  payload: unknown,
+): SpectraOpenSourceBridgeBatch {
+  const wrapped = envelope(payload, providerId);
+  const outer = wrapped.outer;
+  const event = record(outer.event);
+  const eventData = record(event.data);
+  const nestedState = record(
+    eventData.new_state
+    ?? eventData.newState
+    ?? outer.new_state
+    ?? outer.newState,
+  );
+
+  const rows = list(outer.states).length
+    ? list(outer.states)
+    : list(outer.data).length
+      ? list(outer.data)
+      : Object.keys(nestedState).length
+        ? [nestedState]
+        : Array.isArray(payload)
+          ? payload as any[]
+          : [outer];
+
+  const measurements = rows.slice(0, 2_000).flatMap(raw => {
+    const row = record(raw);
+    const attributes = record(row.attributes);
+    const entityId = text(row.entity_id ?? row.entityId, 300);
+    if (entityId && !/^(?:device_tracker|person)\./i.test(entityId)) {
+      return [];
+    }
+
+    const latitude = bounded(
+      attributes.latitude ?? row.latitude,
+      -90,
+      90,
+    );
+    const longitude = bounded(
+      attributes.longitude ?? row.longitude,
+      -180,
+      180,
+    );
+    const timestamp = isoTimestamp(
+      row.last_updated
+      ?? row.lastUpdated
+      ?? row.last_changed
+      ?? row.lastChanged
+      ?? attributes.timestamp
+      ?? outer.timestamp,
+    );
+    if (latitude === null || longitude === null || !timestamp) return [];
+
+    const accuracy = finite(
+      attributes.gps_accuracy
+      ?? attributes.gpsAccuracy
+      ?? row.gps_accuracy
+      ?? row.gpsAccuracy,
+    );
+    const altitude = finite(
+      attributes.altitude
+      ?? attributes.elevation
+      ?? row.altitude,
+    );
+    const speed = finite(attributes.speed ?? row.speed);
+    const heading = bounded(
+      attributes.course
+      ?? attributes.heading
+      ?? row.course
+      ?? row.heading,
+      0,
+      360,
+    );
+
+    return [{
+      kind: 'position',
+      source: 'device_gps',
+      timestamp,
+      latitude,
+      longitude,
+      altitude: altitude ?? undefined,
+      accuracy:
+        accuracy !== null && accuracy > 0
+          ? Math.min(5_000_000, accuracy)
+          : undefined,
+      speed:
+        speed !== null && speed >= 0
+          ? speed
+          : undefined,
+      heading: heading ?? undefined,
+      confidence: confidenceForAccuracy(
+        accuracy !== null && accuracy > 0 ? accuracy : 25,
+        0.96,
+      ),
+      provider: wrapped.providerId,
+      recordId: entityId,
+      correlationGroup:
+        `homeassistant:${wrapped.providerId}:${entityId || 'tracker'}`,
+      metadata: {
+        acquisitionMethod: 'homeassistant-device-tracker',
+        homeAssistantEntityId: entityId,
+        homeAssistantState: text(row.state, 120),
+        homeAssistantFriendlyName: text(attributes.friendly_name, 300),
+        homeAssistantSourceType: text(
+          attributes.source_type
+          ?? attributes.sourceType,
+          120,
+        ),
+        homeAssistantBattery: finite(
+          attributes.battery
+          ?? attributes.battery_level
+          ?? attributes.batteryLevel,
+        ) ?? undefined,
+      },
+    }];
+  });
+
+  if (!measurements.length) {
+    throw new Error(
+      'Home Assistant payload contains no usable device_tracker/person coordinates.',
+    );
+  }
+
+  return {
+    sessionId: wrapped.sessionId,
+    subjectLabel: wrapped.subjectLabel,
+    sourceId: wrapped.providerId,
+    measurements,
+    metadata: {
+      normalization: 'homeassistant-device-tracker',
+      observationCount: measurements.length,
+      normalizedAt: new Date().toISOString(),
+    },
+  };
+}
+
 function normalizeCot(
   providerId: string,
   payload: unknown,
@@ -1439,6 +1576,7 @@ function applyConfiguredBridgeIdentity(
       ?? metadata.traccarDeviceId
       ?? metadata.meshtasticNodeId
       ?? metadata.cotUid
+      ?? metadata.homeAssistantEntityId
       ?? metadata.find3Device,
       200,
     ),
@@ -1496,6 +1634,9 @@ export function normalizeSpectraOpenSourceBridgePayload(
     case 'cot-location':
       batch = normalizeCot(providerId, payload);
       break;
+    case 'homeassistant-device-tracker':
+      batch = normalizeHomeAssistant(providerId, payload);
+      break;
     default: {
       const exhaustive: never = kind;
       throw new Error(`Unsupported open-source bridge normalizer: ${String(exhaustive)}`);
@@ -1516,4 +1657,5 @@ export const SPECTRA_OPEN_SOURCE_BRIDGE_KINDS:
     'traccar-position',
     'meshtastic-position',
     'cot-location',
+    'homeassistant-device-tracker',
   ] as const;
