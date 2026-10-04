@@ -1,5 +1,6 @@
 export type SpectraOpenSourceBridgeKind =
-  | 'owntracks-location';
+  | 'owntracks-location'
+  | 'chirpstack-location';
 
 export interface SpectraOpenSourceBridgeBatch {
   sessionId?: string;
@@ -157,6 +158,111 @@ function normalizeOwnTracks(
   };
 }
 
+function normalizeChirpStack(
+  providerId: string,
+  payload: unknown,
+): SpectraOpenSourceBridgeBatch {
+  const wrapped = envelope(payload, providerId);
+  const rows = (() => {
+    const outer = wrapped.outer;
+    const events = list(outer.events);
+    if (events.length) return events;
+    const data = list(outer.data);
+    if (data.length) return data;
+    return [outer];
+  })();
+
+  const measurements = rows.slice(0, 2_000).flatMap(raw => {
+    const row = record(raw);
+    const location = record(row.location);
+    const deviceInfo = record(row.deviceInfo ?? row.device_info);
+    const latitude = bounded(
+      location.latitude ?? row.latitude ?? row.lat,
+      -90,
+      90,
+    );
+    const longitude = bounded(
+      location.longitude ?? row.longitude ?? row.lon ?? row.lng,
+      -180,
+      180,
+    );
+    const timestamp = isoTimestamp(
+      row.time
+      ?? row.timestamp
+      ?? row.receivedAt
+      ?? row.received_at,
+    );
+    if (latitude === null || longitude === null || !timestamp) return [];
+
+    const altitude = finite(location.altitude ?? row.altitude);
+    const accuracy = finite(location.accuracy ?? row.accuracy);
+    const deviceId = text(
+      deviceInfo.devEui
+      ?? deviceInfo.dev_eui
+      ?? deviceInfo.deviceName
+      ?? deviceInfo.device_name
+      ?? row.devEui
+      ?? row.dev_eui,
+      200,
+    );
+    const deduplicationId = text(
+      row.deduplicationId ?? row.deduplication_id ?? row.id,
+      300,
+    );
+    const locationSource = text(
+      location.source ?? row.locationSource ?? row.location_source,
+      80,
+    );
+
+    return [{
+      kind: 'position',
+      source: 'device_gps',
+      timestamp,
+      latitude,
+      longitude,
+      altitude: altitude ?? undefined,
+      accuracy: accuracy !== null && accuracy > 0 ? accuracy : undefined,
+      confidence: confidenceForAccuracy(
+        accuracy !== null && accuracy > 0 ? accuracy : 50,
+        0.92,
+      ),
+      provider: wrapped.providerId,
+      recordId: deduplicationId,
+      correlationGroup:
+        `chirpstack:${wrapped.providerId}:${deviceId || 'device'}`,
+      metadata: {
+        acquisitionMethod: 'chirpstack-location-event',
+        chirpStackDeviceId: deviceId,
+        chirpStackLocationSource: locationSource,
+        chirpStackTenantId: text(
+          deviceInfo.tenantId ?? deviceInfo.tenant_id,
+          200,
+        ),
+        chirpStackApplicationId: text(
+          deviceInfo.applicationId ?? deviceInfo.application_id,
+          200,
+        ),
+      },
+    }];
+  });
+
+  if (!measurements.length) {
+    throw new Error('ChirpStack payload contains no usable LocationEvent observations.');
+  }
+
+  return {
+    sessionId: wrapped.sessionId,
+    subjectLabel: wrapped.subjectLabel,
+    sourceId: wrapped.providerId,
+    measurements,
+    metadata: {
+      normalization: 'chirpstack-location',
+      observationCount: measurements.length,
+      normalizedAt: new Date().toISOString(),
+    },
+  };
+}
+
 export function normalizeSpectraOpenSourceBridgePayload(
   kind: SpectraOpenSourceBridgeKind,
   providerId: string,
@@ -167,6 +273,8 @@ export function normalizeSpectraOpenSourceBridgePayload(
   switch (kind) {
     case 'owntracks-location':
       return normalizeOwnTracks(providerId, payload);
+    case 'chirpstack-location':
+      return normalizeChirpStack(providerId, payload);
     default: {
       const exhaustive: never = kind;
       throw new Error(`Unsupported open-source bridge normalizer: ${String(exhaustive)}`);
@@ -177,4 +285,5 @@ export function normalizeSpectraOpenSourceBridgePayload(
 export const SPECTRA_OPEN_SOURCE_BRIDGE_KINDS:
   readonly SpectraOpenSourceBridgeKind[] = [
     'owntracks-location',
+    'chirpstack-location',
   ] as const;
