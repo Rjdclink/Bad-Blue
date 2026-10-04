@@ -924,7 +924,7 @@ router.get('/health', async (_req: Request, res: Response) => {
   }
 
   const unhealthyStreams = [...providerStreams, ...mqttStreams]
-    .filter(item => item.state === 'failed' || item.state === 'degraded');
+    .filter(item => item.state === 'degraded' || item.state === 'stopped');
   const status = persistence === 'healthy' && unhealthyStreams.length === 0
     ? 'operational'
     : 'degraded';
