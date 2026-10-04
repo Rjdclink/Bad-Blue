@@ -372,7 +372,9 @@ test('Realtime observations work locally and across replicas when Supabase Realt
   realtimeBridge.includes("table: 'spectra_location_observations'"));
 test('SPECTRA acquisition session stays attached to GeoRuntime without callback churn',
   spectra.includes('sessionId={spectraSessionId}') &&
-  spectra.includes('sessionId: sessionOverride || spectraSessionId || undefined') &&
+  spectra.includes('sessionOverride ||') &&
+  spectra.includes('spectraSessionIdRef.current ||') &&
+  spectra.includes('sessionId: resolvedSessionId') &&
   dashboard.includes('sessionId?: string | null') &&
   dashboard.includes('sessionId: sessionId || undefined') &&
   runtime.includes('const sessionIdRef = useRef<string | null>') &&
