@@ -59,6 +59,7 @@ import {
   getSpectraActiveAcquisitionHealth,
 } from '../services/spectra/SpectraActiveAcquisition';
 import { acquireSpectraPublicMobilityContext } from '../services/spectra/SpectraPublicMobilityContext';
+import { acquireSpectraWzdxContext } from '../services/spectra/SpectraWzdxContext';
 import {
   registerSpectraAcquisitionRequest,
   stopSpectraAcquisitionSession,
@@ -830,6 +831,7 @@ interface SpectraContextEvidence {
   earthObservation: Array<Record<string, unknown>>;
   publicFeeds: Awaited<ReturnType<typeof acquireSpectraPublicMobilityContext>>['feeds'];
   mobilityVehicles: Awaited<ReturnType<typeof acquireSpectraPublicMobilityContext>>['vehicles'];
+  roadWorkZones: Awaited<ReturnType<typeof acquireSpectraWzdxContext>>;
   sourceFamilies: string[];
 }
 
@@ -859,6 +861,7 @@ async function collectSpectraContextEvidence(input: {
       : Promise.resolve(null),
     copernicusItems(input.latitude, input.longitude, earthFrom, earthTo),
     acquireSpectraPublicMobilityContext(input.latitude, input.longitude, 25_000),
+    acquireSpectraWzdxContext(input.latitude, input.longitude, 50_000),
   ]);
 
   const places = outcomes[0].status === 'fulfilled' ? outcomes[0].value : [];
@@ -876,6 +879,9 @@ async function collectSpectraContextEvidence(input: {
     : { feeds: [], vehicles: [] };
   const publicFeeds = publicMobility.feeds;
   const mobilityVehicles = publicMobility.vehicles;
+  const roadWorkZones = outcomes[9].status === 'fulfilled'
+    ? outcomes[9].value
+    : [];
 
   const sourceFamilies: string[] = [];
   if (places.length) sourceFamilies.push('place-context');
@@ -891,6 +897,7 @@ async function collectSpectraContextEvidence(input: {
   if (earthObservation.length) sourceFamilies.push('earth-observation');
   if (publicFeeds.length) sourceFamilies.push('public-mobility-feed');
   if (mobilityVehicles.length) sourceFamilies.push('public-mobility-vehicle-context');
+  if (roadWorkZones.length) sourceFamilies.push('public-road-work-zone');
 
   return {
     anchor: {
@@ -907,6 +914,7 @@ async function collectSpectraContextEvidence(input: {
     earthObservation: earthObservation.slice(0, 20),
     publicFeeds: publicFeeds.slice(0, 24),
     mobilityVehicles: mobilityVehicles.slice(0, 250),
+    roadWorkZones: roadWorkZones.slice(0, 250),
     sourceFamilies,
   };
 }
@@ -1530,6 +1538,7 @@ router.post('/acquire', async (req: Request, res: Response) => {
       earthObservation: [],
       publicFeeds: [],
       mobilityVehicles: [],
+      roadWorkZones: [],
       sourceFamilies: [],
     };
     const contextAnchor = canonicalLatest?.point
@@ -1569,6 +1578,7 @@ router.post('/acquire', async (req: Request, res: Response) => {
       + contextEvidence.earthObservation.length
       + contextEvidence.publicFeeds.length
       + contextEvidence.mobilityVehicles.length
+      + contextEvidence.roadWorkZones.length
       + (contextEvidence.weather ? 1 : 0);
 
     throwIfAcquisitionStopped(acquisitionLease.signal);
