@@ -11,6 +11,7 @@ export interface SpectraMqttProviderConfig {
   label: string;
   brokerUrl: string;
   topic: string;
+  decoder: 'json' | 'cot-xml';
   normalizerKind: SpectraProviderNormalizerKind;
   sessionId?: string;
   subjectLabel?: string;
@@ -27,6 +28,7 @@ export interface SpectraMqttProviderHealth {
   label: string;
   state: 'idle' | 'connecting' | 'healthy' | 'degraded' | 'stopped';
   topic: string;
+  decoder: 'json' | 'cot-xml';
   normalizerKind: string;
   connectedAt?: string;
   lastMessageAt?: string;
@@ -81,6 +83,7 @@ function loadConfigs(): SpectraMqttProviderConfig[] {
       const label = String(item?.label || id).trim().slice(0, 200);
       const brokerUrl = String(item?.brokerUrl || '').trim();
       const topic = String(item?.topic || '').trim().slice(0, 500);
+      const decoder = String(item?.decoder || 'json').trim() as 'json' | 'cot-xml';
       const normalizerKind = String(item?.normalizerKind || '').trim() as SpectraProviderNormalizerKind;
 
       let validBroker = false;
@@ -95,6 +98,7 @@ function loadConfigs(): SpectraMqttProviderConfig[] {
         || !validBroker
         || !topic
         || topic.includes('\u0000')
+        || !['json', 'cot-xml'].includes(decoder)
         || !SPECTRA_PROVIDER_NORMALIZER_KINDS.includes(normalizerKind)
       ) return [];
 
@@ -104,6 +108,7 @@ function loadConfigs(): SpectraMqttProviderConfig[] {
         label: label || id,
         brokerUrl,
         topic,
+        decoder,
         normalizerKind,
         sessionId: String(item?.sessionId || '').trim().slice(0, 200) || undefined,
         subjectLabel: String(item?.subjectLabel || '').trim().slice(0, 500) || undefined,
@@ -262,27 +267,50 @@ async function processPublish(runtime: Runtime, flags: number, body: Buffer): Pr
   runtime.health.lastMessageAt = new Date().toISOString();
 
   try {
-    const payload = JSON.parse(body.subarray(offset).toString('utf8'));
-    const payloadRecord =
-      payload && typeof payload === 'object' && !Array.isArray(payload)
-        ? payload as Record<string, unknown>
-        : Array.isArray(payload)
-          ? { data: payload }
-          : { value: payload };
-    const batch = normalizeSpectraProviderPayload(
-      runtime.config.normalizerKind,
-      runtime.config.id,
-      {
-        ...payloadRecord,
-        sessionId: runtime.config.sessionId
-          || String(payloadRecord.sessionId || '').trim()
-          || undefined,
-        subjectLabel: runtime.config.subjectLabel
-          || String(payloadRecord.subjectLabel || '').trim()
-          || undefined,
-        _spectraMqttTopic: topic.value,
-      },
-    );
+    const payloadBytes = body.subarray(offset);
+    if (!payloadBytes.length || payloadBytes.length > 8_000_000) return;
+
+    const batch = (() => {
+      if (runtime.config.decoder === 'cot-xml') {
+        const xml = payloadBytes.toString('utf8').trim();
+        if (!xml.startsWith('<') || xml.length > 2_000_000) {
+          throw new Error('MQTT CoT frame is empty or exceeds the bounded XML size.');
+        }
+        return normalizeSpectraProviderPayload(
+          runtime.config.normalizerKind,
+          runtime.config.id,
+          {
+            xml,
+            sessionId: runtime.config.sessionId,
+            subjectLabel: runtime.config.subjectLabel,
+            _spectraMqttTopic: topic.value,
+          },
+        );
+      }
+
+      const payload = JSON.parse(payloadBytes.toString('utf8'));
+      const payloadRecord =
+        payload && typeof payload === 'object' && !Array.isArray(payload)
+          ? payload as Record<string, unknown>
+          : Array.isArray(payload)
+            ? { data: payload }
+            : { value: payload };
+
+      return normalizeSpectraProviderPayload(
+        runtime.config.normalizerKind,
+        runtime.config.id,
+        {
+          ...payloadRecord,
+          sessionId: runtime.config.sessionId
+            || String(payloadRecord.sessionId || '').trim()
+            || undefined,
+          subjectLabel: runtime.config.subjectLabel
+            || String(payloadRecord.subjectLabel || '').trim()
+            || undefined,
+          _spectraMqttTopic: topic.value,
+        },
+      );
+    })();
 
     if (acceptOnce(runtime, batch) && consumer) {
       await consumer(batch, runtime.config.id);
@@ -428,6 +456,7 @@ export function startSpectraMqttProviderStreams(nextConsumer: Consumer): void {
         label: config.label,
         state: 'idle',
         topic: config.topic,
+        decoder: config.decoder,
         normalizerKind: config.normalizerKind,
         messages: 0,
         acceptedBatches: 0,
@@ -468,6 +497,7 @@ export function getConfiguredSpectraMqttProviders(): Array<{
   id: string;
   label: string;
   topic: string;
+  decoder: 'json' | 'cot-xml';
   normalizerKind: string;
   sessionBound: boolean;
 }> {
@@ -475,6 +505,7 @@ export function getConfiguredSpectraMqttProviders(): Array<{
     id: config.id,
     label: config.label,
     topic: config.topic,
+    decoder: config.decoder,
     normalizerKind: config.normalizerKind,
     sessionBound: Boolean(config.sessionId),
   }));
