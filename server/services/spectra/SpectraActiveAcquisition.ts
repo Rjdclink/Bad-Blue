@@ -105,6 +105,61 @@ function normalizeDeviceRef(value?: string): string | undefined {
   return normalized ? normalized.slice(0, 300) : undefined;
 }
 
+function configuredDeviceRefForAdapter(
+  config: ActiveProviderConfig,
+  input: SpectraActiveAcquisitionInput,
+): string | undefined {
+  const direct = normalizeDeviceRef(input.deviceRef);
+  if (direct) return direct;
+
+  const raw = String(process.env.SPECTRA_INFRASTRUCTURE_SUBJECT_BINDINGS || '').trim();
+  if (!raw) return undefined;
+
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return undefined;
+
+    const expectedProvider = config.id.trim().toLowerCase();
+    const expectedSession = String(input.sessionId || '').trim().toLowerCase();
+    const expectedSubject = String(input.subjectLabel || '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toLowerCase();
+
+    for (const item of parsed.slice(0, 1000)) {
+      if (!item || typeof item !== 'object') continue;
+      const candidate = item as Record<string, unknown>;
+      const provider = String(candidate.providerId || '').trim().toLowerCase();
+      if (provider && provider !== expectedProvider) continue;
+
+      const sessionId = String(candidate.sessionId || '').trim().toLowerCase();
+      const subjectLabel = String(candidate.subjectLabel || '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .toLowerCase();
+
+      const identityMatches =
+        (expectedSession && sessionId === expectedSession)
+        || (expectedSubject && subjectLabel === expectedSubject);
+      if (!identityMatches) continue;
+
+      const identifier = String(candidate.identifier || '').trim();
+      if (!identifier) continue;
+
+      const unqualified = identifier.replace(
+        /^(?:mac|client|device|user|ip):/i,
+        '',
+      ).trim();
+      const resolved = normalizeDeviceRef(unqualified);
+      if (resolved) return resolved;
+    }
+  } catch {
+    return undefined;
+  }
+
+  return undefined;
+}
+
 function positiveInteger(value: unknown, fallback: number, maximum: number): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed >= 0
@@ -155,7 +210,7 @@ function targetAvailable(
   input: SpectraActiveAcquisitionInput,
 ): boolean {
   if (config.target === 'none') return true;
-  return Boolean(normalizeDeviceRef(input.deviceRef));
+  return Boolean(configuredDeviceRefForAdapter(config, input));
 }
 
 function canonicalBatch(
@@ -489,7 +544,11 @@ async function fetchAdapter(
   config: ActiveProviderConfig,
   input: SpectraActiveAcquisitionInput,
 ): Promise<SpectraNormalizedProviderBatch> {
-  const url = templateUrl(config.url, input);
+  const resolvedInput: SpectraActiveAcquisitionInput = {
+    ...input,
+    deviceRef: configuredDeviceRefForAdapter(config, input),
+  };
+  const url = templateUrl(config.url, resolvedInput);
   if (!url) throw new Error('Configured active-provider URL is invalid.');
 
   for (const [parameter, envName] of Object.entries(config.queryFromEnv || {})) {
@@ -524,7 +583,7 @@ async function fetchAdapter(
       headers,
       redirect: 'error',
       body: config.method === 'POST'
-        ? JSON.stringify(acquisitionBody(input))
+        ? JSON.stringify(acquisitionBody(resolvedInput))
         : undefined,
       signal: controller.signal,
     });
@@ -534,7 +593,7 @@ async function fetchAdapter(
     }
 
     const payload = await response.json();
-    return normalizeProviderResponse(payload, config, input);
+    return normalizeProviderResponse(payload, config, resolvedInput);
   } finally {
     clearTimeout(timeout);
     input.signal?.removeEventListener('abort', relayAbort);
