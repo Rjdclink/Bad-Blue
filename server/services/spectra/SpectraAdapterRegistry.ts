@@ -182,6 +182,16 @@ export const SPECTRA_ADAPTER_CAPABILITIES: SpectraAdapterCapability[] = [
     notes: 'Reconnectable authenticated WSS transport for configured infrastructure providers, with deduplication and stream health reporting.',
   },
   {
+    id: 'openwisp-wifi-session-location',
+    label: 'OpenWISP Wi-Fi session location',
+    mode: 'provider-pull',
+    sourceTypes: ['wifi_fingerprint'],
+    configured: () => anyEnv('SPECTRA_ACTIVE_PROVIDER_ADAPTERS', 'SPECTRA_ANCHOR_CATALOG_JSON'),
+    priority: 'high',
+    supportsRealtime: true,
+    notes: 'Maps OpenWISP Wi-Fi client sessions to configured managed-device/AP anchors, yielding bounded association-location evidence rather than an invented precise fix.',
+  },
+  {
     id: 'kismet-device-location',
     label: 'Kismet Wi-Fi/Bluetooth device-location bridge',
     mode: 'provider-pull',
