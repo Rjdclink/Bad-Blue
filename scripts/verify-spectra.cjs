@@ -1137,12 +1137,20 @@ test('Provider-neutral WSS coordinator is reconnectable, authenticated and wired
   providerStreamCoordinator.includes('scheduleReconnect') &&
   geoconsoleRoutes.includes('startSpectraProviderStreams') &&
   geoconsoleRoutes.includes("'wss-provider-stream'"));
-test('Provider-neutral MQTT transport uses TLS, subscription, reconnect and QoS1 acknowledgement',
+test('Provider-neutral MQTT transport acknowledges QoS1 only after successful canonical consumption',
   mqttProviderCoordinator.includes('SPECTRA_MQTT_PROVIDER_ADAPTERS') &&
   mqttProviderCoordinator.includes("url.protocol === 'mqtts:'") &&
   mqttProviderCoordinator.includes('subscribePacket') &&
   mqttProviderCoordinator.includes('pubAckPacket') &&
   mqttProviderCoordinator.includes('scheduleReconnect') &&
+  mqttProviderCoordinator.includes('await consumer(batch, runtime.config.id)') &&
+  mqttProviderCoordinator.includes('rememberAccepted(runtime, batch)') &&
+  mqttProviderCoordinator.indexOf('await consumer(batch, runtime.config.id)') <
+    mqttProviderCoordinator.indexOf('rememberAccepted(runtime, batch)') &&
+  mqttProviderCoordinator.indexOf('rememberAccepted(runtime, batch)') <
+    mqttProviderCoordinator.indexOf('runtime.socket.write(pubAckPacket(packetId))') &&
+  mqttProviderCoordinator.includes('fail(runtime, error)') &&
+  !mqttProviderCoordinator.includes('function acceptOnce') &&
   geoconsoleRoutes.includes('startSpectraMqttProviderStreams') &&
   geoconsoleRoutes.includes("'mqtts-provider-stream'"));
 test('Native Meraki Scanning API validator, payload secret and v2 observation shape are supported',
