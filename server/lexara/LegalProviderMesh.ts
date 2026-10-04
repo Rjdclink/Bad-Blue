@@ -25,6 +25,10 @@ export interface LegalMeshSearchOptions {
   jurisdiction?: string;
   subject?: string;
   requestedFact?: string;
+  // Live Lexara background turns can return as soon as one independent
+  // provider/query variant yields useful candidates. Default false preserves
+  // comprehensive discovery for legal research, SPECTRA and other callers.
+  firstUseful?: boolean;
 }
 
 const clean = (v: unknown) => {
@@ -39,6 +43,18 @@ const clean = (v: unknown) => {
     return null;
   }
 };
+
+function independentSearchBase(value: string | undefined): string {
+  const base = String(value || '').trim();
+  if (!base) return '';
+  try {
+    const host = new URL(base).hostname.toLowerCase();
+    if (/^pantheon-(?:ddgs|searxng|openserp)\.railway\.internal$/.test(host)) return '';
+  } catch {
+    return base;
+  }
+  return base;
+}
 
 async function withTimeout<T>(
   timeoutMs: number,
@@ -180,7 +196,7 @@ async function duckDuckGoInstantAnswer(query: string, signal?: AbortSignal): Pro
 }
 
 async function searxng(query: string, signal?: AbortSignal): Promise<LegalMeshCandidate[]> {
-  const base = process.env.SEARXNG_URL?.trim();
+  const base = independentSearchBase(process.env.SEARXNG_URL);
   if (!base) return [];
   const result = await withTimeout(2_200, signal, async requestSignal => {
     const endpoint = new URL('/search', base.endsWith('/') ? base : base + '/');
@@ -199,7 +215,7 @@ async function searxng(query: string, signal?: AbortSignal): Promise<LegalMeshCa
 }
 
 async function ddgsBackend(query: string, backend: string, budgetMs: number, signal?: AbortSignal): Promise<LegalMeshCandidate[]> {
-  const base = process.env.DDGS_URL?.trim();
+  const base = independentSearchBase(process.env.DDGS_URL);
   if (!base) return [];
   const result = await withTimeout(budgetMs, signal, async requestSignal => {
     const endpoint = new URL('/search/text', base.endsWith('/') ? base : base + '/');
@@ -219,7 +235,7 @@ async function ddgsBackend(query: string, backend: string, budgetMs: number, sig
 }
 
 async function ddgs(query: string, signal?: AbortSignal): Promise<LegalMeshCandidate[]> {
-  if (!process.env.DDGS_URL?.trim()) return [];
+  if (!independentSearchBase(process.env.DDGS_URL)) return [];
   const primary = [...new Set((process.env.LEXARA_DDGS_BACKEND?.trim() || 'auto').split(',').map(x=>x.trim()).filter(Boolean))].join(',');
   const fallback = [...new Set((process.env.LEXARA_DDGS_FALLBACK_BACKENDS?.trim() || 'auto').split(',').map(x=>x.trim()).filter(x=>x && x!==primary))].join(',');
   const first = await ddgsBackend(query, primary, 1_300, signal);
@@ -227,7 +243,7 @@ async function ddgs(query: string, signal?: AbortSignal): Promise<LegalMeshCandi
 }
 
 async function openserp(query: string, signal?: AbortSignal): Promise<LegalMeshCandidate[]> {
-  const base = process.env.OPENSERP_URL?.trim();
+  const base = independentSearchBase(process.env.OPENSERP_URL);
   if (!base) return [];
   const result = await withTimeout(2_200, signal, async requestSignal => {
     const endpoint = new URL('/mega/search', base.endsWith('/') ? base : base + '/');
@@ -310,31 +326,55 @@ async function commonCrawl(query: string, existingUrls: readonly string[], optio
   return result||[];
 }
 
-async function freeSearch(query: string, signal?: AbortSignal): Promise<LegalMeshCandidate[]> {
+async function freeSearch(
+  query: string,
+  signal?: AbortSignal,
+  firstUseful = false,
+): Promise<LegalMeshCandidate[]> {
   // One parent listener per query variant prevents the shared turn signal from
   // accumulating a listener for every parallel search provider.
   const controller = new AbortController();
   const relayAbort = () => controller.abort(signal?.reason);
   if (signal?.aborted) controller.abort(signal.reason);
   else signal?.addEventListener('abort', relayAbort, { once: true });
+  const providerSearches = [
+    () => tavily(query,controller.signal),
+    () => duckDuckGoInstantAnswer(query,controller.signal),
+    () => searxng(query,controller.signal),
+    () => ddgs(query,controller.signal),
+    () => openserp(query,controller.signal),
+  ];
   try {
-    const groups=await Promise.all([
-      tavily(query,controller.signal),
-      duckDuckGoInstantAnswer(query,controller.signal),
-      searxng(query,controller.signal),
-      ddgs(query,controller.signal),
-      openserp(query,controller.signal),
-    ]);
+    if (firstUseful) {
+      const providerAttempts = providerSearches.map(search =>
+        search().then(results => {
+          if (!results.length) throw new Error('Lexara search provider returned no candidates');
+          return results;
+        }),
+      );
+      try {
+        const firstUsefulResults = await Promise.any(providerAttempts);
+        controller.abort(new Error('Lexara first useful provider result selected'));
+        return firstUsefulResults;
+      } catch (error) {
+        if (signal?.aborted) {
+          const reason = signal.reason;
+          if (reason instanceof Error || reason instanceof DOMException) throw reason;
+          throw new DOMException(typeof reason === 'string' ? reason : 'Lexara discovery cancelled', 'AbortError');
+        }
+        return [];
+      }
+    }
+
+    const groups=await Promise.all(providerSearches.map(search => search()));
     return fuseRankedCandidates(groups);
   } finally {
     signal?.removeEventListener('abort', relayAbort);
   }
 }
 
-async function firstUsefulParallelSearch(
+async function firstUsefulSearchVariants(
   queries: readonly string[],
-  seen: ReadonlySet<string>,
-  providerPrefix: 'supplemental' | 'planned',
   signal?: AbortSignal,
 ): Promise<LegalMeshCandidate[]> {
   if (!queries.length) return [];
@@ -345,8 +385,44 @@ async function firstUsefulParallelSearch(
   else signal?.addEventListener('abort', relayAbort, { once: true });
 
   try {
+    const variantAttempts = queries.map(query =>
+      freeSearch(query, controller.signal, true).then(results => {
+        if (!results.length) throw new Error('Lexara search variant returned no candidates');
+        return results;
+      }),
+    );
+    const firstUsefulResults = await Promise.any(variantAttempts);
+    controller.abort(new Error('Lexara first useful query variant selected'));
+    return firstUsefulResults;
+  } catch (error) {
+    if (signal?.aborted) {
+      const reason = signal.reason;
+      if (reason instanceof Error || reason instanceof DOMException) throw reason;
+      throw new DOMException(typeof reason === 'string' ? reason : 'Lexara discovery cancelled', 'AbortError');
+    }
+    return [];
+  } finally {
+    signal?.removeEventListener('abort', relayAbort);
+  }
+}
+
+async function firstUsefulParallelSearch(
+  queries: readonly string[],
+  seen: ReadonlySet<string>,
+  providerPrefix: 'supplemental' | 'planned',
+  signal?: AbortSignal,
+  providerFirstUseful = false,
+): Promise<LegalMeshCandidate[]> {
+  if (!queries.length) return [];
+
+  const controller = new AbortController();
+  const relayAbort = () => controller.abort(signal?.reason);
+  if (signal?.aborted) controller.abort(signal.reason);
+  else signal?.addEventListener('abort', relayAbort, { once: true });
+
+  try {
     const attempts = queries.map(query =>
-      freeSearch(query, controller.signal).then(results => {
+      freeSearch(query, controller.signal, providerFirstUseful).then(results => {
         const fresh = results
           .filter(item => !seen.has(item.url))
           .map(item => ({ ...item, tier: 5 as const, provider: `${providerPrefix}-${item.provider}` }));
@@ -388,7 +464,9 @@ export async function discoverLegalMeshTier3(
   });
   if(learnedPatterns[0]) variants.push(`${query} ${learnedPatterns[0]}`);
   const uniqueVariants=[...new Set(variants)].slice(0,6);
-  const groups=await Promise.all(uniqueVariants.map(variant=>freeSearch(variant,signal)));
+  const groups=options.firstUseful
+    ? [await firstUsefulSearchVariants(uniqueVariants,signal)]
+    : await Promise.all(uniqueVariants.map(variant=>freeSearch(variant,signal)));
   const learnedSources=await Promise.race([
     getLexaraLearnedSources(options.categories||[],options.jurisdiction,8),
     new Promise<string[]>(resolve=>setTimeout(()=>resolve([]),75)),
@@ -419,6 +497,7 @@ export async function discoverLegalMeshSupplemental(
       seen,
       'supplemental',
       signal,
+      options.firstUseful === true,
     );
     if(learnedFresh.length) return learnedFresh;
   }
@@ -438,6 +517,7 @@ export async function discoverLegalMeshSupplemental(
       seen,
       'planned',
       signal,
+      options.firstUseful === true,
     );
     if(plannedFresh.length) return plannedFresh;
   }

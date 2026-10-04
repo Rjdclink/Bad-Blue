@@ -126,6 +126,20 @@ if (!legalMesh.includes('async function firstUsefulParallelSearch')
   || legalMesh.includes('const plannedOutcomes=await Promise.allSettled')) {
   throw new Error('Lexara supplemental discovery lost optimized parallel first-useful-result behavior');
 }
+if (!legalMesh.includes('firstUseful?: boolean')
+  || !legalMesh.includes('Promise.any(providerAttempts)')
+  || !legalMesh.includes('Promise.any(variantAttempts)')
+  || !legalMesh.includes('const groups=options.firstUseful')
+  || !background.includes('firstUseful: !deepAcquisitionRequested')) {
+  throw new Error('Lexara live background discovery lost first-useful provider/query timing');
+}
+if (!legalMesh.includes('function independentSearchBase')
+  || !legalMesh.includes('pantheon-(?:ddgs|searxng|openserp)')
+  || !legalMesh.includes('independentSearchBase(process.env.DDGS_URL)')
+  || !legalMesh.includes('independentSearchBase(process.env.SEARXNG_URL)')
+  || !legalMesh.includes('independentSearchBase(process.env.OPENSERP_URL)')) {
+  throw new Error('Lexara retired Pantheon internal search endpoints are still callable');
+}
 if (!background.includes('LIVE_TOTAL_CANDIDATES = 18')
   || !background.includes('LIVE_TARGETS_PER_PASS = 6')
   || background.includes('BROAD_PERSON_LIVE_TOTAL_CANDIDATES')

@@ -164,6 +164,78 @@ test('both legal discovery tiers preserve DDGS results while carrying the canoni
   assert.equal(primary[0].url, urls[0]); assert.equal(primary[0].excerpt, 'Fresh source evidence');
   assert.equal(supplemental[0].url, urls[0]); assert.equal(h.calls.gateway.length, 0);
 });
+test('Lexara live first-useful mode returns before a slow provider while default discovery stays comprehensive', async () => {
+  let liveSlowProviderFinished = false;
+  const live = harness({
+    env: { TAVILY_API_KEY: 'fixture', DDGS_URL: 'https://ddgs.fixture.test' },
+    fetchPayload: async url => {
+      if (url.includes('api.tavily.com')) {
+        return { results: [{ url: urls[0], title: 'Fast Tavily result', content: 'Fast useful evidence' }] };
+      }
+      if (url.includes('ddgs.fixture.test')) {
+        await new Promise(resolve => setTimeout(resolve, 120));
+        liveSlowProviderFinished = true;
+        return { results: [{ href: urls[1], title: 'Slow DDGS result', body: 'Slow useful evidence' }] };
+      }
+      return { results: [] };
+    },
+  });
+  const liveMesh = live.load('server/lexara/LegalProviderMesh.ts');
+  const firstUseful = await liveMesh.discoverLegalMeshTier3(
+    'contract fixture',
+    undefined,
+    { firstUseful: true },
+  );
+  assert(firstUseful.some(item => item.url === urls[0]), 'fast useful provider result must survive');
+  assert.equal(
+    liveSlowProviderFinished,
+    false,
+    'live first-useful discovery must not wait for a slower provider after useful evidence arrives',
+  );
+
+  let comprehensiveSlowProviderFinished = false;
+  const comprehensive = harness({
+    env: { TAVILY_API_KEY: 'fixture', DDGS_URL: 'https://ddgs.fixture.test' },
+    fetchPayload: async url => {
+      if (url.includes('api.tavily.com')) {
+        return { results: [{ url: urls[0], title: 'Fast Tavily result', content: 'Fast useful evidence' }] };
+      }
+      if (url.includes('ddgs.fixture.test')) {
+        await new Promise(resolve => setTimeout(resolve, 40));
+        comprehensiveSlowProviderFinished = true;
+        return { results: [{ href: urls[1], title: 'Slow DDGS result', body: 'Slow useful evidence' }] };
+      }
+      return { results: [] };
+    },
+  });
+  const comprehensiveMesh = comprehensive.load('server/lexara/LegalProviderMesh.ts');
+  const allResults = await comprehensiveMesh.discoverLegalMeshTier3('contract fixture');
+  assert.equal(
+    comprehensiveSlowProviderFinished,
+    true,
+    'default discovery must retain comprehensive provider waiting for non-background callers',
+  );
+  assert(allResults.some(item => item.url === urls[0]));
+  assert(allResults.some(item => item.url === urls[1]));
+});
+
+test('retired Pantheon internal search endpoints are ignored by the Lexara mesh', async () => {
+  const h = harness({
+    env: {
+      DDGS_URL: 'http://pantheon-ddgs.railway.internal:8080',
+      SEARXNG_URL: 'http://pantheon-searxng.railway.internal:8080',
+      OPENSERP_URL: 'http://pantheon-openserp.railway.internal:8080',
+    },
+  });
+  const mesh = h.load('server/lexara/LegalProviderMesh.ts');
+  await mesh.discoverLegalMeshTier3('contract fixture', undefined, { firstUseful: true });
+  assert.equal(
+    h.calls.http.some(call => /pantheon-(?:ddgs|searxng|openserp)\.railway\.internal/i.test(call.url)),
+    false,
+    'retired Pantheon internal endpoints must never receive Lexara search traffic',
+  );
+});
+
 test('legal discovery misses and learned-query retries never reopen OpenRouter', async () => {
   const h = harness({ env: { DDGS_URL: 'https://ddgs.fixture.test' }, learnedPattern: 'court records' });
   const result = await h.load('server/services/pantheon/PantheonDiscoveryCoordinator.ts').discoverPantheonSourcesParallel('contract fixture', [], { providerPolicy: 'legalwhat', includePaidFallback: true, timeoutMs: 250 });
