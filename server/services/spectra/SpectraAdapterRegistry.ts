@@ -182,6 +182,16 @@ export const SPECTRA_ADAPTER_CAPABILITIES: SpectraAdapterCapability[] = [
     notes: 'Reconnectable authenticated WSS transport for configured infrastructure providers, with deduplication and stream health reporting.',
   },
   {
+    id: 'owntracks-location-bridge',
+    label: 'OwnTracks Recorder location bridge',
+    mode: 'live-telemetry',
+    sourceTypes: ['device_gps'],
+    configured: () => anyEnv('SPECTRA_MQTT_PROVIDER_ADAPTERS', 'SPECTRA_WSS_PROVIDER_ADAPTERS', 'SPECTRA_ACTIVE_PROVIDER_ADAPTERS'),
+    priority: 'critical',
+    supportsRealtime: true,
+    notes: 'Normalizes OwnTracks location payloads delivered through MQTT, WebSocket, webhook or configured HTTPS pull into canonical timestamped GPS observations.',
+  },
+  {
     id: 'signed-provider-webhook',
     label: 'Signed telemetry provider webhook',
     mode: 'provider-webhook',
