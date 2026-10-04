@@ -305,18 +305,40 @@ function normalizeFind3(
   const guesses = list(analysis.guesses);
   const bestGuess = record(guesses[0]);
 
-  const latitude = bounded(
+  const directLatitude = bounded(
     gps.lat ?? gps.latitude ?? data.lat ?? outer.lat,
     -90,
     90,
   );
-  const longitude = bounded(
+  const directLongitude = bounded(
     gps.lon ?? gps.lng ?? gps.longitude ?? data.lon ?? data.lng ?? outer.lon,
     -180,
     180,
   );
+
+  const find3LocationLabel = text(
+    data.loc
+    ?? data.location
+    ?? bestGuess.location
+    ?? sensors.l,
+    300,
+  );
+  const calibratedAnchor = (
+    directLatitude === null || directLongitude === null
+  ) && find3LocationLabel
+    ? resolveConfiguredSpectraAnchor({
+        id: find3LocationLabel,
+        anchorId: find3LocationLabel,
+        locatorId: find3LocationLabel,
+      })
+    : null;
+
+  const latitude = directLatitude ?? calibratedAnchor?.latitude ?? null;
+  const longitude = directLongitude ?? calibratedAnchor?.longitude ?? null;
   if (latitude === null || longitude === null) {
-    throw new Error('FIND3 payload contains no GPS-calibrated location.');
+    throw new Error(
+      'FIND3 payload contains neither coordinates nor a configured location-label anchor.',
+    );
   }
 
   const sensorTimestamp = finite(sensors.t ?? outer.t);
@@ -354,13 +376,7 @@ function normalizeFind3(
     ?? outer.family,
     200,
   );
-  const locationLabel = text(
-    data.loc
-    ?? data.location
-    ?? bestGuess.location
-    ?? sensors.l,
-    300,
-  );
+  const locationLabel = find3LocationLabel;
 
   const measurement = {
     kind: 'position',
@@ -368,7 +384,13 @@ function normalizeFind3(
     timestamp,
     latitude,
     longitude,
-    confidence: probability,
+    accuracy:
+      calibratedAnchor?.accuracyMeters !== undefined
+        ? Math.max(0.25, calibratedAnchor.accuracyMeters)
+        : undefined,
+    confidence: calibratedAnchor
+      ? Math.min(0.9, probability)
+      : probability,
     provider: wrapped.providerId,
     recordId: text(
       outer.id
@@ -385,6 +407,10 @@ function normalizeFind3(
       find3Probability: probability,
       find3SeenSeconds: seenSeconds ?? undefined,
       calibratedIndoorLocation: true,
+      find3CoordinateSource: calibratedAnchor
+        ? 'configured-location-label-anchor'
+        : 'provider-coordinate',
+      find3AnchorId: calibratedAnchor?.id,
     },
   };
 
