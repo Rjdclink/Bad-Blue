@@ -262,6 +262,24 @@ try {
   assert.equal(traccar.measurements[0].accuracy, 8);
   assert.match(String(traccar.measurements[0].correlationGroup), /:7$/);
 
+  const cot = normalizeSpectraOpenSourceBridgePayload(
+    'cot-location',
+    'cot-test',
+    '<event version="2.0" uid="device-cot-1" type="a-f-G-U-C" time="2026-10-03T23:02:00Z" start="2026-10-03T23:02:00Z" stale="2026-10-03T23:07:00Z" how="m-g"><point lat="41.2567" lon="-95.9347" hae="323" ce="4.5" le="7"/><detail><contact callsign="Unit One"/><track speed="2.5" course="90"/></detail></event>',
+  );
+  assert.equal(cot.measurements.length, 1);
+  assert.equal(cot.measurements[0].latitude, 41.2567);
+  assert.equal(cot.measurements[0].longitude, -95.9347);
+  assert.equal(cot.measurements[0].accuracy, 4.5);
+  assert.equal(cot.measurements[0].verticalAccuracy, 7);
+  assert.equal(cot.measurements[0].speed, 2.5);
+  assert.equal(cot.measurements[0].heading, 90);
+  assert.equal(cot.subjectLabel, 'Unit One');
+  assert.equal(
+    (cot.measurements[0].metadata as any).cotUid,
+    'device-cot-1',
+  );
+
   const meshtastic = normalizeSpectraOpenSourceBridgePayload(
     'meshtastic-position',
     'meshtastic-test',
