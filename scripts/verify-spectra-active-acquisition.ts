@@ -205,6 +205,24 @@ try {
   assert.equal(collector.batches[0]?.measurements[0]?.source, 'device_gps');
   assert.equal(collector.batches[0]?.metadata?.acquisition, 'active-provider-pull');
 
+  let repeatedFetchCalled = false;
+  globalThis.fetch = async () => {
+    repeatedFetchCalled = true;
+    throw new Error('provider cooldown should have prevented this fetch');
+  };
+  const cooledDown = await acquireSpectraActiveTelemetry({
+    deviceRef: 'device-a',
+    sessionId: 'fixture-session',
+    subjectLabel: 'managed device',
+  });
+  assert.equal(cooledDown.batches.length, 0);
+  assert.equal(cooledDown.attempts[0]?.status, 'skipped');
+  assert.match(
+    String(cooledDown.attempts[0]?.reason || ''),
+    /poll cooldown/i,
+  );
+  assert.equal(repeatedFetchCalled, false);
+
   const skipped = await acquireSpectraActiveTelemetry({
     sessionId: 'fixture-session',
     subjectLabel: 'missing managed device',
@@ -299,6 +317,11 @@ try {
 
   const capabilities = getSpectraActiveAcquisitionCapabilities();
   assert.ok(capabilities.some(capability => capability.id === 'android-collector-fixture'));
+  assert.equal(
+    capabilities.find(capability => capability.id === 'android-collector-fixture')
+      ?.minPollIntervalMs,
+    5000,
+  );
 
   console.log('SPECTRA managed-device active acquisition and anchor verification passed.');
 } finally {
