@@ -381,6 +381,27 @@ function builtInFind3Adapter(): ActiveProviderConfig | null {
   };
 }
 
+function builtInTraccarAdapter(): ActiveProviderConfig | null {
+  const url = String(process.env.SPECTRA_TRACCAR_POSITION_URL_TEMPLATE || '').trim();
+  const validationUrl = url
+    .replace(/\{\{deviceRef\}\}/g, 'managed-device')
+    .replace(/\{\{sessionId\}\}/g, 'session');
+  if (!httpsUrl(validationUrl)) return null;
+
+  return {
+    id: 'traccar-position-bridge',
+    label: 'Traccar latest position',
+    url,
+    method: 'GET',
+    normalizerKind: 'traccar-position',
+    target: 'device',
+    headersFromEnv: String(process.env.SPECTRA_TRACCAR_AUTHORIZATION || '').trim()
+      ? { Authorization: 'SPECTRA_TRACCAR_AUTHORIZATION' }
+      : undefined,
+    timeoutMs: timeoutMs(process.env.SPECTRA_TRACCAR_TIMEOUT_MS),
+  };
+}
+
 function acquisitionBody(
   input: SpectraActiveAcquisitionInput,
 ): Record<string, unknown> {
@@ -455,6 +476,7 @@ export function getSpectraActiveAcquisitionCapabilities(): Array<{
     builtInCiscoSpacesAdapter(),
     builtInUniFiAdapter(),
     builtInFind3Adapter(),
+    builtInTraccarAdapter(),
     ...configuredAdapters(),
   ].filter((item): item is ActiveProviderConfig => Boolean(item))
     .map(item => ({
@@ -474,6 +496,7 @@ export async function acquireSpectraActiveTelemetry(
     builtInCiscoSpacesAdapter(),
     builtInUniFiAdapter(),
     builtInFind3Adapter(),
+    builtInTraccarAdapter(),
     ...configuredAdapters(),
   ].filter((item): item is ActiveProviderConfig => Boolean(item));
 
