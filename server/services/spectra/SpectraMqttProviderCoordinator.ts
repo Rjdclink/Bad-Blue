@@ -12,6 +12,8 @@ export interface SpectraMqttProviderConfig {
   brokerUrl: string;
   topic: string;
   normalizerKind: SpectraProviderNormalizerKind;
+  sessionId?: string;
+  subjectLabel?: string;
   usernameEnv?: string;
   passwordEnv?: string;
   clientId?: string;
@@ -103,6 +105,8 @@ function loadConfigs(): SpectraMqttProviderConfig[] {
         brokerUrl,
         topic,
         normalizerKind,
+        sessionId: String(item?.sessionId || '').trim().slice(0, 200) || undefined,
+        subjectLabel: String(item?.subjectLabel || '').trim().slice(0, 500) || undefined,
         usernameEnv: String(item?.usernameEnv || '').trim() || undefined,
         passwordEnv: String(item?.passwordEnv || '').trim() || undefined,
         clientId: String(item?.clientId || '').trim().slice(0, 120) || undefined,
@@ -259,10 +263,23 @@ async function processPublish(runtime: Runtime, flags: number, body: Buffer): Pr
 
   try {
     const payload = JSON.parse(body.subarray(offset).toString('utf8'));
+    const payloadRecord =
+      payload && typeof payload === 'object' && !Array.isArray(payload)
+        ? payload as Record<string, unknown>
+        : {};
     const batch = normalizeSpectraProviderPayload(
       runtime.config.normalizerKind,
       runtime.config.id,
-      payload,
+      {
+        ...payloadRecord,
+        sessionId: runtime.config.sessionId
+          || String(payloadRecord.sessionId || '').trim()
+          || undefined,
+        subjectLabel: runtime.config.subjectLabel
+          || String(payloadRecord.subjectLabel || '').trim()
+          || undefined,
+        _spectraMqttTopic: topic.value,
+      },
     );
 
     if (acceptOnce(runtime, batch) && consumer) {
@@ -450,11 +467,13 @@ export function getConfiguredSpectraMqttProviders(): Array<{
   label: string;
   topic: string;
   normalizerKind: string;
+  sessionBound: boolean;
 }> {
   return loadConfigs().map(config => ({
     id: config.id,
     label: config.label,
     topic: config.topic,
     normalizerKind: config.normalizerKind,
+    sessionBound: Boolean(config.sessionId),
   }));
 }
