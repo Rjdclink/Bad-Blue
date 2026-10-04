@@ -1,6 +1,7 @@
 export type SpectraOpenSourceBridgeKind =
   | 'owntracks-location'
-  | 'chirpstack-location';
+  | 'chirpstack-location'
+  | 'find3-location';
 
 export interface SpectraOpenSourceBridgeBatch {
   sessionId?: string;
@@ -263,6 +264,115 @@ function normalizeChirpStack(
   };
 }
 
+function normalizeFind3(
+  providerId: string,
+  payload: unknown,
+): SpectraOpenSourceBridgeBatch {
+  const wrapped = envelope(payload, providerId);
+  const outer = wrapped.outer;
+  const data = record(outer.data);
+  const sensors = record(outer.sensors);
+  const gps = record(data.gps ?? sensors.gps ?? outer.gps);
+  const analysis = record(outer.analysis);
+  const guesses = list(analysis.guesses);
+  const bestGuess = record(guesses[0]);
+
+  const latitude = bounded(
+    gps.lat ?? gps.latitude ?? data.lat ?? outer.lat,
+    -90,
+    90,
+  );
+  const longitude = bounded(
+    gps.lon ?? gps.lng ?? gps.longitude ?? data.lon ?? data.lng ?? outer.lon,
+    -180,
+    180,
+  );
+  if (latitude === null || longitude === null) {
+    throw new Error('FIND3 payload contains no GPS-calibrated location.');
+  }
+
+  const sensorTimestamp = finite(sensors.t ?? outer.t);
+  const seenSeconds = finite(data.seen ?? outer.seen);
+  const timestamp =
+    sensorTimestamp !== null
+      ? isoTimestamp(sensorTimestamp)
+      : seenSeconds !== null && seenSeconds >= 0
+        ? new Date(Date.now() - seenSeconds * 1000).toISOString()
+        : isoTimestamp(outer.timestamp ?? outer.time);
+  if (!timestamp) {
+    throw new Error('FIND3 payload contains no usable observation time.');
+  }
+
+  const probabilityRaw = finite(
+    data.prob
+    ?? data.probability
+    ?? bestGuess.probability
+    ?? outer.probability,
+  );
+  const probability = probabilityRaw !== null
+    ? Math.max(0.05, Math.min(1, probabilityRaw))
+    : 0.55;
+  const device = text(
+    sensors.d
+    ?? sensors.device
+    ?? data.device
+    ?? outer.device,
+    200,
+  );
+  const family = text(
+    sensors.f
+    ?? sensors.family
+    ?? data.family
+    ?? outer.family,
+    200,
+  );
+  const locationLabel = text(
+    data.loc
+    ?? data.location
+    ?? bestGuess.location
+    ?? sensors.l,
+    300,
+  );
+
+  const measurement = {
+    kind: 'position',
+    source: 'wifi_fingerprint',
+    timestamp,
+    latitude,
+    longitude,
+    confidence: probability,
+    provider: wrapped.providerId,
+    recordId: text(
+      outer.id
+      ?? `${family || 'family'}:${device || 'device'}:${sensorTimestamp || timestamp}`,
+      300,
+    ),
+    correlationGroup:
+      `find3:${wrapped.providerId}:${family || 'family'}:${device || 'device'}`,
+    metadata: {
+      acquisitionMethod: 'find3-fingerprint-classification',
+      find3Family: family,
+      find3Device: device,
+      find3LocationLabel: locationLabel,
+      find3Probability: probability,
+      find3SeenSeconds: seenSeconds ?? undefined,
+      calibratedIndoorLocation: true,
+    },
+  };
+
+  return {
+    sessionId: wrapped.sessionId,
+    subjectLabel: wrapped.subjectLabel,
+    sourceId: wrapped.providerId,
+    measurements: [measurement],
+    metadata: {
+      normalization: 'find3-location',
+      observationCount: 1,
+      normalizedAt: new Date().toISOString(),
+    },
+  };
+}
+
 export function normalizeSpectraOpenSourceBridgePayload(
   kind: SpectraOpenSourceBridgeKind,
   providerId: string,
@@ -275,6 +385,8 @@ export function normalizeSpectraOpenSourceBridgePayload(
       return normalizeOwnTracks(providerId, payload);
     case 'chirpstack-location':
       return normalizeChirpStack(providerId, payload);
+    case 'find3-location':
+      return normalizeFind3(providerId, payload);
     default: {
       const exhaustive: never = kind;
       throw new Error(`Unsupported open-source bridge normalizer: ${String(exhaustive)}`);
@@ -286,4 +398,5 @@ export const SPECTRA_OPEN_SOURCE_BRIDGE_KINDS:
   readonly SpectraOpenSourceBridgeKind[] = [
     'owntracks-location',
     'chirpstack-location',
+    'find3-location',
   ] as const;
