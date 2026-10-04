@@ -701,6 +701,16 @@ export const SPECTRA_ADAPTER_CAPABILITIES: SpectraAdapterCapability[] = [
     notes: 'Discovers active no-auth GTFS-Realtime feed metadata from the public MobilityData catalog.',
   },
   {
+    id: 'hootenanny-conflated-map-context',
+    label: 'Hootenanny conflated map context',
+    mode: 'place-context',
+    sourceTypes: ['public_record'],
+    configured: () => anyEnv('SPECTRA_HOOTENANNY_BASE_URL', 'SPECTRA_HOOTENANNY_MAP_ID'),
+    priority: 'high',
+    supportsRealtime: false,
+    notes: 'Queries a configured Hootenanny conflated map by bounding box so roads, buildings and POIs from multiple source datasets can strengthen map matching without becoming target telemetry.',
+  },
+  {
     id: 'overpass-place-context',
     label: 'OpenStreetMap Overpass place context',
     mode: 'place-context',
