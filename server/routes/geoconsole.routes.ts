@@ -82,6 +82,10 @@ import {
   spectraWigleConfigured,
 } from '../services/spectra/SpectraWigleRadioResolver';
 import {
+  resolveSpectraUnwiredRadio,
+  spectraUnwiredConfigured,
+} from '../services/spectra/SpectraUnwiredRadioResolver';
+import {
   acquireSpectraResourcePermit,
   SpectraResourceBusyError,
 } from '../services/spectra/SpectraResourceGovernor';
@@ -1046,7 +1050,7 @@ async function googleRadioPoint(
 async function radioPoint(
   measurement: z.infer<typeof telemetryRadioSchema>,
 ): Promise<GPSPoint | null> {
-  const [googleOutcome, beaconOutcome, openCellOutcome, mylnikovOutcome, wigleOutcome] = await Promise.allSettled([
+  const [googleOutcome, beaconOutcome, openCellOutcome, mylnikovOutcome, wigleOutcome, unwiredOutcome] = await Promise.allSettled([
     googleRadioPoint(measurement),
     beaconDbRadioPoint(measurement),
     openCellIdPoint(measurement),
@@ -1077,6 +1081,30 @@ async function radioPoint(
       wifiAccessPoints: sanitizedWifiAccessPoints(measurement),
       metadata: measurement.metadata,
     }),
+    resolveSpectraUnwiredRadio({
+      timestamp: measurement.timestamp,
+      provider: measurement.provider,
+      radioType: measurement.radioType,
+      homeMobileCountryCode: measurement.homeMobileCountryCode,
+      homeMobileNetworkCode: measurement.homeMobileNetworkCode,
+      wifiAccessPoints: sanitizedWifiAccessPoints(measurement),
+      cellTowers: sanitizedCellTowers(measurement).flatMap(tower => {
+        const cellId = tower.newRadioCellId ?? tower.cellId;
+        return (
+          Number.isFinite(tower.mobileCountryCode)
+          && Number.isFinite(tower.mobileNetworkCode)
+          && Number.isFinite(tower.locationAreaCode)
+          && Number.isFinite(cellId)
+        ) ? [{
+          radioType: tower.radioType,
+          mobileCountryCode: tower.mobileCountryCode,
+          mobileNetworkCode: tower.mobileNetworkCode,
+          locationAreaCode: tower.locationAreaCode,
+          cellId: Number(cellId),
+        }] : [];
+      }),
+      metadata: measurement.metadata,
+    }),
   ]);
 
   const googlePoint = googleOutcome.status === 'fulfilled' ? googleOutcome.value : null;
@@ -1084,7 +1112,8 @@ async function radioPoint(
   const openCellPoint = openCellOutcome.status === 'fulfilled' ? openCellOutcome.value : null;
   const mylnikovPoints = mylnikovOutcome.status === 'fulfilled' ? mylnikovOutcome.value : [];
   const wiglePoint = wigleOutcome.status === 'fulfilled' ? wigleOutcome.value : null;
-  const candidates = [googlePoint, beaconPoint, openCellPoint, ...mylnikovPoints, wiglePoint].filter(
+  const unwiredPoint = unwiredOutcome.status === 'fulfilled' ? unwiredOutcome.value : null;
+  const candidates = [googlePoint, beaconPoint, openCellPoint, ...mylnikovPoints, wiglePoint, unwiredPoint].filter(
     (point): point is GPSPoint => Boolean(point)
   );
   if (!candidates.length) return null;
@@ -2232,6 +2261,7 @@ router.get('/telemetry-capabilities', (_req: Request, res: Response) => {
       radioGeolocationProviders: {
         mylnikovOpenData: true,
         wigle: spectraWigleConfigured(),
+        unwiredCompatible: spectraUnwiredConfigured(),
         beaconDb: true,
         google: Boolean(
           process.env.SPECTRA_GOOGLE_GEOLOCATION_API_KEY
