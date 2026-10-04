@@ -1,4 +1,5 @@
 import { resolveConfiguredSpectraAnchor } from './SpectraAnchorRegistry';
+import { resolveSpectraInfrastructureBinding } from './SpectraInfrastructureIdentity';
 
 export type SpectraOpenSourceBridgeKind =
   | 'owntracks-location'
@@ -936,6 +937,50 @@ function normalizeTraccar(
   };
 }
 
+function applyConfiguredBridgeIdentity(
+  providerId: string,
+  batch: SpectraOpenSourceBridgeBatch,
+): SpectraOpenSourceBridgeBatch {
+  const first = record(batch.measurements[0]);
+  const metadata = record(first.metadata);
+
+  const binding = resolveSpectraInfrastructureBinding({
+    providerId,
+    macAddress: text(
+      metadata.kismetMac
+      ?? metadata.openWispClientMac,
+      64,
+    ),
+    clientId: text(
+      metadata.ownTracksTrackerId
+      ?? metadata.find3Device,
+      200,
+    ),
+    deviceId: text(
+      metadata.chirpStackDeviceId
+      ?? metadata.espresenseDeviceId
+      ?? metadata.traccarDeviceId
+      ?? metadata.find3Device,
+      200,
+    ),
+    username: text(
+      metadata.ownTracksTrackerId,
+      200,
+    ),
+  });
+
+  return {
+    ...batch,
+    sessionId: binding.sessionId || batch.sessionId,
+    subjectLabel: binding.subjectLabel || batch.subjectLabel,
+    metadata: {
+      ...batch.metadata,
+      configuredIdentityMatch: Boolean(binding.sessionId || binding.subjectLabel),
+      configuredIdentityIdentifiers: binding.identifiers,
+    },
+  };
+}
+
 export function normalizeSpectraOpenSourceBridgePayload(
   kind: SpectraOpenSourceBridgeKind,
   providerId: string,
@@ -943,26 +988,36 @@ export function normalizeSpectraOpenSourceBridgePayload(
 ): SpectraOpenSourceBridgeBatch {
   if (!providerId.trim()) throw new Error('Open-source bridge provider ID is required.');
 
+  let batch: SpectraOpenSourceBridgeBatch;
   switch (kind) {
     case 'owntracks-location':
-      return normalizeOwnTracks(providerId, payload);
+      batch = normalizeOwnTracks(providerId, payload);
+      break;
     case 'chirpstack-location':
-      return normalizeChirpStack(providerId, payload);
+      batch = normalizeChirpStack(providerId, payload);
+      break;
     case 'find3-location':
-      return normalizeFind3(providerId, payload);
+      batch = normalizeFind3(providerId, payload);
+      break;
     case 'espresense-observation':
-      return normalizeEspresense(providerId, payload);
+      batch = normalizeEspresense(providerId, payload);
+      break;
     case 'kismet-device-location':
-      return normalizeKismet(providerId, payload);
+      batch = normalizeKismet(providerId, payload);
+      break;
     case 'openwisp-wifi-session':
-      return normalizeOpenWisp(providerId, payload);
+      batch = normalizeOpenWisp(providerId, payload);
+      break;
     case 'traccar-position':
-      return normalizeTraccar(providerId, payload);
+      batch = normalizeTraccar(providerId, payload);
+      break;
     default: {
       const exhaustive: never = kind;
       throw new Error(`Unsupported open-source bridge normalizer: ${String(exhaustive)}`);
     }
   }
+
+  return applyConfiguredBridgeIdentity(providerId, batch);
 }
 
 export const SPECTRA_OPEN_SOURCE_BRIDGE_KINDS:
