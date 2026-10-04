@@ -69,6 +69,8 @@ const hootenannyContext = read('server/services/spectra/SpectraHootenannyContext
 const mylnikovResolver = read('server/services/spectra/SpectraMylnikovResolver.ts');
 const wigleResolver = read('server/services/spectra/SpectraWigleRadioResolver.ts');
 const unwiredResolver = read('server/services/spectra/SpectraUnwiredRadioResolver.ts');
+const radioConsensus = read('server/services/spectra/SpectraRadioConsensus.ts');
+const radioConsensusVerifier = read('scripts/verify-spectra-radio-consensus.ts');
 const openSourceBridgeNormalizer = read('server/services/spectra/SpectraOpenSourceBridgeNormalizer.ts');
 const openSourceBridgeVerifier = read('scripts/verify-spectra-open-source-bridges.ts');
 const infrastructureNormalizer = read('server/services/spectra/SpectraInfrastructureProviderNormalizer.ts');
@@ -891,6 +893,14 @@ test('Radio mesh runs independent resolvers in parallel and records corroboratio
    'resolveSpectraMylnikovRadio','resolveSpectraWigleWifi','resolveSpectraUnwiredRadio']
     .every(marker => geoconsoleRoutes.includes(marker)) &&
   geoconsoleRoutes.includes('radioCorroboration'));
+test('Radio mesh rejects outliers and never manufactures precision below the strongest agreeing source',
+  radioConsensus.includes('uniqueByProvider') &&
+  radioConsensus.includes('clusterAround') &&
+  radioConsensus.includes('radioExcludedProviders') &&
+  radioConsensus.includes('Math.max(\n    bestClaimedAccuracy') &&
+  geoconsoleRoutes.includes('resolveSpectraRadioConsensus(candidates)') &&
+  radioConsensusVerifier.includes('outlier-provider') &&
+  radioConsensusVerifier.includes('must not claim accuracy tighter'));
 test('Open-source acquisition bridge normalizers cover the high-value GitHub bridge set',
   [
     'owntracks-location',
@@ -948,6 +958,12 @@ test('Open-source bridge identities resolve through configured target-session bi
   openSourceBridgeNormalizer.includes('resolveSpectraInfrastructureBinding') &&
   openSourceBridgeNormalizer.includes('sessionId: binding.sessionId || batch.sessionId') &&
   openSourceBridgeNormalizer.includes('subjectLabel: binding.subjectLabel || batch.subjectLabel'));
+test('Continuous active acquisition paces each provider/target with bounded poll cooldown',
+  activeAcquisition.includes('lastPollByTarget') &&
+  activeAcquisition.includes('pollDelayRemaining') &&
+  activeAcquisition.includes('Provider poll cooldown active') &&
+  activeAcquisition.includes('lastPollByTarget.size > 5_000') &&
+  activeAcquisition.includes('minPollIntervalMs: minPollIntervalMs(item)'));
 test('Active acquisition has built-in FIND3, Traccar, Kismet, OpenWISP and OwnTracks lanes',
   activeAcquisition.includes('builtInFind3Adapter') &&
   activeAcquisition.includes('builtInTraccarAdapter') &&
