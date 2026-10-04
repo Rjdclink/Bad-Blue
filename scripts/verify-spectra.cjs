@@ -307,13 +307,13 @@ test('SPECTRA source registry includes the major geospatial evidence families',
   spectraSources.includes("'map-context'") &&
   spectraSources.includes("'weather-context'") &&
   spectraSources.includes("'earth-observation'"));
-test('SPECTRA acquisition uses adaptive prioritized source waves without fixed 36/24/12 caps',
+test('SPECTRA acquisition uses adaptive prioritized source waves with policy-bounded discovery',
   routes.includes('buildSpectraDiscoveryWaves') &&
   routes.includes('buildSpectraAdaptiveQuery') &&
   routes.includes('SPECTRA_DISCOVERY_POLICY') &&
-  !routes.includes('.slice(0, 36)') &&
-  !routes.includes('.slice(0, 24)') &&
-  !routes.includes('.slice(0, 12)'));
+  routes.includes('discoveryQueriesAttempted >= SPECTRA_DISCOVERY_POLICY.maxQueries') &&
+  routes.includes('discoveryResults.length >= SPECTRA_DISCOVERY_POLICY.maxCandidates') &&
+  routes.includes('.slice(0, SPECTRA_DISCOVERY_POLICY.maxCandidates)'));
 test('SPECTRA has nationwide public camera adapters with optional provider expansion',
   geoconsoleRoutes.includes("router.get('/public-cameras'") &&
   geoconsoleRoutes.includes('api.trafficland.com/v2.2/json/video_feeds/poi') &&
