@@ -432,6 +432,27 @@ function builtInKismetAdapter(): ActiveProviderConfig | null {
   };
 }
 
+function builtInOpenWispAdapter(): ActiveProviderConfig | null {
+  const url = String(process.env.SPECTRA_OPENWISP_WIFI_SESSIONS_URL_TEMPLATE || '').trim();
+  const validationUrl = url
+    .replace(/\{\{deviceRef\}\}/g, 'managed-device')
+    .replace(/\{\{sessionId\}\}/g, 'session');
+  if (!httpsUrl(validationUrl)) return null;
+
+  return {
+    id: 'openwisp-wifi-session-location',
+    label: 'OpenWISP Wi-Fi client session',
+    url,
+    method: 'GET',
+    normalizerKind: 'openwisp-wifi-session',
+    target: 'device',
+    headersFromEnv: String(process.env.SPECTRA_OPENWISP_AUTHORIZATION || '').trim()
+      ? { Authorization: 'SPECTRA_OPENWISP_AUTHORIZATION' }
+      : undefined,
+    timeoutMs: timeoutMs(process.env.SPECTRA_OPENWISP_TIMEOUT_MS),
+  };
+}
+
 function acquisitionBody(
   input: SpectraActiveAcquisitionInput,
 ): Record<string, unknown> {
@@ -513,6 +534,7 @@ export function getSpectraActiveAcquisitionCapabilities(): Array<{
     builtInFind3Adapter(),
     builtInTraccarAdapter(),
     builtInKismetAdapter(),
+    builtInOpenWispAdapter(),
     ...configuredAdapters(),
   ].filter((item): item is ActiveProviderConfig => Boolean(item))
     .map(item => ({
@@ -534,6 +556,7 @@ export async function acquireSpectraActiveTelemetry(
     builtInFind3Adapter(),
     builtInTraccarAdapter(),
     builtInKismetAdapter(),
+    builtInOpenWispAdapter(),
     ...configuredAdapters(),
   ].filter((item): item is ActiveProviderConfig => Boolean(item));
 
