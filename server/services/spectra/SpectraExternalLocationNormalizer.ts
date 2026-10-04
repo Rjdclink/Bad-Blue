@@ -563,7 +563,7 @@ function normalizeMerakiScanning(
   const data = record(root.data || wrapped.body);
   const type = String(root.type || data.type || '').trim().toUpperCase();
   const source =
-    type === 'BLE'
+    type === 'BLE' || type.includes('BLUETOOTH')
       ? 'bluetooth_proximity'
       : 'wifi_fingerprint';
   const measurements: Array<Record<string, unknown>> = [];
@@ -578,7 +578,15 @@ function normalizeMerakiScanning(
       300,
     );
 
-    for (const rawLocation of list(observation.locations).slice(0, 100)) {
+    const locationRows = list(observation.locations);
+    const singleLocation = record(observation.location);
+    const locations = locationRows.length
+      ? locationRows
+      : Object.keys(singleLocation).length
+        ? [singleLocation]
+        : [];
+
+    for (const rawLocation of locations.slice(0, 100)) {
       const location = record(rawLocation);
       const latitude = bounded(location.lat ?? location.latitude, -90, 90);
       const longitude = bounded(
@@ -598,6 +606,7 @@ function normalizeMerakiScanning(
       const accuracy = finite(
         location.accuracy
         ?? location.uncertainty
+        ?? location.unc
         ?? (variance !== null && variance >= 0 ? Math.sqrt(variance) : undefined)
       );
 
