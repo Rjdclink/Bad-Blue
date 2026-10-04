@@ -737,11 +737,12 @@ test('SPECTRA API responses advertise stable API and schema versions',
   apiContract.includes('X-Spectra-Schema-Version') &&
   routes.includes('spectraApiVersionHeaders') &&
   geoconsoleRoutes.includes('spectraApiVersionHeaders'));
-test('Durable observations are canonical and reports rehydrate after cache loss or restart',
+test('Durable observations are canonical and reports rehydrate bounded history after cache loss or restart',
   spectraMigration.includes('CREATE TABLE IF NOT EXISTS public.spectra_location_observations') &&
-  acquisitionPersistence.includes('loadSpectraSessionObservations') &&
-  geoconsoleRoutes.includes('const durableHistory = await loadSpectraSessionObservations') &&
-  geoconsoleRoutes.includes('await hybridGeoconsole.processLocationData(durableHistory, sessionId)') &&
+  acquisitionPersistence.includes('loadSpectraSessionObservationRange') &&
+  geoconsoleRoutes.includes('const durableRange = await loadSpectraSessionObservationRange') &&
+  geoconsoleRoutes.includes('await hybridGeoconsole.processLocationData(durableRange.points, sessionId)') &&
+  geoconsoleRoutes.includes('durableHistoryTruncated: durableRange.truncated') &&
   geoconsoleRoutes.includes('durable SPECTRA observations remain in PostgreSQL/Supabase'));
 test('Provider and renderer layers are replaceable rather than hard-wired',
   adapterRegistry.includes("id: 'generic-https-json-pull'") &&
