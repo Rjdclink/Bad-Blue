@@ -8,7 +8,8 @@ export type SpectraOpenSourceBridgeKind =
   | 'espresense-observation'
   | 'kismet-device-location'
   | 'openwisp-wifi-session'
-  | 'traccar-position';
+  | 'traccar-position'
+  | 'meshtastic-position';
 
 export interface SpectraOpenSourceBridgeBatch {
   sessionId?: string;
@@ -1146,6 +1147,173 @@ function normalizeTraccar(
   };
 }
 
+function normalizeMeshtastic(
+  providerId: string,
+  payload: unknown,
+): SpectraOpenSourceBridgeBatch {
+  const wrapped = envelope(payload, providerId);
+  const outer = wrapped.outer;
+  const rows = list(outer.positions).length
+    ? list(outer.positions)
+    : list(outer.data).length
+      ? list(outer.data)
+      : Array.isArray(payload)
+        ? payload as any[]
+        : [outer];
+
+  const measurements = rows.slice(0, 2_000).flatMap(raw => {
+    const row = record(raw);
+    const decoded = record(row.decoded);
+    const decodedPayload = record(decoded.payload);
+    const position = record(
+      row.position
+      ?? row.payload?.position
+      ?? decoded.position
+      ?? decodedPayload.position
+      ?? decodedPayload,
+    );
+
+    const latitudeScaled = finite(
+      position.latitude_i
+      ?? position.latitudeI
+      ?? row.latitude_i
+      ?? row.latitudeI,
+    );
+    const longitudeScaled = finite(
+      position.longitude_i
+      ?? position.longitudeI
+      ?? row.longitude_i
+      ?? row.longitudeI,
+    );
+
+    const latitude = bounded(
+      position.latitude
+      ?? position.lat
+      ?? (latitudeScaled !== null ? latitudeScaled * 1e-7 : undefined),
+      -90,
+      90,
+    );
+    const longitude = bounded(
+      position.longitude
+      ?? position.lon
+      ?? position.lng
+      ?? (longitudeScaled !== null ? longitudeScaled * 1e-7 : undefined),
+      -180,
+      180,
+    );
+    if (latitude === null || longitude === null) return [];
+
+    const timestamp = isoTimestamp(
+      position.timestamp
+      ?? position.time
+      ?? row.rx_time
+      ?? row.rxTime
+      ?? row.timestamp
+      ?? outer.timestamp,
+    );
+    if (!timestamp) return [];
+
+    const altitude = finite(
+      position.altitude_hae
+      ?? position.altitudeHae
+      ?? position.altitude,
+    );
+    const gpsAccuracy = finite(
+      position.gps_accuracy
+      ?? position.gpsAccuracy
+      ?? row.gps_accuracy
+      ?? row.gpsAccuracy,
+    );
+    const groundSpeed = finite(position.ground_speed ?? position.groundSpeed);
+    const groundTrack = bounded(
+      position.ground_track ?? position.groundTrack,
+      0,
+      360,
+    );
+    const fromNode = text(
+      row.from
+      ?? row.nodeId
+      ?? row.node_id
+      ?? row.sender
+      ?? row.senderId,
+      160,
+    );
+    const packetId = text(row.id ?? row.packetId ?? row.packet_id, 300);
+    const precisionBits = finite(
+      position.precision_bits
+      ?? position.precisionBits,
+    );
+
+    return [{
+      kind: 'position',
+      source: 'device_gps',
+      timestamp,
+      latitude,
+      longitude,
+      altitude: altitude ?? undefined,
+      accuracy:
+        gpsAccuracy !== null && gpsAccuracy > 0
+          ? Math.min(5_000_000, gpsAccuracy)
+          : undefined,
+      speed:
+        groundSpeed !== null && groundSpeed >= 0
+          ? groundSpeed
+          : undefined,
+      heading: groundTrack ?? undefined,
+      confidence: confidenceForAccuracy(
+        gpsAccuracy !== null && gpsAccuracy > 0 ? gpsAccuracy : 30,
+        0.95,
+      ),
+      provider: wrapped.providerId,
+      recordId: packetId,
+      correlationGroup:
+        `meshtastic:${wrapped.providerId}:${fromNode || 'node'}`,
+      metadata: {
+        acquisitionMethod: 'meshtastic-position',
+        meshtasticNodeId: fromNode,
+        meshtasticViaMqtt:
+          typeof row.via_mqtt === 'boolean'
+            ? row.via_mqtt
+            : typeof row.viaMqtt === 'boolean'
+              ? row.viaMqtt
+              : undefined,
+        meshtasticRxRssi: finite(row.rx_rssi ?? row.rxRssi) ?? undefined,
+        meshtasticRxSnr: finite(row.rx_snr ?? row.rxSnr) ?? undefined,
+        meshtasticPrecisionBits:
+          precisionBits !== null
+            ? Math.max(0, Math.floor(precisionBits))
+            : undefined,
+        meshtasticLocationSource: text(
+          position.location_source ?? position.locationSource,
+          80,
+        ),
+        meshtasticFixQuality: finite(
+          position.fix_quality ?? position.fixQuality,
+        ) ?? undefined,
+        meshtasticSatellites: finite(
+          position.sats_in_view ?? position.satsInView,
+        ) ?? undefined,
+      },
+    }];
+  });
+
+  if (!measurements.length) {
+    throw new Error('Meshtastic payload contains no usable timestamped GPS positions.');
+  }
+
+  return {
+    sessionId: wrapped.sessionId,
+    subjectLabel: wrapped.subjectLabel,
+    sourceId: wrapped.providerId,
+    measurements,
+    metadata: {
+      normalization: 'meshtastic-position',
+      observationCount: measurements.length,
+      normalizedAt: new Date().toISOString(),
+    },
+  };
+}
+
 function applyConfiguredBridgeIdentity(
   providerId: string,
   batch: SpectraOpenSourceBridgeBatch,
@@ -1169,6 +1337,7 @@ function applyConfiguredBridgeIdentity(
       metadata.chirpStackDeviceId
       ?? metadata.espresenseDeviceId
       ?? metadata.traccarDeviceId
+      ?? metadata.meshtasticNodeId
       ?? metadata.find3Device,
       200,
     ),
@@ -1220,6 +1389,9 @@ export function normalizeSpectraOpenSourceBridgePayload(
     case 'traccar-position':
       batch = normalizeTraccar(providerId, payload);
       break;
+    case 'meshtastic-position':
+      batch = normalizeMeshtastic(providerId, payload);
+      break;
     default: {
       const exhaustive: never = kind;
       throw new Error(`Unsupported open-source bridge normalizer: ${String(exhaustive)}`);
@@ -1238,4 +1410,5 @@ export const SPECTRA_OPEN_SOURCE_BRIDGE_KINDS:
     'kismet-device-location',
     'openwisp-wifi-session',
     'traccar-position',
+    'meshtastic-position',
   ] as const;
