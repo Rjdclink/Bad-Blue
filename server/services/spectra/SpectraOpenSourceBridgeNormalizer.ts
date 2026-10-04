@@ -922,12 +922,6 @@ function normalizeTraccar(
 
   const measurements = rows.slice(0, 2_000).flatMap(raw => {
     const row = record(raw);
-    const latitude = bounded(row.latitude ?? row.lat, -90, 90);
-    const longitude = bounded(
-      row.longitude ?? row.lon ?? row.lng,
-      -180,
-      180,
-    );
     const timestamp = isoTimestamp(
       row.fixTime
       ?? row.fix_time
@@ -937,15 +931,8 @@ function normalizeTraccar(
       ?? row.server_time
       ?? row.timestamp,
     );
-    if (latitude === null || longitude === null || !timestamp) return [];
+    if (!timestamp) return [];
 
-    const accuracy = finite(
-      row.accuracy
-      ?? row.attributes?.accuracy
-      ?? row.attributes?.hdop,
-    );
-    const altitude = finite(row.altitude ?? row.alt);
-    const course = bounded(row.course ?? row.heading, 0, 360);
     const deviceId = text(
       row.deviceId
       ?? row.device_id
@@ -954,6 +941,149 @@ function normalizeTraccar(
       200,
     );
     const positionId = text(row.id ?? row.positionId ?? row.position_id, 300);
+    const network = record(row.network);
+    const latitude = bounded(row.latitude ?? row.lat, -90, 90);
+    const longitude = bounded(
+      row.longitude ?? row.lon ?? row.lng,
+      -180,
+      180,
+    );
+
+    if (latitude === null || longitude === null) {
+      const wifiAccessPoints = list(network.wifiAccessPoints)
+        .slice(0, 64)
+        .flatMap(rawAccessPoint => {
+          const accessPoint = record(rawAccessPoint);
+          const macAddress = text(
+            accessPoint.macAddress
+            ?? accessPoint.bssid
+            ?? accessPoint.mac,
+            32,
+          );
+          if (!macAddress) return [];
+          const signalStrength = finite(
+            accessPoint.signalStrength
+            ?? accessPoint.rssi,
+          );
+          const channel = finite(accessPoint.channel);
+          return [{
+            macAddress,
+            signalStrength:
+              signalStrength !== null
+                ? Math.max(-127, Math.min(126, signalStrength))
+                : undefined,
+            channel:
+              channel !== null && channel >= 0
+                ? channel
+                : undefined,
+          }];
+        });
+
+      const cellTowers = list(network.cellTowers)
+        .slice(0, 32)
+        .flatMap(rawTower => {
+          const tower = record(rawTower);
+          const mnc = finite(
+            tower.mobileNetworkCode
+            ?? tower.mnc,
+          );
+          if (mnc === null) return [];
+
+          const radioRaw = String(
+            tower.radioType
+            ?? network.radioType
+            ?? 'gsm',
+          ).trim().toLowerCase();
+          const radioType = ['gsm', 'cdma', 'wcdma', 'lte', 'nr'].includes(radioRaw)
+            ? radioRaw
+            : undefined;
+
+          const cellId = finite(tower.cellId ?? tower.cid);
+          const locationAreaCode = finite(
+            tower.locationAreaCode
+            ?? tower.lac,
+          );
+          const mobileCountryCode = finite(
+            tower.mobileCountryCode
+            ?? tower.mcc,
+          );
+          const signalStrength = finite(
+            tower.signalStrength
+            ?? tower.rssi,
+          );
+
+          return [{
+            cellId:
+              cellId !== null && cellId >= 0
+                ? Math.floor(cellId)
+                : undefined,
+            locationAreaCode:
+              locationAreaCode !== null && locationAreaCode >= 0
+                ? Math.floor(locationAreaCode)
+                : undefined,
+            mobileCountryCode:
+              mobileCountryCode !== null
+              && mobileCountryCode >= 0
+              && mobileCountryCode <= 999
+                ? Math.floor(mobileCountryCode)
+                : undefined,
+            mobileNetworkCode: Math.max(0, Math.floor(mnc)),
+            radioType,
+            signalStrength:
+              signalStrength !== null
+                ? Math.max(-200, Math.min(100, signalStrength))
+                : undefined,
+          }];
+        });
+
+      if (!wifiAccessPoints.length && !cellTowers.length) return [];
+
+      const homeMobileCountryCode = finite(network.homeMobileCountryCode);
+      const homeMobileNetworkCode = finite(network.homeMobileNetworkCode);
+      const radioRaw = String(network.radioType || '').trim().toLowerCase();
+      const radioType = ['gsm', 'cdma', 'wcdma', 'lte', 'nr'].includes(radioRaw)
+        ? radioRaw
+        : undefined;
+
+      return [{
+        kind: 'radio',
+        timestamp,
+        radioType,
+        homeMobileCountryCode:
+          homeMobileCountryCode !== null
+          && homeMobileCountryCode >= 0
+          && homeMobileCountryCode <= 999
+            ? Math.floor(homeMobileCountryCode)
+            : undefined,
+        homeMobileNetworkCode:
+          homeMobileNetworkCode !== null && homeMobileNetworkCode >= 0
+            ? Math.floor(homeMobileNetworkCode)
+            : undefined,
+        carrier: text(network.carrier, 120),
+        provider: wrapped.providerId,
+        wifiAccessPoints: wifiAccessPoints.length
+          ? wifiAccessPoints
+          : undefined,
+        cellTowers: cellTowers.length
+          ? cellTowers
+          : undefined,
+        metadata: {
+          acquisitionMethod: 'traccar-network-radio',
+          traccarDeviceId: deviceId,
+          traccarPositionId: positionId,
+          traccarProtocol: text(row.protocol, 100),
+          traccarNetworkFallback: true,
+        },
+      }];
+    }
+
+    const accuracy = finite(
+      row.accuracy
+      ?? row.attributes?.accuracy
+      ?? row.attributes?.hdop,
+    );
+    const altitude = finite(row.altitude ?? row.alt);
+    const course = bounded(row.course ?? row.heading, 0, 360);
     const valid = typeof row.valid === 'boolean' ? row.valid : true;
 
     return [{
@@ -998,7 +1128,9 @@ function normalizeTraccar(
   });
 
   if (!measurements.length) {
-    throw new Error('Traccar payload contains no usable position observations.');
+    throw new Error(
+      'Traccar payload contains neither usable positions nor Wi-Fi/cell radio observations.',
+    );
   }
 
   return {
