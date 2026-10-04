@@ -28,6 +28,7 @@ export interface SpectraProviderStreamConfig {
   oauthScope?: string;
   subscriberIdEnv?: string;
   headersFromEnv?: Record<string, string>;
+  openMessages?: Array<Record<string, unknown>>;
   reconnectMinMs: number;
   reconnectMaxMs: number;
   heartbeatMs: number;
@@ -135,6 +136,18 @@ function loadConfigs(): SpectraProviderStreamConfig[] {
                   .filter(([header, envName]) => header && envName),
               )
             : undefined,
+        openMessages: Array.isArray(item?.openMessages)
+          ? item.openMessages
+              .slice(0, 8)
+              .filter((message: unknown) =>
+                Boolean(message)
+                && typeof message === 'object'
+                && !Array.isArray(message)
+              )
+              .map((message: Record<string, unknown>) =>
+                JSON.parse(JSON.stringify(message))
+              )
+          : undefined,
         reconnectMinMs: positiveInt(item?.reconnectMinMs, 2_000, 500, 60_000),
         reconnectMaxMs: positiveInt(item?.reconnectMaxMs, 60_000, 2_000, 300_000),
         heartbeatMs: positiveInt(
@@ -421,6 +434,25 @@ async function connectRuntime(runtime: RuntimeState): Promise<void> {
 
   socket.once('open', () => {
     runtime.reconnectAttempt = 0;
+
+    try {
+      for (const message of runtime.config.openMessages || []) {
+        const encoded = JSON.stringify(message);
+        if (Buffer.byteLength(encoded, 'utf8') > 64_000) {
+          throw new Error('Configured WSS open message exceeds 64KB.');
+        }
+        socket.send(encoded);
+      }
+    } catch (error) {
+      socket.terminate();
+      updateHealth(runtime, {
+        state: 'degraded',
+        lastErrorAt: new Date().toISOString(),
+        lastError: (error instanceof Error ? error.message : String(error)).slice(0, 500),
+      });
+      return;
+    }
+
     updateHealth(runtime, {
       state: 'healthy',
       connectedAt: new Date().toISOString(),
@@ -542,6 +574,7 @@ export function getConfiguredSpectraProviderStreams(): Array<{
   decoder: SpectraProviderStreamDecoder;
   normalizerKind: string;
   sessionBound: boolean;
+  openMessageCount: number;
 }> {
   return loadConfigs().map(config => ({
     id: config.id,
@@ -549,5 +582,6 @@ export function getConfiguredSpectraProviderStreams(): Array<{
     decoder: config.decoder,
     normalizerKind: config.normalizerKind,
     sessionBound: Boolean(config.sessionId),
+    openMessageCount: config.openMessages?.length || 0,
   }));
 }
