@@ -1059,6 +1059,14 @@ test('SPECTRA recursively reacquires until page exit with one stable session',
   spectra.includes('queryStartedAtRef.current') &&
   spectra.includes("backgroundPass: true") &&
   spectra.includes("sessionId: resolvedSessionId"));
+test('Continuous acquisition persists only newly acquired raw observations, never re-solved history',
+  routes.includes('const newlyAcquiredObservations: any[] = [') &&
+  routes.includes('const newRawLocationObservations = assessLocationQuality(') &&
+  routes.includes('...persistedObservations') &&
+  routes.includes('...newRawLocationObservations') &&
+  routes.includes('observations: newRawLocationObservations') &&
+  routes.includes('const solvedLocationObservations = constraintSolution.points') &&
+  !routes.includes('observations: solvedLocationObservations'));
 test('SPECTRA hard-stops local and server acquisition when the viewer exits',
   spectra.includes("window.addEventListener('pagehide'") &&
   spectra.includes("navigator.sendBeacon('/api/spectra/acquisition/stop'") &&
