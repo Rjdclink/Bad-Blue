@@ -65,6 +65,10 @@ const mapRendererAdapter = read('client/src/components/geoconsole/MapRendererAda
 const geoconsoleCore = read('server/services/geoconsole/index.ts');
 const railwayEnvExample = read('.env.railway.example');
 const legalProviderMesh = read('server/lexara/LegalProviderMesh.ts');
+const hootenannyContext = read('server/services/spectra/SpectraHootenannyContext.ts');
+const mylnikovResolver = read('server/services/spectra/SpectraMylnikovResolver.ts');
+const openSourceBridgeNormalizer = read('server/services/spectra/SpectraOpenSourceBridgeNormalizer.ts');
+const openSourceBridgeVerifier = read('scripts/verify-spectra-open-source-bridges.ts');
 const infrastructureNormalizer = read('server/services/spectra/SpectraInfrastructureProviderNormalizer.ts');
 const arubaStreamDecoder = read('server/services/spectra/SpectraArubaStreamDecoder.ts');
 const providerStreamCoordinator = read('server/services/spectra/SpectraProviderStreamCoordinator.ts');
@@ -842,6 +846,110 @@ test('Retry and reconnect loops use bounded jitter instead of synchronized fixed
 test('Cross-replica governor fails closed unless local fallback is explicitly enabled',
   resourceGovernor.includes('SPECTRA_ALLOW_LOCAL_GOVERNOR_FALLBACK') &&
   railwayEnvExample.includes('SPECTRA_ALLOW_LOCAL_GOVERNOR_FALLBACK=false'));
+
+test('Hootenanny is an additive conflated-map context provider rather than target telemetry',
+  hootenannyContext.includes('/osm/api/0.6/map/') &&
+  hootenannyContext.includes('/conflation/execute') &&
+  hootenannyContext.includes('contextOnly: true') &&
+  placeContext.includes('acquireSpectraHootenannyContext') &&
+  placeContext.includes('conflatedMap: true') &&
+  adapterRegistry.includes("id: 'hootenanny-conflated-map-context'") &&
+  !hootenannyContext.includes('spectra_location_observations'));
+test('Mylnikov open radio geolocation runs alongside the existing radio providers',
+  mylnikovResolver.includes('https://api.mylnikov.org/geolocation/wifi') &&
+  mylnikovResolver.includes('https://api.mylnikov.org/geolocation/cell') &&
+  mylnikovResolver.includes("endpoint.searchParams.set('data', 'open')") &&
+  mylnikovResolver.includes('slice(0, 12)') &&
+  geoconsoleRoutes.includes('resolveSpectraMylnikovRadio') &&
+  geoconsoleRoutes.includes('mylnikovOutcome') &&
+  geoconsoleRoutes.includes('googleRadioPoint(measurement)') &&
+  geoconsoleRoutes.includes('beaconDbRadioPoint(measurement)') &&
+  geoconsoleRoutes.includes('openCellIdPoint(measurement)') &&
+  adapterRegistry.includes("id: 'mylnikov-open-radio-geolocation'"));
+test('Open-source acquisition bridge normalizers cover the high-value GitHub bridge set',
+  [
+    'owntracks-location',
+    'chirpstack-location',
+    'find3-location',
+    'espresense-observation',
+    'kismet-device-location',
+    'openwisp-wifi-session',
+    'traccar-position',
+  ].every(kind => openSourceBridgeNormalizer.includes(`'${kind}'`)) &&
+  providerNormalizer.includes('SPECTRA_OPEN_SOURCE_BRIDGE_KINDS') &&
+  providerNormalizer.includes('normalizeSpectraOpenSourceBridgePayload'));
+test('OwnTracks preserves GPS accuracy, motion and stable MQTT topic device identity',
+  openSourceBridgeNormalizer.includes('row.tst') &&
+  openSourceBridgeNormalizer.includes('speedKmh / 3.6') &&
+  openSourceBridgeNormalizer.includes("topicParts[0].toLowerCase() === 'owntracks'") &&
+  openSourceBridgeNormalizer.includes('ownTracksMqttTopic'));
+test('ChirpStack preserves LocationEvent accuracy and device/application identity',
+  openSourceBridgeNormalizer.includes('chirpStackDeviceId') &&
+  openSourceBridgeNormalizer.includes('chirpStackLocationSource') &&
+  openSourceBridgeNormalizer.includes('chirpStackApplicationId') &&
+  openSourceBridgeNormalizer.includes('location.accuracy'));
+test('FIND3 and ESPresense add independent indoor positioning paths',
+  openSourceBridgeNormalizer.includes('find3-fingerprint-classification') &&
+  openSourceBridgeNormalizer.includes('find3Probability') &&
+  openSourceBridgeNormalizer.includes('espresense-ble-ranging') &&
+  openSourceBridgeNormalizer.includes("kind: 'ranging'") &&
+  openSourceBridgeNormalizer.includes("source: 'ble_rssi'") &&
+  openSourceBridgeNormalizer.includes('resolveConfiguredSpectraAnchor'));
+test('Kismet, OpenWISP and Traccar bridges preserve their native location-bearing evidence',
+  openSourceBridgeNormalizer.includes('kismet.common.location.geopoint') &&
+  openSourceBridgeNormalizer.includes('kismet.device.base.macaddr') &&
+  openSourceBridgeNormalizer.includes('openwisp-wifi-session') &&
+  openSourceBridgeNormalizer.includes('infrastructureAssociation: true') &&
+  openSourceBridgeNormalizer.includes('traccar-position') &&
+  openSourceBridgeNormalizer.includes('traccarNetwork'));
+test('Open-source bridge identities resolve through configured target-session bindings',
+  openSourceBridgeNormalizer.includes('applyConfiguredBridgeIdentity') &&
+  openSourceBridgeNormalizer.includes('resolveSpectraInfrastructureBinding') &&
+  openSourceBridgeNormalizer.includes('sessionId: binding.sessionId || batch.sessionId') &&
+  openSourceBridgeNormalizer.includes('subjectLabel: binding.subjectLabel || batch.subjectLabel'));
+test('Active acquisition has built-in FIND3, Traccar, Kismet, OpenWISP and OwnTracks lanes',
+  activeAcquisition.includes('builtInFind3Adapter') &&
+  activeAcquisition.includes('builtInTraccarAdapter') &&
+  activeAcquisition.includes('builtInKismetAdapter') &&
+  activeAcquisition.includes('builtInOpenWispAdapter') &&
+  activeAcquisition.includes('builtInOwnTracksAdapter') &&
+  activeAcquisition.includes('SPECTRA_FIND3_LOCATION_URL_TEMPLATE') &&
+  activeAcquisition.includes('SPECTRA_TRACCAR_POSITION_URL_TEMPLATE') &&
+  activeAcquisition.includes('SPECTRA_KISMET_DEVICE_URL_TEMPLATE') &&
+  activeAcquisition.includes('SPECTRA_OPENWISP_WIFI_SESSIONS_URL_TEMPLATE') &&
+  activeAcquisition.includes('SPECTRA_OWNTRACKS_LOCATION_URL_TEMPLATE'));
+test('Active adapter secrets may be supplied as headers or query parameters without embedding credentials in URLs',
+  activeAcquisition.includes('queryFromEnv?: Record<string, string>') &&
+  activeAcquisition.includes('url.searchParams.set(parameter, value)') &&
+  activeAcquisition.includes("{ KISMET: 'SPECTRA_KISMET_API_KEY' }") &&
+  activeAcquisition.includes('headersFromEnv'));
+test('WSS and MQTT bridge transports preserve arrays and support server-side session binding',
+  providerStreamCoordinator.includes("Array.isArray(parsed)") &&
+  providerStreamCoordinator.includes("? { data: parsed }") &&
+  providerStreamCoordinator.includes('sessionId: runtime.config.sessionId') &&
+  providerStreamCoordinator.includes('sessionBound: Boolean(config.sessionId)') &&
+  mqttProviderCoordinator.includes("Array.isArray(payload)") &&
+  mqttProviderCoordinator.includes("? { data: payload }") &&
+  mqttProviderCoordinator.includes('sessionId: runtime.config.sessionId') &&
+  mqttProviderCoordinator.includes('sessionBound: Boolean(config.sessionId)'));
+test('Open-source bridge configuration is documented without inventing credentials or endpoints',
+  railwayEnvExample.includes('SPECTRA_FIND3_LOCATION_URL_TEMPLATE=') &&
+  railwayEnvExample.includes('SPECTRA_TRACCAR_POSITION_URL_TEMPLATE=') &&
+  railwayEnvExample.includes('SPECTRA_KISMET_DEVICE_URL_TEMPLATE=') &&
+  railwayEnvExample.includes('SPECTRA_OPENWISP_WIFI_SESSIONS_URL_TEMPLATE=') &&
+  railwayEnvExample.includes('SPECTRA_OWNTRACKS_LOCATION_URL_TEMPLATE=') &&
+  railwayEnvExample.includes('SPECTRA_HOOTENANNY_BASE_URL=') &&
+  railwayEnvExample.includes('headersFromEnv/queryFromEnv'));
+test('Focused bridge behavior verifier exercises all seven open-source normalizers',
+  [
+    'owntracks-location',
+    'chirpstack-location',
+    'find3-location',
+    'espresense-observation',
+    'kismet-device-location',
+    'openwisp-wifi-session',
+    'traccar-position',
+  ].every(kind => openSourceBridgeVerifier.includes(`'${kind}'`)));
 
 test('SPECTRA recursively reacquires until page exit with one stable session',
   spectra.includes('CONTINUOUS_ACQUISITION_DELAY_MS') &&
