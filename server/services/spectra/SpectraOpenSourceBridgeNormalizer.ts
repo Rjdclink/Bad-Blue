@@ -15,7 +15,8 @@ export type SpectraOpenSourceBridgeKind =
   | 'cot-location'
   | 'homeassistant-device-tracker'
   | 'gpsd-tpv'
-  | 'omlox-location';
+  | 'omlox-location'
+  | 'mqtt-room-presence';
 
 export interface SpectraOpenSourceBridgeBatch {
   sessionId?: string;
@@ -1435,6 +1436,109 @@ function normalizeGpsd(
   };
 }
 
+function normalizeMqttRoomPresence(
+  providerId: string,
+  payload: unknown,
+): SpectraOpenSourceBridgeBatch {
+  const wrapped = envelope(payload, providerId);
+  const outer = wrapped.outer;
+  const topic = text(
+    outer._spectraMqttTopic
+    ?? outer.topic,
+    500,
+  );
+  const topicParts = topic
+    ? topic.split('/').map(part => part.trim()).filter(Boolean)
+    : [];
+  const room = text(
+    outer.room
+    ?? outer.roomId
+    ?? outer.room_id
+    ?? topicParts[topicParts.length - 1],
+    200,
+  );
+  const deviceId = text(
+    outer.id
+    ?? outer.device
+    ?? outer.deviceId
+    ?? outer.device_id
+    ?? outer.mac
+    ?? outer.macAddress,
+    200,
+  );
+  const distance = finite(
+    outer.distance
+    ?? outer.distanceMeters
+    ?? outer.distance_m
+    ?? outer.dist,
+  );
+  if (!room || !deviceId || distance === null || distance < 0) {
+    throw new Error(
+      'MQTT room-presence payload requires room, device identifier and non-negative distance.',
+    );
+  }
+
+  const anchor = resolveConfiguredSpectraAnchor({
+    id: room,
+    anchorId: room,
+    deviceId: room,
+    locatorId: room,
+  });
+  if (!anchor) {
+    throw new Error(
+      'MQTT room-presence payload requires a configured room/scanner anchor.',
+    );
+  }
+
+  const timestamp = isoTimestamp(
+    outer.timestamp
+    ?? outer.time
+    ?? outer.tst
+    ?? outer.observedAt
+    ?? outer.observed_at
+    ?? Date.now(),
+  );
+  if (!timestamp) {
+    throw new Error('MQTT room-presence payload contains no usable observation time.');
+  }
+
+  return {
+    sessionId: wrapped.sessionId,
+    subjectLabel: wrapped.subjectLabel || text(outer.name, 300),
+    sourceId: wrapped.providerId,
+    measurements: [{
+      kind: 'ranging',
+      source: 'bluetooth_proximity',
+      timestamp,
+      provider: wrapped.providerId,
+      correlationGroup:
+        `mqtt-room:${wrapped.providerId}:${deviceId}`,
+      anchors: [{
+        id: anchor.id,
+        latitude: anchor.latitude,
+        longitude: anchor.longitude,
+        distanceMeters: Math.min(1_000_000, distance),
+        uncertaintyMeters:
+          anchor.accuracyMeters !== undefined
+            ? Math.max(0.25, anchor.accuracyMeters)
+            : Math.max(0.75, distance * 0.25),
+      }],
+      metadata: {
+        acquisitionMethod: 'mqtt-room-presence',
+        mqttRoomTopic: topic,
+        mqttRoom: room,
+        mqttRoomDeviceId: deviceId,
+        mqttRoomDeviceName: text(outer.name, 300),
+      },
+    }],
+    metadata: {
+      normalization: 'mqtt-room-presence',
+      observationCount: 1,
+      normalizedAt: new Date().toISOString(),
+    },
+  };
+}
+
 function normalizeOmlox(
   providerId: string,
   payload: unknown,
@@ -1993,6 +2097,9 @@ export function normalizeSpectraOpenSourceBridgePayload(
     case 'omlox-location':
       batch = normalizeOmlox(providerId, payload);
       break;
+    case 'mqtt-room-presence':
+      batch = normalizeMqttRoomPresence(providerId, payload);
+      break;
     default: {
       const exhaustive: never = kind;
       throw new Error(`Unsupported open-source bridge normalizer: ${String(exhaustive)}`);
@@ -2016,4 +2123,5 @@ export const SPECTRA_OPEN_SOURCE_BRIDGE_KINDS:
     'homeassistant-device-tracker',
     'gpsd-tpv',
     'omlox-location',
+    'mqtt-room-presence',
   ] as const;
