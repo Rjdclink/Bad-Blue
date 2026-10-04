@@ -512,10 +512,13 @@ export const SPECTRA_ADAPTER_CAPABILITIES: SpectraAdapterCapability[] = [
     label: 'Cisco Meraki Scanning API ingest',
     mode: 'provider-webhook',
     sourceTypes: ['wifi_fingerprint','bluetooth_proximity'],
-    configured: () => anyEnv('SPECTRA_TELEMETRY_HMAC_SECRET'),
+    configured: () => anyEnv(
+      'SPECTRA_INFRASTRUCTURE_WEBHOOK_AUTH',
+      'SPECTRA_TELEMETRY_HMAC_SECRET',
+    ),
     priority: 'high',
     supportsRealtime: true,
-    notes: 'Normalizes Meraki Wi-Fi/BLE location observations, floor-plan context and RSSI records.',
+    notes: 'Accepts native Meraki Scanning API validator/secret payloads or signed canonical provider delivery, and normalizes Wi-Fi/BLE locations, floor-plan context and RSSI records.',
   },
   {
     id: 'cisco-spaces-location-ingest',
