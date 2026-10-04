@@ -182,6 +182,16 @@ export const SPECTRA_ADAPTER_CAPABILITIES: SpectraAdapterCapability[] = [
     notes: 'Reconnectable authenticated WSS transport for configured infrastructure providers, with deduplication and stream health reporting.',
   },
   {
+    id: 'espresense-ble-ranging',
+    label: 'ESPresense BLE indoor ranging',
+    mode: 'live-telemetry',
+    sourceTypes: ['ble_rssi','bluetooth_proximity'],
+    configured: () => anyEnv('SPECTRA_MQTT_PROVIDER_ADAPTERS', 'SPECTRA_ANCHOR_CATALOG_JSON'),
+    priority: 'high',
+    supportsRealtime: true,
+    notes: 'Turns ESPresense room/node distance or RSSI observations into canonical BLE ranging against configured scanner anchors for indoor multilateration.',
+  },
+  {
     id: 'find3-indoor-positioning',
     label: 'FIND3 Wi-Fi/Bluetooth fingerprint positioning',
     mode: 'provider-pull',
