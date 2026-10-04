@@ -17,6 +17,7 @@ interface ActiveProviderConfig {
   headersFromEnv?: Record<string, string>;
   queryFromEnv?: Record<string, string>;
   timeoutMs: number;
+  minPollIntervalMs?: number;
 }
 
 export interface SpectraActiveAcquisitionInput {
@@ -54,6 +55,56 @@ export interface SpectraActiveAcquisitionHealth {
 }
 
 const activeHealth = new Map<string, SpectraActiveAcquisitionHealth>();
+const lastPollByTarget = new Map<string, number>();
+
+function activePollKey(
+  config: ActiveProviderConfig,
+  input: SpectraActiveAcquisitionInput,
+): string {
+  const deviceRef = configuredDeviceRefForAdapter(config, input);
+  const identity = String(
+    deviceRef
+    || input.sessionId
+    || input.subjectLabel
+    || 'global',
+  ).trim().toLowerCase().slice(0, 300);
+  return `${config.id}:${identity}`;
+}
+
+function minPollIntervalMs(config: ActiveProviderConfig): number {
+  return Math.max(
+    1_000,
+    Math.min(
+      300_000,
+      Number.isFinite(Number(config.minPollIntervalMs))
+        ? Number(config.minPollIntervalMs)
+        : 5_000,
+    ),
+  );
+}
+
+function pollDelayRemaining(
+  config: ActiveProviderConfig,
+  input: SpectraActiveAcquisitionInput,
+): number {
+  const key = activePollKey(config, input);
+  const previous = lastPollByTarget.get(key);
+  if (!previous) return 0;
+  return Math.max(0, minPollIntervalMs(config) - (Date.now() - previous));
+}
+
+function markPolled(
+  config: ActiveProviderConfig,
+  input: SpectraActiveAcquisitionInput,
+): void {
+  if (lastPollByTarget.size > 5_000) {
+    const cutoff = Date.now() - 60 * 60_000;
+    for (const [key, at] of lastPollByTarget) {
+      if (at < cutoff) lastPollByTarget.delete(key);
+    }
+  }
+  lastPollByTarget.set(activePollKey(config, input), Date.now());
+}
 
 function recordActiveHealth(
   config: ActiveProviderConfig,
@@ -329,6 +380,10 @@ function configuredAdapters(): ActiveProviderConfig[] {
               )
             : undefined,
         timeoutMs: timeoutMs(item?.timeoutMs),
+        minPollIntervalMs: Math.max(
+          1_000,
+          positiveInteger(item?.minPollIntervalMs, 5_000, 300_000),
+        ),
       }];
     });
   } catch {
@@ -630,6 +685,7 @@ export function getSpectraActiveAcquisitionCapabilities(): Array<{
   label: string;
   normalizerKind: string;
   target: SpectraActiveAcquisitionTarget;
+  minPollIntervalMs: number;
 }> {
   return [
     builtInAndroidMdmAdapter(),
@@ -649,6 +705,7 @@ export function getSpectraActiveAcquisitionCapabilities(): Array<{
       label: item.label,
       normalizerKind: item.normalizerKind,
       target: item.target,
+      minPollIntervalMs: minPollIntervalMs(item),
     }));
 }
 
@@ -689,6 +746,22 @@ export async function acquireSpectraActiveTelemetry(
         };
       }
 
+      const pollDelay = pollDelayRemaining(config, input);
+      if (pollDelay > 0) {
+        return {
+          batch: null,
+          attempt: {
+            id: config.id,
+            label: config.label,
+            status: 'skipped' as const,
+            normalizerKind: config.normalizerKind,
+            measurementCount: 0,
+            reason: `Provider poll cooldown active for ${pollDelay}ms.`,
+          },
+        };
+      }
+
+      markPolled(config, input);
       try {
         const batch = await fetchAdapter(config, input);
         recordActiveHealth(config, 'fulfilled', batch.measurements.length);
