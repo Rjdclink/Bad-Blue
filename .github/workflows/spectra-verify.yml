@@ -40,7 +40,19 @@ jobs:
         run: npm ci --legacy-peer-deps
 
       - name: Run SPECTRA regression suite
-        run: npm run verify:spectra
+        run: npm run verify:spectra 2>&1 | tee spectra-verify.log
 
       - name: Run TypeScript compilation check
-        run: npm run check
+        if: always()
+        run: npm run check 2>&1 | tee typescript-check.log
+
+      - name: Upload SPECTRA verification diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: spectra-verification-diagnostics
+          path: |
+            spectra-verify.log
+            typescript-check.log
+          if-no-files-found: warn
+          retention-days: 7
