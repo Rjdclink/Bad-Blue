@@ -262,6 +262,20 @@ export const SPECTRA_ADAPTER_CAPABILITIES: SpectraAdapterCapability[] = [
     notes: 'Parses bounded CoT XML event/point telemetry with uid, event time, CE/LE uncertainty, track speed/course and callsign over configured WSS or MQTT feeds.',
   },
   {
+    id: 'homeassistant-device-tracker',
+    label: 'Home Assistant device tracker bridge',
+    mode: 'provider-pull',
+    sourceTypes: ['device_gps'],
+    configured: () => anyEnv(
+      'SPECTRA_HOME_ASSISTANT_STATE_URL_TEMPLATE',
+      'SPECTRA_HOME_ASSISTANT_TOKEN',
+      'SPECTRA_ACTIVE_PROVIDER_ADAPTERS',
+    ),
+    priority: 'high',
+    supportsRealtime: true,
+    notes: 'Normalizes owned Home Assistant device_tracker/person state coordinates and GPS accuracy; can be pulled directly from a configured HTTPS REST state endpoint.',
+  },
+  {
     id: 'owntracks-location-bridge',
     label: 'OwnTracks Recorder location bridge',
     mode: 'live-telemetry',
