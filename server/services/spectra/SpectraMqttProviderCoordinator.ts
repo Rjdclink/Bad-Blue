@@ -239,15 +239,27 @@ function dedupeKey(batch: SpectraNormalizedProviderBatch): string {
   ].join('|');
 }
 
-function acceptOnce(runtime: Runtime, batch: SpectraNormalizedProviderBatch): boolean {
-  const now = Date.now();
+function pruneAccepted(runtime: Runtime, now = Date.now()): void {
   for (const [key, at] of runtime.recentKeys) {
     if (now - at > 5 * 60_000) runtime.recentKeys.delete(key);
   }
-  const key = dedupeKey(batch);
-  if (runtime.recentKeys.has(key)) return false;
-  runtime.recentKeys.set(key, now);
-  return true;
+}
+
+function wasAccepted(
+  runtime: Runtime,
+  batch: SpectraNormalizedProviderBatch,
+): boolean {
+  pruneAccepted(runtime);
+  return runtime.recentKeys.has(dedupeKey(batch));
+}
+
+function rememberAccepted(
+  runtime: Runtime,
+  batch: SpectraNormalizedProviderBatch,
+): void {
+  const now = Date.now();
+  pruneAccepted(runtime, now);
+  runtime.recentKeys.set(dedupeKey(batch), now);
 }
 
 async function processPublish(runtime: Runtime, flags: number, body: Buffer): Promise<void> {
@@ -268,7 +280,9 @@ async function processPublish(runtime: Runtime, flags: number, body: Buffer): Pr
 
   try {
     const payloadBytes = body.subarray(offset);
-    if (!payloadBytes.length || payloadBytes.length > 8_000_000) return;
+    if (!payloadBytes.length || payloadBytes.length > 8_000_000) {
+      throw new Error('MQTT telemetry payload is empty or exceeds the bounded payload size.');
+    }
 
     const batch = (() => {
       if (runtime.config.decoder === 'cot-xml') {
@@ -312,13 +326,27 @@ async function processPublish(runtime: Runtime, flags: number, body: Buffer): Pr
       );
     })();
 
-    if (acceptOnce(runtime, batch) && consumer) {
+    if (!wasAccepted(runtime, batch)) {
+      if (!consumer) {
+        throw new Error('SPECTRA MQTT telemetry consumer is unavailable.');
+      }
+
+      // QoS1 is acknowledged only after the canonical consumer succeeds.
+      // Failed batches remain unacknowledged so the broker can redeliver them.
       await consumer(batch, runtime.config.id);
+      rememberAccepted(runtime, batch);
+
       runtime.health.acceptedBatches += 1;
       runtime.health.measurements += batch.measurements.length;
       runtime.health.lastAcceptedAt = new Date().toISOString();
       runtime.health.state = 'healthy';
       runtime.health.lastError = undefined;
+    }
+
+    // A duplicate that is already in recentKeys was successfully consumed on a
+    // prior delivery, so acknowledging that retransmission is also correct.
+    if (qos === 1 && packetId && runtime.socket?.writable) {
+      runtime.socket.write(pubAckPacket(packetId));
     }
   } catch (error) {
     runtime.health.state = 'degraded';
@@ -326,10 +354,10 @@ async function processPublish(runtime: Runtime, flags: number, body: Buffer): Pr
     runtime.health.lastError = (
       error instanceof Error ? error.message : String(error)
     ).slice(0, 500);
-  } finally {
-    if (qos === 1 && packetId && runtime.socket?.writable) {
-      runtime.socket.write(pubAckPacket(packetId));
-    }
+
+    // Force a clean reconnect without PUBACK. For QoS1 the broker will
+    // redeliver the unacknowledged publication on the next session.
+    fail(runtime, error);
   }
 }
 
