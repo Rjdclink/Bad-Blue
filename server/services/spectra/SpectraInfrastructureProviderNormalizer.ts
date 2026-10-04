@@ -1,4 +1,5 @@
 import { resolveSpectraFloorplanCoordinate } from './SpectraFloorplanTransformer';
+import { resolveConfiguredSpectraAnchor } from './SpectraAnchorRegistry';
 import { resolveSpectraInfrastructureBinding, spectraInfrastructureIdentityMetadata } from './SpectraInfrastructureIdentity';
 
 export type SpectraInfrastructureProviderKind =
@@ -151,7 +152,7 @@ function resolveCoordinates(
   latitude: number;
   longitude: number;
   accuracy: number;
-  coordinateSource: 'geographic' | 'floorplan';
+  coordinateSource: 'geographic' | 'floorplan' | 'configured-anchor';
 } | null {
   const latitude = bounded(
     row.latitude ?? row.lat ?? row.location?.latitude ?? row.location?.lat,
@@ -190,11 +191,42 @@ function resolveCoordinates(
     };
   }
 
+  const ids = identifiersForRow(kind, row, providerId);
+  const associatedAnchor = ids.apId
+    ? resolveConfiguredSpectraAnchor({
+        id: ids.apId,
+        anchorId: ids.apId,
+        deviceId: ids.apId,
+        macAddress: ids.apId,
+        bssid: ids.apId,
+      })
+    : null;
+
+  if (associatedAnchor) {
+    const coverageMeters = finite(
+      associatedAnchor.metadata?.coverageMeters
+      ?? associatedAnchor.metadata?.radiusMeters
+      ?? associatedAnchor.metadata?.coverageRadiusMeters,
+    );
+    return {
+      latitude: associatedAnchor.latitude,
+      longitude: associatedAnchor.longitude,
+      accuracy: directAccuracy !== null && directAccuracy > 0
+        ? Math.max(
+            directAccuracy,
+            associatedAnchor.accuracyMeters ?? coverageMeters ?? 25,
+          )
+        : Math.max(
+            associatedAnchor.accuracyMeters ?? 0,
+            coverageMeters ?? 25,
+          ),
+      coordinateSource: 'configured-anchor',
+    };
+  }
+
   const x = finite(row.x ?? row.location?.x ?? row.coordinates?.x);
   const y = finite(row.y ?? row.location?.y ?? row.coordinates?.y);
   if (x === null || y === null) return null;
-
-  const ids = identifiersForRow(kind, row, providerId);
   const transformed = resolveSpectraFloorplanCoordinate({
     provider: providerId,
     mapId: ids.mapId,
@@ -264,7 +296,11 @@ export function normalizeSpectraInfrastructureProviderPayload(
         accuracy: coordinates.accuracy,
         confidence: confidenceForAccuracy(
           coordinates.accuracy,
-          coordinates.coordinateSource === 'floorplan' ? 0.88 : 0.92,
+          coordinates.coordinateSource === 'floorplan'
+            ? 0.88
+            : coordinates.coordinateSource === 'configured-anchor'
+              ? 0.72
+              : 0.92,
         ),
         provider: wrapped.providerId,
         recordId: text(
