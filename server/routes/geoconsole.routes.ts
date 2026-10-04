@@ -1650,11 +1650,30 @@ export async function processSpectraTelemetryBatch(
   };
 }
 
+async function processSpectraStreamBatch(
+  value: unknown,
+  providerId: string,
+): Promise<void> {
+  const validation = telemetryBatchSchema.safeParse(value);
+  if (!validation.success) {
+    throw new Error(
+      `SPECTRA streamed telemetry from ${providerId} did not match the canonical schema.`,
+    );
+  }
+
+  await processSpectraTelemetryBatch(
+    validation.data,
+    true,
+    undefined,
+    providerId,
+  );
+}
+
 startSpectraProviderStreams(async (batch, providerId) => {
-  await processSpectraTelemetryBatch(batch as TelemetryBatch, true, undefined, providerId);
+  await processSpectraStreamBatch(batch, providerId);
 });
 startSpectraMqttProviderStreams(async (batch, providerId) => {
-  await processSpectraTelemetryBatch(batch as TelemetryBatch, true, undefined, providerId);
+  await processSpectraStreamBatch(batch, providerId);
 });
 
 router.post('/traffic-context/provider/:providerId', async (req: Request, res: Response) => {
