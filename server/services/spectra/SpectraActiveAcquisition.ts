@@ -411,6 +411,27 @@ function builtInTraccarAdapter(): ActiveProviderConfig | null {
   };
 }
 
+function builtInKismetAdapter(): ActiveProviderConfig | null {
+  const url = String(process.env.SPECTRA_KISMET_DEVICE_URL_TEMPLATE || '').trim();
+  const validationUrl = url
+    .replace(/\{\{deviceRef\}\}/g, 'managed-device')
+    .replace(/\{\{sessionId\}\}/g, 'session');
+  if (!httpsUrl(validationUrl)) return null;
+
+  return {
+    id: 'kismet-device-location',
+    label: 'Kismet geolocated device',
+    url,
+    method: 'GET',
+    normalizerKind: 'kismet-device-location',
+    target: 'device',
+    queryFromEnv: String(process.env.SPECTRA_KISMET_API_KEY || '').trim()
+      ? { KISMET: 'SPECTRA_KISMET_API_KEY' }
+      : undefined,
+    timeoutMs: timeoutMs(process.env.SPECTRA_KISMET_TIMEOUT_MS),
+  };
+}
+
 function acquisitionBody(
   input: SpectraActiveAcquisitionInput,
 ): Record<string, unknown> {
@@ -491,6 +512,7 @@ export function getSpectraActiveAcquisitionCapabilities(): Array<{
     builtInUniFiAdapter(),
     builtInFind3Adapter(),
     builtInTraccarAdapter(),
+    builtInKismetAdapter(),
     ...configuredAdapters(),
   ].filter((item): item is ActiveProviderConfig => Boolean(item))
     .map(item => ({
@@ -511,6 +533,7 @@ export async function acquireSpectraActiveTelemetry(
     builtInUniFiAdapter(),
     builtInFind3Adapter(),
     builtInTraccarAdapter(),
+    builtInKismetAdapter(),
     ...configuredAdapters(),
   ].filter((item): item is ActiveProviderConfig => Boolean(item));
 
