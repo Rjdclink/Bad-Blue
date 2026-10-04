@@ -774,6 +774,16 @@ export const SPECTRA_ADAPTER_CAPABILITIES: SpectraAdapterCapability[] = [
     notes: 'Queries public NOAA CORS reference-station locations near an existing map candidate as context only.',
   },
   {
+    id: 'wzdx-public-road-context',
+    label: 'USDOT WZDx public road/work-zone context',
+    mode: 'public-record',
+    sourceTypes: ['public_record'],
+    configured: () => true,
+    priority: 'supporting',
+    supportsRealtime: true,
+    notes: 'Discovers active no-key USDOT WZDx feeds and ingests nearby work-zone or field-device GeoJSON as road context only.',
+  },
+  {
     id: 'mobilitydatabase-gtfs-rt-catalog',
     label: 'MobilityDatabase public GTFS-RT catalog',
     mode: 'public-record',
