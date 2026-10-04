@@ -385,6 +385,7 @@ export async function discoverLexaraBackgroundSourcesParallel(
       jurisdiction: options.jurisdiction,
       subject: options.subject,
       requestedFact: options.requestedFact,
+      firstUseful: true,
     }),
     searchLexaraBackgroundWithClaude({
       prompt: query,
@@ -453,6 +454,7 @@ export async function investigateLexaraBackgroundQuestion(
       jurisdiction: context.jurisdiction,
       subject: decision.subject,
       requestedFact: decision.requestedFact,
+      firstUseful: true,
     }).catch(() => [] as LegalMeshCandidate[]);
     const targets = uniqueCandidates(nativeCandidates).slice(0, LIVE_TARGETS_PER_PASS);
     const retrieval = targets.length
@@ -537,6 +539,7 @@ export async function investigateLexaraBackgroundQuestion(
       jurisdiction: subject.location || context.jurisdiction,
       subject: subject.name,
       requestedFact: decision.requestedFact,
+      firstUseful: !deepAcquisitionRequested,
     }).catch(error => {
       console.warn('[LEXARA Background] native discovery failed; preserving other Lexara lanes', {
         error: error instanceof Error ? error.message : String(error),
@@ -829,12 +832,14 @@ export async function investigateLexaraBackgroundQuestion(
           jurisdiction: subject.location || context.jurisdiction,
           subject: subject.name,
           requestedFact: decision.requestedFact,
+          firstUseful: !deepAcquisitionRequested,
         }),
         discoverLegalMeshSupplemental(query, [...seenUrls], laneSignal, {
           categories,
           jurisdiction: subject.location || context.jurisdiction,
           subject: subject.name,
           requestedFact: decision.requestedFact,
+          firstUseful: !deepAcquisitionRequested,
         }),
       ]);
       const primary = primaryOutcome.status === 'fulfilled' ? primaryOutcome.value : [];
