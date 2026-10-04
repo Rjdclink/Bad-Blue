@@ -12,7 +12,8 @@ export type SpectraOpenSourceBridgeKind =
   | 'traccar-position'
   | 'meshtastic-position'
   | 'cot-location'
-  | 'homeassistant-device-tracker';
+  | 'homeassistant-device-tracker'
+  | 'gpsd-tpv';
 
 export interface SpectraOpenSourceBridgeBatch {
   sessionId?: string;
@@ -1317,6 +1318,121 @@ function normalizeMeshtastic(
   };
 }
 
+function normalizeGpsd(
+  providerId: string,
+  payload: unknown,
+): SpectraOpenSourceBridgeBatch {
+  const wrapped = envelope(payload, providerId);
+  const outer = wrapped.outer;
+  const pollRows = list(outer.tpv);
+  const rows = pollRows.length
+    ? pollRows
+    : list(outer.data).length
+      ? list(outer.data)
+      : Array.isArray(payload)
+        ? payload as any[]
+        : [outer];
+
+  const measurements = rows.slice(0, 2_000).flatMap(raw => {
+    const row = record(raw);
+    if (
+      row.class
+      && String(row.class).toUpperCase() !== 'TPV'
+    ) return [];
+
+    const mode = finite(row.mode);
+    if (mode !== null && mode < 2) return [];
+
+    const latitude = bounded(row.lat ?? row.latitude, -90, 90);
+    const longitude = bounded(row.lon ?? row.longitude, -180, 180);
+    const timestamp = isoTimestamp(row.time ?? row.timestamp);
+    if (latitude === null || longitude === null || !timestamp) return [];
+
+    const epx = finite(row.epx);
+    const epy = finite(row.epy);
+    const eph = finite(row.eph);
+    const horizontalAccuracy =
+      eph !== null && eph >= 0
+        ? eph
+        : epx !== null && epx >= 0 && epy !== null && epy >= 0
+          ? Math.hypot(epx, epy)
+          : undefined;
+    const verticalAccuracy = finite(row.epv);
+    const altitude = finite(
+      row.altHAE
+      ?? row.altMSL
+      ?? row.alt,
+    );
+    const speed = finite(row.speed);
+    const track = bounded(row.track, 0, 360);
+    const device = text(row.device, 300);
+
+    return [{
+      kind: 'position',
+      source: 'gnss_fix',
+      timestamp,
+      latitude,
+      longitude,
+      altitude: altitude ?? undefined,
+      accuracy:
+        horizontalAccuracy !== undefined && horizontalAccuracy > 0
+          ? Math.min(5_000_000, horizontalAccuracy)
+          : undefined,
+      verticalAccuracy:
+        verticalAccuracy !== null && verticalAccuracy >= 0
+          ? Math.min(5_000_000, verticalAccuracy)
+          : undefined,
+      speed:
+        speed !== null && speed >= 0
+          ? speed
+          : undefined,
+      heading: track ?? undefined,
+      confidence: confidenceForAccuracy(
+        horizontalAccuracy !== undefined && horizontalAccuracy > 0
+          ? horizontalAccuracy
+          : 25,
+        mode !== null && mode >= 3 ? 0.98 : 0.9,
+      ),
+      provider: wrapped.providerId,
+      recordId: text(
+        [device, timestamp].filter(Boolean).join('@'),
+        300,
+      ),
+      correlationGroup:
+        `gpsd:${wrapped.providerId}:${device || 'receiver'}`,
+      metadata: {
+        acquisitionMethod: 'gpsd-tpv',
+        gpsdDevice: device,
+        gpsdMode: mode ?? undefined,
+        gpsdStatus: finite(row.status) ?? undefined,
+        gpsdEpx: epx ?? undefined,
+        gpsdEpy: epy ?? undefined,
+        gpsdEph: eph ?? undefined,
+        gpsdEpv: verticalAccuracy ?? undefined,
+        gpsdTimeErrorSeconds: finite(row.ept) ?? undefined,
+        gpsdSpeedErrorMps: finite(row.eps) ?? undefined,
+        gpsdClimbMps: finite(row.climb) ?? undefined,
+      },
+    }];
+  });
+
+  if (!measurements.length) {
+    throw new Error('GPSD payload contains no usable TPV fixes.');
+  }
+
+  return {
+    sessionId: wrapped.sessionId,
+    subjectLabel: wrapped.subjectLabel,
+    sourceId: wrapped.providerId,
+    measurements,
+    metadata: {
+      normalization: 'gpsd-tpv',
+      observationCount: measurements.length,
+      normalizedAt: new Date().toISOString(),
+    },
+  };
+}
+
 function normalizeHomeAssistant(
   providerId: string,
   payload: unknown,
@@ -1577,6 +1693,7 @@ function applyConfiguredBridgeIdentity(
       ?? metadata.meshtasticNodeId
       ?? metadata.cotUid
       ?? metadata.homeAssistantEntityId
+      ?? metadata.gpsdDevice
       ?? metadata.find3Device,
       200,
     ),
@@ -1637,6 +1754,9 @@ export function normalizeSpectraOpenSourceBridgePayload(
     case 'homeassistant-device-tracker':
       batch = normalizeHomeAssistant(providerId, payload);
       break;
+    case 'gpsd-tpv':
+      batch = normalizeGpsd(providerId, payload);
+      break;
     default: {
       const exhaustive: never = kind;
       throw new Error(`Unsupported open-source bridge normalizer: ${String(exhaustive)}`);
@@ -1658,4 +1778,5 @@ export const SPECTRA_OPEN_SOURCE_BRIDGE_KINDS:
     'meshtastic-position',
     'cot-location',
     'homeassistant-device-tracker',
+    'gpsd-tpv',
   ] as const;
