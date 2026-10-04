@@ -1,3 +1,6 @@
+import { lookup } from 'node:dns/promises';
+import { isIP } from 'node:net';
+
 export interface SpectraArcGisCameraLayer {
   url: string;
   provider: string;
@@ -26,12 +29,78 @@ function boundingBox(latitude: number, longitude: number, radiusMiles: number) {
   };
 }
 
+function isPrivateIpv4(address: string): boolean {
+  const parts = address.split('.').map(Number);
+  if (parts.length !== 4 || parts.some(part =>
+    !Number.isInteger(part) || part < 0 || part > 255
+  )) return true;
+  const [a, b] = parts;
+  return a === 0
+    || a === 10
+    || a === 127
+    || (a === 100 && b >= 64 && b <= 127)
+    || (a === 169 && b === 254)
+    || (a === 172 && b >= 16 && b <= 31)
+    || (a === 192 && (b === 0 || b === 168))
+    || (a === 198 && (b === 18 || b === 19))
+    || a >= 224;
+}
+
+function isPrivateIpv6(address: string): boolean {
+  const normalized = address.toLowerCase();
+  if (normalized === '::' || normalized === '::1') return true;
+  if (
+    normalized.startsWith('fc')
+    || normalized.startsWith('fd')
+    || normalized.startsWith('fe8')
+    || normalized.startsWith('fe9')
+    || normalized.startsWith('fea')
+    || normalized.startsWith('feb')
+  ) return true;
+  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(normalized);
+  return mapped ? isPrivateIpv4(mapped[1]) : false;
+}
+
+function isPrivateAddress(address: string): boolean {
+  const version = isIP(address);
+  if (version === 4) return isPrivateIpv4(address);
+  if (version === 6) return isPrivateIpv6(address);
+  return true;
+}
+
 function safeServiceUrl(raw: unknown): string | null {
   try {
     const url = new URL(String(raw || '').trim());
     if (url.protocol !== 'https:' || url.username || url.password) return null;
+    const host = url.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+    if (
+      !host
+      || host === 'localhost'
+      || host.endsWith('.localhost')
+      || host.endsWith('.local')
+      || host.endsWith('.internal')
+      || (isIP(host) && isPrivateAddress(host))
+    ) return null;
     if (!/(?:FeatureServer|MapServer)(?:\/\d+)?\/?$/i.test(url.pathname)) return null;
     return url.toString().replace(/\/$/, '');
+  } catch {
+    return null;
+  }
+}
+
+async function assertPublicServiceUrl(raw: string): Promise<string | null> {
+  const safe = safeServiceUrl(raw);
+  if (!safe) return null;
+  try {
+    const url = new URL(safe);
+    const host = url.hostname.replace(/^\[|\]$/g, '');
+    if (isIP(host)) return isPrivateAddress(host) ? null : safe;
+
+    const addresses = await lookup(host, { all: true, verbatim: true });
+    if (!addresses.length || addresses.some(item => isPrivateAddress(item.address))) {
+      return null;
+    }
+    return safe;
   } catch {
     return null;
   }
@@ -42,6 +111,10 @@ async function discoverServiceLayers(
   provider: string,
   itemId?: string,
 ): Promise<SpectraArcGisCameraLayer[]> {
+  const publicServiceUrl = await assertPublicServiceUrl(serviceUrl);
+  if (!publicServiceUrl) return [];
+  serviceUrl = publicServiceUrl;
+
   const directLayer = serviceUrl.match(/\/(?:FeatureServer|MapServer)\/(\d+)$/i);
   if (directLayer) {
     return [{ url: serviceUrl, provider, itemId }];
@@ -142,8 +215,10 @@ export async function discoverPublicArcGisCameraLayers(
       results.slice(0, 16).map(async (item: any) => {
         const serviceUrl = safeServiceUrl(item?.url);
         if (!serviceUrl) return [];
+        const publicServiceUrl = await assertPublicServiceUrl(serviceUrl);
+        if (!publicServiceUrl) return [];
         return discoverServiceLayers(
-          serviceUrl,
+          publicServiceUrl,
           String(item?.title || item?.owner || new URL(serviceUrl).hostname).slice(0, 200),
           String(item?.id || '').slice(0, 80) || undefined,
         );
