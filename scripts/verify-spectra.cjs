@@ -707,10 +707,15 @@ test('GTFS-Realtime parser is bounded and handles vehicle-position protobuf fiel
   gtfsRealtimeContext.includes('parseVehiclePosition') &&
   gtfsRealtimeContext.includes('bytes.length > 8_000_000') &&
   gtfsRealtimeContext.includes('contextOnly: true'));
-test('ArcGIS public camera discovery searches anonymous public content and remains spatially bounded',
+test('ArcGIS public camera discovery is spatially bounded and rejects private/reserved service targets',
   arcGisCameraDiscovery.includes('https://www.arcgis.com/sharing/rest/search') &&
-  arcGisCameraDiscovery.includes("endpoint.searchParams.set('bbox'") &&
+  arcGisCameraDiscovery.includes("'bbox'") &&
   arcGisCameraDiscovery.includes("type:\"Feature Service\"") &&
+  arcGisCameraDiscovery.includes("lookup(host, { all: true, verbatim: true })") &&
+  arcGisCameraDiscovery.includes('isPrivateIpv4') &&
+  arcGisCameraDiscovery.includes('isPrivateIpv6') &&
+  arcGisCameraDiscovery.includes("host.endsWith('.local')") &&
+  arcGisCameraDiscovery.includes('assertPublicServiceUrl') &&
   geoconsoleRoutes.includes('discoverPublicArcGisCameraLayers') &&
   adapterRegistry.includes("id: 'public-arcgis-camera-discovery'"));
 test('Infrastructure floorplan and identity helper utilities remain bounded and configuration-driven',
