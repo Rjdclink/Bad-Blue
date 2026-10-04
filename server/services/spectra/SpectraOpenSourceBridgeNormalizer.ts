@@ -4,7 +4,8 @@ export type SpectraOpenSourceBridgeKind =
   | 'owntracks-location'
   | 'chirpstack-location'
   | 'find3-location'
-  | 'espresense-observation';
+  | 'espresense-observation'
+  | 'kismet-device-location';
 
 export interface SpectraOpenSourceBridgeBatch {
   sessionId?: string;
@@ -503,6 +504,210 @@ function normalizeEspresense(
   };
 }
 
+function kismetLocationCandidate(value: unknown): {
+  latitude: number;
+  longitude: number;
+  altitude?: number;
+} | null {
+  if (Array.isArray(value) && value.length >= 2) {
+    const longitude = bounded(value[0], -180, 180);
+    const latitude = bounded(value[1], -90, 90);
+    const altitude = finite(value[2]);
+    return latitude !== null && longitude !== null
+      ? {
+          latitude,
+          longitude,
+          altitude: altitude ?? undefined,
+        }
+      : null;
+  }
+
+  const source = record(value);
+  const geopoint =
+    source['kismet.common.location.geopoint']
+    ?? source.geopoint;
+  if (Array.isArray(geopoint)) {
+    const resolved = kismetLocationCandidate(geopoint);
+    if (resolved) {
+      const altitude = finite(
+        source['kismet.common.location.alt']
+        ?? source.alt,
+      );
+      return {
+        ...resolved,
+        altitude: altitude ?? resolved.altitude,
+      };
+    }
+  }
+
+  for (const key of [
+    'kismet.common.location.last_loc',
+    'kismet.common.location.avg_loc',
+    'kismet.common.location.last',
+    'kismet.common.location.min_loc',
+    'kismet.common.location.max_loc',
+    'last_loc',
+    'avg_loc',
+    'last',
+  ]) {
+    if (source[key] !== undefined) {
+      const resolved = kismetLocationCandidate(source[key]);
+      if (resolved) return resolved;
+    }
+  }
+
+  const latitude = bounded(source.lat ?? source.latitude, -90, 90);
+  const longitude = bounded(source.lon ?? source.lng ?? source.longitude, -180, 180);
+  const altitude = finite(source.alt ?? source.altitude);
+  return latitude !== null && longitude !== null
+    ? { latitude, longitude, altitude: altitude ?? undefined }
+    : null;
+}
+
+function normalizeKismet(
+  providerId: string,
+  payload: unknown,
+): SpectraOpenSourceBridgeBatch {
+  const wrapped = envelope(payload, providerId);
+  const outer = wrapped.outer;
+  const rows = list(outer.devices).length
+    ? list(outer.devices)
+    : list(outer.data).length
+      ? list(outer.data)
+      : Array.isArray(payload)
+        ? payload as any[]
+        : [outer];
+
+  const measurements = rows.slice(0, 2_000).flatMap(raw => {
+    const row = record(raw);
+    const base = record(row['kismet.device.base'] ?? row.base);
+    const locationCandidates = [
+      row['kismet.common.location'],
+      row['kismet.device.base.location'],
+      base['kismet.device.base.location'],
+      base['kismet.common.location'],
+      row.location,
+      row,
+    ];
+    let location: ReturnType<typeof kismetLocationCandidate> = null;
+    for (const candidate of locationCandidates) {
+      location = kismetLocationCandidate(candidate);
+      if (location) break;
+    }
+    if (!location) return [];
+
+    const lastSeen = finite(
+      row.last_time
+      ?? row['kismet.device.base.last_time']
+      ?? base.last_time
+      ?? base['kismet.device.base.last_time'],
+    );
+    const timestamp =
+      lastSeen !== null && lastSeen > 0
+        ? isoTimestamp(lastSeen)
+        : isoTimestamp(
+            row.timestamp
+            ?? row.time
+            ?? row.lastSeen
+            ?? Date.now(),
+          );
+    if (!timestamp) return [];
+
+    const mac = text(
+      row.mac
+      ?? row.macaddr
+      ?? row['kismet.device.base.macaddr']
+      ?? base.macaddr
+      ?? base['kismet.device.base.macaddr'],
+      64,
+    );
+    const phy = text(
+      row.phy
+      ?? row.phyname
+      ?? row['kismet.device.base.phyname']
+      ?? base.phyname
+      ?? base['kismet.device.base.phyname'],
+      80,
+    );
+    const signal = finite(
+      row.signal
+      ?? row.last_signal
+      ?? row['kismet.device.base.signal.last_signal']
+      ?? base.last_signal,
+    );
+    const source =
+      String(phy || '').toUpperCase().includes('BLUETOOTH')
+        ? 'bluetooth_proximity'
+        : 'wifi_fingerprint';
+
+    return [{
+      kind: 'position',
+      source,
+      timestamp,
+      latitude: location.latitude,
+      longitude: location.longitude,
+      altitude: location.altitude,
+      accuracy: finite(row.accuracy ?? row.ce) ?? 35,
+      confidence: confidenceForAccuracy(
+        finite(row.accuracy ?? row.ce) ?? 35,
+        0.86,
+      ),
+      provider: wrapped.providerId,
+      recordId: text(
+        row.uid
+        ?? row.key
+        ?? row['kismet.device.base.key']
+        ?? base.key
+        ?? base['kismet.device.base.key']
+        ?? mac,
+        300,
+      ),
+      correlationGroup:
+        `kismet:${wrapped.providerId}:${mac || text(row.uid, 120) || 'device'}`,
+      metadata: {
+        acquisitionMethod: 'kismet-device-location',
+        kismetMac: mac,
+        kismetPhy: phy,
+        kismetSignalDbm: signal ?? undefined,
+        kismetChannel: text(
+          row.channel
+          ?? row['kismet.device.base.channel']
+          ?? base.channel,
+          80,
+        ),
+        kismetFrequency: finite(
+          row.freq
+          ?? row.frequency
+          ?? row['kismet.device.base.frequency']
+          ?? base.frequency,
+        ) ?? undefined,
+        kismetName: text(
+          row.name
+          ?? row['kismet.device.base.name']
+          ?? base.name,
+          300,
+        ),
+      },
+    }];
+  });
+
+  if (!measurements.length) {
+    throw new Error('Kismet payload contains no usable geolocated device observations.');
+  }
+
+  return {
+    sessionId: wrapped.sessionId,
+    subjectLabel: wrapped.subjectLabel,
+    sourceId: wrapped.providerId,
+    measurements,
+    metadata: {
+      normalization: 'kismet-device-location',
+      observationCount: measurements.length,
+      normalizedAt: new Date().toISOString(),
+    },
+  };
+}
+
 export function normalizeSpectraOpenSourceBridgePayload(
   kind: SpectraOpenSourceBridgeKind,
   providerId: string,
@@ -519,6 +724,8 @@ export function normalizeSpectraOpenSourceBridgePayload(
       return normalizeFind3(providerId, payload);
     case 'espresense-observation':
       return normalizeEspresense(providerId, payload);
+    case 'kismet-device-location':
+      return normalizeKismet(providerId, payload);
     default: {
       const exhaustive: never = kind;
       throw new Error(`Unsupported open-source bridge normalizer: ${String(exhaustive)}`);
@@ -532,4 +739,5 @@ export const SPECTRA_OPEN_SOURCE_BRIDGE_KINDS:
     'chirpstack-location',
     'find3-location',
     'espresense-observation',
+    'kismet-device-location',
   ] as const;
