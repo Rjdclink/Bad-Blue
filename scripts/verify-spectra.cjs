@@ -1149,6 +1149,13 @@ test('Provider-neutral WSS coordinator is reconnectable, authenticated and wired
   providerStreamCoordinator.includes('scheduleReconnect') &&
   geoconsoleRoutes.includes('startSpectraProviderStreams') &&
   geoconsoleRoutes.includes("'wss-provider-stream'"));
+test('WSS and MQTT normalized batches are schema-parsed before canonical telemetry processing',
+  geoconsoleRoutes.includes('async function processSpectraStreamBatch') &&
+  geoconsoleRoutes.includes('telemetryBatchSchema.safeParse(value)') &&
+  geoconsoleRoutes.includes('processSpectraTelemetryBatch(') &&
+  geoconsoleRoutes.includes('validation.data,') &&
+  (geoconsoleRoutes.match(/processSpectraStreamBatch\(batch, providerId\)/g) || []).length === 2 &&
+  !geoconsoleRoutes.includes('batch as TelemetryBatch, true, undefined, providerId'));
 test('Provider-neutral MQTT transport acknowledges QoS1 only after successful canonical consumption',
   mqttProviderCoordinator.includes('SPECTRA_MQTT_PROVIDER_ADAPTERS') &&
   mqttProviderCoordinator.includes("url.protocol === 'mqtts:'") &&
