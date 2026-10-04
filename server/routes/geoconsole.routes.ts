@@ -6,7 +6,7 @@
  * may also be persisted through the canonical Postgres/PostGIS evidence store.
  */
 
-import { Router, Request, Response } from 'express';
+import { Router, type NextFunction, type Request, type Response } from 'express';
 import { EventEmitter } from 'node:events';
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'crypto';
 import { z } from 'zod';
@@ -16,7 +16,7 @@ import { GPSPoint, DataSource } from '../services/geoconsole/types';
 import { assessLocationQuality } from '../services/geoconsole/location-quality';
 import { selectCrawlerPlan } from '../services/crawlers/CrawlerSelectionUtility';
 import { createLogger } from '../logger';
-import { isAuthenticated } from '../auth';
+import { adminAuthMiddleware, isAuthenticated } from '../auth';
 import { getPlatformUserId } from '../authIdentity';
 import { pool } from '../db';
 import {
@@ -55,9 +55,96 @@ import {
 } from '../services/spectra/SpectraProviderTelemetryNormalizer';
 import { assessSpectraLiveLocation } from '../services/spectra/SpectraLiveConfidence';
 import { solveSpectraConstraintLayer } from '../services/spectra/SpectraConstraintSolver';
+import {
+  loadSpectraSessionObservationPage,
+  loadSpectraSessionObservationRange,
+} from '../services/spectra/SpectraAcquisitionPersistence';
+import { spectraMetricsProviderEvent } from '../services/spectra/SpectraObservability';
+import {
+  startSpectraProviderStreams,
+  getSpectraProviderStreamHealth,
+  getConfiguredSpectraProviderStreams,
+} from '../services/spectra/SpectraProviderStreamCoordinator';
+import {
+  startSpectraMqttProviderStreams,
+  getSpectraMqttProviderHealth,
+  getConfiguredSpectraMqttProviders,
+} from '../services/spectra/SpectraMqttProviderCoordinator';
+import { discoverPublicArcGisCameraLayers } from '../services/spectra/SpectraArcGisPublicCameraDiscovery';
+import {
+  findSpectraPublicGtfsRealtimeFeeds,
+  getSpectraPublicFeedCatalogSource,
+} from '../services/spectra/SpectraPublicFeedRegistry';
+import { spectraApiVersionHeaders } from '../services/spectra/SpectraApiContract';
+import { resolveSpectraMylnikovRadio } from '../services/spectra/SpectraMylnikovResolver';
+import {
+  resolveSpectraWigleWifi,
+  spectraWigleConfigured,
+} from '../services/spectra/SpectraWigleRadioResolver';
+import {
+  resolveSpectraUnwiredRadio,
+  spectraUnwiredConfigured,
+} from '../services/spectra/SpectraUnwiredRadioResolver';
+import { resolveSpectraRadioConsensus } from '../services/spectra/SpectraRadioConsensus';
+import {
+  acquireSpectraResourcePermit,
+  SpectraResourceBusyError,
+} from '../services/spectra/SpectraResourceGovernor';
+import { createSpectraTenantScope } from '../services/spectra/SpectraTenantScope';
+import {
+  providerMayWriteOwnedSpectraSession,
+  resolveSpectraProviderSessionBinding,
+} from '../services/spectra/SpectraProviderSessionAccess';
 
 const router = Router();
+router.use(spectraApiVersionHeaders);
 const log = createLogger('GeoconsoleRoutes');
+
+const spectraResourceMiddleware = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  const userId = getPlatformUserId(req.user as any);
+  if (!userId) {
+    return res.status(401).json({ success: false, error: 'Authentication required.' });
+  }
+
+  const tenantScope = createSpectraTenantScope(userId);
+  try {
+    const permit = await acquireSpectraResourcePermit(tenantScope.tenantId);
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      void permit.release().catch(error => {
+        log.warn('SPECTRA route permit release failed', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+    };
+    res.once('finish', release);
+    res.once('close', release);
+    return next();
+  } catch (error) {
+    if (error instanceof SpectraResourceBusyError) {
+      res.setHeader('Retry-After', String(Math.max(1, Math.ceil(error.retryAfterMs / 1000))));
+      return res.status(429).json({
+        success: false,
+        error: error.message,
+        retryAfterMs: error.retryAfterMs,
+      });
+    }
+
+    log.warn('SPECTRA route resource governor unavailable', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return res.status(503).json({
+      success: false,
+      error: 'SPECTRA resource governor is unavailable.',
+    });
+  }
+};
 const telemetryImportUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 5_000_000, files: 1 },
@@ -331,6 +418,86 @@ function stableJson(value: unknown): string {
   return `{${Object.keys(record).sort().map(key =>
     `${JSON.stringify(key)}:${stableJson(record[key])}`
   ).join(',')}}`;
+}
+
+function infrastructureWebhookEntry(
+  providerId: string,
+): Record<string, any> | null {
+  const raw = String(process.env.SPECTRA_INFRASTRUCTURE_WEBHOOK_AUTH || '').trim();
+  if (!raw || !providerId) return null;
+
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return null;
+    const entry = parsed.find((item: any) =>
+      String(item?.providerId || '').trim().toLowerCase() === providerId.toLowerCase()
+    );
+    return entry && typeof entry === 'object' ? entry : null;
+  } catch {
+    return null;
+  }
+}
+
+function infrastructureWebhookAuthorized(req: Request, providerId: string): boolean {
+  const entry = infrastructureWebhookEntry(providerId);
+  if (!entry) return false;
+
+  try {
+    const mode = String(entry?.mode || 'static-header').trim().toLowerCase();
+    if (mode === 'mist-hmac-sha256') {
+      const secretEnv = String(entry?.secretEnv || entry?.tokenEnv || '').trim();
+      const secret = String(process.env[secretEnv] || '').trim();
+      const signature = String(req.header('x-mist-signature-v2') || '').trim().toLowerCase();
+      const rawBody = (req as any).rawBody;
+      if (
+        !secret
+        || !Buffer.isBuffer(rawBody)
+        || !/^[a-f0-9]{64}$/.test(signature)
+      ) return false;
+
+      const expected = createHmac('sha256', secret)
+        .update(rawBody)
+        .digest('hex');
+      const actualBuffer = Buffer.from(signature, 'hex');
+      const expectedBuffer = Buffer.from(expected, 'hex');
+      return actualBuffer.length === expectedBuffer.length
+        && timingSafeEqual(actualBuffer, expectedBuffer);
+    }
+
+    if (mode === 'meraki-scanning-secret') {
+      const secretEnv = String(entry?.secretEnv || entry?.tokenEnv || '').trim();
+      const expected = String(process.env[secretEnv] || '').trim();
+      const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body)
+        ? req.body as Record<string, unknown>
+        : {};
+      const actual = String(body.secret || '').trim();
+      if (!expected || !actual) return false;
+      const actualBuffer = Buffer.from(actual, 'utf8');
+      const expectedBuffer = Buffer.from(expected, 'utf8');
+      return actualBuffer.length === expectedBuffer.length
+        && timingSafeEqual(actualBuffer, expectedBuffer);
+    }
+
+    const headerName = String(entry?.header || 'authorization').trim().toLowerCase();
+    const tokenEnv = String(entry?.tokenEnv || '').trim();
+    if (!headerName || !tokenEnv) return false;
+
+    const expectedRaw = String(process.env[tokenEnv] || '').trim();
+    if (!expectedRaw) return false;
+
+    const actualRaw = String(req.header(headerName) || '').trim();
+    if (!actualRaw) return false;
+
+    const expected = /^authorization$/i.test(headerName) && !/^(?:Bearer|Basic)\s+/i.test(expectedRaw)
+      ? `Bearer ${expectedRaw}`
+      : expectedRaw;
+    const actualBuffer = Buffer.from(actualRaw, 'utf8');
+    const expectedBuffer = Buffer.from(expected, 'utf8');
+    return actualBuffer.length === expectedBuffer.length
+      && timingSafeEqual(actualBuffer, expectedBuffer);
+  } catch {
+    return false;
+  }
 }
 
 function providerTelemetryAuthorized(req: Request): boolean {
@@ -884,44 +1051,100 @@ async function googleRadioPoint(
 async function radioPoint(
   measurement: z.infer<typeof telemetryRadioSchema>,
 ): Promise<GPSPoint | null> {
-  const [googleOutcome, beaconOutcome, openCellOutcome] = await Promise.allSettled([
+  const [googleOutcome, beaconOutcome, openCellOutcome, mylnikovOutcome, wigleOutcome, unwiredOutcome] = await Promise.allSettled([
     googleRadioPoint(measurement),
     beaconDbRadioPoint(measurement),
     openCellIdPoint(measurement),
+    resolveSpectraMylnikovRadio({
+      timestamp: measurement.timestamp,
+      provider: measurement.provider,
+      wifiAccessPoints: sanitizedWifiAccessPoints(measurement),
+      cellTowers: sanitizedCellTowers(measurement).flatMap(tower => {
+        const cellId = tower.newRadioCellId ?? tower.cellId;
+        return (
+          Number.isFinite(tower.mobileCountryCode)
+          && Number.isFinite(tower.mobileNetworkCode)
+          && Number.isFinite(tower.locationAreaCode)
+          && Number.isFinite(cellId)
+        ) ? [{
+          mobileCountryCode: tower.mobileCountryCode,
+          mobileNetworkCode: tower.mobileNetworkCode,
+          locationAreaCode: tower.locationAreaCode,
+          cellId: Number(cellId),
+          signalStrength: tower.signalStrength,
+        }] : [];
+      }),
+      metadata: measurement.metadata,
+    }),
+    resolveSpectraWigleWifi({
+      timestamp: measurement.timestamp,
+      provider: measurement.provider,
+      wifiAccessPoints: sanitizedWifiAccessPoints(measurement),
+      metadata: measurement.metadata,
+    }),
+    resolveSpectraUnwiredRadio({
+      timestamp: measurement.timestamp,
+      provider: measurement.provider,
+      radioType: measurement.radioType,
+      homeMobileCountryCode: measurement.homeMobileCountryCode,
+      homeMobileNetworkCode: measurement.homeMobileNetworkCode,
+      wifiAccessPoints: sanitizedWifiAccessPoints(measurement),
+      cellTowers: sanitizedCellTowers(measurement).flatMap(tower => {
+        const cellId = tower.newRadioCellId ?? tower.cellId;
+        return (
+          Number.isFinite(tower.mobileCountryCode)
+          && Number.isFinite(tower.mobileNetworkCode)
+          && Number.isFinite(tower.locationAreaCode)
+          && Number.isFinite(cellId)
+        ) ? [{
+          radioType: tower.radioType,
+          mobileCountryCode: tower.mobileCountryCode,
+          mobileNetworkCode: tower.mobileNetworkCode,
+          locationAreaCode: tower.locationAreaCode,
+          cellId: Number(cellId),
+        }] : [];
+      }),
+      metadata: measurement.metadata,
+    }),
   ]);
 
   const googlePoint = googleOutcome.status === 'fulfilled' ? googleOutcome.value : null;
   const beaconPoint = beaconOutcome.status === 'fulfilled' ? beaconOutcome.value : null;
   const openCellPoint = openCellOutcome.status === 'fulfilled' ? openCellOutcome.value : null;
-  const candidates = [googlePoint, beaconPoint, openCellPoint].filter(
+  const mylnikovPoints = mylnikovOutcome.status === 'fulfilled' ? mylnikovOutcome.value : [];
+  const wiglePoint = wigleOutcome.status === 'fulfilled' ? wigleOutcome.value : null;
+  const unwiredPoint = unwiredOutcome.status === 'fulfilled' ? unwiredOutcome.value : null;
+  const candidates = [googlePoint, beaconPoint, openCellPoint, ...mylnikovPoints, wiglePoint, unwiredPoint].filter(
     (point): point is GPSPoint => Boolean(point)
   );
   if (!candidates.length) return null;
 
-  const selected = [...candidates].sort((left, right) =>
-    (left.accuracy ?? Number.MAX_SAFE_INTEGER) - (right.accuracy ?? Number.MAX_SAFE_INTEGER)
-    || right.confidence - left.confidence
-  )[0];
+  const consensus = resolveSpectraRadioConsensus(candidates);
+  if (!consensus) return null;
 
-  const corroboration = candidates
-    .filter(point => point !== selected)
-    .map(point => {
-      const distance = Math.hypot(
-        (selected.latitude - point.latitude) * 111_320,
-        (selected.longitude - point.longitude)
-          * 111_320
-          * Math.max(0.15, Math.cos(selected.latitude * Math.PI / 180)),
-      );
-      return {
-        provider: point.provenance?.provider || point.source,
-        distanceMeters: Math.round(distance),
-        accuracyMeters: point.accuracy,
-      };
-    });
+  const selected = consensus.point;
+  const corroboration = candidates.map(point => {
+    const phi1 = selected.latitude * Math.PI / 180;
+    const phi2 = point.latitude * Math.PI / 180;
+    const dPhi = (point.latitude - selected.latitude) * Math.PI / 180;
+    const dLambda = (point.longitude - selected.longitude) * Math.PI / 180;
+    const h =
+      Math.sin(dPhi / 2) ** 2
+      + Math.cos(phi1) * Math.cos(phi2) * Math.sin(dLambda / 2) ** 2;
+    const distance = 2 * 6_371_008.8 * Math.asin(Math.min(1, Math.sqrt(h)));
+    return {
+      provider: point.provenance?.provider || point.source,
+      distanceMeters: Math.round(distance),
+      accuracyMeters: point.accuracy,
+    };
+  });
 
   selected.metadata = {
     ...(selected.metadata || {}),
     radioCorroboration: corroboration,
+    radioConsensusAgreeingProviderCount: consensus.agreeingProviderCount,
+    radioConsensusCandidateCount: consensus.candidateCount,
+    radioConsensusExcludedProviderCount: consensus.excludedProviderCount,
   };
   return selected;
 }
@@ -1078,10 +1301,30 @@ async function persistTelemetryBatch(input: {
        FOR UPDATE`,
       [input.sessionId],
     );
-    if (existingSession.rows.length && input.userId) {
+    if (existingSession.rows.length) {
       const existingUserId = String(existingSession.rows[0]?.user_id || '');
-      if (existingUserId && existingUserId !== input.userId) {
-        throw new Error('SPECTRA telemetry session ownership mismatch');
+      if (existingUserId) {
+        if (input.userId) {
+          if (existingUserId !== input.userId) {
+            throw new Error('SPECTRA telemetry session ownership mismatch');
+          }
+        } else if (!providerMayWriteOwnedSpectraSession({
+          providerId: input.providerId || input.batch.sourceId,
+          sessionId: input.sessionId,
+          ownerTenantId: existingUserId,
+        })) {
+          throw new Error('SPECTRA provider is not bound to this tenant session');
+        }
+      } else if (input.userId) {
+        const binding = input.providerId
+          ? resolveSpectraProviderSessionBinding({
+              providerId: input.providerId,
+              sessionId: input.sessionId,
+            })
+          : null;
+        if (!binding?.tenantId || binding.tenantId !== input.userId) {
+          throw new Error('SPECTRA unowned legacy telemetry session cannot be claimed by this request');
+        }
       }
 
       const existingSubject = String(existingSession.rows[0]?.subject_label || '')
@@ -1357,6 +1600,19 @@ export async function processSpectraTelemetryBatch(
   liveAssessment: ReturnType<typeof assessSpectraLiveLocation>;
 }> {
   const sessionId = batch.sessionId || randomUUID();
+  let effectiveUserId = userId;
+
+  if (!effectiveUserId && providerId) {
+    const binding = resolveSpectraProviderSessionBinding({
+      providerId,
+      sessionId,
+    });
+    if (!binding?.tenantId) {
+      throw new Error('SPECTRA provider telemetry requires an explicit tenant-scoped session binding.');
+    }
+    effectiveUserId = binding.tenantId;
+  }
+
   const resolved = await resolveSpectraTelemetryBatchPoints(batch, trustedProvider);
   const points = resolved.points;
   const quality = resolved.quality;
@@ -1370,7 +1626,7 @@ export async function processSpectraTelemetryBatch(
   const persistence = await persistTelemetryBatch({
     batch,
     sessionId,
-    userId,
+    userId: effectiveUserId,
     providerId,
     points: constrainedPoints,
   }).catch(error => {
@@ -1379,6 +1635,8 @@ export async function processSpectraTelemetryBatch(
     });
     return { available: false };
   });
+
+  spectraMetricsProviderEvent(batch.measurements.length);
 
   return {
     sessionId,
@@ -1391,6 +1649,32 @@ export async function processSpectraTelemetryBatch(
     liveAssessment,
   };
 }
+
+async function processSpectraStreamBatch(
+  value: unknown,
+  providerId: string,
+): Promise<void> {
+  const validation = telemetryBatchSchema.safeParse(value);
+  if (!validation.success) {
+    throw new Error(
+      `SPECTRA streamed telemetry from ${providerId} did not match the canonical schema.`,
+    );
+  }
+
+  await processSpectraTelemetryBatch(
+    validation.data,
+    true,
+    undefined,
+    providerId,
+  );
+}
+
+startSpectraProviderStreams(async (batch, providerId) => {
+  await processSpectraStreamBatch(batch, providerId);
+});
+startSpectraMqttProviderStreams(async (batch, providerId) => {
+  await processSpectraStreamBatch(batch, providerId);
+});
 
 router.post('/traffic-context/provider/:providerId', async (req: Request, res: Response) => {
   if (!providerTelemetryAuthorized(req)) {
@@ -1407,9 +1691,73 @@ router.post('/traffic-context/provider/:providerId', async (req: Request, res: R
   }
 
   const providerId = String(req.params.providerId || '').trim().slice(0, 200);
+  let boundTenantId: string | undefined;
+
+  try {
+    const owner = await pool.query(
+      `SELECT user_id
+       FROM public.spectra_investigations
+       WHERE session_id = $1
+       LIMIT 1`,
+      [validation.data.sessionId],
+    );
+    const ownerTenantId = String(owner.rows[0]?.user_id || '');
+    const binding = resolveSpectraProviderSessionBinding({
+      providerId,
+      sessionId: validation.data.sessionId,
+    });
+
+    if (!ownerTenantId) {
+      return res.status(404).json({
+        success: false,
+        error: 'Traffic-context target session is not an owned SPECTRA investigation.',
+      });
+    }
+
+    if (!binding?.tenantId) {
+      return res.status(403).json({
+        success: false,
+        error: 'Traffic-context provider requires a tenant-scoped session binding.',
+      });
+    }
+
+    if (!providerMayWriteOwnedSpectraSession({
+      providerId,
+      sessionId: validation.data.sessionId,
+      ownerTenantId,
+    })) {
+      return res.status(403).json({
+        success: false,
+        error: 'Traffic-context provider is not bound to this tenant session.',
+      });
+    }
+
+    boundTenantId = ownerTenantId;
+  } catch (error: any) {
+    if (error?.code !== '42P01') {
+      log.warn('SPECTRA traffic-context tenant binding check failed', {
+        providerId,
+        sessionId: validation.data.sessionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return res.status(503).json({
+        success: false,
+        error: 'SPECTRA tenant binding check unavailable.',
+      });
+    }
+  }
+
+  if (!boundTenantId) {
+    return res.status(503).json({
+      success: false,
+      error: 'SPECTRA tenant binding state is unavailable.',
+    });
+  }
+
   const outcomes = await Promise.allSettled(
     validation.data.contexts.map(context =>
       persistSpectraMotionContext({
+        userId: boundTenantId,
         sessionId: validation.data.sessionId,
         provider: context.provider || providerId,
         sourceId: context.sourceId || providerId,
@@ -1440,6 +1788,90 @@ router.post('/traffic-context/provider/:providerId', async (req: Request, res: R
       attempted: validation.data.contexts.length,
     },
   });
+});
+
+router.get('/telemetry/infrastructure/:providerId/normalize/meraki-scanning', (req: Request, res: Response) => {
+  const providerId = String(req.params.providerId || '').trim().slice(0, 200);
+  const entry = infrastructureWebhookEntry(providerId);
+  const mode = String(entry?.mode || '').trim().toLowerCase();
+  const validatorEnv = String(entry?.validatorEnv || '').trim();
+  const validator = validatorEnv
+    ? String(process.env[validatorEnv] || '').trim()
+    : '';
+
+  if (mode !== 'meraki-scanning-secret' || !validator) {
+    return res.status(404).type('text/plain').send('Not configured');
+  }
+
+  res.setHeader('Cache-Control', 'no-store');
+  return res.status(200).type('text/plain').send(validator);
+});
+
+router.post('/telemetry/infrastructure/:providerId/normalize/:kind', async (req: Request, res: Response) => {
+  const providerId = String(req.params.providerId || '').trim().slice(0, 200);
+  const kind = String(req.params.kind || '').trim() as SpectraProviderNormalizerKind;
+
+  if (!providerId || !SPECTRA_PROVIDER_NORMALIZER_KINDS.includes(kind)) {
+    return res.status(400).json({ success: false, error: 'Unsupported infrastructure telemetry normalizer.' });
+  }
+  if (!infrastructureWebhookAuthorized(req, providerId)) {
+    return res.status(401).json({ success: false, error: 'Invalid infrastructure webhook credentials.' });
+  }
+
+  const infrastructureEntry = infrastructureWebhookEntry(providerId);
+  const configuredSessionId = String(infrastructureEntry?.sessionId || '').trim().slice(0, 200);
+  const configuredSubjectLabel = String(infrastructureEntry?.subjectLabel || '').trim().slice(0, 500);
+  const rawBody =
+    req.body && typeof req.body === 'object' && !Array.isArray(req.body)
+      ? req.body as Record<string, unknown>
+      : {};
+
+  let normalized;
+  try {
+    normalized = normalizeSpectraProviderPayload(kind, providerId, {
+      ...rawBody,
+      sessionId: configuredSessionId || rawBody.sessionId,
+      subjectLabel: configuredSubjectLabel || rawBody.subjectLabel,
+    });
+  } catch (error) {
+    return res.status(400).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Infrastructure telemetry could not be normalized.',
+    });
+  }
+
+  const validation = telemetryBatchSchema.safeParse(normalized);
+  if (!validation.success) {
+    return res.status(400).json({
+      success: false,
+      error: 'Normalized infrastructure telemetry did not match the canonical SPECTRA schema.',
+      details: validation.error.errors,
+    });
+  }
+
+  try {
+    const processed = await processSpectraTelemetryBatch(validation.data, true, undefined, providerId);
+    return res.json({
+      success: true,
+      data: {
+        normalizer: kind,
+        providerId,
+        sessionId: processed.sessionId,
+        inputCount: processed.inputCount,
+        positionCount: processed.positionCount,
+        contextOnlyCount: processed.contextOnlyCount,
+        persistence: processed.persistence,
+        liveAssessment: processed.liveAssessment,
+      },
+    });
+  } catch (error) {
+    log.warn('SPECTRA infrastructure webhook processing failed', {
+      providerId,
+      kind,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return res.status(500).json({ success: false, error: 'Infrastructure telemetry processing failed.' });
+  }
 });
 
 router.post('/telemetry/provider/:providerId/normalize/:kind', async (req: Request, res: Response) => {
@@ -1574,11 +2006,9 @@ router.post('/traffic-context', async (req: Request, res: Response) => {
        LIMIT 1`,
       [validation.data.sessionId],
     );
-    if (owner.rows.length) {
-      const ownerId = String(owner.rows[0]?.user_id || '');
-      if (ownerId && ownerId !== userId) {
-        return res.status(404).json({ success: false, error: 'SPECTRA session not found.' });
-      }
+    const ownerId = String(owner.rows[0]?.user_id || '');
+    if (!owner.rows.length || ownerId !== userId) {
+      return res.status(404).json({ success: false, error: 'SPECTRA session not found.' });
     }
 
     const outcomes = await Promise.allSettled(
@@ -1642,6 +2072,17 @@ router.get('/traffic-context/:sessionId', async (req: Request, res: Response) =>
     return res.status(400).json({ success: false, error: 'Invalid SPECTRA session.' });
   }
 
+  const owner = await pool.query(
+    `SELECT 1
+     FROM public.spectra_investigations
+     WHERE session_id = $1 AND user_id = $2
+     LIMIT 1`,
+    [sessionId, userId],
+  ).catch(() => ({ rows: [] as any[] }));
+  if (!owner.rows.length) {
+    return res.status(404).json({ success: false, error: 'SPECTRA session not found.' });
+  }
+
   const data = await loadSpectraMotionContext({
     userId,
     sessionId,
@@ -1663,6 +2104,20 @@ router.get('/telemetry-history/:sessionId', async (req: Request, res: Response) 
     return res.status(400).json({ success: false, error: 'Invalid telemetry session.' });
   }
 
+  const query = z.object({
+    after: z.string().datetime().optional(),
+    before: z.string().datetime().optional(),
+    cursor: z.string().trim().min(1).max(1_000).optional(),
+    limit: z.coerce.number().int().min(1).max(2_000).default(500),
+  }).safeParse(req.query);
+  if (!query.success) {
+    return res.status(400).json({
+      success: false,
+      error: 'Invalid telemetry history range or cursor.',
+      details: query.error.errors,
+    });
+  }
+
   try {
     const owner = await pool.query(
       `SELECT id
@@ -1675,48 +2130,41 @@ router.get('/telemetry-history/:sessionId', async (req: Request, res: Response) 
       return res.status(404).json({ success: false, error: 'Telemetry session not found.' });
     }
 
-    const history = await pool.query(
-      `SELECT
-         source_type, provider, latitude, longitude, altitude, accuracy_meters,
-         confidence, observation_kind, evidence_class,
-         subject_match_confidence, timestamp_confidence, acquisition_method, source_url,
-         observed_at, received_at, correlation_group, provenance, metadata
-       FROM public.spectra_location_observations
-       WHERE session_id = $1 AND user_id = $2
-       ORDER BY observed_at ASC
-       LIMIT 2000`,
-      [sessionId, userId],
-    );
+    const page = await loadSpectraSessionObservationPage(userId, sessionId, {
+      limit: query.data.limit,
+      after: query.data.after ? new Date(query.data.after) : undefined,
+      before: query.data.before ? new Date(query.data.before) : undefined,
+      cursor: query.data.cursor,
+    });
 
     return res.json({
       success: true,
-      data: history.rows.map((row: any) => ({
-        latitude: Number(row.latitude),
-        longitude: Number(row.longitude),
-        altitude: row.altitude == null ? undefined : Number(row.altitude),
-        accuracy: row.accuracy_meters == null ? undefined : Number(row.accuracy_meters),
-        timestamp: new Date(row.observed_at).toISOString(),
-        receivedAt: new Date(row.received_at).toISOString(),
-        source: row.source_type,
-        confidence: Number(row.confidence),
-        observationKind: row.observation_kind,
-        evidenceClass: row.evidence_class,
-        subjectMatchConfidence: row.subject_match_confidence == null
-          ? undefined
-          : Number(row.subject_match_confidence),
-        timestampConfidence: row.timestamp_confidence == null
-          ? undefined
-          : Number(row.timestamp_confidence),
-        acquisitionMethod: row.acquisition_method || undefined,
-        sourceUrl: row.source_url || undefined,
-        correlationGroup: row.correlation_group || undefined,
-        provenance: row.provenance || undefined,
-        metadata: row.metadata || {},
+      data: page.points.map(point => ({
+        ...point,
+        timestamp: point.timestamp.toISOString(),
+        receivedAt: point.receivedAt?.toISOString(),
+        provenance: point.provenance
+          ? {
+              ...point.provenance,
+              capturedAt: point.provenance.capturedAt instanceof Date
+                ? point.provenance.capturedAt.toISOString()
+                : point.provenance.capturedAt,
+            }
+          : undefined,
       })),
+      pagination: {
+        order: 'newest-first',
+        limit: query.data.limit,
+        hasMore: page.hasMore,
+        nextCursor: page.nextCursor,
+      },
     });
   } catch (error: any) {
     if (error?.code === '42P01') {
       return res.status(503).json({ success: false, error: 'SPECTRA persistence is not initialized.' });
+    }
+    if (/cursor|range/i.test(String(error?.message || ''))) {
+      return res.status(400).json({ success: false, error: error.message });
     }
     log.error('Telemetry history load failed', { error, userId, sessionId });
     return res.status(500).json({ success: false, error: 'Telemetry history could not be loaded.' });
@@ -1811,7 +2259,7 @@ router.get('/telemetry-capabilities', (_req: Request, res: Response) => {
   return res.json({
     success: true,
     data: {
-      transports: ['https-json', 'signed-webhook', 'structured-import'],
+      transports: ['https-json', 'signed-webhook', 'wss-provider-stream', 'mqtts-provider-stream', 'structured-import'],
       positionSources: [
         'browser_geolocation', 'device_gps', 'gnss_fix', 'gnss_raw',
         'vehicle_telemetry', 'exif_photo', 'exif_video', 'social_geotag',
@@ -1825,7 +2273,17 @@ router.get('/telemetry-capabilities', (_req: Request, res: Response) => {
       ],
       contextSources: ['accelerometer', 'imu_gyro', 'magnetometer', 'barometer'],
       radioGeolocationConfigured: true,
+      publicFeedDiscovery: {
+        mobilityDatabaseGtfsRealtimeCatalog: true,
+        catalogSource: getSpectraPublicFeedCatalogSource(),
+        arcGisPublicCameraSearch: true,
+        fccAntennaContext: true,
+        noaaCorsContext: true,
+      },
       radioGeolocationProviders: {
+        mylnikovOpenData: true,
+        wigle: spectraWigleConfigured(),
+        unwiredCompatible: spectraUnwiredConfigured(),
         beaconDb: true,
         google: Boolean(
           process.env.SPECTRA_GOOGLE_GEOLOCATION_API_KEY
@@ -1840,7 +2298,36 @@ router.get('/telemetry-capabilities', (_req: Request, res: Response) => {
       activeAcquisitionAdapters: getSpectraActiveAcquisitionCapabilities(),
       configuredAnchorCount: getConfiguredSpectraAnchorCount(),
       genericPullAdapters: getSpectraGenericPullAdapters(),
+      providerStreams: {
+        configured: getConfiguredSpectraProviderStreams(),
+        health: getSpectraProviderStreamHealth(),
+      },
+      mqttProviderStreams: {
+        configured: getConfiguredSpectraMqttProviders(),
+        health: getSpectraMqttProviderHealth(),
+      },
     },
+  });
+});
+
+router.get('/public-feed-catalog', async (req: Request, res: Response) => {
+  const validation = z.object({
+    lat: z.coerce.number().min(-90).max(90),
+    lng: z.coerce.number().min(-180).max(180),
+    limit: z.coerce.number().int().min(1).max(200).default(50),
+  }).safeParse(req.query);
+
+  if (!validation.success) {
+    return res.status(400).json({ success: false, error: 'Invalid public feed search coordinates.' });
+  }
+
+  const { lat, lng, limit } = validation.data;
+  const feeds = await findSpectraPublicGtfsRealtimeFeeds(lat, lng, limit);
+  return res.json({
+    success: true,
+    data: feeds,
+    source: getSpectraPublicFeedCatalogSource(),
+    contextOnly: true,
   });
 });
 
@@ -2392,7 +2879,15 @@ export async function arcGisCameras(
   lng: number,
   radiusMiles: number,
 ): Promise<PublicCameraResult[]> {
-  const layers = configuredArcGisCameraLayers();
+  const discoveredLayers = await discoverPublicArcGisCameraLayers(lat, lng, radiusMiles);
+  const configuredLayers = configuredArcGisCameraLayers();
+  const seenLayers = new Set<string>();
+  const layers = [...configuredLayers, ...discoveredLayers].filter(layer => {
+    const key = String(layer.url || '').toLowerCase();
+    if (!key || seenLayers.has(key)) return false;
+    seenLayers.add(key);
+    return true;
+  });
   if (!layers.length) return [];
 
   const box = cameraBoundingBox(lat, lng, radiusMiles);
@@ -2902,7 +3397,7 @@ router.get('/environment-context', async (req: Request, res: Response) => {
  * POST /api/geoconsole/process
  * Process raw location inputs through the full pipeline
  */
-router.post('/process', async (req: Request, res: Response) => {
+router.post('/process', spectraResourceMiddleware, async (req: Request, res: Response) => {
   const startTime = Date.now();
   
   try {
@@ -3001,7 +3496,7 @@ router.post('/process', async (req: Request, res: Response) => {
  * POST /api/geoconsole/report
  * Generate comprehensive intelligence report
  */
-router.post('/report', async (req: Request, res: Response) => {
+router.post('/report', spectraResourceMiddleware, async (req: Request, res: Response) => {
   const startTime = Date.now();
 
   try {
@@ -3016,8 +3511,32 @@ router.post('/report', async (req: Request, res: Response) => {
     }
 
     const { sessionId, subject, timeRange } = validation.data;
+    const userId = getPlatformUserId(req.user as any);
+    if (!userId) {
+      return res.status(401).json({ success: false, error: 'Authentication required.' });
+    }
 
     log.info('Generating intelligence report', { sessionId, subject });
+
+    // The canonical history is durable PostgreSQL/Supabase state. Rehydrate
+    // derived in-memory caches on every report request so a restart or cache
+    // clear cannot erase reportability.
+    const durableRange = await loadSpectraSessionObservationRange(
+      userId,
+      sessionId,
+      {
+        start: timeRange?.start,
+        end: timeRange?.end,
+        maxPoints: 20_000,
+      },
+    );
+    if (!durableRange.points.length) {
+      return res.status(404).json({
+        success: false,
+        error: 'No durable SPECTRA observations were found for this session and range.',
+      });
+    }
+    await hybridGeoconsole.processLocationData(durableRange.points, sessionId);
 
     const report = await hybridGeoconsole.generateIntelligenceReport(
       sessionId,
@@ -3029,6 +3548,8 @@ router.post('/report', async (req: Request, res: Response) => {
       success: true,
       data: report,
       metadata: {
+        durableObservationCount: durableRange.points.length,
+        durableHistoryTruncated: durableRange.truncated,
         timestamp: new Date(),
         processingTime: Date.now() - startTime,
         cacheHit: false,
@@ -3057,6 +3578,8 @@ router.get('/status', async (req: Request, res: Response) => {
         status: 'operational',
         orchestration: state,
         capabilities: {
+          durableObservationPersistence: true,
+          restartSafeReportRehydration: true,
           multimodalFusion: true,
           uncertaintyAwareFusion: true,
           monteCarloInterpolation: true,
@@ -3087,7 +3610,7 @@ router.get('/status', async (req: Request, res: Response) => {
  * POST /api/geoconsole/config
  * Update system configuration
  */
-router.post('/config', async (req: Request, res: Response) => {
+router.post('/config', adminAuthMiddleware, async (req: Request, res: Response) => {
   try {
     const validation = configUpdateSchema.safeParse(req.body);
     
@@ -3118,13 +3641,13 @@ router.post('/config', async (req: Request, res: Response) => {
  * POST /api/geoconsole/clear-cache
  * Clear all in-memory caches
  */
-router.post('/clear-cache', async (req: Request, res: Response) => {
+router.post('/clear-cache', adminAuthMiddleware, async (req: Request, res: Response) => {
   try {
     hybridGeoconsole.clearCaches();
 
     res.json({
       success: true,
-      message: 'All caches cleared',
+      message: 'Derived in-memory caches cleared; durable SPECTRA observations remain in PostgreSQL/Supabase.',
     });
   } catch (error) {
     log.error('Clear cache endpoint error', { error });
@@ -3139,7 +3662,7 @@ router.post('/clear-cache', async (req: Request, res: Response) => {
  * POST /api/geoconsole/interpolate
  * Interpolate path between two points
  */
-router.post('/interpolate', async (req: Request, res: Response) => {
+router.post('/interpolate', spectraResourceMiddleware, async (req: Request, res: Response) => {
   const startTime = Date.now();
 
   try {
@@ -3219,7 +3742,7 @@ router.post('/interpolate', async (req: Request, res: Response) => {
  * POST /api/geoconsole/futurecast
  * Generate future position predictions
  */
-router.post('/futurecast', async (req: Request, res: Response) => {
+router.post('/futurecast', spectraResourceMiddleware, async (req: Request, res: Response) => {
   const startTime = Date.now();
 
   try {

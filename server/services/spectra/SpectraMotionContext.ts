@@ -119,7 +119,10 @@ export async function loadSpectraMotionContext(input: {
        FROM public.spectra_motion_context
        WHERE session_id = $1
          AND observed_at >= now() - ($2::text || ' minutes')::interval
-         AND ($3::text IS NULL OR user_id IS NULL OR user_id = $3)
+         AND (
+           ($3::text IS NULL AND user_id IS NULL)
+           OR user_id = $3
+         )
        ORDER BY observed_at DESC
        LIMIT $4`,
       [sessionId, String(maxAgeMinutes), input.userId || null, limit * 3],

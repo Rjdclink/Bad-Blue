@@ -96,6 +96,7 @@ function launchDetails(launch: SpectraLaunchPayload): string {
 interface AcquisitionResponse {
   success: boolean;
   error?: string;
+  retryAfterMs?: number;
   target?: string;
   details?: string;
   resolvedTargetLabel?: string;
@@ -119,6 +120,32 @@ interface AcquisitionResponse {
 
 const FIRST_PROMPT = 'What is it that you want to locate?';
 const DETAILS_PROMPT = 'What information can you give me about the target?';
+const CONTINUOUS_ACQUISITION_DELAY_MS = 1_500;
+
+interface AcquireTargetOptions {
+  backgroundPass?: boolean;
+  signal?: AbortSignal;
+  recursivePass?: number;
+  queryStartedAt?: string;
+}
+
+function jitteredAcquisitionDelay(baseMs: number): number {
+  const bounded = Math.max(500, Math.min(60_000, Math.floor(baseMs)));
+  const spread = Math.max(50, Math.floor(bounded * 0.2));
+  const jitter = Math.floor((Math.random() * (spread * 2 + 1)) - spread);
+  return Math.max(500, bounded + jitter);
+}
+
+function createSpectraSessionId(): string {
+  try {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return `spectra-${crypto.randomUUID()}`;
+    }
+  } catch {
+    // Fall through to the compatibility identifier.
+  }
+  return `spectra-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+}
 
 function makeMessage(role: Message['role'], content: string): Message {
   return {
@@ -164,6 +191,25 @@ export default function SpectraPage() {
   const lastSpokenTextRef = useRef<{ normalized: string; expiresAt: number } | null>(null);
   const recentVoiceTurnRef = useRef<{ normalized: string; at: number } | null>(null);
   const initialVoicePromptRef = useRef(false);
+  const queryStartedAtRef = useRef(new Date().toISOString());
+  const spectraSessionIdRef = useRef<string | null>(null);
+  const targetRef = useRef(target);
+  const detailsRef = useRef(details);
+  const directEvidenceRef = useRef(directEvidence);
+  const continuousAcquisitionActiveRef = useRef(false);
+  const continuousAcquisitionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const activeAcquisitionAbortRef = useRef<AbortController | null>(null);
+  const foregroundAcquisitionActiveRef = useRef(false);
+  const recursivePassRef = useRef(0);
+  const continuousRetryDelayRef = useRef(CONTINUOUS_ACQUISITION_DELAY_MS);
+  const hardStopRef = useRef<(reason?: string, notifyServer?: boolean) => void>(() => undefined);
+
+  useEffect(() => {
+    targetRef.current = target;
+    detailsRef.current = details;
+    directEvidenceRef.current = directEvidence;
+    spectraSessionIdRef.current = spectraSessionId;
+  }, [details, directEvidence, spectraSessionId, target]);
 
   const voiceSynthesis = useVoiceSynthesis();
   const voiceMode = useVoiceMode({
@@ -271,6 +317,11 @@ export default function SpectraPage() {
   ]);
 
   const resetSession = useCallback(() => {
+    hardStopRef.current('new_target', true);
+    queryStartedAtRef.current = new Date().toISOString();
+    recursivePassRef.current = 0;
+    continuousRetryDelayRef.current = CONTINUOUS_ACQUISITION_DELAY_MS;
+    spectraSessionIdRef.current = null;
     requestRef.current += 1;
     launchedFromLexaraRef.current = false;
     originLexaraSessionIdRef.current = null;
@@ -295,11 +346,49 @@ export default function SpectraPage() {
     detailsValue: string,
     extraEvidence: GPSPoint[] = directEvidence,
     sessionOverride?: string,
-  ) => {
+    options: AcquireTargetOptions = {},
+  ): Promise<AcquisitionResponse | null> => {
+    const backgroundPass = options.backgroundPass === true;
+
+    if (!backgroundPass) {
+      // Mark foreground work before any await. A scheduled recursive pass can
+      // then observe this synchronously and defer instead of stealing the
+      // shared request/abort slot from newly supplied evidence.
+      foregroundAcquisitionActiveRef.current = true;
+      if (activeAcquisitionAbortRef.current) {
+        activeAcquisitionAbortRef.current.abort(
+          new Error('SPECTRA foreground acquisition superseded the background pass.'),
+        );
+        activeAcquisitionAbortRef.current = null;
+      }
+    }
+
+    const localController = options.signal ? null : new AbortController();
+    const acquisitionSignal = options.signal || localController?.signal;
+    if (!backgroundPass && localController) {
+      activeAcquisitionAbortRef.current = localController;
+    }
+
     const requestId = ++requestRef.current;
-    setPhase('acquiring');
-    setLastError(null);
-    setAcquisitionStage('Resolving supplied location context…');
+    const resolvedSessionId =
+      sessionOverride ||
+      spectraSessionIdRef.current ||
+      createSpectraSessionId();
+
+    if (spectraSessionIdRef.current !== resolvedSessionId) {
+      spectraSessionIdRef.current = resolvedSessionId;
+      setSpectraSessionId(resolvedSessionId);
+    }
+
+    if (!backgroundPass) {
+      setPhase('acquiring');
+      setLastError(null);
+      setAcquisitionStage('Resolving supplied location context…');
+    } else {
+      setAcquisitionStage(
+        `Continuous recursive acquisition · pass ${Math.max(1, options.recursivePass || 1)}`,
+      );
+    }
 
     // Put evidence already in hand on the map immediately. Deep discovery may
     // take substantially longer, but the viewer should never lose verified
@@ -327,51 +416,55 @@ export default function SpectraPage() {
       });
     }
 
-    const previewRegionPromise = (async () => {
-      for (const locationText of [detailsValue, targetValue]) {
-        if (!locationText.trim()) continue;
-        try {
-          const previewResponse = await fetch('/api/geoconsole/geocode-city-state', {
-            method: 'POST',
-            credentials: 'include',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ location: locationText }),
-          });
-          const previewPayload = await previewResponse.json().catch(() => ({}));
-          if (
-            requestId !== requestRef.current ||
-            !previewResponse.ok ||
-            previewPayload?.success !== true
-          ) {
-            continue;
-          }
+    const previewRegionPromise = backgroundPass
+      ? Promise.resolve()
+      : (async () => {
+          for (const locationText of [detailsValue, targetValue]) {
+            if (!locationText.trim()) continue;
+            try {
+              const previewResponse = await fetch('/api/geoconsole/geocode-city-state', {
+                method: 'POST',
+                credentials: 'include',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ location: locationText }),
+                signal: acquisitionSignal,
+              });
+              const previewPayload = await previewResponse.json().catch(() => ({}));
+              if (
+                requestId !== requestRef.current ||
+                !previewResponse.ok ||
+                previewPayload?.success !== true
+              ) {
+                continue;
+              }
 
-          const region = previewPayload.data;
-          if (
-            Number.isFinite(Number(region?.latitude)) &&
-            Number.isFinite(Number(region?.longitude))
-          ) {
-            setCandidateLocations([{
-              latitude: Number(region.latitude),
-              longitude: Number(region.longitude),
-              label: String(region.displayName || locationText),
-              confidence: 0.25,
-              basis: 'regional_context',
-              accuracyMeters: Number.isFinite(Number(region.accuracyMeters))
-                ? Number(region.accuracyMeters)
-                : 25_000,
-            }]);
-            setAcquisitionStage('Regional context mapped; broadening identity discovery…');
-            return;
+              const region = previewPayload.data;
+              if (
+                Number.isFinite(Number(region?.latitude)) &&
+                Number.isFinite(Number(region?.longitude))
+              ) {
+                setCandidateLocations([{
+                  latitude: Number(region.latitude),
+                  longitude: Number(region.longitude),
+                  label: String(region.displayName || locationText),
+                  confidence: 0.25,
+                  basis: 'regional_context',
+                  accuracyMeters: Number.isFinite(Number(region.accuracyMeters))
+                    ? Number(region.accuracyMeters)
+                    : 25_000,
+                }]);
+                setAcquisitionStage('Regional context mapped; broadening identity discovery…');
+                return;
+              }
+            } catch (error) {
+              if (acquisitionSignal?.aborted) return;
+              // Regional preview is advisory and must never block deeper discovery.
+            }
           }
-        } catch {
-          // Regional preview is advisory and must never block deeper discovery.
-        }
-      }
-      if (requestId === requestRef.current) {
-        setAcquisitionStage('Broadening identity and source discovery…');
-      }
-    })();
+          if (requestId === requestRef.current) {
+            setAcquisitionStage('Broadening identity and source discovery…');
+          }
+        })();
 
     try {
       void previewRegionPromise;
@@ -379,11 +472,14 @@ export default function SpectraPage() {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
+        signal: acquisitionSignal,
         body: JSON.stringify({
           target: targetValue,
           details: detailsValue,
-          sessionId: sessionOverride || spectraSessionId || undefined,
+          sessionId: resolvedSessionId,
           originSessionId: originLexaraSessionIdRef.current || undefined,
+          queryStartedAt: options.queryStartedAt || queryStartedAtRef.current,
+          recursivePass: Math.max(0, options.recursivePass || 0),
           directEvidence: extraEvidence.map(point => ({
             ...point,
             timestamp: new Date(point.timestamp).toISOString(),
@@ -402,12 +498,32 @@ export default function SpectraPage() {
         }),
       });
 
-      const payload = await response.json() as AcquisitionResponse;
-      if (requestId !== requestRef.current) return;
+      const payload = await response.json().catch(() => ({})) as AcquisitionResponse;
+      if (requestId !== requestRef.current) return null;
+
+      if (response.status === 429) {
+        const headerSeconds = Number(response.headers.get('Retry-After'));
+        const retryAfterMs = Number.isFinite(Number(payload.retryAfterMs))
+          ? Number(payload.retryAfterMs)
+          : Number.isFinite(headerSeconds)
+            ? headerSeconds * 1000
+            : 5_000;
+        continuousRetryDelayRef.current = Math.max(
+          CONTINUOUS_ACQUISITION_DELAY_MS,
+          Math.min(60_000, Math.ceil(retryAfterMs)),
+        );
+        if (backgroundPass) {
+          setAcquisitionStage('Continuous acquisition throttled; retry scheduled…');
+          return null;
+        }
+        throw new Error(payload.error || 'SPECTRA acquisition capacity is temporarily saturated.');
+      }
 
       if (!response.ok || !payload.success) {
         throw new Error(payload.error || 'Target acquisition failed.');
       }
+
+      continuousRetryDelayRef.current = CONTINUOUS_ACQUISITION_DELAY_MS;
 
       const discoveredPoints = Array.isArray(payload.locationObservations)
         ? payload.locationObservations
@@ -442,37 +558,230 @@ export default function SpectraPage() {
       );
       setSourceCount(payload.acquisition?.sourceCount ?? 0);
       if (typeof payload.sessionId === 'string' && payload.sessionId.trim()) {
-        setSpectraSessionId(payload.sessionId.trim());
+        const returnedSessionId = payload.sessionId.trim();
+        spectraSessionIdRef.current = returnedSessionId;
+        setSpectraSessionId(returnedSessionId);
       }
-      setPhase('active');
 
-      const certainty = points.length > 0 || canonicalLocationConfidence > 0
-        ? Math.round(canonicalLocationConfidence * 100)
-        : null;
+      if (!backgroundPass) {
+        setPhase('active');
+      } else {
+        setLastError(null);
+        setAcquisitionStage(
+          `Continuous recursive acquisition · pass ${Math.max(1, options.recursivePass || 1)} complete`,
+        );
+      }
 
-      const regionalCandidates = Array.isArray(payload.candidateLocations)
-        ? payload.candidateLocations
-        : [];
-      const resolvedTarget = payload.resolvedTargetLabel?.trim() || targetValue;
-      const responseText = points.length > 0
-        ? `I acquired ${points.length} timestamped location observation${points.length === 1 ? '' : 's'} for ${resolvedTarget}. The map is updated${certainty !== null ? ` with ${certainty}% location-evidence confidence` : ''}.`
-        : regionalCandidates.length > 0
-          ? `I found a regional location candidate for ${resolvedTarget} and placed it on the map. I do not yet have timestamped coordinate evidence for a movement track.`
-          : `I completed the current discovery pass for ${resolvedTarget} across ${payload.acquisition?.sourceCount ?? 0} distinct source group${(payload.acquisition?.sourceCount ?? 0) === 1 ? '' : 's'}, but I do not yet have timestamped coordinate evidence strong enough to place the target precisely on the map.`;
+      if (!backgroundPass) {
+        const certainty = points.length > 0 || canonicalLocationConfidence > 0
+          ? Math.round(canonicalLocationConfidence * 100)
+          : null;
 
-      addMessage('spectra', responseText);
-      speakIfEnabled(responseText);
+        const regionalCandidates = Array.isArray(payload.candidateLocations)
+          ? payload.candidateLocations
+          : [];
+        const resolvedTarget = payload.resolvedTargetLabel?.trim() || targetValue;
+        const responseText = points.length > 0
+          ? `I acquired ${points.length} timestamped location observation${points.length === 1 ? '' : 's'} for ${resolvedTarget}. The map is updated${certainty !== null ? ` with ${certainty}% location-evidence confidence` : ''}.`
+          : regionalCandidates.length > 0
+            ? `I found a regional location candidate for ${resolvedTarget} and placed it on the map. I do not yet have timestamped coordinate evidence for a movement track.`
+            : `I completed the current discovery pass for ${resolvedTarget} across ${payload.acquisition?.sourceCount ?? 0} distinct source group${(payload.acquisition?.sourceCount ?? 0) === 1 ? '' : 's'}, but I do not yet have timestamped coordinate evidence strong enough to place the target precisely on the map.`;
+
+        addMessage('spectra', responseText);
+        speakIfEnabled(responseText);
+      }
+
+      return payload;
     } catch (error) {
-      if (requestId !== requestRef.current) return;
+      if (
+        acquisitionSignal?.aborted ||
+        (error instanceof DOMException && error.name === 'AbortError')
+      ) {
+        return null;
+      }
+      if (requestId !== requestRef.current) return null;
+
       const message = error instanceof Error ? error.message : 'Target acquisition failed.';
+      if (backgroundPass) {
+        setLastError(message);
+        setAcquisitionStage('Continuous acquisition retrying…');
+        return null;
+      }
+
       setLastError(message);
       setAcquisitionStage('Acquisition needs additional information');
       setPhase('error');
       const responseText = 'I could not complete that acquisition. Give me corrected or additional target information and I will try again.';
       addMessage('spectra', responseText);
       speakIfEnabled(responseText);
+      return null;
+    } finally {
+      if (
+        localController
+        && activeAcquisitionAbortRef.current === localController
+      ) {
+        activeAcquisitionAbortRef.current = null;
+      }
+      if (!backgroundPass) {
+        foregroundAcquisitionActiveRef.current = false;
+      }
     }
-  }, [addMessage, directEvidence, speakIfEnabled, spectraSessionId]);
+  }, [addMessage, directEvidence, speakIfEnabled]);
+
+  const stopContinuousAcquisition = useCallback((
+    reason = 'viewer_exit',
+    notifyServer = true,
+  ) => {
+    continuousAcquisitionActiveRef.current = false;
+
+    if (continuousAcquisitionTimerRef.current) {
+      clearTimeout(continuousAcquisitionTimerRef.current);
+      continuousAcquisitionTimerRef.current = null;
+    }
+
+    if (activeAcquisitionAbortRef.current) {
+      activeAcquisitionAbortRef.current.abort(new Error(`SPECTRA acquisition stopped: ${reason}`));
+      activeAcquisitionAbortRef.current = null;
+    }
+
+    requestRef.current += 1;
+
+    const sessionId = spectraSessionIdRef.current;
+    if (!notifyServer || !sessionId || typeof window === 'undefined') return;
+
+    const body = JSON.stringify({ sessionId });
+    try {
+      if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
+        const blob = new Blob([body], { type: 'application/json' });
+        if (navigator.sendBeacon('/api/spectra/acquisition/stop', blob)) return;
+      }
+    } catch {
+      // Keepalive fetch below is the fallback.
+    }
+
+    void fetch('/api/spectra/acquisition/stop', {
+      method: 'POST',
+      credentials: 'include',
+      keepalive: true,
+      headers: { 'Content-Type': 'application/json' },
+      body,
+    }).catch(() => undefined);
+  }, []);
+
+  hardStopRef.current = stopContinuousAcquisition;
+
+  const startContinuousAcquisition = useCallback(() => {
+    if (
+      continuousAcquisitionActiveRef.current
+      || !targetRef.current.trim()
+      || !detailsRef.current.trim()
+      || !spectraSessionIdRef.current
+    ) {
+      return;
+    }
+
+    continuousAcquisitionActiveRef.current = true;
+
+    const runPass = async () => {
+      if (!continuousAcquisitionActiveRef.current) return;
+
+      if (foregroundAcquisitionActiveRef.current) {
+        continuousAcquisitionTimerRef.current = setTimeout(
+          () => void runPass(),
+          jitteredAcquisitionDelay(continuousRetryDelayRef.current),
+        );
+        return;
+      }
+
+      const controller = new AbortController();
+      activeAcquisitionAbortRef.current = controller;
+      const pass = ++recursivePassRef.current;
+
+      try {
+        await acquireTarget(
+          targetRef.current,
+          detailsRef.current,
+          directEvidenceRef.current,
+          spectraSessionIdRef.current || undefined,
+          {
+            backgroundPass: true,
+            signal: controller.signal,
+            recursivePass: pass,
+            queryStartedAt: queryStartedAtRef.current,
+          },
+        );
+      } finally {
+        if (activeAcquisitionAbortRef.current === controller) {
+          activeAcquisitionAbortRef.current = null;
+        }
+
+        if (continuousAcquisitionActiveRef.current) {
+          continuousAcquisitionTimerRef.current = setTimeout(
+            () => void runPass(),
+            jitteredAcquisitionDelay(continuousRetryDelayRef.current),
+          );
+        }
+      }
+    };
+
+    continuousRetryDelayRef.current = CONTINUOUS_ACQUISITION_DELAY_MS;
+    continuousAcquisitionTimerRef.current = setTimeout(
+      () => void runPass(),
+      jitteredAcquisitionDelay(continuousRetryDelayRef.current),
+    );
+  }, [acquireTarget]);
+
+  useEffect(() => {
+    if (
+      (phase === 'active' || phase === 'error')
+      && target.trim()
+      && details.trim()
+      && spectraSessionId
+    ) {
+      startContinuousAcquisition();
+    }
+  }, [details, phase, spectraSessionId, startContinuousAcquisition, target]);
+
+  useEffect(() => {
+    const onPageHide = () => {
+      stopContinuousAcquisition('page_exit', true);
+    };
+
+    const onPageShow = (event: PageTransitionEvent) => {
+      if (!event.persisted) return;
+
+      // pagehide also fires when the browser places SPECTRA in BFCache. The old
+      // investigation was correctly hard-stopped on hide; restoration must use
+      // a fresh session rather than silently reviving that stopped ID.
+      const freshSessionId = createSpectraSessionId();
+      spectraSessionIdRef.current = freshSessionId;
+      setSpectraSessionId(freshSessionId);
+      queryStartedAtRef.current = new Date().toISOString();
+      recursivePassRef.current = 0;
+      continuousRetryDelayRef.current = CONTINUOUS_ACQUISITION_DELAY_MS;
+      foregroundAcquisitionActiveRef.current = false;
+      requestRef.current += 1;
+
+      if (targetRef.current.trim() && detailsRef.current.trim()) {
+        setPhase('active');
+        setAcquisitionStage('SPECTRA session restored; resuming recursive acquisition…');
+        startContinuousAcquisition();
+      }
+    };
+
+    window.addEventListener('pagehide', onPageHide);
+    window.addEventListener('pageshow', onPageShow);
+    return () => {
+      window.removeEventListener('pagehide', onPageHide);
+      window.removeEventListener('pageshow', onPageShow);
+      if (
+        continuousAcquisitionActiveRef.current
+        || activeAcquisitionAbortRef.current
+      ) {
+        stopContinuousAcquisition('spectra_unmounted', false);
+      }
+    };
+  }, [startContinuousAcquisition, stopContinuousAcquisition]);
 
   useEffect(() => {
     const launch = lexaraLaunchRef.current;
@@ -487,6 +796,8 @@ export default function SpectraPage() {
 
     const targetValue = launch.target;
     const detailsValue = launchDetails(launch);
+    targetRef.current = targetValue;
+    detailsRef.current = detailsValue;
     setTarget(targetValue);
     setDetails(detailsValue);
     setAcquisitionStage('LEXARA context received; starting SPECTRA acquisition…');
@@ -525,6 +836,7 @@ export default function SpectraPage() {
         : directEvidence;
 
       if (extractedPoint) {
+        directEvidenceRef.current = nextDirectEvidence;
         setDirectEvidence(nextDirectEvidence);
       }
 
@@ -540,6 +852,7 @@ export default function SpectraPage() {
       ].filter(Boolean).join('. ');
 
       const expandedDetails = [details, evidenceDescription].filter(Boolean).join('\n');
+      detailsRef.current = expandedDetails;
       setDetails(expandedDetails);
 
       const responseText = extractedPoint
@@ -595,7 +908,10 @@ export default function SpectraPage() {
       }
 
       const importedSessionId = String(payload.data?.sessionId || spectraSessionId || '').trim();
-      if (importedSessionId) setSpectraSessionId(importedSessionId);
+      if (importedSessionId) {
+        spectraSessionIdRef.current = importedSessionId;
+        setSpectraSessionId(importedSessionId);
+      }
 
       if (importedSessionId) {
         const historyResponse = await fetch(
@@ -663,6 +979,7 @@ export default function SpectraPage() {
         `Accepted location observations: ${processedCount}`,
       ].join('. ');
       const expandedDetails = [details, evidenceDescription].filter(Boolean).join('\n');
+      detailsRef.current = expandedDetails;
       setDetails(expandedDetails);
 
       const responseText = processedCount > 0
@@ -724,6 +1041,7 @@ export default function SpectraPage() {
     setInput('');
 
     if (phase === 'awaiting_target') {
+      targetRef.current = message;
       setTarget(message);
       setPhase('awaiting_details');
       addMessage('spectra', DETAILS_PROMPT);
@@ -732,14 +1050,16 @@ export default function SpectraPage() {
     }
 
     if (phase === 'awaiting_details') {
+      detailsRef.current = message;
       setDetails(message);
-      await acquireTarget(target, message);
+      await acquireTarget(targetRef.current || target, message);
       return;
     }
 
-    const expandedDetails = [details, message].filter(Boolean).join('\n');
+    const expandedDetails = [detailsRef.current || details, message].filter(Boolean).join('\n');
+    detailsRef.current = expandedDetails;
     setDetails(expandedDetails);
-    await acquireTarget(target, expandedDetails);
+    await acquireTarget(targetRef.current || target, expandedDetails);
   }, [
     acquireTarget,
     addMessage,
@@ -839,7 +1159,10 @@ export default function SpectraPage() {
         <Button
           variant="ghost"
           size="sm"
-          onClick={() => setLocation('/lexara-consent')}
+          onClick={() => {
+            hardStopRef.current('back_button', true);
+            setLocation('/lexara-consent');
+          }}
           className="text-slate-300 hover:text-white"
         >
           <ArrowLeft className="h-4 w-4 mr-1" />

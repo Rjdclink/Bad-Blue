@@ -49,6 +49,34 @@ const realtimeBridge = read('server/services/spectra/SpectraRealtimeBridge.ts');
 const telemetryImport = read('server/services/spectra/SpectraTelemetryImport.ts');
 const acquisitionPersistence = read('server/services/spectra/SpectraAcquisitionPersistence.ts');
 const placeContext = read('server/services/spectra/SpectraPlaceContext.ts');
+const publicInfrastructure = read('server/services/spectra/SpectraPublicInfrastructureContext.ts');
+const publicFeedRegistry = read('server/services/spectra/SpectraPublicFeedRegistry.ts');
+const gtfsRealtimeContext = read('server/services/spectra/SpectraGtfsRealtimeContext.ts');
+const arcGisCameraDiscovery = read('server/services/spectra/SpectraArcGisPublicCameraDiscovery.ts');
+const floorplanTransformer = read('server/services/spectra/SpectraFloorplanTransformer.ts');
+const infrastructureIdentity = read('server/services/spectra/SpectraInfrastructureIdentity.ts');
+const acquisitionControl = read('server/services/spectra/SpectraAcquisitionControl.ts');
+const apiContract = read('server/services/spectra/SpectraApiContract.ts');
+const resourceGovernor = read('server/services/spectra/SpectraResourceGovernor.ts');
+const observability = read('server/services/spectra/SpectraObservability.ts');
+const tenantScope = read('server/services/spectra/SpectraTenantScope.ts');
+const providerSessionAccess = read('server/services/spectra/SpectraProviderSessionAccess.ts');
+const mapRendererAdapter = read('client/src/components/geoconsole/MapRendererAdapter.ts');
+const geoconsoleCore = read('server/services/geoconsole/index.ts');
+const railwayEnvExample = read('.env.railway.example');
+const legalProviderMesh = read('server/lexara/LegalProviderMesh.ts');
+const hootenannyContext = read('server/services/spectra/SpectraHootenannyContext.ts');
+const mylnikovResolver = read('server/services/spectra/SpectraMylnikovResolver.ts');
+const wigleResolver = read('server/services/spectra/SpectraWigleRadioResolver.ts');
+const unwiredResolver = read('server/services/spectra/SpectraUnwiredRadioResolver.ts');
+const radioConsensus = read('server/services/spectra/SpectraRadioConsensus.ts');
+const radioConsensusVerifier = read('scripts/verify-spectra-radio-consensus.ts');
+const openSourceBridgeNormalizer = read('server/services/spectra/SpectraOpenSourceBridgeNormalizer.ts');
+const openSourceBridgeVerifier = read('scripts/verify-spectra-open-source-bridges.ts');
+const infrastructureNormalizer = read('server/services/spectra/SpectraInfrastructureProviderNormalizer.ts');
+const arubaStreamDecoder = read('server/services/spectra/SpectraArubaStreamDecoder.ts');
+const providerStreamCoordinator = read('server/services/spectra/SpectraProviderStreamCoordinator.ts');
+const mqttProviderCoordinator = read('server/services/spectra/SpectraMqttProviderCoordinator.ts');
 const publicRetrieval = read('server/services/spectra/SpectraPublicRetrieval.ts');
 const cameraDirectories = read('server/services/spectra/SpectraCameraDirectoryAdapters.ts');
 const motionContext = read('server/services/spectra/SpectraMotionContext.ts');
@@ -59,6 +87,8 @@ const motionContextMigration = read('server/migrations/067_spectra_motion_contex
 const motionContextAccessMigration = read('server/migrations/068_spectra_motion_context_server_only_access.sql');
 const spectraAccessMigration = read('server/migrations/065_spectra_server_only_access.sql');
 const spectraIndexMigration = read('server/migrations/066_spectra_foreign_key_indexes.sql');
+const spectraTenantHistoryIndexMigration = read('server/migrations/069_spectra_tenant_history_indexes.sql');
+const spectraAcquisitionControlMigration = read('server/migrations/070_spectra_acquisition_control.sql');
 const landing = read('client/src/pages/landing.tsx');
 const login = read('client/src/pages/login.tsx');
 
@@ -74,7 +104,7 @@ test('Second question waits for first response',
   spectra.includes("addMessage('spectra', DETAILS_PROMPT)"));
 test('Acquisition begins only after details phase',
   spectra.includes("if (phase === 'awaiting_details')") &&
-  spectra.includes("await acquireTarget(target, message)"));
+  spectra.includes("await acquireTarget(targetRef.current || target, message)"));
 test('SPECTRA uses one canonical GeoConsole map',
   spectra.includes('<GeoconsoleRadarDashboard') &&
   spectra.includes('spectraShell'));
@@ -278,13 +308,13 @@ test('SPECTRA source registry includes the major geospatial evidence families',
   spectraSources.includes("'map-context'") &&
   spectraSources.includes("'weather-context'") &&
   spectraSources.includes("'earth-observation'"));
-test('SPECTRA acquisition uses adaptive prioritized source waves without fixed 36/24/12 caps',
+test('SPECTRA acquisition uses adaptive prioritized source waves with policy-bounded discovery',
   routes.includes('buildSpectraDiscoveryWaves') &&
   routes.includes('buildSpectraAdaptiveQuery') &&
   routes.includes('SPECTRA_DISCOVERY_POLICY') &&
-  !routes.includes('.slice(0, 36)') &&
-  !routes.includes('.slice(0, 24)') &&
-  !routes.includes('.slice(0, 12)'));
+  routes.includes('discoveryQueriesAttempted >= SPECTRA_DISCOVERY_POLICY.maxQueries') &&
+  routes.includes('discoveryResults.length >= SPECTRA_DISCOVERY_POLICY.maxCandidates') &&
+  routes.includes('.slice(0, SPECTRA_DISCOVERY_POLICY.maxCandidates)'));
 test('SPECTRA has nationwide public camera adapters with optional provider expansion',
   geoconsoleRoutes.includes("router.get('/public-cameras'") &&
   geoconsoleRoutes.includes('api.trafficland.com/v2.2/json/video_feeds/poi') &&
@@ -343,7 +373,9 @@ test('Realtime observations work locally and across replicas when Supabase Realt
   realtimeBridge.includes("table: 'spectra_location_observations'"));
 test('SPECTRA acquisition session stays attached to GeoRuntime without callback churn',
   spectra.includes('sessionId={spectraSessionId}') &&
-  spectra.includes('sessionId: sessionOverride || spectraSessionId || undefined') &&
+  spectra.includes('sessionOverride ||') &&
+  spectra.includes('spectraSessionIdRef.current ||') &&
+  spectra.includes('sessionId: resolvedSessionId') &&
   dashboard.includes('sessionId?: string | null') &&
   dashboard.includes('sessionId: sessionId || undefined') &&
   runtime.includes('const sessionIdRef = useRef<string | null>') &&
@@ -382,6 +414,12 @@ test('Constraint solver is wired before posterior confidence and Futurecast',
   constraintSolver.includes('buildSpectraSpatialConstraints') &&
   constraintSolver.includes('dependencyGraph') &&
   constraintSolver.includes('spectra_forward_backward_motion_smoother'));
+test('Constraint solver scores bearing contradictions and scopes dependency penalties to relevant time windows',
+  constraintSolver.includes("c.kind === 'bearing' && c.anchor && c.bearingDegrees !== undefined") &&
+  constraintSolver.includes('(c.bearingSigmaDegrees ?? 12) * 4') &&
+  constraintSolver.includes('2 * rangeMeters * Math.sin(') &&
+  constraintSolver.includes('const effectiveWeights = dependencyAdjustedWeights(relevant)') &&
+  !constraintSolver.includes('const effectiveWeights = dependencyAdjustedWeights(constraints)'));
 test('Ranging keeps anchor geometry for the common constraint layer',
   geoconsoleRoutes.includes('constraintAnchors: anchors.map(anchor => ({') &&
   geoconsoleRoutes.includes('bearingUncertaintyDegrees: anchor.raw.bearingUncertaintyDegrees'));
@@ -659,6 +697,529 @@ test('CAMARA provider normalization preserves circle and polygon uncertainty',
   providerNormalizer.includes("areaType === 'POLYGON'") &&
   providerNormalizer.includes('camaraPolygonCenter') &&
   providerNormalizer.includes('confidenceForAccuracy'));
+test('Public infrastructure context adds FCC antenna and NOAA CORS sources without promoting them to target observations',
+  publicInfrastructure.includes('FCC Antenna Structure Registration') &&
+  publicInfrastructure.includes('NOAA CORS Network') &&
+  publicInfrastructure.includes('contextOnly: true') &&
+  placeContext.includes('acquireSpectraPublicInfrastructureContext') &&
+  routes.includes("sourceFamilies.push('public-infrastructure')") &&
+  !publicInfrastructure.includes('spectra_location_observations'));
+test('Public GTFS-Realtime catalog discovery is keyless, bounded and context-only',
+  publicFeedRegistry.includes('https://files.mobilitydatabase.org/feeds_v2.csv') &&
+  publicFeedRegistry.includes("authenticationType === 0") &&
+  publicFeedRegistry.includes("record.entityTypes.includes('vp')") &&
+  geoconsoleRoutes.includes("router.get('/public-feed-catalog'") &&
+  geoconsoleRoutes.includes('contextOnly: true') &&
+  routes.includes("sourceFamilies.push('public-mobility-feed')"));
+test('Public feed registry preserves missing bounding coordinates instead of coercing blanks to zero',
+  publicFeedRegistry.includes('const raw = value(row, ...keys).trim()') &&
+  publicFeedRegistry.includes('if (!raw) return null;') &&
+  publicFeedRegistry.includes('const parsed = Number(raw)') &&
+  publicFeedRegistry.includes('minLat !== null && maxLat !== null && minLon !== null && maxLon !== null'));
+test('GTFS-Realtime parser is bounded and handles vehicle-position protobuf fields without adding target evidence',
+  gtfsRealtimeContext.includes('class ProtobufReader') &&
+  gtfsRealtimeContext.includes('parseVehiclePosition') &&
+  gtfsRealtimeContext.includes('bytes.length > 8_000_000') &&
+  gtfsRealtimeContext.includes('contextOnly: true'));
+test('ArcGIS public camera discovery is spatially bounded and rejects private/reserved service targets',
+  arcGisCameraDiscovery.includes('https://www.arcgis.com/sharing/rest/search') &&
+  arcGisCameraDiscovery.includes("'bbox'") &&
+  arcGisCameraDiscovery.includes("type:\"Feature Service\"") &&
+  arcGisCameraDiscovery.includes("lookup(host, { all: true, verbatim: true })") &&
+  arcGisCameraDiscovery.includes('isPrivateIpv4') &&
+  arcGisCameraDiscovery.includes('isPrivateIpv6') &&
+  arcGisCameraDiscovery.includes("host.endsWith('.local')") &&
+  arcGisCameraDiscovery.includes('assertPublicServiceUrl') &&
+  geoconsoleRoutes.includes('discoverPublicArcGisCameraLayers') &&
+  adapterRegistry.includes("id: 'public-arcgis-camera-discovery'"));
+test('Infrastructure floorplan and identity helper utilities remain bounded and configuration-driven',
+  floorplanTransformer.includes('SPECTRA_FLOORPLAN_CALIBRATIONS_JSON') &&
+  floorplanTransformer.includes('affine-three-point') &&
+  infrastructureIdentity.includes('SPECTRA_INFRASTRUCTURE_SUBJECT_BINDINGS') &&
+  infrastructureIdentity.includes('infrastructureCorrelationGroup'));
+
+test('SPECTRA exposes a pinned v1 interface with OpenAPI and compatibility mounts',
+  apiContract.includes("export const SPECTRA_API_VERSION = '1'") &&
+  apiContract.includes("openapi: '3.1.0'") &&
+  apiContract.includes("'/spectra/v1/acquire'") &&
+  apiContract.includes("'/geoconsole/v1/telemetry-history/{sessionId}'") &&
+  routes.includes("router.get('/openapi.json'") &&
+  serverRoutes.includes("app.use('/api/spectra/v1', spectraRoutes.default)") &&
+  serverRoutes.includes("app.use('/api/geoconsole/v1', geoconsoleRoutes.default)"));
+test('SPECTRA API responses advertise stable API and schema versions',
+  apiContract.includes('X-Spectra-Api-Version') &&
+  apiContract.includes('X-Spectra-Schema-Version') &&
+  routes.includes('spectraApiVersionHeaders') &&
+  geoconsoleRoutes.includes('spectraApiVersionHeaders'));
+test('Durable observations are canonical and reports rehydrate bounded history after cache loss or restart',
+  spectraMigration.includes('CREATE TABLE IF NOT EXISTS public.spectra_location_observations') &&
+  acquisitionPersistence.includes('loadSpectraSessionObservationRange') &&
+  geoconsoleRoutes.includes('const durableRange = await loadSpectraSessionObservationRange') &&
+  geoconsoleRoutes.includes('await hybridGeoconsole.processLocationData(durableRange.points, sessionId)') &&
+  geoconsoleRoutes.includes('durableHistoryTruncated: durableRange.truncated') &&
+  geoconsoleRoutes.includes('durable SPECTRA observations remain in PostgreSQL/Supabase'));
+test('Provider and renderer layers are replaceable rather than hard-wired',
+  adapterRegistry.includes("id: 'generic-https-json-pull'") &&
+  providerNormalizer.includes('SPECTRA_PROVIDER_NORMALIZER_KINDS') &&
+  legalProviderMesh.includes('export interface LegalMeshCandidate') &&
+  legalProviderMesh.includes("provider:'tavily'") &&
+  legalProviderMesh.includes("provider:'searxng'") &&
+  mapRendererAdapter.includes("export interface GeoconsoleMapRendererAdapter") &&
+  mapRendererAdapter.includes("id: 'maplibre'") &&
+  mapRendererAdapter.includes("id: 'mapbox-global'") &&
+  intelligenceMap.includes('resolveGeoconsoleMapRenderer'));
+test('Cross-replica resource governance uses PostgreSQL advisory locks with bounded waiting',
+  resourceGovernor.includes('pg_try_advisory_lock') &&
+  resourceGovernor.includes('SPECTRA_MAX_CONCURRENT_ACQUISITIONS') &&
+  resourceGovernor.includes('SPECTRA_MAX_CONCURRENT_ACQUISITIONS_PER_TENANT') &&
+  resourceGovernor.includes('SPECTRA_RESOURCE_ACQUIRE_TIMEOUT_MS') &&
+  routes.includes('acquireSpectraResourcePermit') &&
+  routes.includes("res.status(429)") &&
+  spectra.includes("response.status === 429") &&
+  spectra.includes("response.headers.get('Retry-After')"));
+test('GeoConsole max concurrency and compute budget are active controls, not descriptive settings',
+  geoconsoleCore.includes('acquireProcessingPermit') &&
+  geoconsoleCore.includes('this.orchestrationState.activeTasks += 1') &&
+  geoconsoleCore.includes('this.orchestrationState.computeUsage += units') &&
+  geoconsoleCore.includes('this.orchestrationConfig.maxConcurrentOperations') &&
+  geoconsoleCore.includes('this.orchestrationConfig.computeBudget') &&
+  geoconsoleCore.includes('GeoConsole processing queue is saturated'));
+test('Railway-facing resource controls are documented for reproducible configuration',
+  railwayEnvExample.includes('SPECTRA_MAX_CONCURRENT_ACQUISITIONS=4') &&
+  railwayEnvExample.includes('SPECTRA_MAX_CONCURRENT_ACQUISITIONS_PER_TENANT=2') &&
+  railwayEnvExample.includes('SPECTRA_RESOURCE_ACQUIRE_TIMEOUT_MS=1500'));
+test('SPECTRA exposes liveness, readiness, detailed health and Prometheus metrics',
+  routes.includes("router.get('/live'") &&
+  routes.includes("router.get('/ready'") &&
+  routes.includes("router.get('/health'") &&
+  routes.includes("router.get('/metrics'") &&
+  routes.includes("pool.query('SELECT 1 AS ok')") &&
+  observability.includes('# TYPE spectra_acquisitions_total counter') &&
+  observability.includes('# TYPE spectra_acquisition_active gauge') &&
+  observability.includes('# TYPE spectra_provider_events_total counter'));
+test('Provider health includes active pulls plus WSS and MQTT stream state',
+  activeAcquisition.includes('getSpectraActiveAcquisitionHealth') &&
+  routes.includes('getSpectraActiveAcquisitionHealth') &&
+  routes.includes('getSpectraProviderStreamHealth') &&
+  routes.includes('getSpectraMqttProviderHealth'));
+test('Tenant isolation is explicit and all owned provider writes require a provider-session binding',
+  tenantScope.includes("model: 'user-v1'") &&
+  acquisitionPersistence.includes('WHERE session_id = $1 AND user_id = $2') &&
+  geoconsoleRoutes.includes('providerMayWriteOwnedSpectraSession') &&
+  providerSessionAccess.includes('SPECTRA_PROVIDER_SESSION_BINDINGS') &&
+  providerSessionAccess.includes('ownerTenantId') &&
+  spectraAccessMigration.includes('FROM PUBLIC, anon, authenticated') &&
+  spectraAccessMigration.includes('TO service_role'));
+test('Provider traffic context cannot attach to an owned tenant session without an explicit binding',
+  geoconsoleRoutes.includes('Traffic-context provider is not bound to this tenant session.') &&
+  geoconsoleRoutes.includes('providerMayWriteOwnedSpectraSession({') &&
+  railwayEnvExample.includes('SPECTRA_PROVIDER_SESSION_BINDINGS=[]'));
+
+test('Long-running durable history returns freshest bounded evidence and supports opaque cursor pagination',
+  acquisitionPersistence.includes('ORDER BY observed_at DESC, id DESC') &&
+  acquisitionPersistence.includes('encodeObservationCursor') &&
+  acquisitionPersistence.includes('decodeObservationCursor') &&
+  acquisitionPersistence.includes('loadSpectraSessionObservationRange') &&
+  geoconsoleRoutes.includes("cursor: z.string().trim().min(1).max(1_000).optional()") &&
+  geoconsoleRoutes.includes("order: 'newest-first'") &&
+  apiContract.includes('opaque nextCursor') &&
+  spectraTenantHistoryIndexMigration.includes('user_id') &&
+  spectraTenantHistoryIndexMigration.includes('session_id') &&
+  spectraTenantHistoryIndexMigration.includes('observed_at DESC') &&
+  dockerfile.includes('069_spectra_tenant_history_indexes.sql'));
+test('Report rehydration can span a bounded durable time range instead of only the oldest cache window',
+  geoconsoleRoutes.includes('loadSpectraSessionObservationRange') &&
+  geoconsoleRoutes.includes('maxPoints: 20_000') &&
+  geoconsoleRoutes.includes('durableHistoryTruncated') &&
+  acquisitionPersistence.includes('maxPoints ?? 20_000'));
+test('Global GeoConsole configuration and cache mutation require administrator authorization',
+  geoconsoleRoutes.includes("router.post('/config', adminAuthMiddleware") &&
+  geoconsoleRoutes.includes("router.post('/clear-cache', adminAuthMiddleware"));
+test('Expensive GeoConsole routes share cross-replica resource governance',
+  geoconsoleRoutes.includes('const spectraResourceMiddleware') &&
+  geoconsoleRoutes.includes("router.post('/process', spectraResourceMiddleware") &&
+  geoconsoleRoutes.includes("router.post('/report', spectraResourceMiddleware") &&
+  geoconsoleRoutes.includes("router.post('/interpolate', spectraResourceMiddleware") &&
+  geoconsoleRoutes.includes("router.post('/futurecast', spectraResourceMiddleware"));
+test('Provider telemetry and motion context cannot create or append owned data without a tenant-scoped session binding',
+  providerSessionAccess.includes('resolveSpectraProviderSessionBinding') &&
+  providerSessionAccess.includes('Boolean(binding?.tenantId') &&
+  geoconsoleRoutes.includes('SPECTRA provider telemetry requires an explicit tenant-scoped session binding.') &&
+  geoconsoleRoutes.includes('Traffic-context provider requires a tenant-scoped session binding.') &&
+  geoconsoleRoutes.includes('userId: boundTenantId') &&
+  motionContext.includes('OR user_id = $3'));
+test('Detailed health reports provider binding counts without exposing bound session identifiers',
+  routes.includes('getConfiguredSpectraProviderSessionBindingSummary') &&
+  providerSessionAccess.includes('tenantScopedCount') &&
+  !routes.includes('getConfiguredSpectraProviderSessionBindings()'));
+test('Map renderer abstraction permits registered alternate renderers and falls back to MapLibre',
+  mapRendererAdapter.includes('registerGeoconsoleMapRenderer') &&
+  mapRendererAdapter.includes("adapters.set(id, adapter)") &&
+  mapRendererAdapter.includes("active: 'maplibre'") &&
+  intelligenceMap.includes('renderer.adapter.createMap') &&
+  intelligenceMap.includes('renderer.adapter.createPopup'));
+test('Configured provider fan-out is explicitly bounded',
+  activeAcquisition.includes('parsed.slice(0, 16)') &&
+  genericPull.includes('parsed.slice(0, 64)') &&
+  providerStreamCoordinator.includes('parsed.slice(0, 32)') &&
+  mqttProviderCoordinator.includes('parsed.slice(0, 32)'));
+test('Retry and reconnect loops use bounded jitter instead of synchronized fixed retries',
+  spectra.includes('jitteredAcquisitionDelay') &&
+  providerStreamCoordinator.includes('Math.random()') &&
+  mqttProviderCoordinator.includes('Math.random()'));
+test('Cross-replica governor fails closed unless local fallback is explicitly enabled',
+  resourceGovernor.includes('SPECTRA_ALLOW_LOCAL_GOVERNOR_FALLBACK') &&
+  railwayEnvExample.includes('SPECTRA_ALLOW_LOCAL_GOVERNOR_FALLBACK=false'));
+
+test('Hootenanny is an additive conflated-map context provider rather than target telemetry',
+  hootenannyContext.includes('/osm/api/0.6/map/') &&
+  hootenannyContext.includes('/conflation/execute') &&
+  hootenannyContext.includes('contextOnly: true') &&
+  placeContext.includes('acquireSpectraHootenannyContext') &&
+  placeContext.includes('conflatedMap: true') &&
+  adapterRegistry.includes("id: 'hootenanny-conflated-map-context'") &&
+  !hootenannyContext.includes('spectra_location_observations'));
+test('Mylnikov open radio geolocation runs alongside the existing radio providers',
+  mylnikovResolver.includes('https://api.mylnikov.org/geolocation/wifi') &&
+  mylnikovResolver.includes('https://api.mylnikov.org/geolocation/cell') &&
+  mylnikovResolver.includes("endpoint.searchParams.set('data', 'open')") &&
+  mylnikovResolver.includes('slice(0, 12)') &&
+  geoconsoleRoutes.includes('resolveSpectraMylnikovRadio') &&
+  geoconsoleRoutes.includes('mylnikovOutcome') &&
+  geoconsoleRoutes.includes('googleRadioPoint(measurement)') &&
+  geoconsoleRoutes.includes('beaconDbRadioPoint(measurement)') &&
+  geoconsoleRoutes.includes('openCellIdPoint(measurement)') &&
+  adapterRegistry.includes("id: 'mylnikov-open-radio-geolocation'"));
+test('WiGLE exact-BSSID resolver participates in the bounded radio mesh',
+  wigleResolver.includes('https://api.wigle.net/api/v2/network/search') &&
+  wigleResolver.includes("endpoint.searchParams.set('netid', bssid)") &&
+  wigleResolver.includes('SPECTRA_WIGLE_API_TOKEN') &&
+  wigleResolver.includes('slice(0, 6)') &&
+  geoconsoleRoutes.includes('resolveSpectraWigleWifi') &&
+  geoconsoleRoutes.includes('wigleOutcome') &&
+  geoconsoleRoutes.includes('wigle: spectraWigleConfigured()') &&
+  adapterRegistry.includes("id: 'wigle-bssid-geolocation'"));
+test('Traccar-style Unwired resolver participates in the bounded radio mesh',
+  unwiredResolver.includes('SPECTRA_UNWIRED_GEOLOCATION_URL') &&
+  unwiredResolver.includes('SPECTRA_UNWIRED_GEOLOCATION_TOKEN') &&
+  unwiredResolver.includes("url.protocol === 'https:'") &&
+  unwiredResolver.includes('slice(0, 32)') &&
+  geoconsoleRoutes.includes('resolveSpectraUnwiredRadio') &&
+  geoconsoleRoutes.includes('unwiredOutcome') &&
+  geoconsoleRoutes.includes('unwiredCompatible: spectraUnwiredConfigured()') &&
+  adapterRegistry.includes("id: 'unwired-compatible-radio-geolocation'"));
+test('Radio mesh runs independent resolvers in parallel and records corroboration',
+  ['googleRadioPoint(measurement)','beaconDbRadioPoint(measurement)','openCellIdPoint(measurement)',
+   'resolveSpectraMylnikovRadio','resolveSpectraWigleWifi','resolveSpectraUnwiredRadio']
+    .every(marker => geoconsoleRoutes.includes(marker)) &&
+  geoconsoleRoutes.includes('radioCorroboration'));
+test('Radio mesh rejects outliers and never manufactures precision below the strongest agreeing source',
+  radioConsensus.includes('uniqueByProvider') &&
+  radioConsensus.includes('clusterAround') &&
+  radioConsensus.includes('radioExcludedProviders') &&
+  radioConsensus.includes('Math.max(\n    bestClaimedAccuracy') &&
+  geoconsoleRoutes.includes('resolveSpectraRadioConsensus(candidates)') &&
+  radioConsensusVerifier.includes('outlier-provider') &&
+  radioConsensusVerifier.includes('must not claim accuracy tighter'));
+test('Open-source acquisition bridge normalizers cover the high-value GitHub bridge set',
+  [
+    'owntracks-location',
+    'chirpstack-location',
+    'find3-location',
+    'espresense-observation',
+    'kismet-device-location',
+    'openwisp-wifi-session',
+    'traccar-position',
+    'meshtastic-position',
+    'cot-location',
+    'homeassistant-device-tracker',
+    'gpsd-tpv',
+    'omlox-location',
+    'mqtt-room-presence',
+    'openmqttgateway-ble',
+    'frigate-event',
+  ].every(kind => openSourceBridgeNormalizer.includes(`'${kind}'`)) &&
+  providerNormalizer.includes('SPECTRA_OPEN_SOURCE_BRIDGE_KINDS') &&
+  providerNormalizer.includes('normalizeSpectraOpenSourceBridgePayload'));
+test('OwnTracks preserves GPS accuracy, motion and stable MQTT topic device identity',
+  openSourceBridgeNormalizer.includes('row.tst') &&
+  openSourceBridgeNormalizer.includes('speedKmh / 3.6') &&
+  openSourceBridgeNormalizer.includes("topicParts[0].toLowerCase() === 'owntracks'") &&
+  openSourceBridgeNormalizer.includes('ownTracksMqttTopic'));
+test('ChirpStack preserves LocationEvent accuracy and device/application identity',
+  openSourceBridgeNormalizer.includes('chirpStackDeviceId') &&
+  openSourceBridgeNormalizer.includes('chirpStackLocationSource') &&
+  openSourceBridgeNormalizer.includes('chirpStackApplicationId') &&
+  openSourceBridgeNormalizer.includes('location.accuracy'));
+test('Frigate camera events add conservative configured-camera visual detections',
+  openSourceBridgeNormalizer.includes("'frigate-event'") &&
+  openSourceBridgeNormalizer.includes("acquisitionMethod: 'frigate-camera-event'") &&
+  openSourceBridgeNormalizer.includes('camera-coverage-region-not-object-pixel-geolocation') &&
+  adapterRegistry.includes("id: 'frigate-camera-events'") &&
+  railwayEnvExample.includes('"normalizerKind":"frigate-event"') &&
+  openSourceBridgeVerifier.includes('const frigate = normalizeSpectraOpenSourceBridgePayload'));
+test('OpenMQTTGateway adds raw BLE scanner ranging through the existing MQTT and anchor mesh',
+  openSourceBridgeNormalizer.includes("'openmqttgateway-ble'") &&
+  openSourceBridgeNormalizer.includes('OpenMQTTGateway BLE payload requires') &&
+  openSourceBridgeNormalizer.includes("acquisitionMethod: 'openmqttgateway-ble'") &&
+  adapterRegistry.includes("id: 'openmqttgateway-ble'") &&
+  railwayEnvExample.includes('"normalizerKind":"openmqttgateway-ble"') &&
+  openSourceBridgeVerifier.includes('const openMqttGateway ='));
+test('omlox and MQTT Room add standardized RTLS and room-ranging acquisition paths',
+  openSourceBridgeNormalizer.includes("'omlox-location'") &&
+  openSourceBridgeNormalizer.includes('location_updates:geojson') &&
+  openSourceBridgeNormalizer.includes('resolveSpectraFloorplanCoordinate') &&
+  openSourceBridgeNormalizer.includes("'mqtt-room-presence'") &&
+  openSourceBridgeNormalizer.includes("acquisitionMethod: 'mqtt-room-presence'") &&
+  adapterRegistry.includes("id: 'omlox-location-hub'") &&
+  adapterRegistry.includes("id: 'mqtt-room-presence'") &&
+  railwayEnvExample.includes('"normalizerKind":"omlox-location"') &&
+  railwayEnvExample.includes('"normalizerKind":"mqtt-room-presence"'));
+test('FIND3 and ESPresense add independent indoor positioning paths',
+  openSourceBridgeNormalizer.includes('find3-fingerprint-classification') &&
+  openSourceBridgeNormalizer.includes('find3Probability') &&
+  openSourceBridgeNormalizer.includes('espresense-ble-ranging') &&
+  openSourceBridgeNormalizer.includes("kind: 'ranging'") &&
+  openSourceBridgeNormalizer.includes("source: 'ble_rssi'") &&
+  openSourceBridgeNormalizer.includes('resolveConfiguredSpectraAnchor'));
+test('Kismet, OpenWISP and Traccar bridges preserve their native location-bearing evidence',
+  openSourceBridgeNormalizer.includes('kismet.common.location.geopoint') &&
+  openSourceBridgeNormalizer.includes('kismet.device.base.macaddr') &&
+  openSourceBridgeNormalizer.includes('openwisp-wifi-session') &&
+  openSourceBridgeNormalizer.includes('infrastructureAssociation: true') &&
+  openSourceBridgeNormalizer.includes('traccar-position') &&
+  openSourceBridgeNormalizer.includes('traccarNetwork'));
+test('Open-source bridge identities resolve through configured target-session bindings',
+  openSourceBridgeNormalizer.includes('applyConfiguredBridgeIdentity') &&
+  openSourceBridgeNormalizer.includes('resolveSpectraInfrastructureBinding') &&
+  openSourceBridgeNormalizer.includes('sessionId: binding.sessionId || batch.sessionId') &&
+  openSourceBridgeNormalizer.includes('subjectLabel: binding.subjectLabel || batch.subjectLabel'));
+test('Continuous active acquisition paces each provider/target with bounded poll cooldown',
+  activeAcquisition.includes('lastPollByTarget') &&
+  activeAcquisition.includes('pollDelayRemaining') &&
+  activeAcquisition.includes('Provider poll cooldown active') &&
+  activeAcquisition.includes('lastPollByTarget.size > 5_000') &&
+  activeAcquisition.includes('minPollIntervalMs: minPollIntervalMs(item)'));
+test('Active acquisition has built-in FIND3, Traccar, Kismet, OpenWISP and OwnTracks lanes',
+  activeAcquisition.includes('builtInFind3Adapter') &&
+  activeAcquisition.includes('builtInTraccarAdapter') &&
+  activeAcquisition.includes('builtInKismetAdapter') &&
+  activeAcquisition.includes('builtInOpenWispAdapter') &&
+  activeAcquisition.includes('builtInOwnTracksAdapter') &&
+  activeAcquisition.includes('SPECTRA_FIND3_LOCATION_URL_TEMPLATE') &&
+  activeAcquisition.includes('SPECTRA_TRACCAR_POSITION_URL_TEMPLATE') &&
+  activeAcquisition.includes('SPECTRA_KISMET_DEVICE_URL_TEMPLATE') &&
+  activeAcquisition.includes('SPECTRA_OPENWISP_WIFI_SESSIONS_URL_TEMPLATE') &&
+  activeAcquisition.includes('SPECTRA_OWNTRACKS_LOCATION_URL_TEMPLATE'));
+test('Active adapter secrets may be supplied as headers or query parameters without embedding credentials in URLs',
+  activeAcquisition.includes('queryFromEnv?: Record<string, string>') &&
+  activeAcquisition.includes('url.searchParams.set(parameter, value)') &&
+  activeAcquisition.includes("{ KISMET: 'SPECTRA_KISMET_API_KEY' }") &&
+  activeAcquisition.includes('headersFromEnv'));
+test('WSS and MQTT bridge transports preserve arrays, session binding and provider subscriptions',
+  providerStreamCoordinator.includes("Array.isArray(parsed)") &&
+  providerStreamCoordinator.includes("? { data: parsed }") &&
+  providerStreamCoordinator.includes('sessionId: runtime.config.sessionId') &&
+  providerStreamCoordinator.includes('sessionBound: Boolean(config.sessionId)') &&
+  providerStreamCoordinator.includes('openMessages?: Array<Record<string, unknown>>') &&
+  providerStreamCoordinator.includes('socket.send(encoded)') &&
+  providerStreamCoordinator.includes('openMessageCount') &&
+  mqttProviderCoordinator.includes("Array.isArray(payload)") &&
+  mqttProviderCoordinator.includes("? { data: payload }") &&
+  mqttProviderCoordinator.includes('sessionId: runtime.config.sessionId') &&
+  mqttProviderCoordinator.includes('sessionBound: Boolean(config.sessionId)'));
+test('Open-source bridge configuration is documented without inventing credentials or endpoints',
+  railwayEnvExample.includes('SPECTRA_FIND3_LOCATION_URL_TEMPLATE=') &&
+  railwayEnvExample.includes('SPECTRA_TRACCAR_POSITION_URL_TEMPLATE=') &&
+  railwayEnvExample.includes('SPECTRA_KISMET_DEVICE_URL_TEMPLATE=') &&
+  railwayEnvExample.includes('SPECTRA_OPENWISP_WIFI_SESSIONS_URL_TEMPLATE=') &&
+  railwayEnvExample.includes('SPECTRA_OWNTRACKS_LOCATION_URL_TEMPLATE=') &&
+  railwayEnvExample.includes('SPECTRA_HOOTENANNY_BASE_URL=') &&
+  railwayEnvExample.includes('SPECTRA_WIGLE_API_TOKEN=') &&
+  railwayEnvExample.includes('SPECTRA_UNWIRED_GEOLOCATION_URL=') &&
+  railwayEnvExample.includes('headersFromEnv/queryFromEnv'));
+test('Focused bridge behavior verifier exercises the complete open-source normalizer set',
+  [
+    'owntracks-location',
+    'chirpstack-location',
+    'find3-location',
+    'espresense-observation',
+    'kismet-device-location',
+    'openwisp-wifi-session',
+    'traccar-position',
+    'meshtastic-position',
+    'cot-location',
+    'homeassistant-device-tracker',
+    'gpsd-tpv',
+    'omlox-location',
+    'mqtt-room-presence',
+    'openmqttgateway-ble',
+    'frigate-event',
+  ].every(kind => openSourceBridgeVerifier.includes(`'${kind}'`)));
+
+test('SPECTRA recursively reacquires until page exit with one stable session',
+  spectra.includes('CONTINUOUS_ACQUISITION_DELAY_MS') &&
+  spectra.includes('startContinuousAcquisition') &&
+  spectra.includes('continuousAcquisitionActiveRef.current') &&
+  spectra.includes('recursivePassRef.current') &&
+  spectra.includes('queryStartedAtRef.current') &&
+  spectra.includes("backgroundPass: true") &&
+  spectra.includes("sessionId: resolvedSessionId"));
+test('Continuous acquisition persists only newly acquired raw observations, never re-solved history',
+  routes.includes('const newlyAcquiredObservations: any[] = [') &&
+  routes.includes('const newRawLocationObservations = assessLocationQuality(') &&
+  routes.includes('...persistedObservations') &&
+  routes.includes('...newRawLocationObservations') &&
+  routes.includes('observations: newRawLocationObservations') &&
+  routes.includes('const solvedLocationObservations = constraintSolution.points') &&
+  !routes.includes('observations: solvedLocationObservations'));
+test('SPECTRA hard-stops local and server acquisition when the viewer exits',
+  spectra.includes("window.addEventListener('pagehide'") &&
+  spectra.includes("navigator.sendBeacon('/api/spectra/acquisition/stop'") &&
+  spectra.includes("keepalive: true") &&
+  spectra.includes("hardStopRef.current('back_button', true)") &&
+  spectra.includes("hardStopRef.current('new_target', true)") &&
+  routes.includes("router.post('/acquisition/stop'") &&
+  routes.includes('stopSpectraAcquisitionSession'));
+test('BFCache restore starts a fresh SPECTRA session instead of reviving a stopped ID',
+  spectra.includes("window.addEventListener('pageshow', onPageShow)") &&
+  spectra.includes('if (!event.persisted) return;') &&
+  spectra.includes('const freshSessionId = createSpectraSessionId()') &&
+  spectra.includes('spectraSessionIdRef.current = freshSessionId') &&
+  spectra.includes('recursivePassRef.current = 0') &&
+  spectra.includes('startContinuousAcquisition();'));
+test('Foreground acquisition blocks recursive background passes from stealing the active request slot',
+  spectra.includes('foregroundAcquisitionActiveRef = useRef(false)') &&
+  spectra.includes('foregroundAcquisitionActiveRef.current = true') &&
+  spectra.includes('if (foregroundAcquisitionActiveRef.current)') &&
+  spectra.includes('foregroundAcquisitionActiveRef.current = false') &&
+  spectra.includes('SPECTRA foreground acquisition superseded the background pass.'));
+test('Hard stop coordinates in-flight and delayed acquisition across replicas',
+  acquisitionControl.includes('controllers: Set<AbortController>') &&
+  acquisitionControl.includes('controller.abort') &&
+  acquisitionControl.includes('spectra_acquisition_control') &&
+  acquisitionControl.includes('SHARED_STOP_POLL_MS = 500') &&
+  acquisitionControl.includes('assertSpectraAcquisitionSessionActive') &&
+  acquisitionControl.includes('INSERT INTO public.spectra_acquisition_control') &&
+  spectraAcquisitionControlMigration.includes('PRIMARY KEY (user_id, session_id)') &&
+  spectraAcquisitionControlMigration.includes('FROM PUBLIC, anon, authenticated') &&
+  spectraAcquisitionControlMigration.includes('TO service_role') &&
+  dockerfile.includes('070_spectra_acquisition_control.sql') &&
+  routes.includes('await assertSpectraAcquisitionSessionActive') &&
+  routes.includes('await stopSpectraAcquisitionSession') &&
+  routes.includes('acquisitionLease.cancel') &&
+  routes.includes('throwIfAcquisitionStopped(acquisitionLease.signal)'));
+test('Recursive discovery and active provider pulls inherit the acquisition abort signal',
+  routes.includes('externalSignal?: AbortSignal') &&
+  routes.includes("signal: acquisitionLease.signal") &&
+  routes.includes('acquisitionLease.signal') &&
+  activeAcquisition.includes('signal?: AbortSignal') &&
+  activeAcquisition.includes("input.signal?.addEventListener('abort'"));
+test('Continuous passes broaden source-wave and adaptive-query coverage instead of freezing on pass zero',
+  routes.includes('const outerPass = Math.max(0, recursivePass)') &&
+  routes.includes('(outerPass * 4) % waveQueries.length') &&
+  routes.includes('combinedPass % 8') &&
+  routes.includes("'newly available evidence'"));
+
+test('Infrastructure client association can fall back to configured AP anchors without inventing AP coordinates',
+  infrastructureNormalizer.includes('resolveConfiguredSpectraAnchor') &&
+  infrastructureNormalizer.includes('const associatedAnchor = ids.apId') &&
+  infrastructureNormalizer.includes("coordinateSource: 'configured-anchor'") &&
+  infrastructureNormalizer.includes('? 0.72') &&
+  providerNormalizer.includes("'unifi-client-location'"));
+test('Major infrastructure feeds normalize through the canonical SPECTRA provider path',
+  infrastructureNormalizer.includes("'mist-location'") &&
+  infrastructureNormalizer.includes("'extreme-location'") &&
+  infrastructureNormalizer.includes("'unifi-client-location'") &&
+  infrastructureNormalizer.includes("'aruba-location-json'") &&
+  infrastructureNormalizer.includes('resolveSpectraFloorplanCoordinate') &&
+  infrastructureNormalizer.includes('resolveSpectraInfrastructureBinding') &&
+  infrastructureNormalizer.includes('row.clientMac') &&
+  infrastructureNormalizer.includes('row.sensorMac') &&
+  infrastructureNormalizer.includes('row.siteName') &&
+  infrastructureNormalizer.includes('row.floorName') &&
+  providerNormalizer.includes('SPECTRA_INFRASTRUCTURE_PROVIDER_KINDS'));
+test('Infrastructure multi-client payloads are isolated to one configured subject binding',
+  infrastructureNormalizer.includes('const normalizedEntries =') &&
+  infrastructureNormalizer.includes('const selectedSessionId =') &&
+  infrastructureNormalizer.includes('entry.binding.sessionId === selectedSessionId') &&
+  infrastructureNormalizer.includes('return !hasAnyConfiguredBinding && wrapped.sessionId === selectedSessionId') &&
+  infrastructureNormalizer.includes('droppedMismatchedBindingCount') &&
+  !infrastructureNormalizer.includes('const firstBinding ='));
+test('Aruba Central WSS decoder implements documented CloudEvents and location protobuf fields',
+  arubaStreamDecoder.includes('parseCloudEvent') &&
+  arubaStreamDecoder.includes('parseWifiClientLocation') &&
+  arubaStreamDecoder.includes('sta_eth_mac') &&
+  arubaStreamDecoder.includes('reporting_ap_serial') &&
+  arubaStreamDecoder.includes('error_level'));
+test('Provider-neutral WSS coordinator is reconnectable, authenticated and wired into canonical telemetry',
+  providerStreamCoordinator.includes('SPECTRA_WSS_PROVIDER_ADAPTERS') &&
+  providerStreamCoordinator.includes("decoder === 'aruba-location-protobuf'") &&
+  providerStreamCoordinator.includes('Authorization') &&
+  providerStreamCoordinator.includes('oauthClientIdEnv') &&
+  providerStreamCoordinator.includes('https://sso.common.cloud.hpe.com/as/token.oauth2') &&
+  providerStreamCoordinator.includes("grant_type: 'client_credentials'") &&
+  providerStreamCoordinator.includes('accessTokenExpiresAt') &&
+  providerStreamCoordinator.includes('scheduleReconnect') &&
+  geoconsoleRoutes.includes('startSpectraProviderStreams') &&
+  geoconsoleRoutes.includes("'wss-provider-stream'"));
+test('WSS and MQTT normalized batches are schema-parsed before canonical telemetry processing',
+  geoconsoleRoutes.includes('async function processSpectraStreamBatch') &&
+  geoconsoleRoutes.includes('telemetryBatchSchema.safeParse(value)') &&
+  geoconsoleRoutes.includes('processSpectraTelemetryBatch(') &&
+  geoconsoleRoutes.includes('validation.data,') &&
+  (geoconsoleRoutes.match(/processSpectraStreamBatch\(batch, providerId\)/g) || []).length === 2 &&
+  !geoconsoleRoutes.includes('batch as TelemetryBatch, true, undefined, providerId'));
+test('Provider-neutral MQTT transport acknowledges QoS1 only after successful canonical consumption',
+  mqttProviderCoordinator.includes('SPECTRA_MQTT_PROVIDER_ADAPTERS') &&
+  mqttProviderCoordinator.includes("url.protocol === 'mqtts:'") &&
+  mqttProviderCoordinator.includes('subscribePacket') &&
+  mqttProviderCoordinator.includes('pubAckPacket') &&
+  mqttProviderCoordinator.includes('scheduleReconnect') &&
+  mqttProviderCoordinator.includes('await consumer(batch, runtime.config.id)') &&
+  mqttProviderCoordinator.includes('rememberAccepted(runtime, batch)') &&
+  mqttProviderCoordinator.indexOf('await consumer(batch, runtime.config.id)') <
+    mqttProviderCoordinator.indexOf('rememberAccepted(runtime, batch)') &&
+  mqttProviderCoordinator.indexOf('rememberAccepted(runtime, batch)') <
+    mqttProviderCoordinator.indexOf('runtime.socket.write(pubAckPacket(packetId))') &&
+  mqttProviderCoordinator.includes('fail(runtime, error)') &&
+  !mqttProviderCoordinator.includes('function acceptOnce') &&
+  geoconsoleRoutes.includes('startSpectraMqttProviderStreams') &&
+  geoconsoleRoutes.includes("'mqtts-provider-stream'"));
+test('Native Meraki Scanning API validator, payload secret and v2 observation shape are supported',
+  geoconsoleRoutes.includes("mode === 'meraki-scanning-secret'") &&
+  geoconsoleRoutes.includes("normalize/meraki-scanning', (req") &&
+  geoconsoleRoutes.includes('entry?.validatorEnv') &&
+  geoconsoleRoutes.includes("String(body.secret || '').trim()") &&
+  externalLocationNormalizer.includes('const singleLocation = record(observation.location)') &&
+  externalLocationNormalizer.includes('?? location.unc') &&
+  externalLocationNormalizer.includes("type.includes('BLUETOOTH')") &&
+  adapterRegistry.includes("id: 'meraki-scanning-ingest'") &&
+  railwayEnvExample.includes('"mode":"meraki-scanning-secret"'));
+
+test('Infrastructure webhook ingress uses per-provider credentials and Mist SHA-256 validation before normalization',
+  geoconsoleRoutes.includes('SPECTRA_INFRASTRUCTURE_WEBHOOK_AUTH') &&
+  geoconsoleRoutes.includes("mode === 'mist-hmac-sha256'") &&
+  geoconsoleRoutes.includes("req.header('x-mist-signature-v2')") &&
+  geoconsoleRoutes.includes("createHmac('sha256', secret)") &&
+  geoconsoleRoutes.includes("router.post('/telemetry/infrastructure/:providerId/normalize/:kind'") &&
+  geoconsoleRoutes.includes('timingSafeEqual(actualBuffer, expectedBuffer)') &&
+  geoconsoleRoutes.includes('normalizeSpectraProviderPayload(kind, providerId, req.body)'));
+test('UniFi client observations have a built-in authenticated pull adapter',
+  activeAcquisition.includes('SPECTRA_UNIFI_CLIENT_URL_TEMPLATE') &&
+  activeAcquisition.includes('SPECTRA_UNIFI_API_KEY') &&
+  activeAcquisition.includes("'X-API-Key': 'SPECTRA_UNIFI_API_KEY'") &&
+  activeAcquisition.includes("normalizerKind: 'unifi-client-location'"));
+test('Infrastructure adapter registry advertises Mist, Extreme, Aruba, UniFi, WSS and MQTT lanes',
+  adapterRegistry.includes("id: 'mist-location-webhook'") &&
+  adapterRegistry.includes("id: 'extreme-location-webhook'") &&
+  adapterRegistry.includes("id: 'aruba-location-stream'") &&
+  adapterRegistry.includes("id: 'unifi-client-location'") &&
+  adapterRegistry.includes("id: 'provider-neutral-wss-stream'") &&
+  adapterRegistry.includes("id: 'provider-neutral-mqtt-stream'") &&
+  adapterRegistry.includes('SPECTRA_INFRASTRUCTURE_WEBHOOK_AUTH') &&
+  adapterRegistry.includes('SPECTRA_UNIFI_CLIENT_URL_TEMPLATE'));
+
 test('Place context uses independent OpenStreetMap and GeoNames lanes',
   geoconsoleRoutes.includes("router.get('/place-context'") &&
   placeContext.includes('overpass-api.de/api/interpreter') &&
@@ -721,7 +1282,9 @@ test('Aggregate camera traffic context never becomes a target location observati
 test('Aggregate vehicle-flow context can refine Futurecast only behind a vehicle-motion gate',
   geoconsoleRoutes.includes('loadSpectraMotionContext') &&
   geoconsoleRoutes.includes('motionContextApplied') &&
-  geoconsoleRoutes.includes('WHERE session_id = $1 AND user_id = $2') &&
+  motionContext.includes('($3::text IS NULL AND user_id IS NULL)') &&
+  motionContext.includes('OR user_id = $3') &&
+  geoconsoleRoutes.includes("error: 'SPECTRA session not found.'") &&
   monteCarlo.includes('const likelyVehicleMotion = usable.some(vehicleClass)') &&
   monteCarlo.includes('motionContextInfluence = Math.min(0.35') &&
   monteCarlo.includes('motionContextCongestionRatio') &&
@@ -744,8 +1307,11 @@ test('Generic vehicle/camera feeds preserve track identity and velocity context'
   geoconsoleRoutes.includes("typeof inputMetadata.trackId === 'string'") &&
   geoconsoleRoutes.includes('velocity: (') &&
   geoconsoleRoutes.includes(': inputMetadata.velocity'));
-test('SPECTRA API is mounted',
-  serverRoutes.includes("app.use('/api/spectra', spectraRoutes.default)"));
+test('SPECTRA API is mounted with legacy and stable v1 compatibility paths',
+  serverRoutes.includes("app.use('/api/spectra/v1', spectraRoutes.default)") &&
+  serverRoutes.includes("app.use('/api/spectra', spectraRoutes.default)") &&
+  serverRoutes.includes("app.use('/api/geoconsole/v1', geoconsoleRoutes.default)") &&
+  serverRoutes.includes("app.use('/api/geoconsole', geoconsoleRoutes.default)"));
 
 console.log(`\nPassed: ${passed}  Failed: ${failed}\n`);
 process.exit(failed === 0 ? 0 : 1);

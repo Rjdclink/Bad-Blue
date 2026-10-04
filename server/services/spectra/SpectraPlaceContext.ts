@@ -1,9 +1,17 @@
+import { acquireSpectraPublicInfrastructureContext } from './SpectraPublicInfrastructureContext';
+import { acquireSpectraHootenannyContext } from './SpectraHootenannyContext';
+
 export interface SpectraPlaceContextItem {
   id: string;
   name: string;
   latitude: number;
   longitude: number;
-  provider: 'OpenStreetMap Overpass' | 'GeoNames';
+  provider:
+    | 'OpenStreetMap Overpass'
+    | 'GeoNames'
+    | 'FCC Antenna Structure Registration'
+    | 'NOAA CORS Network'
+    | 'Hootenanny';
   category?: string;
   metadata?: Record<string, unknown>;
 }
@@ -137,15 +145,43 @@ export async function acquireSpectraPlaceContext(
   longitude: number,
   radiusMeters = 2_000,
 ): Promise<SpectraPlaceContextItem[]> {
-  const [osmOutcome, geoNamesOutcome] = await Promise.allSettled([
+  const [osmOutcome, geoNamesOutcome, infrastructureOutcome, hootenannyOutcome] = await Promise.allSettled([
     overpassNearbyPlaces(latitude, longitude, radiusMeters),
     geoNamesNearbyPlaces(latitude, longitude, radiusMeters),
+    acquireSpectraPublicInfrastructureContext(latitude, longitude),
+    acquireSpectraHootenannyContext(latitude, longitude, radiusMeters),
   ]);
 
   const seen = new Set<string>();
   return [
     ...(osmOutcome.status === 'fulfilled' ? osmOutcome.value : []),
     ...(geoNamesOutcome.status === 'fulfilled' ? geoNamesOutcome.value : []),
+    ...(infrastructureOutcome.status === 'fulfilled' ? infrastructureOutcome.value : []),
+    ...(hootenannyOutcome.status === 'fulfilled' ? hootenannyOutcome.value.flatMap(feature => {
+      const featureLatitude = Number(feature.latitude);
+      const featureLongitude = Number(feature.longitude);
+      if (!validCoordinate(featureLatitude, featureLongitude)) return [];
+
+      return [{
+        id: `hoot:${feature.type}:${feature.id}`,
+        name: feature.tags.name || feature.tags.amenity || feature.tags.building || feature.tags.highway || 'Hootenanny map feature',
+        latitude: featureLatitude,
+        longitude: featureLongitude,
+        provider: 'Hootenanny' as const,
+        category: feature.tags.building
+          ? 'building'
+          : feature.tags.highway
+            ? 'road'
+            : feature.tags.amenity || feature.tags.shop || feature.tags.office
+              ? 'poi'
+              : 'map_feature',
+        metadata: {
+          tags: feature.tags,
+          contextOnly: true,
+          conflatedMap: true,
+        },
+      }];
+    }) : []),
   ].filter(item => {
     const key = `${item.provider}:${item.id}`;
     if (seen.has(key)) return false;

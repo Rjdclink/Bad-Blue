@@ -13,8 +13,9 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import maplibregl, { GeoJSONSource, Map as MapLibreMap, MapLayerMouseEvent } from 'maplibre-gl';
+import { GeoJSONSource, Map as MapLibreMap, MapLayerMouseEvent } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
+import { resolveGeoconsoleMapRenderer } from './MapRendererAdapter';
 import type { GeoFrame } from '@/hooks/useGeoRuntime';
 import type { LocationCandidate } from '@shared/geoconsoleTypes';
 
@@ -797,7 +798,8 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
 
-    const map = new maplibregl.Map({
+    const renderer = resolveGeoconsoleMapRenderer();
+    const map = renderer.adapter.createMap({
       container: containerRef.current,
       style: mapMode === 'dark' ? OPENFREEMAP_DARK : OPENFREEMAP_LIBERTY,
       center: initialCenter,
@@ -815,12 +817,15 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
       maxPitch: 85,
     });
 
-    map.addControl(new maplibregl.NavigationControl({
+    map.addControl(renderer.adapter.createNavigationControl({
       showCompass: true,
       showZoom: true,
       visualizePitch: true,
     }), 'top-left');
-    map.addControl(new maplibregl.ScaleControl({ unit: 'imperial', maxWidth: 140 }), 'bottom-left');
+    map.addControl(renderer.adapter.createScaleControl({
+      unit: 'imperial',
+      maxWidth: 140,
+    }), 'bottom-left');
 
     const canvas = map.getCanvas();
     const handleContextLost = (event: Event) => {
@@ -899,7 +904,7 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
       initializeRuntimeLayers(map);
     });
 
-    const popup = new maplibregl.Popup({ closeButton: true, closeOnClick: true });
+    const popup = renderer.adapter.createPopup({ closeButton: true, closeOnClick: true });
     map.on('click', 'spectra-candidate-points', (event: MapLayerMouseEvent) => {
       const feature = event.features?.[0];
       if (!feature?.geometry || feature.geometry.type !== 'Point') return;

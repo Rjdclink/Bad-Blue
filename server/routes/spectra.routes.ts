@@ -1,4 +1,5 @@
 import { Router, type Request, type Response } from 'express';
+import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { isAuthenticated } from '../auth';
 import {
@@ -52,9 +53,97 @@ import { retrieveSpectraPublicEvidence } from '../services/spectra/SpectraPublic
 import { assessSpectraLiveLocation } from '../services/spectra/SpectraLiveConfidence';
 import { solveSpectraConstraintLayer } from '../services/spectra/SpectraConstraintSolver';
 import { acquireConfiguredSpectraCameras } from '../services/spectra/SpectraCameraDirectoryAdapters';
-import { acquireSpectraActiveTelemetry } from '../services/spectra/SpectraActiveAcquisition';
+import {
+  acquireSpectraActiveTelemetry,
+  getSpectraActiveAcquisitionCapabilities,
+  getSpectraActiveAcquisitionHealth,
+} from '../services/spectra/SpectraActiveAcquisition';
+import { acquireSpectraPublicMobilityContext } from '../services/spectra/SpectraPublicMobilityContext';
+import { acquireSpectraWzdxContext } from '../services/spectra/SpectraWzdxContext';
+import {
+  assertSpectraAcquisitionSessionActive,
+  registerSpectraAcquisitionRequest,
+  stopSpectraAcquisitionSession,
+} from '../services/spectra/SpectraAcquisitionControl';
+import {
+  acquireSpectraResourcePermit,
+  getSpectraResourceGovernorSnapshot,
+  SpectraResourceBusyError,
+  type SpectraResourcePermit,
+} from '../services/spectra/SpectraResourceGovernor';
+import {
+  getSpectraMetricsSnapshot,
+  renderSpectraPrometheusMetrics,
+  spectraMetricsAcquisitionOutcome,
+  spectraMetricsAcquisitionStarted,
+} from '../services/spectra/SpectraObservability';
+import {
+  getSpectraOpenApiDocument,
+  SPECTRA_API_VERSION,
+  SPECTRA_SCHEMA_VERSION,
+  spectraApiVersionHeaders,
+} from '../services/spectra/SpectraApiContract';
+import { createSpectraTenantScope } from '../services/spectra/SpectraTenantScope';
+import {
+  getConfiguredSpectraProviderStreams,
+  getSpectraProviderStreamHealth,
+} from '../services/spectra/SpectraProviderStreamCoordinator';
+import {
+  getConfiguredSpectraMqttProviders,
+  getSpectraMqttProviderHealth,
+} from '../services/spectra/SpectraMqttProviderCoordinator';
+import { getSpectraAdapterCapabilities } from '../services/spectra/SpectraAdapterRegistry';
+import { spectraRealtimeBridgeConfigured } from '../services/spectra/SpectraRealtimeBridge';
+import { getConfiguredSpectraProviderSessionBindingSummary } from '../services/spectra/SpectraProviderSessionAccess';
 
 const router = Router();
+router.use(spectraApiVersionHeaders);
+
+router.get('/openapi.json', (_req: Request, res: Response) => {
+  res.setHeader('Cache-Control', 'public, max-age=300');
+  return res.json(getSpectraOpenApiDocument());
+});
+
+router.get('/live', (_req: Request, res: Response) => {
+  return res.json({
+    success: true,
+    data: {
+      status: 'live',
+      apiVersion: SPECTRA_API_VERSION,
+      checkedAt: new Date().toISOString(),
+    },
+  });
+});
+
+router.get('/ready', async (_req: Request, res: Response) => {
+  try {
+    await Promise.race([
+      pool.query('SELECT 1 AS ok'),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('SPECTRA readiness database timeout')), 1_000)
+      ),
+    ]);
+    return res.json({
+      success: true,
+      data: {
+        status: 'ready',
+        apiVersion: SPECTRA_API_VERSION,
+        resourceGovernor: getSpectraResourceGovernorSnapshot(),
+        checkedAt: new Date().toISOString(),
+      },
+    });
+  } catch {
+    return res.status(503).json({
+      success: false,
+      data: {
+        status: 'not-ready',
+        apiVersion: SPECTRA_API_VERSION,
+        checkedAt: new Date().toISOString(),
+      },
+    });
+  }
+});
+
 router.use(isAuthenticated);
 
 const directEvidenceSchema = z.object({
@@ -83,7 +172,13 @@ const acquireSchema = z.object({
   details: z.string().trim().min(1).max(12_000),
   sessionId: z.string().trim().min(1).max(200).optional(),
   originSessionId: z.string().trim().min(1).max(200).optional(),
+  queryStartedAt: z.string().datetime().optional(),
+  recursivePass: z.number().int().min(0).max(1_000_000).optional(),
   directEvidence: z.array(directEvidenceSchema).max(20).default([]),
+});
+
+const stopAcquisitionSchema = z.object({
+  sessionId: z.string().trim().min(1).max(200),
 });
 
 const PHONE_CANDIDATE_RE = /(?:\+\d{1,3}[\s().-]*)?(?:\d[\s().-]*){7,15}/;
@@ -94,6 +189,13 @@ const configuredOsintTimeout = Number(process.env.SPECTRA_OSINT_TIMEOUT_MS);
 const SPECTRA_OSINT_TIMEOUT_MS = Number.isFinite(configuredOsintTimeout)
   ? Math.max(15_000, configuredOsintTimeout)
   : 90_000;
+
+function throwIfAcquisitionStopped(signal?: AbortSignal): void {
+  if (!signal?.aborted) return;
+  const reason = signal.reason;
+  if (reason instanceof Error) throw reason;
+  throw new Error('SPECTRA acquisition stopped');
+}
 
 async function settleWithin<T>(
   promise: Promise<T>,
@@ -294,6 +396,7 @@ function discoveryResultFromCandidate(candidate: LegalMeshCandidate): SpectraDis
 async function runDiscoveryPass(
   queries: string[],
   context: { subject?: string; location?: string } = {},
+  externalSignal?: AbortSignal,
 ): Promise<{
   results: SpectraDiscoveryResult[];
   attempted: number;
@@ -307,8 +410,16 @@ async function runDiscoveryPass(
   }
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(new Error('SPECTRA discovery pass timeout')), 15_000);
+  const relayAbort = () => controller.abort(externalSignal?.reason);
+  if (externalSignal?.aborted) relayAbort();
+  else externalSignal?.addEventListener('abort', relayAbort, { once: true });
+
+  const timer = setTimeout(
+    () => controller.abort(new Error('SPECTRA discovery pass timeout')),
+    15_000,
+  );
   try {
+    throwIfAcquisitionStopped(controller.signal);
     const nativePromise = Promise.allSettled(uniqueQueries.map(query =>
       discoverLegalMeshTier3(query, controller.signal, {
         categories: [
@@ -469,6 +580,7 @@ async function runDiscoveryPass(
     };
   } finally {
     clearTimeout(timer);
+    externalSignal?.removeEventListener('abort', relayAbort);
   }
 }
 
@@ -718,6 +830,9 @@ interface SpectraContextEvidence {
   geotaggedMedia: any[];
   weather?: Record<string, unknown>;
   earthObservation: Array<Record<string, unknown>>;
+  publicFeeds: Awaited<ReturnType<typeof acquireSpectraPublicMobilityContext>>['feeds'];
+  mobilityVehicles: Awaited<ReturnType<typeof acquireSpectraPublicMobilityContext>>['vehicles'];
+  roadWorkZones: Awaited<ReturnType<typeof acquireSpectraWzdxContext>>;
   sourceFamilies: string[];
 }
 
@@ -746,6 +861,8 @@ async function collectSpectraContextEvidence(input: {
       ? nwsLatestObservation(input.latitude, input.longitude)
       : Promise.resolve(null),
     copernicusItems(input.latitude, input.longitude, earthFrom, earthTo),
+    acquireSpectraPublicMobilityContext(input.latitude, input.longitude, 25_000),
+    acquireSpectraWzdxContext(input.latitude, input.longitude, 50_000),
   ]);
 
   const places = outcomes[0].status === 'fulfilled' ? outcomes[0].value : [];
@@ -758,15 +875,30 @@ async function collectSpectraContextEvidence(input: {
     ? outcomes[6].value
     : undefined;
   const earthObservation = outcomes[7].status === 'fulfilled' ? outcomes[7].value : [];
+  const publicMobility = outcomes[8].status === 'fulfilled'
+    ? outcomes[8].value
+    : { feeds: [], vehicles: [] };
+  const publicFeeds = publicMobility.feeds;
+  const mobilityVehicles = publicMobility.vehicles;
+  const roadWorkZones = outcomes[9].status === 'fulfilled'
+    ? outcomes[9].value
+    : [];
 
   const sourceFamilies: string[] = [];
   if (places.length) sourceFamilies.push('place-context');
+  if (places.some(place =>
+    place.provider === 'FCC Antenna Structure Registration'
+    || place.provider === 'NOAA CORS Network'
+  )) sourceFamilies.push('public-infrastructure');
   if (trafficLand.length || arcGis.length || externalCameras.length) {
     sourceFamilies.push('public-camera');
   }
   if (wikimedia.length || flickr.length) sourceFamilies.push('geotagged-media');
   if (weather) sourceFamilies.push('weather');
   if (earthObservation.length) sourceFamilies.push('earth-observation');
+  if (publicFeeds.length) sourceFamilies.push('public-mobility-feed');
+  if (mobilityVehicles.length) sourceFamilies.push('public-mobility-vehicle-context');
+  if (roadWorkZones.length) sourceFamilies.push('public-road-work-zone');
 
   return {
     anchor: {
@@ -781,9 +913,118 @@ async function collectSpectraContextEvidence(input: {
     geotaggedMedia: [...wikimedia, ...flickr].slice(0, 120),
     weather,
     earthObservation: earthObservation.slice(0, 20),
+    publicFeeds: publicFeeds.slice(0, 24),
+    mobilityVehicles: mobilityVehicles.slice(0, 250),
+    roadWorkZones: roadWorkZones.slice(0, 250),
     sourceFamilies,
   };
 }
+
+router.get('/health', async (_req: Request, res: Response) => {
+  const providerStreams = getSpectraProviderStreamHealth();
+  const mqttStreams = getSpectraMqttProviderHealth();
+  const governor = getSpectraResourceGovernorSnapshot();
+  let persistence = 'healthy';
+  let persistenceError: string | undefined;
+
+  try {
+    await Promise.race([
+      pool.query('SELECT 1 AS ok'),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('SPECTRA persistence health timeout')), 2_000)
+      ),
+    ]);
+  } catch (error) {
+    persistence = 'degraded';
+    persistenceError = error instanceof Error ? error.message : String(error);
+  }
+
+  const unhealthyStreams = [...providerStreams, ...mqttStreams]
+    .filter(item => item.state === 'degraded' || item.state === 'stopped');
+  const status = persistence === 'healthy' && unhealthyStreams.length === 0
+    ? 'operational'
+    : 'degraded';
+
+  return res.json({
+    success: true,
+    data: {
+      status,
+      apiVersion: SPECTRA_API_VERSION,
+      schemaVersion: SPECTRA_SCHEMA_VERSION,
+      tenantModel: 'user-v1',
+      tenantIsolation: {
+        routeScopedByAuthenticatedUser: true,
+        providerOwnedSessionBindings: getConfiguredSpectraProviderSessionBindingSummary(),
+      },
+      persistence: {
+        status: persistence,
+        error: persistenceError,
+      },
+      realtime: {
+        crossReplicaConfigured: spectraRealtimeBridgeConfigured(),
+      },
+      resourceGovernor: governor,
+      metrics: getSpectraMetricsSnapshot(),
+      adapters: getSpectraAdapterCapabilities(),
+      activeAcquisition: {
+        configured: getSpectraActiveAcquisitionCapabilities(),
+        health: getSpectraActiveAcquisitionHealth(),
+      },
+      providerStreams: {
+        configured: getConfiguredSpectraProviderStreams(),
+        health: providerStreams,
+      },
+      mqttProviderStreams: {
+        configured: getConfiguredSpectraMqttProviders(),
+        health: mqttStreams,
+      },
+      checkedAt: new Date().toISOString(),
+    },
+  });
+});
+
+router.get('/metrics', (_req: Request, res: Response) => {
+  res.setHeader('Content-Type', 'text/plain; version=0.0.4; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-store');
+  return res.send(renderSpectraPrometheusMetrics({
+    apiVersion: SPECTRA_API_VERSION,
+    schemaVersion: SPECTRA_SCHEMA_VERSION,
+    governor: getSpectraResourceGovernorSnapshot(),
+  }));
+});
+
+router.post('/acquisition/stop', async (req: Request, res: Response) => {
+  const parsed = stopAcquisitionSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ success: false, error: 'A SPECTRA session ID is required.' });
+  }
+
+  const userId = getPlatformUserId(req.user as any);
+  if (!userId) {
+    return res.status(401).json({ success: false, error: 'Authentication required.' });
+  }
+
+  try {
+    await stopSpectraAcquisitionSession(
+      userId,
+      parsed.data.sessionId,
+      'SPECTRA acquisition stopped because the viewer exited',
+    );
+  } catch (error) {
+    console.warn('[SPECTRA] Shared acquisition stop could not be persisted', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return res.status(503).json({
+      success: false,
+      error: 'SPECTRA could not persist the acquisition stop state.',
+    });
+  }
+  return res.json({
+    success: true,
+    sessionId: parsed.data.sessionId,
+    stopped: true,
+  });
+});
 
 router.post('/acquire', async (req: Request, res: Response) => {
   const parsed = acquireSchema.safeParse(req.body);
@@ -800,11 +1041,63 @@ router.post('/acquire', async (req: Request, res: Response) => {
     directEvidence,
     sessionId: requestedSessionId,
     originSessionId,
+    queryStartedAt,
+    recursivePass = 0,
   } = parsed.data;
   const userId = getPlatformUserId(req.user as any);
   if (!userId) {
     return res.status(401).json({ success: false, error: 'Authentication required.' });
   }
+
+  const tenantScope = createSpectraTenantScope(userId);
+  const acquisitionSessionId = requestedSessionId || `spectra-${randomUUID()}`;
+  const finishAcquisitionMetric = spectraMetricsAcquisitionStarted();
+  let resourcePermit: SpectraResourcePermit | null = null;
+
+  try {
+    resourcePermit = await acquireSpectraResourcePermit(tenantScope.tenantId);
+  } catch (error) {
+    finishAcquisitionMetric();
+    if (error instanceof SpectraResourceBusyError) {
+      spectraMetricsAcquisitionOutcome('busy');
+      res.setHeader('Retry-After', String(Math.max(1, Math.ceil(error.retryAfterMs / 1000))));
+      return res.status(429).json({
+        success: false,
+        error: error.message,
+        retryAfterMs: error.retryAfterMs,
+      });
+    }
+    spectraMetricsAcquisitionOutcome('error');
+    return res.status(503).json({
+      success: false,
+      error: 'SPECTRA resource governor is unavailable.',
+    });
+  }
+
+  try {
+    await assertSpectraAcquisitionSessionActive(userId, acquisitionSessionId);
+  } catch (error) {
+    await resourcePermit?.release().catch(() => undefined);
+    finishAcquisitionMetric();
+    spectraMetricsAcquisitionOutcome('stopped');
+    return res.status(409).json({
+      success: false,
+      stopped: true,
+      sessionId: acquisitionSessionId,
+      error: error instanceof Error
+        ? error.message
+        : 'SPECTRA acquisition session stopped.',
+    });
+  }
+
+  const acquisitionLease = registerSpectraAcquisitionRequest(userId, acquisitionSessionId);
+  const cancelDisconnectedRequest = () => {
+    if (!res.writableEnded) {
+      acquisitionLease.cancel('SPECTRA acquisition request disconnected');
+    }
+  };
+  res.once('close', cancelDisconnectedRequest);
+
   const normalizedTarget = normalizeTargetIntent(target);
   const combinedTargetText = [normalizedTarget, details].filter(Boolean).join(' ');
   const phone = extractPhoneNumber(combinedTargetText);
@@ -823,12 +1116,12 @@ router.post('/acquire', async (req: Request, res: Response) => {
   const resolvedTargetLabel = resolvedName || phone || normalizedTarget;
 
   try {
-    const persistedObservationsPromise = requestedSessionId
-      ? loadSpectraSessionObservations(userId, requestedSessionId).catch(() => [])
-      : Promise.resolve([] as GPSPoint[]);
-    const identityBindingsPromise = requestedSessionId
-      ? loadSpectraSessionIdentityBindings(userId, requestedSessionId).catch(() => [])
-      : Promise.resolve([]);
+    throwIfAcquisitionStopped(acquisitionLease.signal);
+
+    const persistedObservationsPromise =
+      loadSpectraSessionObservations(userId, acquisitionSessionId).catch(() => []);
+    const identityBindingsPromise =
+      loadSpectraSessionIdentityBindings(userId, acquisitionSessionId).catch(() => []);
 
     const semanticSubject = resolveLexaraBackgroundSubject(
       [target, details].filter(Boolean).join('. '),
@@ -843,9 +1136,25 @@ router.post('/acquire', async (req: Request, res: Response) => {
     });
     const sourceWaves = buildSpectraDiscoveryWaves(resolvedTargetLabel, details);
     const waveQueries = sourceWaves.flatMap(wave => wave.targets.map(source => source.query));
+    const outerPass = Math.max(0, recursivePass);
+    const waveStart = waveQueries.length
+      ? (outerPass * 4) % waveQueries.length
+      : 0;
+    const outerAdaptiveQuery = buildSpectraAdaptiveQuery(
+      resolvedTargetLabel,
+      details,
+      outerPass % 8,
+      outerPass > 0
+        ? ['fresh source', 'recent location signal', 'newly available evidence']
+        : [],
+    );
     const initialQueries = [...new Set([
+      outerAdaptiveQuery,
       ...discoveryQueries.firstPass,
-      ...waveQueries.slice(0, 4),
+      ...waveQueries.slice(waveStart, waveStart + 4),
+      ...(waveStart + 4 > waveQueries.length
+        ? waveQueries.slice(0, Math.max(0, waveStart + 4 - waveQueries.length))
+        : []),
     ])];
 
     const backgroundPromise = settleWithin(
@@ -855,20 +1164,26 @@ router.post('/acquire', async (req: Request, res: Response) => {
           previousMessages: [{ role: 'user', content: details }],
           delegatedByLexara: true,
           resolvedSubject: semanticSubject || undefined,
+          signal: acquisitionLease.signal,
         },
       ),
       Math.min(SPECTRA_OSINT_TIMEOUT_MS, 20_000),
       'SPECTRA background research',
     );
 
-    const firstPassPromise = runDiscoveryPass(initialQueries, {
-      subject: resolvedSubjectName,
-      location: semanticSubject?.location || details,
-    });
+    const firstPassPromise = runDiscoveryPass(
+      initialQueries,
+      {
+        subject: resolvedSubjectName,
+        location: semanticSubject?.location || details,
+      },
+      acquisitionLease.signal,
+    );
     const activeAcquisitionPromise = acquireSpectraActiveTelemetry({
       deviceRef,
-      sessionId: requestedSessionId,
+      sessionId: acquisitionSessionId,
       subjectLabel: resolvedTargetLabel,
+      signal: acquisitionLease.signal,
     });
 
     const [
@@ -884,6 +1199,7 @@ router.post('/acquire', async (req: Request, res: Response) => {
       identityBindingsPromise,
       activeAcquisitionPromise,
     ]);
+    throwIfAcquisitionStopped(acquisitionLease.signal);
 
     const activeBatchOutcomes = await Promise.allSettled(
       activeAcquisition.batches.map(batch =>
@@ -960,11 +1276,14 @@ router.post('/acquire', async (req: Request, res: Response) => {
         break;
       }
 
-      const waveOffset = pass * 4;
+      const combinedPass = outerPass + pass;
+      const waveOffset = waveQueries.length
+        ? (combinedPass * 4) % waveQueries.length
+        : 0;
       const recursiveQuery = buildSpectraAdaptiveQuery(
         resolvedTargetLabel,
         details,
-        pass,
+        combinedPass % 8,
         [
           independentSources.size < SPECTRA_DISCOVERY_POLICY.minIndependentSources
             ? 'independent source'
@@ -976,15 +1295,23 @@ router.post('/acquire', async (req: Request, res: Response) => {
         recursiveQuery,
         ...discoveryQueries.secondPass.slice(Math.max(0, pass - 1), pass + 1),
         ...waveQueries.slice(waveOffset, waveOffset + 4),
+        ...(waveOffset + 4 > waveQueries.length
+          ? waveQueries.slice(0, Math.max(0, waveOffset + 4 - waveQueries.length))
+          : []),
       ])].filter(Boolean);
 
       if (!nextQueries.length) break;
 
       const beforeCount = discoveryResults.length;
-      const nextPass = await runDiscoveryPass(nextQueries, {
-        subject: resolvedSubjectName,
-        location: semanticSubject?.location || details,
-      });
+      throwIfAcquisitionStopped(acquisitionLease.signal);
+      const nextPass = await runDiscoveryPass(
+        nextQueries,
+        {
+          subject: resolvedSubjectName,
+          location: semanticSubject?.location || details,
+        },
+        acquisitionLease.signal,
+      );
       discoveryQueriesAttempted += nextPass.attempted;
       discoveryQueriesFailed += nextPass.failed;
       discoveryPasses += nextPass.attempted > 0 ? 1 : 0;
@@ -1010,7 +1337,7 @@ router.post('/acquire', async (req: Request, res: Response) => {
       throw new Error('All SPECTRA discovery paths failed');
     }
 
-    const observations: any[] = [
+    const newlyAcquiredObservations: any[] = [
       ...activeLocationPoints.map(point => ({
         ...point,
         timestamp: point.timestamp.toISOString(),
@@ -1028,48 +1355,35 @@ router.post('/acquire', async (req: Request, res: Response) => {
           acquisitionMethod: 'active-provider-pull',
         },
       })),
-      ...persistedObservations.map(point => ({
-        ...point,
-        timestamp: point.timestamp.toISOString(),
-        receivedAt: point.receivedAt?.toISOString(),
-        provenance: point.provenance
-          ? {
-              ...point.provenance,
-              capturedAt: point.provenance.capturedAt instanceof Date
-                ? point.provenance.capturedAt.toISOString()
-                : point.provenance.capturedAt,
-            }
-          : undefined,
-      })),
       ...directEvidence.map(point => {
-      const normalized = normalizeClientEvidence({
-        ...point,
-        timestamp: new Date(point.timestamp),
-        receivedAt: point.receivedAt ? new Date(point.receivedAt) : undefined,
-        provenance: point.provenance
-          ? {
-              ...point.provenance,
-              capturedAt: point.provenance.capturedAt
-                ? new Date(point.provenance.capturedAt)
-                : undefined,
-            }
-          : undefined,
-      } as GPSPoint);
+        const normalized = normalizeClientEvidence({
+          ...point,
+          timestamp: new Date(point.timestamp),
+          receivedAt: point.receivedAt ? new Date(point.receivedAt) : undefined,
+          provenance: point.provenance
+            ? {
+                ...point.provenance,
+                capturedAt: point.provenance.capturedAt
+                  ? new Date(point.provenance.capturedAt)
+                  : undefined,
+              }
+            : undefined,
+        } as GPSPoint);
 
-      return {
-        ...normalized,
-        timestamp: normalized.timestamp.toISOString(),
-        receivedAt: normalized.receivedAt?.toISOString(),
-        provenance: normalized.provenance
-          ? {
-              ...normalized.provenance,
-              capturedAt: normalized.provenance.capturedAt instanceof Date
-                ? normalized.provenance.capturedAt.toISOString()
-                : normalized.provenance.capturedAt,
-            }
-          : undefined,
-      };
-    }),
+        return {
+          ...normalized,
+          timestamp: normalized.timestamp.toISOString(),
+          receivedAt: normalized.receivedAt?.toISOString(),
+          provenance: normalized.provenance
+            ? {
+                ...normalized.provenance,
+                capturedAt: normalized.provenance.capturedAt instanceof Date
+                  ? normalized.provenance.capturedAt.toISOString()
+                  : normalized.provenance.capturedAt,
+              }
+            : undefined,
+        };
+      }),
     ];
 
     for (const source of report.sources || []) {
@@ -1077,7 +1391,7 @@ router.post('/acquire', async (req: Request, res: Response) => {
         source?.data,
         String(source?.name || 'public_record'),
         normalizeConfidence(source?.confidence),
-        observations,
+        newlyAcquiredObservations,
       );
     }
 
@@ -1086,11 +1400,11 @@ router.post('/acquire', async (req: Request, res: Response) => {
         result?.metadata,
         String(result?.title || 'web_discovery'),
         normalizeConfidence((result?.relevanceScore ?? 0) / 100),
-        observations,
+        newlyAcquiredObservations,
       );
     }
 
-    const normalizedLocationObservations: GPSPoint[] = dedupeObservations(observations)
+    const normalizedNewLocationObservations: GPSPoint[] = dedupeObservations(newlyAcquiredObservations)
       .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
       .map(point => ({
         ...point,
@@ -1105,6 +1419,16 @@ router.post('/acquire', async (req: Request, res: Response) => {
             }
           : undefined,
       }));
+    const newRawLocationObservations = assessLocationQuality(
+      normalizedNewLocationObservations,
+    ).points;
+
+    const normalizedLocationObservations: GPSPoint[] = dedupeObservations([
+      ...persistedObservations,
+      ...newRawLocationObservations,
+    ])
+      .sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+
 
     const locationQuality = assessLocationQuality(normalizedLocationObservations);
     const qualityLocationObservations = locationQuality.points;
@@ -1236,6 +1560,9 @@ router.post('/acquire', async (req: Request, res: Response) => {
       cameras: [],
       geotaggedMedia: [],
       earthObservation: [],
+      publicFeeds: [],
+      mobilityVehicles: [],
+      roadWorkZones: [],
       sourceFamilies: [],
     };
     const contextAnchor = canonicalLatest?.point
@@ -1256,11 +1583,13 @@ router.post('/acquire', async (req: Request, res: Response) => {
         : null;
 
     if (contextAnchor) {
+      throwIfAcquisitionStopped(acquisitionLease.signal);
       const contextOutcome = await settleWithin(
         collectSpectraContextEvidence(contextAnchor),
         8_500,
         'SPECTRA geographic context',
       );
+      throwIfAcquisitionStopped(acquisitionLease.signal);
       if (contextOutcome.status === 'fulfilled') {
         contextEvidence = contextOutcome.value;
       }
@@ -1271,14 +1600,21 @@ router.post('/acquire', async (req: Request, res: Response) => {
       + contextEvidence.cameras.length
       + contextEvidence.geotaggedMedia.length
       + contextEvidence.earthObservation.length
+      + contextEvidence.publicFeeds.length
+      + contextEvidence.mobilityVehicles.length
+      + contextEvidence.roadWorkZones.length
       + (contextEvidence.weather ? 1 : 0);
 
+    throwIfAcquisitionStopped(acquisitionLease.signal);
     const persistence = await persistSpectraAcquisition({
       userId,
-      sessionId: requestedSessionId,
+      sessionId: acquisitionSessionId,
       subjectLabel: resolvedTargetLabel,
       clues: [target, details],
-      observations: solvedLocationObservations,
+      // Canonical history stores raw accepted observations only. Previously
+      // persisted points participate in solving but are never transformed and written
+      // back again, preventing recursive smoothing from manufacturing duplicate history.
+      observations: newRawLocationObservations,
       state: {
         constraintSolverDiagnostics: constraintSolution.diagnostics,
         identityConfidence,
@@ -1309,6 +1645,9 @@ router.post('/acquire', async (req: Request, res: Response) => {
         ).length,
         activeAcquisitionPositionCount: activeLocationPoints.length,
         originSessionId: originSessionId || null,
+        queryStartedAt: queryStartedAt || null,
+        recursivePass,
+        continuousAcquisition: true,
         lastAcquiredAt: new Date().toISOString(),
       },
     }).catch(error => {
@@ -1317,16 +1656,17 @@ router.post('/acquire', async (req: Request, res: Response) => {
       });
       return {
         available: false,
-        sessionId: requestedSessionId || '',
+        sessionId: acquisitionSessionId,
       };
     });
 
+    spectraMetricsAcquisitionOutcome('success');
     return res.json({
       success: true,
       target,
       details,
       resolvedTargetLabel,
-      sessionId: persistence.sessionId || requestedSessionId,
+      sessionId: persistence.sessionId || acquisitionSessionId,
       persistenceAvailable: persistence.available,
       acquisition: {
         identityConfidence,
@@ -1388,11 +1728,30 @@ router.post('/acquire', async (req: Request, res: Response) => {
       },
     });
   } catch (error) {
+    if (acquisitionLease.signal.aborted) {
+      spectraMetricsAcquisitionOutcome('stopped');
+      if (!res.headersSent && !res.writableEnded) {
+        return res.status(499).json({
+          success: false,
+          error: 'SPECTRA acquisition stopped.',
+          stopped: true,
+          sessionId: acquisitionSessionId,
+        });
+      }
+      return;
+    }
+
+    spectraMetricsAcquisitionOutcome('error');
     console.error('[SPECTRA] Acquisition failed', error);
     return res.status(500).json({
       success: false,
       error: 'SPECTRA could not complete target acquisition.',
     });
+  } finally {
+    res.off('close', cancelDisconnectedRequest);
+    acquisitionLease.release();
+    await resourcePermit?.release().catch(() => undefined);
+    finishAcquisitionMetric();
   }
 });
 

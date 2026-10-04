@@ -153,76 +153,222 @@ export async function loadSpectraSessionIdentityBindings(
   }
 }
 
+function persistedObservationRowToPoint(row: any): GPSPoint | null {
+  const latitude = Number(row.latitude);
+  const longitude = Number(row.longitude);
+  const observedAt = new Date(row.observed_at);
+  if (
+    !Number.isFinite(latitude)
+    || !Number.isFinite(longitude)
+    || !Number.isFinite(observedAt.getTime())
+  ) return null;
+
+  const metadata = row.metadata && typeof row.metadata === 'object'
+    ? { ...row.metadata }
+    : {};
+
+  return {
+    latitude,
+    longitude,
+    altitude: row.altitude == null ? undefined : Number(row.altitude),
+    accuracy: row.accuracy_meters == null ? undefined : Number(row.accuracy_meters),
+    timestamp: observedAt,
+    receivedAt: row.received_at ? new Date(row.received_at) : undefined,
+    source: row.source_type,
+    confidence: Number(row.confidence),
+    observationKind: row.observation_kind,
+    correlationGroup: row.correlation_group || undefined,
+    provenance: row.provenance || {
+      provider: row.provider || undefined,
+      capturedAt: observedAt,
+    },
+    metadata: {
+      ...metadata,
+      evidenceClass: row.evidence_class || metadata.evidenceClass,
+      subjectMatchConfidence: row.subject_match_confidence == null
+        ? metadata.subjectMatchConfidence
+        : Number(row.subject_match_confidence),
+      timestampConfidence: row.timestamp_confidence == null
+        ? metadata.timestampConfidence
+        : Number(row.timestamp_confidence),
+      acquisitionMethod: row.acquisition_method || metadata.acquisitionMethod,
+      sourceUrl: row.source_url || metadata.sourceUrl,
+      restoredFromPersistence: true,
+      databaseObservationId: row.id ? String(row.id) : metadata.databaseObservationId,
+    },
+  } as GPSPoint;
+}
+
+interface SpectraObservationCursor {
+  observedAt: string;
+  id: string;
+}
+
+function encodeObservationCursor(row: any): string | undefined {
+  const observedAt = new Date(row?.observed_at);
+  const id = String(row?.id || '').trim();
+  if (!id || !Number.isFinite(observedAt.getTime())) return undefined;
+  return Buffer.from(JSON.stringify({
+    observedAt: observedAt.toISOString(),
+    id,
+  } satisfies SpectraObservationCursor), 'utf8').toString('base64url');
+}
+
+function decodeObservationCursor(value?: string): SpectraObservationCursor | null {
+  const raw = String(value || '').trim();
+  if (!raw || raw.length > 1_000) return null;
+  try {
+    const parsed = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8'));
+    const observedAt = new Date(parsed?.observedAt);
+    const id = String(parsed?.id || '').trim();
+    if (!id || !Number.isFinite(observedAt.getTime())) return null;
+    return { observedAt: observedAt.toISOString(), id };
+  } catch {
+    return null;
+  }
+}
+
+export interface SpectraObservationPage {
+  points: GPSPoint[];
+  nextCursor?: string;
+  hasMore: boolean;
+}
+
+export async function loadSpectraSessionObservationPage(
+  userId: string,
+  sessionId: string,
+  options: {
+    limit?: number;
+    after?: Date;
+    before?: Date;
+    cursor?: string;
+  } = {},
+): Promise<SpectraObservationPage> {
+  const normalizedSessionId = sessionId.trim();
+  if (!normalizedSessionId || normalizedSessionId.length > 200) {
+    return { points: [], hasMore: false };
+  }
+
+  const boundedLimit = Math.max(1, Math.min(2_000, Math.floor(options.limit ?? 500)));
+  const cursor = decodeObservationCursor(options.cursor);
+  if (options.cursor && !cursor) {
+    throw new Error('Invalid SPECTRA observation cursor.');
+  }
+
+  const after = options.after instanceof Date && Number.isFinite(options.after.getTime())
+    ? options.after
+    : null;
+  const before = options.before instanceof Date && Number.isFinite(options.before.getTime())
+    ? options.before
+    : null;
+  if (after && before && after.getTime() > before.getTime()) {
+    throw new Error('SPECTRA observation range start must not exceed range end.');
+  }
+
+  try {
+    const result = await pool.query(
+      `SELECT
+         id, source_type, provider, latitude, longitude, altitude, accuracy_meters,
+         confidence, observation_kind, evidence_class,
+         subject_match_confidence, timestamp_confidence, acquisition_method, source_url,
+         observed_at, received_at, correlation_group, provenance, metadata
+       FROM public.spectra_location_observations
+       WHERE session_id = $1
+         AND user_id = $2
+         AND ($3::timestamptz IS NULL OR observed_at >= $3)
+         AND ($4::timestamptz IS NULL OR observed_at <= $4)
+         AND (
+           $5::timestamptz IS NULL
+           OR observed_at < $5
+           OR (observed_at = $5 AND id < $6::uuid)
+         )
+       ORDER BY observed_at DESC, id DESC
+       LIMIT $7`,
+      [
+        normalizedSessionId,
+        userId,
+        after,
+        before,
+        cursor?.observedAt || null,
+        cursor?.id || null,
+        boundedLimit + 1,
+      ],
+    );
+
+    const hasMore = result.rows.length > boundedLimit;
+    const pageRows = result.rows.slice(0, boundedLimit);
+    const points = pageRows.flatMap((row: any) => {
+      const point = persistedObservationRowToPoint(row);
+      return point ? [point] : [];
+    });
+
+    return {
+      points,
+      hasMore,
+      nextCursor: hasMore && pageRows.length
+        ? encodeObservationCursor(pageRows[pageRows.length - 1])
+        : undefined,
+    };
+  } catch (error: any) {
+    if (error?.code === '42P01') return { points: [], hasMore: false };
+    throw error;
+  }
+}
+
 export async function loadSpectraSessionObservations(
   userId: string,
   sessionId: string,
   limit = 2_000,
 ): Promise<GPSPoint[]> {
-  const normalizedSessionId = sessionId.trim();
-  if (!normalizedSessionId || normalizedSessionId.length > 200) return [];
-  const boundedLimit = Math.max(1, Math.min(2_000, Math.floor(limit)));
+  const page = await loadSpectraSessionObservationPage(userId, sessionId, {
+    limit: Math.max(1, Math.min(2_000, Math.floor(limit))),
+  });
+  // The database page is newest-first so that a bounded read always contains
+  // the freshest evidence. Internal fusion expects chronological order.
+  return [...page.points].reverse();
+}
 
-  try {
-    const result = await pool.query(
-      `SELECT
-         source_type, provider, latitude, longitude, altitude, accuracy_meters,
-         confidence, observation_kind, evidence_class,
-         subject_match_confidence, timestamp_confidence, acquisition_method, source_url,
-         observed_at, received_at, correlation_group, provenance, metadata
-       FROM public.spectra_location_observations
-       WHERE session_id = $1 AND user_id = $2
-       ORDER BY observed_at ASC
-       LIMIT $3`,
-      [normalizedSessionId, userId, boundedLimit],
-    );
+export async function loadSpectraSessionObservationRange(
+  userId: string,
+  sessionId: string,
+  input: {
+    start?: Date;
+    end?: Date;
+    maxPoints?: number;
+  } = {},
+): Promise<{ points: GPSPoint[]; truncated: boolean }> {
+  const maxPoints = Math.max(1, Math.min(50_000, Math.floor(input.maxPoints ?? 20_000)));
+  const points: GPSPoint[] = [];
+  let cursor: string | undefined;
+  let truncated = false;
 
-    return result.rows.flatMap((row: any) => {
-      const latitude = Number(row.latitude);
-      const longitude = Number(row.longitude);
-      const observedAt = new Date(row.observed_at);
-      if (
-        !Number.isFinite(latitude)
-        || !Number.isFinite(longitude)
-        || !Number.isFinite(observedAt.getTime())
-      ) return [];
-
-      const metadata = row.metadata && typeof row.metadata === 'object'
-        ? { ...row.metadata }
-        : {};
-      return [{
-        latitude,
-        longitude,
-        altitude: row.altitude == null ? undefined : Number(row.altitude),
-        accuracy: row.accuracy_meters == null ? undefined : Number(row.accuracy_meters),
-        timestamp: observedAt,
-        receivedAt: row.received_at ? new Date(row.received_at) : undefined,
-        source: row.source_type,
-        confidence: Number(row.confidence),
-        observationKind: row.observation_kind,
-        correlationGroup: row.correlation_group || undefined,
-        provenance: row.provenance || {
-          provider: row.provider || undefined,
-          capturedAt: observedAt,
-        },
-        metadata: {
-          ...metadata,
-          evidenceClass: row.evidence_class || metadata.evidenceClass,
-          subjectMatchConfidence: row.subject_match_confidence == null
-            ? metadata.subjectMatchConfidence
-            : Number(row.subject_match_confidence),
-          timestampConfidence: row.timestamp_confidence == null
-            ? metadata.timestampConfidence
-            : Number(row.timestamp_confidence),
-          acquisitionMethod: row.acquisition_method || metadata.acquisitionMethod,
-          sourceUrl: row.source_url || metadata.sourceUrl,
-          restoredFromPersistence: true,
-        },
-      } as GPSPoint];
+  while (points.length < maxPoints) {
+    const page = await loadSpectraSessionObservationPage(userId, sessionId, {
+      limit: Math.min(2_000, maxPoints - points.length),
+      after: input.start,
+      before: input.end,
+      cursor,
     });
-  } catch (error: any) {
-    if (error?.code === '42P01') return [];
-    throw error;
+    points.push(...page.points);
+
+    if (!page.hasMore || !page.nextCursor) {
+      truncated = false;
+      break;
+    }
+
+    cursor = page.nextCursor;
+    if (points.length >= maxPoints) {
+      truncated = true;
+      break;
+    }
   }
+
+  return {
+    points: points.sort((left, right) =>
+      left.timestamp.getTime() - right.timestamp.getTime()
+    ),
+    truncated,
+  };
 }
 
 export async function persistSpectraAcquisition(input: {
@@ -246,18 +392,19 @@ export async function persistSpectraAcquisition(input: {
        FOR UPDATE`,
       [sessionId],
     );
-    let claimingPreviouslyUnownedSession = false;
     if (existing.rows.length) {
       const existingUserId = String(existing.rows[0]?.user_id || '');
       const existingSubject = normalizeClue(String(existing.rows[0]?.subject_label || ''));
       const incomingSubject = normalizeClue(input.subjectLabel);
-      if (existingUserId && existingUserId !== input.userId) {
+      if (!existingUserId) {
+        throw new Error('SPECTRA unowned legacy session cannot be claimed by a user request');
+      }
+      if (existingUserId !== input.userId) {
         throw new Error('SPECTRA session ownership mismatch');
       }
       if (!subjectsCompatible(existingSubject, incomingSubject)) {
         throw new Error('SPECTRA session subject mismatch');
       }
-      claimingPreviouslyUnownedSession = !existingUserId;
     }
 
     const investigation = await client.query(
@@ -300,21 +447,6 @@ export async function persistSpectraAcquisition(input: {
          SET subject_label = $2, updated_at = now()
          WHERE id = $1::uuid`,
         [investigationId, input.subjectLabel],
-      );
-    }
-
-    if (claimingPreviouslyUnownedSession) {
-      await client.query(
-        `UPDATE public.spectra_telemetry_events
-         SET user_id = $2
-         WHERE session_id = $1 AND user_id IS NULL`,
-        [sessionId, input.userId],
-      );
-      await client.query(
-        `UPDATE public.spectra_location_observations
-         SET user_id = $2
-         WHERE session_id = $1 AND user_id IS NULL`,
-        [sessionId, input.userId],
       );
     }
 

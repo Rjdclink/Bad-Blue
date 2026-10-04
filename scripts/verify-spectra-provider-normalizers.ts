@@ -942,6 +942,62 @@ function measurement(batch: ReturnType<typeof normalizeSpectraProviderPayload>, 
 
 {
   const batch = normalizeSpectraProviderPayload(
+    'meraki-scanning',
+    'meraki-native-v2',
+    {
+      version: '2.0',
+      secret: 'provider-secret',
+      type: 'DevicesSeen',
+      data: {
+        apMac: '00:18:0a:13:dd:b0',
+        observations: [{
+          clientMac: '18:fe:34:d7:7c:26',
+          seenTime: '2026-10-02T20:59:55Z',
+          rssi: 56,
+          location: {
+            lat: 43.5446,
+            lng: -96.7311,
+            unc: 7.5,
+            x: [],
+            y: [],
+          },
+        }],
+      },
+    },
+  );
+  const point = measurement(batch);
+  assert.equal(point.source, 'wifi_fingerprint');
+  assert.equal(point.accuracy, 7.5);
+  assert.equal(point.provenance?.recordId, '18:fe:34:d7:7c:26');
+}
+
+{
+  const batch = normalizeSpectraProviderPayload(
+    'meraki-scanning',
+    'meraki-native-ble',
+    {
+      version: '2.0',
+      type: 'BluetoothDevicesSeen',
+      data: {
+        observations: [{
+          clientMac: '18:fe:34:d7:7c:27',
+          seenTime: '2026-10-02T20:59:56Z',
+          location: {
+            lat: 43.54461,
+            lng: -96.73111,
+            unc: 10,
+          },
+        }],
+      },
+    },
+  );
+  const point = measurement(batch);
+  assert.equal(point.source, 'bluetooth_proximity');
+  assert.equal(point.accuracy, 10);
+}
+
+{
+  const batch = normalizeSpectraProviderPayload(
     'cisco-spaces-location',
     'cisco-spaces',
     {
@@ -1015,6 +1071,45 @@ function measurement(batch: ReturnType<typeof normalizeSpectraProviderPayload>, 
   assert.equal(point.metadata.accuracyConfidenceLevel, 0.68);
   assert.equal(point.metadata.correlationDomain, 'device-1');
   assert.equal(point.metadata.vpsUsed, true);
+}
+
+{
+  const originalAnchors = process.env.SPECTRA_ANCHOR_CATALOG_JSON;
+  try {
+    process.env.SPECTRA_ANCHOR_CATALOG_JSON = JSON.stringify([{
+      id: 'ap-fixture-1',
+      latitude: 43.5447,
+      longitude: -96.7312,
+      accuracyMeters: 8,
+      metadata: { coverageMeters: 40 },
+    }]);
+
+    const batch = normalizeSpectraProviderPayload(
+      'unifi-client-location',
+      'unifi-fixture',
+      {
+        clients: [{
+          mac: '00:11:22:33:44:66',
+          apId: 'ap-fixture-1',
+          lastSeen: '2026-10-03T23:04:00Z',
+          connected: true,
+        }],
+      },
+    );
+    const point = measurement(batch);
+    assert.equal(point.source, 'wifi_fingerprint');
+    assert.equal(point.latitude, 43.5447);
+    assert.equal(point.longitude, -96.7312);
+    assert.equal(point.accuracy, 40);
+    assert.equal(point.metadata.coordinateSource, 'configured-anchor');
+    assert.ok(point.confidence <= 0.72);
+  } finally {
+    if (originalAnchors === undefined) {
+      delete process.env.SPECTRA_ANCHOR_CATALOG_JSON;
+    } else {
+      process.env.SPECTRA_ANCHOR_CATALOG_JSON = originalAnchors;
+    }
+  }
 }
 
 {
@@ -1095,6 +1190,11 @@ for (const kind of [
   'aws-iot-device-location',
   'arcore-geospatial-pose',
   'connected-vehicle-location',
+  'mist-location',
+  'extreme-location',
+  'unifi-client-location',
+  'aruba-location-json',
+  'generic-infrastructure-location',
 ]) {
   assert.ok(
     SPECTRA_PROVIDER_NORMALIZER_KINDS.includes(kind as any),
