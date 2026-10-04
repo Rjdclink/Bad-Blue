@@ -508,6 +508,16 @@ export const SPECTRA_ADAPTER_CAPABILITIES: SpectraAdapterCapability[] = [
     notes: 'Fixed HTTPS pull adapters normalize provider JSON into SPECTRA observations.',
   },
   {
+    id: 'mylnikov-open-radio-geolocation',
+    label: 'Mylnikov open Wi-Fi/cell geolocation',
+    mode: 'radio-geolocation',
+    sourceTypes: ['wifi_fingerprint','cellular'],
+    configured: () => true,
+    priority: 'high',
+    supportsRealtime: true,
+    notes: 'Keyless open-data resolver for supplied BSSIDs and MCC/MNC/LAC/cell IDs, including bounded multi-observation refinement.',
+  },
+  {
     id: 'beacondb-radio-geolocation',
     label: 'beaconDB radio geolocation',
     mode: 'radio-resolution',
