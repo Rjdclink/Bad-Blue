@@ -57,6 +57,35 @@ try {
     'OwnTracks identity should prefer the stable MQTT device segment over display tid',
   );
 
+  const ownTracksGeoJson = normalizeSpectraOpenSourceBridgePayload(
+    'owntracks-location',
+    'owntracks-geojson-test',
+    {
+      type: 'FeatureCollection',
+      features: [{
+        type: 'Feature',
+        geometry: {
+          type: 'Point',
+          coordinates: [-95.9346, 41.2566, 321],
+        },
+        properties: {
+          tst: 1791061201,
+          acc: 6,
+          tid: 'PB',
+          device: 'phone-b',
+        },
+      }],
+    },
+  );
+  assert.equal(ownTracksGeoJson.measurements.length, 1);
+  assert.equal(ownTracksGeoJson.measurements[0].latitude, 41.2566);
+  assert.equal(ownTracksGeoJson.measurements[0].longitude, -95.9346);
+  assert.equal(ownTracksGeoJson.measurements[0].altitude, 321);
+  assert.equal(
+    (ownTracksGeoJson.measurements[0].metadata as any).ownTracksGeoJsonFeature,
+    true,
+  );
+
   const chirpStack = normalizeSpectraOpenSourceBridgePayload(
     'chirpstack-location',
     'chirpstack-test',
