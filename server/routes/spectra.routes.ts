@@ -61,6 +61,7 @@ import {
 import { acquireSpectraPublicMobilityContext } from '../services/spectra/SpectraPublicMobilityContext';
 import { acquireSpectraWzdxContext } from '../services/spectra/SpectraWzdxContext';
 import {
+  assertSpectraAcquisitionSessionActive,
   registerSpectraAcquisitionRequest,
   stopSpectraAcquisitionSession,
 } from '../services/spectra/SpectraAcquisitionControl';
@@ -992,7 +993,7 @@ router.get('/metrics', (_req: Request, res: Response) => {
   }));
 });
 
-router.post('/acquisition/stop', (req: Request, res: Response) => {
+router.post('/acquisition/stop', async (req: Request, res: Response) => {
   const parsed = stopAcquisitionSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ success: false, error: 'A SPECTRA session ID is required.' });
@@ -1003,11 +1004,21 @@ router.post('/acquisition/stop', (req: Request, res: Response) => {
     return res.status(401).json({ success: false, error: 'Authentication required.' });
   }
 
-  stopSpectraAcquisitionSession(
-    userId,
-    parsed.data.sessionId,
-    'SPECTRA acquisition stopped because the viewer exited',
-  );
+  try {
+    await stopSpectraAcquisitionSession(
+      userId,
+      parsed.data.sessionId,
+      'SPECTRA acquisition stopped because the viewer exited',
+    );
+  } catch (error) {
+    console.warn('[SPECTRA] Shared acquisition stop could not be persisted', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return res.status(503).json({
+      success: false,
+      error: 'SPECTRA could not persist the acquisition stop state.',
+    });
+  }
   return res.json({
     success: true,
     sessionId: parsed.data.sessionId,
@@ -1060,6 +1071,22 @@ router.post('/acquire', async (req: Request, res: Response) => {
     return res.status(503).json({
       success: false,
       error: 'SPECTRA resource governor is unavailable.',
+    });
+  }
+
+  try {
+    await assertSpectraAcquisitionSessionActive(userId, acquisitionSessionId);
+  } catch (error) {
+    await resourcePermit?.release().catch(() => undefined);
+    finishAcquisitionMetric();
+    spectraMetricsAcquisitionOutcome('stopped');
+    return res.status(409).json({
+      success: false,
+      stopped: true,
+      sessionId: acquisitionSessionId,
+      error: error instanceof Error
+        ? error.message
+        : 'SPECTRA acquisition session stopped.',
     });
   }
 
