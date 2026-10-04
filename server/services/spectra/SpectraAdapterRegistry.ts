@@ -182,6 +182,16 @@ export const SPECTRA_ADAPTER_CAPABILITIES: SpectraAdapterCapability[] = [
     notes: 'Reconnectable authenticated WSS transport for configured infrastructure providers, with deduplication and stream health reporting.',
   },
   {
+    id: 'traccar-position-bridge',
+    label: 'Traccar position bridge',
+    mode: 'provider-pull',
+    sourceTypes: ['device_gps','wifi_fingerprint','cellular'],
+    configured: () => anyEnv('SPECTRA_ACTIVE_PROVIDER_ADAPTERS', 'SPECTRA_WSS_PROVIDER_ADAPTERS'),
+    priority: 'critical',
+    supportsRealtime: true,
+    notes: 'Normalizes Traccar position events and preserves network/protocol metadata so SPECTRA can consume the mature Traccar device ecosystem without coupling to a specific tracker protocol.',
+  },
+  {
     id: 'openwisp-wifi-session-location',
     label: 'OpenWISP Wi-Fi session location',
     mode: 'provider-pull',
