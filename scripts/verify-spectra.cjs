@@ -1062,6 +1062,19 @@ test('SPECTRA hard-stops local and server acquisition when the viewer exits',
   spectra.includes("hardStopRef.current('new_target', true)") &&
   routes.includes("router.post('/acquisition/stop'") &&
   routes.includes('stopSpectraAcquisitionSession'));
+test('BFCache restore starts a fresh SPECTRA session instead of reviving a stopped ID',
+  spectra.includes("window.addEventListener('pageshow', onPageShow)") &&
+  spectra.includes('if (!event.persisted) return;') &&
+  spectra.includes('const freshSessionId = createSpectraSessionId()') &&
+  spectra.includes('spectraSessionIdRef.current = freshSessionId') &&
+  spectra.includes('recursivePassRef.current = 0') &&
+  spectra.includes('startContinuousAcquisition();'));
+test('Foreground acquisition blocks recursive background passes from stealing the active request slot',
+  spectra.includes('foregroundAcquisitionActiveRef = useRef(false)') &&
+  spectra.includes('foregroundAcquisitionActiveRef.current = true') &&
+  spectra.includes('if (foregroundAcquisitionActiveRef.current)') &&
+  spectra.includes('foregroundAcquisitionActiveRef.current = false') &&
+  spectra.includes('SPECTRA foreground acquisition superseded the background pass.'));
 test('Hard stop coordinates in-flight and delayed acquisition across replicas',
   acquisitionControl.includes('controllers: Set<AbortController>') &&
   acquisitionControl.includes('controller.abort') &&
