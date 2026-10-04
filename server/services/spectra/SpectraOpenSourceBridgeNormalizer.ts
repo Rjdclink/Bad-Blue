@@ -16,7 +16,8 @@ export type SpectraOpenSourceBridgeKind =
   | 'homeassistant-device-tracker'
   | 'gpsd-tpv'
   | 'omlox-location'
-  | 'mqtt-room-presence';
+  | 'mqtt-room-presence'
+  | 'openmqttgateway-ble';
 
 export interface SpectraOpenSourceBridgeBatch {
   sessionId?: string;
@@ -1436,6 +1437,153 @@ function normalizeGpsd(
   };
 }
 
+function normalizeOpenMqttGatewayBle(
+  providerId: string,
+  payload: unknown,
+): SpectraOpenSourceBridgeBatch {
+  const wrapped = envelope(payload, providerId);
+  const outer = wrapped.outer;
+  const topic = text(
+    outer._spectraMqttTopic
+    ?? outer.topic,
+    500,
+  );
+  const topicParts = topic
+    ? topic.split('/').map(part => part.trim()).filter(Boolean)
+    : [];
+
+  const targetRef = text(
+    outer.mac
+    ?? outer.id
+    ?? outer.address
+    ?? outer.device
+    ?? outer.deviceId,
+    240,
+  );
+  const distance = finite(
+    outer.distance
+    ?? outer.distanceMeters
+    ?? outer.distance_m
+    ?? outer.dist,
+  );
+  const rssi = finite(
+    outer.rssi
+    ?? outer.rssiDbm
+    ?? outer.signal,
+  );
+  const txPower = finite(
+    outer.txpower
+    ?? outer.txPower
+    ?? outer.measuredPower,
+  );
+
+  const gatewayCandidates = [
+    outer.gatewayId,
+    outer.gateway_id,
+    outer.gateway,
+    outer.scannerId,
+    outer.scanner_id,
+    outer.room,
+    outer.roomId,
+    topicParts.length >= 2 ? topicParts[topicParts.length - 2] : undefined,
+    topicParts[topicParts.length - 1],
+    wrapped.providerId,
+  ];
+
+  const resolvedGateway = gatewayCandidates
+    .map(candidate => text(candidate, 200))
+    .filter((candidate): candidate is string => Boolean(candidate))
+    .map(candidate => ({
+      candidate,
+      anchor: resolveConfiguredSpectraAnchor({
+        id: candidate,
+        anchorId: candidate,
+        deviceId: candidate,
+        locatorId: candidate,
+      }),
+    }))
+    .find(item => Boolean(item.anchor));
+
+  if (!targetRef || !resolvedGateway?.anchor) {
+    throw new Error(
+      'OpenMQTTGateway BLE payload requires a device identifier and configured gateway anchor.',
+    );
+  }
+  if (
+    (distance === null || distance < 0)
+    && (rssi === null || txPower === null)
+  ) {
+    throw new Error(
+      'OpenMQTTGateway BLE payload requires distance or RSSI plus calibrated TX power.',
+    );
+  }
+
+  const timestamp = isoTimestamp(
+    outer.timestamp
+    ?? outer.time
+    ?? outer.tst
+    ?? outer.observedAt
+    ?? outer.observed_at
+    ?? Date.now(),
+  );
+  if (!timestamp) {
+    throw new Error('OpenMQTTGateway BLE payload contains no usable observation time.');
+  }
+
+  const anchor: Record<string, unknown> = {
+    id: resolvedGateway.anchor.id,
+    latitude: resolvedGateway.anchor.latitude,
+    longitude: resolvedGateway.anchor.longitude,
+    uncertaintyMeters:
+      resolvedGateway.anchor.accuracyMeters !== undefined
+        ? Math.max(0.25, resolvedGateway.anchor.accuracyMeters)
+        : undefined,
+  };
+  if (distance !== null && distance >= 0) {
+    anchor.distanceMeters = Math.min(1_000_000, distance);
+  }
+  if (rssi !== null) {
+    anchor.rssiDbm = Math.max(-127, Math.min(0, rssi));
+  }
+  if (txPower !== null) {
+    anchor.txPowerAtOneMeterDbm = Math.max(-127, Math.min(0, txPower));
+  }
+
+  return {
+    sessionId: wrapped.sessionId,
+    subjectLabel: wrapped.subjectLabel,
+    sourceId: wrapped.providerId,
+    measurements: [{
+      kind: 'ranging',
+      source: 'ble_rssi',
+      timestamp,
+      provider: wrapped.providerId,
+      correlationGroup:
+        `openmqttgateway:${wrapped.providerId}:${targetRef}`,
+      anchors: [anchor],
+      metadata: {
+        acquisitionMethod: 'openmqttgateway-ble',
+        openMqttGatewayTopic: topic,
+        openMqttGatewayId: targetRef,
+        openMqttGatewayMac: text(outer.mac, 100),
+        openMqttGatewayModel: text(
+          outer.model
+          ?? outer.model_id,
+          120,
+        ),
+        openMqttGatewayBrand: text(outer.brand, 120),
+        openMqttGatewayUuid: text(outer.uuid, 160),
+        openMqttGatewayGatewayId: resolvedGateway.candidate,
+      },
+    }],
+    metadata: {
+      normalization: 'openmqttgateway-ble',
+      observationCount: 1,
+      normalizedAt: new Date().toISOString(),
+    },
+  };
+}
+
 function normalizeMqttRoomPresence(
   providerId: string,
   payload: unknown,
@@ -2100,6 +2248,9 @@ export function normalizeSpectraOpenSourceBridgePayload(
     case 'mqtt-room-presence':
       batch = normalizeMqttRoomPresence(providerId, payload);
       break;
+    case 'openmqttgateway-ble':
+      batch = normalizeOpenMqttGatewayBle(providerId, payload);
+      break;
     default: {
       const exhaustive: never = kind;
       throw new Error(`Unsupported open-source bridge normalizer: ${String(exhaustive)}`);
@@ -2124,4 +2275,5 @@ export const SPECTRA_OPEN_SOURCE_BRIDGE_KINDS:
     'gpsd-tpv',
     'omlox-location',
     'mqtt-room-presence',
+    'openmqttgateway-ble',
   ] as const;
