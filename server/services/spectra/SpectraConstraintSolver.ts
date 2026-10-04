@@ -436,10 +436,39 @@ function solveOnePoint(
 
   for (const c of relevant) {
     let residual = 0;
+    let contradiction = false;
+
     if (c.kind === 'coordinate' && c.target) {
       residual = haversineMeters(solvedGeo, c.target);
     } else if (c.kind === 'range' && c.anchor && c.distanceMeters !== undefined) {
       residual = Math.abs(haversineMeters(solvedGeo, c.anchor) - c.distanceMeters);
+    } else if (c.kind === 'bearing' && c.anchor && c.bearingDegrees !== undefined) {
+      const anchorLocal = localMeters(
+        c.anchor.latitude,
+        c.anchor.longitude,
+        solvedGeo.latitude,
+        solvedGeo.longitude,
+      );
+      // Vector from anchor -> solved point is the negative of solved-origin
+      // anchor coordinates. atan2(east, north) yields true-north bearing.
+      const observed = (
+        Math.atan2(-anchorLocal.x, -anchorLocal.y) * RAD_TO_DEG + 360
+      ) % 360;
+      const expected = ((c.bearingDegrees % 360) + 360) % 360;
+      let angularError = observed - expected;
+      while (angularError > 180) angularError -= 360;
+      while (angularError < -180) angularError += 360;
+
+      const rangeMeters = Math.max(0.1, haversineMeters(solvedGeo, c.anchor));
+      // Chord distance at the observed range gives the bearing disagreement a
+      // meter-domain residual without the 180-degree blind spot of sin(delta).
+      residual = 2 * rangeMeters * Math.sin(
+        Math.abs(angularError) * DEG_TO_RAD / 2,
+      );
+      contradiction = Math.abs(angularError) > Math.max(
+        5,
+        (c.bearingSigmaDegrees ?? 12) * 4,
+      );
     } else if (c.kind === 'range_difference' && c.anchor && c.anchorB && c.distanceDifferenceMeters !== undefined) {
       residual = Math.abs(
         haversineMeters(solvedGeo, c.anchor)
@@ -451,8 +480,17 @@ function solveOnePoint(
     } else if (c.kind === 'road' && c.roadPolyline?.length) {
       residual = closestPointOnPolyline(solvedGeo, c.roadPolyline)?.distanceMeters ?? 0;
     }
+
     residuals.push(residual);
-    if (residual > Math.max(10, c.sigmaMeters * 4)) contradictions += 1;
+    if (
+      contradiction
+      || (
+        c.kind !== 'bearing'
+        && residual > Math.max(10, c.sigmaMeters * 4)
+      )
+    ) {
+      contradictions += 1;
+    }
   }
 
   const independentKeys = new Set(relevant.map(c => c.dependencyKey));
