@@ -212,6 +212,16 @@ export const SPECTRA_ADAPTER_CAPABILITIES: SpectraAdapterCapability[] = [
     notes: 'Normalizes geolocated Kismet Wi-Fi/Bluetooth device records, including averaged/last geopoints and signal metadata, into the canonical telemetry path.',
   },
   {
+    id: 'openmqttgateway-ble',
+    label: 'OpenMQTTGateway BLE ranging',
+    mode: 'live-telemetry',
+    sourceTypes: ['ble_rssi','bluetooth_proximity'],
+    configured: () => anyEnv('SPECTRA_MQTT_PROVIDER_ADAPTERS', 'SPECTRA_ANCHOR_CATALOG_JSON'),
+    priority: 'high',
+    supportsRealtime: true,
+    notes: 'Normalizes OpenMQTTGateway BLE id/mac, RSSI, calibrated TX power and distance payloads against configured gateway anchors through the provider-neutral MQTT transport.',
+  },
+  {
     id: 'mqtt-room-presence',
     label: 'MQTT Room-compatible BLE presence',
     mode: 'live-telemetry',
