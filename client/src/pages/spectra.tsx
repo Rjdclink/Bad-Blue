@@ -747,9 +747,33 @@ export default function SpectraPage() {
       stopContinuousAcquisition('page_exit', true);
     };
 
+    const onPageShow = (event: PageTransitionEvent) => {
+      if (!event.persisted) return;
+
+      // pagehide also fires when the browser places SPECTRA in BFCache. The old
+      // investigation was correctly hard-stopped on hide; restoration must use
+      // a fresh session rather than silently reviving that stopped ID.
+      const freshSessionId = createSpectraSessionId();
+      spectraSessionIdRef.current = freshSessionId;
+      setSpectraSessionId(freshSessionId);
+      queryStartedAtRef.current = new Date().toISOString();
+      recursivePassRef.current = 0;
+      continuousRetryDelayRef.current = CONTINUOUS_ACQUISITION_DELAY_MS;
+      foregroundAcquisitionActiveRef.current = false;
+      requestRef.current += 1;
+
+      if (targetRef.current.trim() && detailsRef.current.trim()) {
+        setPhase('active');
+        setAcquisitionStage('SPECTRA session restored; resuming recursive acquisition…');
+        startContinuousAcquisition();
+      }
+    };
+
     window.addEventListener('pagehide', onPageHide);
+    window.addEventListener('pageshow', onPageShow);
     return () => {
       window.removeEventListener('pagehide', onPageHide);
+      window.removeEventListener('pageshow', onPageShow);
       if (
         continuousAcquisitionActiveRef.current
         || activeAcquisitionAbortRef.current
@@ -757,7 +781,7 @@ export default function SpectraPage() {
         stopContinuousAcquisition('spectra_unmounted', false);
       }
     };
-  }, [stopContinuousAcquisition]);
+  }, [startContinuousAcquisition, stopContinuousAcquisition]);
 
   useEffect(() => {
     const launch = lexaraLaunchRef.current;
