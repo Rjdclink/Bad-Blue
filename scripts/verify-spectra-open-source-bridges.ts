@@ -12,9 +12,15 @@ try {
     [...SPECTRA_OPEN_SOURCE_BRIDGE_KINDS].sort(),
     [
       'chirpstack-location',
+      'cot-location',
       'espresense-observation',
       'find3-location',
+      'gpsd-tpv',
+      'homeassistant-device-tracker',
       'kismet-device-location',
+      'meshtastic-position',
+      'mqtt-room-presence',
+      'omlox-location',
       'openwisp-wifi-session',
       'owntracks-location',
       'traccar-position',
@@ -341,6 +347,74 @@ try {
     (meshtastic.measurements[0].metadata as any).meshtasticViaMqtt,
     true,
   );
+
+  const gpsd = normalizeSpectraOpenSourceBridgePayload(
+    'gpsd-tpv',
+    'gpsd-test',
+    {
+      class: 'TPV',
+      device: '/dev/ttyUSB0',
+      mode: 3,
+      time: '2026-10-03T23:03:00.000Z',
+      lat: 41.2568,
+      lon: -95.9348,
+      altHAE: 324,
+      epx: 1.8,
+      epy: 2.2,
+      speed: 1.5,
+      track: 45,
+    },
+  );
+  assert.equal(gpsd.measurements.length, 1);
+  assert.equal(gpsd.measurements[0].source, 'gnss_fix');
+  assert.equal(gpsd.measurements[0].latitude, 41.2568);
+  assert.equal(gpsd.measurements[0].heading, 45);
+
+  const omlox = normalizeSpectraOpenSourceBridgePayload(
+    'omlox-location',
+    'omlox-test',
+    {
+      event: 'message',
+      topic: 'location_updates',
+      payload: [{
+        position: {
+          type: 'Point',
+          coordinates: [-95.9349, 41.2569, 325],
+        },
+        crs: 'EPSG:4326',
+        provider_type: 'uwb',
+        provider_id: 'uwb-tag-1',
+        timestamp_generated: '2026-10-03T23:03:01.000Z',
+        accuracy: 0.35,
+        speed: 0.5,
+        course: 180,
+        trackables: ['trackable-1'],
+      }],
+    },
+  );
+  assert.equal(omlox.measurements.length, 1);
+  assert.equal(omlox.measurements[0].source, 'uwb_range');
+  assert.equal(omlox.measurements[0].latitude, 41.2569);
+  assert.equal(omlox.measurements[0].longitude, -95.9349);
+  assert.equal(omlox.measurements[0].accuracy, 0.35);
+  assert.match(String(omlox.measurements[0].correlationGroup), /trackable-1$/);
+
+  const mqttRoom = normalizeSpectraOpenSourceBridgePayload(
+    'mqtt-room-presence',
+    'room-assistant-test',
+    {
+      id: 'phone-room-a',
+      name: 'Phone Room A',
+      distance: 2.4,
+      _spectraMqttTopic: 'room_presence/room-kitchen',
+      timestamp: '2026-10-03T23:03:02.000Z',
+    },
+  );
+  assert.equal(mqttRoom.measurements.length, 1);
+  assert.equal(mqttRoom.measurements[0].kind, 'ranging');
+  assert.equal(mqttRoom.measurements[0].source, 'bluetooth_proximity');
+  assert.equal((mqttRoom.measurements[0].anchors as any[])[0].id, 'room-kitchen');
+  assert.equal((mqttRoom.measurements[0].anchors as any[])[0].distanceMeters, 2.4);
 
   const traccarNetworkFallback = normalizeSpectraOpenSourceBridgePayload(
     'traccar-position',
