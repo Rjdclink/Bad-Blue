@@ -917,6 +917,7 @@ test('Open-source acquisition bridge normalizers cover the high-value GitHub bri
     'omlox-location',
     'mqtt-room-presence',
     'openmqttgateway-ble',
+    'frigate-event',
   ].every(kind => openSourceBridgeNormalizer.includes(`'${kind}'`)) &&
   providerNormalizer.includes('SPECTRA_OPEN_SOURCE_BRIDGE_KINDS') &&
   providerNormalizer.includes('normalizeSpectraOpenSourceBridgePayload'));
@@ -930,6 +931,13 @@ test('ChirpStack preserves LocationEvent accuracy and device/application identit
   openSourceBridgeNormalizer.includes('chirpStackLocationSource') &&
   openSourceBridgeNormalizer.includes('chirpStackApplicationId') &&
   openSourceBridgeNormalizer.includes('location.accuracy'));
+test('Frigate camera events add conservative configured-camera visual detections',
+  openSourceBridgeNormalizer.includes("'frigate-event'") &&
+  openSourceBridgeNormalizer.includes("acquisitionMethod: 'frigate-camera-event'") &&
+  openSourceBridgeNormalizer.includes('camera-coverage-region-not-object-pixel-geolocation') &&
+  adapterRegistry.includes("id: 'frigate-camera-events'") &&
+  railwayEnvExample.includes('"normalizerKind":"frigate-event"') &&
+  openSourceBridgeVerifier.includes('const frigate = normalizeSpectraOpenSourceBridgePayload'));
 test('OpenMQTTGateway adds raw BLE scanner ranging through the existing MQTT and anchor mesh',
   openSourceBridgeNormalizer.includes("'openmqttgateway-ble'") &&
   openSourceBridgeNormalizer.includes('OpenMQTTGateway BLE payload requires') &&
@@ -1026,6 +1034,7 @@ test('Focused bridge behavior verifier exercises the complete open-source normal
     'omlox-location',
     'mqtt-room-presence',
     'openmqttgateway-ble',
+    'frigate-event',
   ].every(kind => openSourceBridgeVerifier.includes(`'${kind}'`)));
 
 test('SPECTRA recursively reacquires until page exit with one stable session',
