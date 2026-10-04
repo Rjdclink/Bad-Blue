@@ -67,6 +67,8 @@ const railwayEnvExample = read('.env.railway.example');
 const legalProviderMesh = read('server/lexara/LegalProviderMesh.ts');
 const hootenannyContext = read('server/services/spectra/SpectraHootenannyContext.ts');
 const mylnikovResolver = read('server/services/spectra/SpectraMylnikovResolver.ts');
+const wigleResolver = read('server/services/spectra/SpectraWigleRadioResolver.ts');
+const unwiredResolver = read('server/services/spectra/SpectraUnwiredRadioResolver.ts');
 const openSourceBridgeNormalizer = read('server/services/spectra/SpectraOpenSourceBridgeNormalizer.ts');
 const openSourceBridgeVerifier = read('scripts/verify-spectra-open-source-bridges.ts');
 const infrastructureNormalizer = read('server/services/spectra/SpectraInfrastructureProviderNormalizer.ts');
@@ -866,6 +868,29 @@ test('Mylnikov open radio geolocation runs alongside the existing radio provider
   geoconsoleRoutes.includes('beaconDbRadioPoint(measurement)') &&
   geoconsoleRoutes.includes('openCellIdPoint(measurement)') &&
   adapterRegistry.includes("id: 'mylnikov-open-radio-geolocation'"));
+test('WiGLE exact-BSSID resolver participates in the bounded radio mesh',
+  wigleResolver.includes('https://api.wigle.net/api/v2/network/search') &&
+  wigleResolver.includes("endpoint.searchParams.set('netid', bssid)") &&
+  wigleResolver.includes('SPECTRA_WIGLE_API_TOKEN') &&
+  wigleResolver.includes('slice(0, 6)') &&
+  geoconsoleRoutes.includes('resolveSpectraWigleWifi') &&
+  geoconsoleRoutes.includes('wigleOutcome') &&
+  geoconsoleRoutes.includes('wigle: spectraWigleConfigured()') &&
+  adapterRegistry.includes("id: 'wigle-bssid-geolocation'"));
+test('Traccar-style Unwired resolver participates in the bounded radio mesh',
+  unwiredResolver.includes('SPECTRA_UNWIRED_GEOLOCATION_URL') &&
+  unwiredResolver.includes('SPECTRA_UNWIRED_GEOLOCATION_TOKEN') &&
+  unwiredResolver.includes("url.protocol === 'https:'") &&
+  unwiredResolver.includes('slice(0, 32)') &&
+  geoconsoleRoutes.includes('resolveSpectraUnwiredRadio') &&
+  geoconsoleRoutes.includes('unwiredOutcome') &&
+  geoconsoleRoutes.includes('unwiredCompatible: spectraUnwiredConfigured()') &&
+  adapterRegistry.includes("id: 'unwired-compatible-radio-geolocation'"));
+test('Radio mesh runs independent resolvers in parallel and records corroboration',
+  ['googleRadioPoint(measurement)','beaconDbRadioPoint(measurement)','openCellIdPoint(measurement)',
+   'resolveSpectraMylnikovRadio','resolveSpectraWigleWifi','resolveSpectraUnwiredRadio']
+    .every(marker => geoconsoleRoutes.includes(marker)) &&
+  geoconsoleRoutes.includes('radioCorroboration'));
 test('Open-source acquisition bridge normalizers cover the high-value GitHub bridge set',
   [
     'owntracks-location',
@@ -875,6 +900,12 @@ test('Open-source acquisition bridge normalizers cover the high-value GitHub bri
     'kismet-device-location',
     'openwisp-wifi-session',
     'traccar-position',
+    'meshtastic-position',
+    'cot-location',
+    'homeassistant-device-tracker',
+    'gpsd-tpv',
+    'omlox-location',
+    'mqtt-room-presence',
   ].every(kind => openSourceBridgeNormalizer.includes(`'${kind}'`)) &&
   providerNormalizer.includes('SPECTRA_OPEN_SOURCE_BRIDGE_KINDS') &&
   providerNormalizer.includes('normalizeSpectraOpenSourceBridgePayload'));
@@ -888,6 +919,16 @@ test('ChirpStack preserves LocationEvent accuracy and device/application identit
   openSourceBridgeNormalizer.includes('chirpStackLocationSource') &&
   openSourceBridgeNormalizer.includes('chirpStackApplicationId') &&
   openSourceBridgeNormalizer.includes('location.accuracy'));
+test('omlox and MQTT Room add standardized RTLS and room-ranging acquisition paths',
+  openSourceBridgeNormalizer.includes("'omlox-location'") &&
+  openSourceBridgeNormalizer.includes('location_updates:geojson') &&
+  openSourceBridgeNormalizer.includes('resolveSpectraFloorplanCoordinate') &&
+  openSourceBridgeNormalizer.includes("'mqtt-room-presence'") &&
+  openSourceBridgeNormalizer.includes("acquisitionMethod: 'mqtt-room-presence'") &&
+  adapterRegistry.includes("id: 'omlox-location-hub'") &&
+  adapterRegistry.includes("id: 'mqtt-room-presence'") &&
+  railwayEnvExample.includes('"normalizerKind":"omlox-location"') &&
+  railwayEnvExample.includes('"normalizerKind":"mqtt-room-presence"'));
 test('FIND3 and ESPresense add independent indoor positioning paths',
   openSourceBridgeNormalizer.includes('find3-fingerprint-classification') &&
   openSourceBridgeNormalizer.includes('find3Probability') &&
@@ -923,11 +964,14 @@ test('Active adapter secrets may be supplied as headers or query parameters with
   activeAcquisition.includes('url.searchParams.set(parameter, value)') &&
   activeAcquisition.includes("{ KISMET: 'SPECTRA_KISMET_API_KEY' }") &&
   activeAcquisition.includes('headersFromEnv'));
-test('WSS and MQTT bridge transports preserve arrays and support server-side session binding',
+test('WSS and MQTT bridge transports preserve arrays, session binding and provider subscriptions',
   providerStreamCoordinator.includes("Array.isArray(parsed)") &&
   providerStreamCoordinator.includes("? { data: parsed }") &&
   providerStreamCoordinator.includes('sessionId: runtime.config.sessionId') &&
   providerStreamCoordinator.includes('sessionBound: Boolean(config.sessionId)') &&
+  providerStreamCoordinator.includes('openMessages?: Array<Record<string, unknown>>') &&
+  providerStreamCoordinator.includes('socket.send(encoded)') &&
+  providerStreamCoordinator.includes('openMessageCount') &&
   mqttProviderCoordinator.includes("Array.isArray(payload)") &&
   mqttProviderCoordinator.includes("? { data: payload }") &&
   mqttProviderCoordinator.includes('sessionId: runtime.config.sessionId') &&
@@ -939,8 +983,10 @@ test('Open-source bridge configuration is documented without inventing credentia
   railwayEnvExample.includes('SPECTRA_OPENWISP_WIFI_SESSIONS_URL_TEMPLATE=') &&
   railwayEnvExample.includes('SPECTRA_OWNTRACKS_LOCATION_URL_TEMPLATE=') &&
   railwayEnvExample.includes('SPECTRA_HOOTENANNY_BASE_URL=') &&
+  railwayEnvExample.includes('SPECTRA_WIGLE_API_TOKEN=') &&
+  railwayEnvExample.includes('SPECTRA_UNWIRED_GEOLOCATION_URL=') &&
   railwayEnvExample.includes('headersFromEnv/queryFromEnv'));
-test('Focused bridge behavior verifier exercises all seven open-source normalizers',
+test('Focused bridge behavior verifier exercises the complete open-source normalizer set',
   [
     'owntracks-location',
     'chirpstack-location',
@@ -949,6 +995,12 @@ test('Focused bridge behavior verifier exercises all seven open-source normalize
     'kismet-device-location',
     'openwisp-wifi-session',
     'traccar-position',
+    'meshtastic-position',
+    'cot-location',
+    'homeassistant-device-tracker',
+    'gpsd-tpv',
+    'omlox-location',
+    'mqtt-room-presence',
   ].every(kind => openSourceBridgeVerifier.includes(`'${kind}'`)));
 
 test('SPECTRA recursively reacquires until page exit with one stable session',
