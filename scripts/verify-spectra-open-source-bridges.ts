@@ -262,6 +262,33 @@ try {
   assert.equal(traccar.measurements[0].accuracy, 8);
   assert.match(String(traccar.measurements[0].correlationGroup), /:7$/);
 
+  const homeAssistant = normalizeSpectraOpenSourceBridgePayload(
+    'homeassistant-device-tracker',
+    'homeassistant-test',
+    {
+      entity_id: 'device_tracker.phone_a',
+      state: 'not_home',
+      last_updated: '2026-10-03T23:01:30Z',
+      attributes: {
+        latitude: 41.25665,
+        longitude: -95.93465,
+        gps_accuracy: 7,
+        altitude: 320,
+        friendly_name: 'Phone A',
+        source_type: 'gps',
+        battery_level: 72,
+      },
+    },
+  );
+  assert.equal(homeAssistant.measurements.length, 1);
+  assert.equal(homeAssistant.measurements[0].latitude, 41.25665);
+  assert.equal(homeAssistant.measurements[0].longitude, -95.93465);
+  assert.equal(homeAssistant.measurements[0].accuracy, 7);
+  assert.equal(
+    (homeAssistant.measurements[0].metadata as any).homeAssistantEntityId,
+    'device_tracker.phone_a',
+  );
+
   const cot = normalizeSpectraOpenSourceBridgePayload(
     'cot-location',
     'cot-test',
