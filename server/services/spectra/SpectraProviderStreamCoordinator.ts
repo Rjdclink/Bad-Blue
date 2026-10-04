@@ -10,6 +10,7 @@ import { decodeSpectraArubaLocationFrame } from './SpectraArubaStreamDecoder';
 
 export type SpectraProviderStreamDecoder =
   | 'json'
+  | 'cot-xml'
   | 'aruba-location-protobuf';
 
 export interface SpectraProviderStreamConfig {
@@ -107,7 +108,7 @@ function loadConfigs(): SpectraProviderStreamConfig[] {
         !id
         || seen.has(id)
         || !validWssUrl(url)
-        || !['json', 'aruba-location-protobuf'].includes(decoder)
+        || !['json', 'cot-xml', 'aruba-location-protobuf'].includes(decoder)
         || !SPECTRA_PROVIDER_NORMALIZER_KINDS.includes(normalizerKind)
       ) return [];
 
@@ -285,6 +286,23 @@ async function decodeFrame(
   runtime: RuntimeState,
   data: RawData,
 ): Promise<SpectraNormalizedProviderBatch | null> {
+  if (runtime.config.decoder === 'cot-xml') {
+    const bytes = rawBytes(data);
+    if (!bytes.length || bytes.length > 2_000_000) return null;
+    const xml = new TextDecoder().decode(bytes).trim();
+    if (!xml.startsWith('<')) return null;
+
+    return normalizeSpectraProviderPayload(
+      runtime.config.normalizerKind,
+      runtime.config.id,
+      {
+        xml,
+        sessionId: runtime.config.sessionId,
+        subjectLabel: runtime.config.subjectLabel,
+      },
+    );
+  }
+
   if (runtime.config.decoder === 'aruba-location-protobuf') {
     const decoded = decodeSpectraArubaLocationFrame(rawBytes(data));
     if (!decoded) return null;
