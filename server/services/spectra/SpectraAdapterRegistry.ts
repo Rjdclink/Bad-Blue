@@ -276,6 +276,16 @@ export const SPECTRA_ADAPTER_CAPABILITIES: SpectraAdapterCapability[] = [
     notes: 'Normalizes owned Home Assistant device_tracker/person state coordinates and GPS accuracy; can be pulled directly from a configured HTTPS REST state endpoint.',
   },
   {
+    id: 'omlox-location-hub',
+    label: 'omlox Open Location Hub',
+    mode: 'live-telemetry',
+    sourceTypes: ['device_gps','wifi_fingerprint','bluetooth_proximity','uwb_range'],
+    configured: () => anyEnv('SPECTRA_WSS_PROVIDER_ADAPTERS'),
+    priority: 'critical',
+    supportsRealtime: true,
+    notes: 'Consumes standardized omlox location_updates or location_updates:geojson streams from configured RTLS hubs, including UWB, Wi-Fi, BLE and virtual location providers.',
+  },
+  {
     id: 'owntracks-location-bridge',
     label: 'OwnTracks Recorder location bridge',
     mode: 'live-telemetry',
