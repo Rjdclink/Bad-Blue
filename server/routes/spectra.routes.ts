@@ -1310,7 +1310,7 @@ router.post('/acquire', async (req: Request, res: Response) => {
       throw new Error('All SPECTRA discovery paths failed');
     }
 
-    const observations: any[] = [
+    const newlyAcquiredObservations: any[] = [
       ...activeLocationPoints.map(point => ({
         ...point,
         timestamp: point.timestamp.toISOString(),
@@ -1328,48 +1328,35 @@ router.post('/acquire', async (req: Request, res: Response) => {
           acquisitionMethod: 'active-provider-pull',
         },
       })),
-      ...persistedObservations.map(point => ({
-        ...point,
-        timestamp: point.timestamp.toISOString(),
-        receivedAt: point.receivedAt?.toISOString(),
-        provenance: point.provenance
-          ? {
-              ...point.provenance,
-              capturedAt: point.provenance.capturedAt instanceof Date
-                ? point.provenance.capturedAt.toISOString()
-                : point.provenance.capturedAt,
-            }
-          : undefined,
-      })),
       ...directEvidence.map(point => {
-      const normalized = normalizeClientEvidence({
-        ...point,
-        timestamp: new Date(point.timestamp),
-        receivedAt: point.receivedAt ? new Date(point.receivedAt) : undefined,
-        provenance: point.provenance
-          ? {
-              ...point.provenance,
-              capturedAt: point.provenance.capturedAt
-                ? new Date(point.provenance.capturedAt)
-                : undefined,
-            }
-          : undefined,
-      } as GPSPoint);
+        const normalized = normalizeClientEvidence({
+          ...point,
+          timestamp: new Date(point.timestamp),
+          receivedAt: point.receivedAt ? new Date(point.receivedAt) : undefined,
+          provenance: point.provenance
+            ? {
+                ...point.provenance,
+                capturedAt: point.provenance.capturedAt
+                  ? new Date(point.provenance.capturedAt)
+                  : undefined,
+              }
+            : undefined,
+        } as GPSPoint);
 
-      return {
-        ...normalized,
-        timestamp: normalized.timestamp.toISOString(),
-        receivedAt: normalized.receivedAt?.toISOString(),
-        provenance: normalized.provenance
-          ? {
-              ...normalized.provenance,
-              capturedAt: normalized.provenance.capturedAt instanceof Date
-                ? normalized.provenance.capturedAt.toISOString()
-                : normalized.provenance.capturedAt,
-            }
-          : undefined,
-      };
-    }),
+        return {
+          ...normalized,
+          timestamp: normalized.timestamp.toISOString(),
+          receivedAt: normalized.receivedAt?.toISOString(),
+          provenance: normalized.provenance
+            ? {
+                ...normalized.provenance,
+                capturedAt: normalized.provenance.capturedAt instanceof Date
+                  ? normalized.provenance.capturedAt.toISOString()
+                  : normalized.provenance.capturedAt,
+              }
+            : undefined,
+        };
+      }),
     ];
 
     for (const source of report.sources || []) {
@@ -1377,7 +1364,7 @@ router.post('/acquire', async (req: Request, res: Response) => {
         source?.data,
         String(source?.name || 'public_record'),
         normalizeConfidence(source?.confidence),
-        observations,
+        newlyAcquiredObservations,
       );
     }
 
@@ -1386,11 +1373,11 @@ router.post('/acquire', async (req: Request, res: Response) => {
         result?.metadata,
         String(result?.title || 'web_discovery'),
         normalizeConfidence((result?.relevanceScore ?? 0) / 100),
-        observations,
+        newlyAcquiredObservations,
       );
     }
 
-    const normalizedLocationObservations: GPSPoint[] = dedupeObservations(observations)
+    const normalizedNewLocationObservations: GPSPoint[] = dedupeObservations(newlyAcquiredObservations)
       .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
       .map(point => ({
         ...point,
@@ -1405,6 +1392,16 @@ router.post('/acquire', async (req: Request, res: Response) => {
             }
           : undefined,
       }));
+    const newRawLocationObservations = assessLocationQuality(
+      normalizedNewLocationObservations,
+    ).points;
+
+    const normalizedLocationObservations: GPSPoint[] = dedupeObservations([
+      ...persistedObservations,
+      ...newRawLocationObservations,
+    ])
+      .sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+
 
     const locationQuality = assessLocationQuality(normalizedLocationObservations);
     const qualityLocationObservations = locationQuality.points;
@@ -1587,7 +1584,10 @@ router.post('/acquire', async (req: Request, res: Response) => {
       sessionId: acquisitionSessionId,
       subjectLabel: resolvedTargetLabel,
       clues: [target, details],
-      observations: solvedLocationObservations,
+      // Canonical history stores raw accepted observations only. Previously
+      // persisted points participate in solving but are never transformed and written
+      // back again, preventing recursive smoothing from manufacturing duplicate history.
+      observations: newRawLocationObservations,
       state: {
         constraintSolverDiagnostics: constraintSolution.diagnostics,
         identityConfidence,
