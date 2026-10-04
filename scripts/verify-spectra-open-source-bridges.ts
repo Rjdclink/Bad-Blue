@@ -262,6 +262,41 @@ try {
   assert.equal(traccar.measurements[0].accuracy, 8);
   assert.match(String(traccar.measurements[0].correlationGroup), /:7$/);
 
+  const meshtastic = normalizeSpectraOpenSourceBridgePayload(
+    'meshtastic-position',
+    'meshtastic-test',
+    {
+      from: 123456789,
+      id: 42,
+      rx_time: 1791061300,
+      rx_rssi: -91,
+      rx_snr: 8.5,
+      via_mqtt: true,
+      decoded: {
+        payload: {
+          latitude_i: 412566000,
+          longitude_i: -959346000,
+          altitude: 322,
+          gps_accuracy: 5,
+          ground_speed: 3.2,
+          ground_track: 185,
+          precision_bits: 28,
+          sats_in_view: 11,
+        },
+      },
+    },
+  );
+  assert.equal(meshtastic.measurements.length, 1);
+  assert.equal(meshtastic.measurements[0].latitude, 41.2566);
+  assert.equal(meshtastic.measurements[0].longitude, -95.9346);
+  assert.equal(meshtastic.measurements[0].accuracy, 5);
+  assert.equal(meshtastic.measurements[0].speed, 3.2);
+  assert.equal(meshtastic.measurements[0].heading, 185);
+  assert.equal(
+    (meshtastic.measurements[0].metadata as any).meshtasticViaMqtt,
+    true,
+  );
+
   const traccarNetworkFallback = normalizeSpectraOpenSourceBridgePayload(
     'traccar-position',
     'traccar-network-test',
