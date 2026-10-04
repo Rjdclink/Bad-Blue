@@ -53,7 +53,9 @@ function value(row: Record<string, unknown>, ...keys: string[]): string {
 }
 
 function finite(row: Record<string, unknown>, ...keys: string[]): number | null {
-  const parsed = Number(value(row, ...keys));
+  const raw = value(row, ...keys).trim();
+  if (!raw) return null;
+  const parsed = Number(raw);
   return Number.isFinite(parsed) ? parsed : null;
 }
 
