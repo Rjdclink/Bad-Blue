@@ -212,6 +212,16 @@ export const SPECTRA_ADAPTER_CAPABILITIES: SpectraAdapterCapability[] = [
     notes: 'Normalizes geolocated Kismet Wi-Fi/Bluetooth device records, including averaged/last geopoints and signal metadata, into the canonical telemetry path.',
   },
   {
+    id: 'mqtt-room-presence',
+    label: 'MQTT Room-compatible BLE presence',
+    mode: 'live-telemetry',
+    sourceTypes: ['bluetooth_proximity'],
+    configured: () => anyEnv('SPECTRA_MQTT_PROVIDER_ADAPTERS'),
+    priority: 'high',
+    supportsRealtime: true,
+    notes: 'Consumes Home Assistant MQTT Room-compatible room/distance messages from room-assistant, ESP32-MQTT-room and similar scanners using configured room anchors.',
+  },
+  {
     id: 'espresense-ble-ranging',
     label: 'ESPresense BLE indoor ranging',
     mode: 'live-telemetry',
