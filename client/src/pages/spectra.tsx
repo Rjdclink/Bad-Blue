@@ -199,6 +199,7 @@ export default function SpectraPage() {
   const continuousAcquisitionActiveRef = useRef(false);
   const continuousAcquisitionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeAcquisitionAbortRef = useRef<AbortController | null>(null);
+  const foregroundAcquisitionActiveRef = useRef(false);
   const recursivePassRef = useRef(0);
   const continuousRetryDelayRef = useRef(CONTINUOUS_ACQUISITION_DELAY_MS);
   const hardStopRef = useRef<(reason?: string, notifyServer?: boolean) => void>(() => undefined);
@@ -349,9 +350,17 @@ export default function SpectraPage() {
   ): Promise<AcquisitionResponse | null> => {
     const backgroundPass = options.backgroundPass === true;
 
-    if (!backgroundPass && activeAcquisitionAbortRef.current) {
-      activeAcquisitionAbortRef.current.abort(new Error('SPECTRA foreground acquisition superseded the background pass.'));
-      activeAcquisitionAbortRef.current = null;
+    if (!backgroundPass) {
+      // Mark foreground work before any await. A scheduled recursive pass can
+      // then observe this synchronously and defer instead of stealing the
+      // shared request/abort slot from newly supplied evidence.
+      foregroundAcquisitionActiveRef.current = true;
+      if (activeAcquisitionAbortRef.current) {
+        activeAcquisitionAbortRef.current.abort(
+          new Error('SPECTRA foreground acquisition superseded the background pass.'),
+        );
+        activeAcquisitionAbortRef.current = null;
+      }
     }
 
     const localController = options.signal ? null : new AbortController();
@@ -613,6 +622,9 @@ export default function SpectraPage() {
       ) {
         activeAcquisitionAbortRef.current = null;
       }
+      if (!backgroundPass) {
+        foregroundAcquisitionActiveRef.current = false;
+      }
     }
   }, [addMessage, directEvidence, speakIfEnabled]);
 
@@ -672,6 +684,14 @@ export default function SpectraPage() {
 
     const runPass = async () => {
       if (!continuousAcquisitionActiveRef.current) return;
+
+      if (foregroundAcquisitionActiveRef.current) {
+        continuousAcquisitionTimerRef.current = setTimeout(
+          () => void runPass(),
+          jitteredAcquisitionDelay(continuousRetryDelayRef.current),
+        );
+        return;
+      }
 
       const controller = new AbortController();
       activeAcquisitionAbortRef.current = controller;
