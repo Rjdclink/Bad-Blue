@@ -182,6 +182,16 @@ export const SPECTRA_ADAPTER_CAPABILITIES: SpectraAdapterCapability[] = [
     notes: 'Reconnectable authenticated WSS transport for configured infrastructure providers, with deduplication and stream health reporting.',
   },
   {
+    id: 'kismet-device-location',
+    label: 'Kismet Wi-Fi/Bluetooth device-location bridge',
+    mode: 'provider-pull',
+    sourceTypes: ['wifi_fingerprint','bluetooth_proximity'],
+    configured: () => anyEnv('SPECTRA_ACTIVE_PROVIDER_ADAPTERS'),
+    priority: 'high',
+    supportsRealtime: true,
+    notes: 'Normalizes geolocated Kismet Wi-Fi/Bluetooth device records, including averaged/last geopoints and signal metadata, into the canonical telemetry path.',
+  },
+  {
     id: 'espresense-ble-ranging',
     label: 'ESPresense BLE indoor ranging',
     mode: 'live-telemetry',
