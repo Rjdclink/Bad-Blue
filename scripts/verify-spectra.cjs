@@ -741,8 +741,8 @@ test('Infrastructure floorplan and identity helper utilities remain bounded and 
 test('SPECTRA exposes a pinned v1 interface with OpenAPI and compatibility mounts',
   apiContract.includes("export const SPECTRA_API_VERSION = '1'") &&
   apiContract.includes("openapi: '3.1.0'") &&
-  apiContract.includes("'/acquire'") &&
-  apiContract.includes("'/telemetry-history/{sessionId}'") &&
+  apiContract.includes("'/spectra/v1/acquire'") &&
+  apiContract.includes("'/geoconsole/v1/telemetry-history/{sessionId}'") &&
   routes.includes("router.get('/openapi.json'") &&
   serverRoutes.includes("app.use('/api/spectra/v1', spectraRoutes.default)") &&
   serverRoutes.includes("app.use('/api/geoconsole/v1', geoconsoleRoutes.default)"));
