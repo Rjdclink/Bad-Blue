@@ -88,6 +88,7 @@ const motionContextAccessMigration = read('server/migrations/068_spectra_motion_
 const spectraAccessMigration = read('server/migrations/065_spectra_server_only_access.sql');
 const spectraIndexMigration = read('server/migrations/066_spectra_foreign_key_indexes.sql');
 const spectraTenantHistoryIndexMigration = read('server/migrations/069_spectra_tenant_history_indexes.sql');
+const spectraAcquisitionControlMigration = read('server/migrations/070_spectra_acquisition_control.sql');
 const landing = read('client/src/pages/landing.tsx');
 const login = read('client/src/pages/login.tsx');
 
@@ -1061,11 +1062,19 @@ test('SPECTRA hard-stops local and server acquisition when the viewer exits',
   spectra.includes("hardStopRef.current('new_target', true)") &&
   routes.includes("router.post('/acquisition/stop'") &&
   routes.includes('stopSpectraAcquisitionSession'));
-test('Hard stop aborts in-flight and delayed server acquisition requests',
+test('Hard stop coordinates in-flight and delayed acquisition across replicas',
   acquisitionControl.includes('controllers: Set<AbortController>') &&
   acquisitionControl.includes('controller.abort') &&
-  acquisitionControl.includes('state.stopped') &&
-  routes.includes('registerSpectraAcquisitionRequest') &&
+  acquisitionControl.includes('spectra_acquisition_control') &&
+  acquisitionControl.includes('SHARED_STOP_POLL_MS = 500') &&
+  acquisitionControl.includes('assertSpectraAcquisitionSessionActive') &&
+  acquisitionControl.includes('INSERT INTO public.spectra_acquisition_control') &&
+  spectraAcquisitionControlMigration.includes('PRIMARY KEY (user_id, session_id)') &&
+  spectraAcquisitionControlMigration.includes('FROM PUBLIC, anon, authenticated') &&
+  spectraAcquisitionControlMigration.includes('TO service_role') &&
+  dockerfile.includes('070_spectra_acquisition_control.sql') &&
+  routes.includes('await assertSpectraAcquisitionSessionActive') &&
+  routes.includes('await stopSpectraAcquisitionSession') &&
   routes.includes('acquisitionLease.cancel') &&
   routes.includes('throwIfAcquisitionStopped(acquisitionLease.signal)'));
 test('Recursive discovery and active provider pulls inherit the acquisition abort signal',
