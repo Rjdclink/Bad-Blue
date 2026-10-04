@@ -942,6 +942,62 @@ function measurement(batch: ReturnType<typeof normalizeSpectraProviderPayload>, 
 
 {
   const batch = normalizeSpectraProviderPayload(
+    'meraki-scanning',
+    'meraki-native-v2',
+    {
+      version: '2.0',
+      secret: 'provider-secret',
+      type: 'DevicesSeen',
+      data: {
+        apMac: '00:18:0a:13:dd:b0',
+        observations: [{
+          clientMac: '18:fe:34:d7:7c:26',
+          seenTime: '2026-10-02T20:59:55Z',
+          rssi: 56,
+          location: {
+            lat: 43.5446,
+            lng: -96.7311,
+            unc: 7.5,
+            x: [],
+            y: [],
+          },
+        }],
+      },
+    },
+  );
+  const point = measurement(batch);
+  assert.equal(point.source, 'wifi_fingerprint');
+  assert.equal(point.accuracy, 7.5);
+  assert.equal(point.provenance?.recordId, '18:fe:34:d7:7c:26');
+}
+
+{
+  const batch = normalizeSpectraProviderPayload(
+    'meraki-scanning',
+    'meraki-native-ble',
+    {
+      version: '2.0',
+      type: 'BluetoothDevicesSeen',
+      data: {
+        observations: [{
+          clientMac: '18:fe:34:d7:7c:27',
+          seenTime: '2026-10-02T20:59:56Z',
+          location: {
+            lat: 43.54461,
+            lng: -96.73111,
+            unc: 10,
+          },
+        }],
+      },
+    },
+  );
+  const point = measurement(batch);
+  assert.equal(point.source, 'bluetooth_proximity');
+  assert.equal(point.accuracy, 10);
+}
+
+{
+  const batch = normalizeSpectraProviderPayload(
     'cisco-spaces-location',
     'cisco-spaces',
     {
