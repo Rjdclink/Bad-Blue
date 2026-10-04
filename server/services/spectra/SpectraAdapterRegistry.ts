@@ -182,6 +182,16 @@ export const SPECTRA_ADAPTER_CAPABILITIES: SpectraAdapterCapability[] = [
     notes: 'Reconnectable authenticated WSS transport for configured infrastructure providers, with deduplication and stream health reporting.',
   },
   {
+    id: 'find3-indoor-positioning',
+    label: 'FIND3 Wi-Fi/Bluetooth fingerprint positioning',
+    mode: 'provider-pull',
+    sourceTypes: ['wifi_fingerprint','bluetooth_proximity'],
+    configured: () => anyEnv('SPECTRA_ACTIVE_PROVIDER_ADAPTERS'),
+    priority: 'critical',
+    supportsRealtime: true,
+    notes: 'Consumes GPS-calibrated FIND3 fingerprint classification results and preserves the returned probability as location confidence.',
+  },
+  {
     id: 'chirpstack-location-bridge',
     label: 'ChirpStack location-event bridge',
     mode: 'live-telemetry',
