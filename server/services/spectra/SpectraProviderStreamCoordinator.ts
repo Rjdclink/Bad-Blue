@@ -302,7 +302,9 @@ async function decodeFrame(
   const parsedRecord =
     parsed && typeof parsed === 'object' && !Array.isArray(parsed)
       ? parsed as Record<string, unknown>
-      : {};
+      : Array.isArray(parsed)
+        ? { data: parsed }
+        : { value: parsed };
   return normalizeSpectraProviderPayload(
     runtime.config.normalizerKind,
     runtime.config.id,
