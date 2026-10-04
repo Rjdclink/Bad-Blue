@@ -107,6 +107,36 @@ try {
 
   process.env.SPECTRA_ANCHOR_CATALOG_JSON = JSON.stringify([
     {
+      id: 'office',
+      latitude: 41.2575,
+      longitude: -95.9365,
+      accuracyMeters: 4,
+    },
+  ]);
+
+  const find3LabelOnly = normalizeSpectraOpenSourceBridgePayload(
+    'find3-location',
+    'find3-test',
+    {
+      data: {
+        prob: 0.83,
+        seen: 1,
+        device: 'wifi-phone-b',
+        loc: 'office',
+      },
+    },
+  );
+  assert.equal(find3LabelOnly.measurements.length, 1);
+  assert.equal(find3LabelOnly.measurements[0].latitude, 41.2575);
+  assert.equal(find3LabelOnly.measurements[0].longitude, -95.9365);
+  assert.equal(find3LabelOnly.measurements[0].accuracy, 4);
+  assert.equal(
+    (find3LabelOnly.measurements[0].metadata as any).find3CoordinateSource,
+    'configured-location-label-anchor',
+  );
+
+  process.env.SPECTRA_ANCHOR_CATALOG_JSON = JSON.stringify([
+    {
       id: 'room-kitchen',
       latitude: 41.255,
       longitude: -95.935,
