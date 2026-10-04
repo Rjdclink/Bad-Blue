@@ -18,6 +18,8 @@ export interface SpectraProviderStreamConfig {
   url: string;
   decoder: SpectraProviderStreamDecoder;
   normalizerKind: SpectraProviderNormalizerKind;
+  sessionId?: string;
+  subjectLabel?: string;
   authorizationEnv?: string;
   oauthClientIdEnv?: string;
   oauthClientSecretEnv?: string;
@@ -114,6 +116,8 @@ function loadConfigs(): SpectraProviderStreamConfig[] {
         url,
         decoder,
         normalizerKind,
+        sessionId: String(item?.sessionId || '').trim().slice(0, 200) || undefined,
+        subjectLabel: String(item?.subjectLabel || '').trim().slice(0, 500) || undefined,
         authorizationEnv: String(item?.authorizationEnv || '').trim() || undefined,
         oauthClientIdEnv: String(item?.oauthClientIdEnv || '').trim() || undefined,
         oauthClientSecretEnv: String(item?.oauthClientSecretEnv || '').trim() || undefined,
@@ -275,6 +279,8 @@ async function decodeFrame(
       runtime.config.normalizerKind,
       runtime.config.id,
       {
+        sessionId: runtime.config.sessionId,
+        subjectLabel: runtime.config.subjectLabel,
         events: [decoded.payload],
         metadata: {
           streamDecoder: 'aruba-location-protobuf',
@@ -293,10 +299,22 @@ async function decodeFrame(
   } catch {
     return null;
   }
+  const parsedRecord =
+    parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {};
   return normalizeSpectraProviderPayload(
     runtime.config.normalizerKind,
     runtime.config.id,
-    parsed,
+    {
+      ...parsedRecord,
+      sessionId: runtime.config.sessionId
+        || String(parsedRecord.sessionId || '').trim()
+        || undefined,
+      subjectLabel: runtime.config.subjectLabel
+        || String(parsedRecord.subjectLabel || '').trim()
+        || undefined,
+    },
   );
 }
 
@@ -459,11 +477,13 @@ export function getConfiguredSpectraProviderStreams(): Array<{
   label: string;
   decoder: SpectraProviderStreamDecoder;
   normalizerKind: string;
+  sessionBound: boolean;
 }> {
   return loadConfigs().map(config => ({
     id: config.id,
     label: config.label,
     decoder: config.decoder,
     normalizerKind: config.normalizerKind,
+    sessionBound: Boolean(config.sessionId),
   }));
 }
