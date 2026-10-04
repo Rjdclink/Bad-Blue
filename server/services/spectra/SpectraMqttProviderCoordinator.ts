@@ -266,7 +266,9 @@ async function processPublish(runtime: Runtime, flags: number, body: Buffer): Pr
     const payloadRecord =
       payload && typeof payload === 'object' && !Array.isArray(payload)
         ? payload as Record<string, unknown>
-        : {};
+        : Array.isArray(payload)
+          ? { data: payload }
+          : { value: payload };
     const batch = normalizeSpectraProviderPayload(
       runtime.config.normalizerKind,
       runtime.config.id,
