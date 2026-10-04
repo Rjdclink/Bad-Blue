@@ -21,6 +21,7 @@ try {
       'meshtastic-position',
       'mqtt-room-presence',
       'omlox-location',
+      'frigate-event',
       'openmqttgateway-ble',
       'openwisp-wifi-session',
       'owntracks-location',
@@ -399,6 +400,54 @@ try {
   assert.equal(omlox.measurements[0].longitude, -95.9349);
   assert.equal(omlox.measurements[0].accuracy, 0.35);
   assert.match(String(omlox.measurements[0].correlationGroup), /trackable-1$/);
+
+  const originalCameraAnchors = process.env.SPECTRA_ANCHOR_CATALOG_JSON;
+  try {
+    process.env.SPECTRA_ANCHOR_CATALOG_JSON = JSON.stringify([{
+      id: 'front_door',
+      latitude: 41.2567,
+      longitude: -95.9347,
+      accuracyMeters: 8,
+      metadata: { coverageMeters: 32 },
+    }]);
+
+    const frigate = normalizeSpectraOpenSourceBridgePayload(
+      'frigate-event',
+      'frigate-test',
+      {
+        type: 'update',
+        after: {
+          id: 'event-person-1',
+          camera: 'front_door',
+          frame_time: 1791072182.08,
+          label: 'person',
+          sub_label: ['Known Person', 0.91],
+          score: 0.88,
+          current_zones: ['porch'],
+          entered_zones: ['walkway', 'porch'],
+          active: true,
+        },
+        _spectraMqttTopic: 'frigate/events',
+      },
+    );
+    assert.equal(frigate.measurements.length, 1);
+    assert.equal(frigate.measurements[0].kind, 'position');
+    assert.equal(frigate.measurements[0].source, 'visual_detection');
+    assert.equal(frigate.measurements[0].latitude, 41.2567);
+    assert.equal(frigate.measurements[0].longitude, -95.9347);
+    assert.equal(frigate.measurements[0].accuracy, 32);
+    assert.equal(frigate.measurements[0].cameraId, 'front_door');
+    assert.equal(
+      (frigate.measurements[0].metadata as any).coordinateInterpretation,
+      'camera-coverage-region-not-object-pixel-geolocation',
+    );
+  } finally {
+    if (originalCameraAnchors === undefined) {
+      delete process.env.SPECTRA_ANCHOR_CATALOG_JSON;
+    } else {
+      process.env.SPECTRA_ANCHOR_CATALOG_JSON = originalCameraAnchors;
+    }
+  }
 
   const openMqttGateway = normalizeSpectraOpenSourceBridgePayload(
     'openmqttgateway-ble',
