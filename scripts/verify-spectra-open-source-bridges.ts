@@ -262,6 +262,50 @@ try {
   assert.equal(traccar.measurements[0].accuracy, 8);
   assert.match(String(traccar.measurements[0].correlationGroup), /:7$/);
 
+  const traccarNetworkFallback = normalizeSpectraOpenSourceBridgePayload(
+    'traccar-position',
+    'traccar-network-test',
+    {
+      id: 56,
+      deviceId: 8,
+      protocol: 'watch',
+      fixTime: '2026-10-03T23:00:05.000Z',
+      network: {
+        homeMobileCountryCode: 310,
+        homeMobileNetworkCode: 260,
+        radioType: 'lte',
+        carrier: 'Example Carrier',
+        wifiAccessPoints: [{
+          macAddress: '00:11:22:33:44:55',
+          signalStrength: -61,
+          channel: 6,
+        }],
+        cellTowers: [{
+          mobileCountryCode: 310,
+          mobileNetworkCode: 260,
+          locationAreaCode: 40495,
+          cellId: 17811,
+          signalStrength: -89,
+          radioType: 'lte',
+        }],
+      },
+    },
+  );
+  assert.equal(traccarNetworkFallback.measurements.length, 1);
+  assert.equal(traccarNetworkFallback.measurements[0].kind, 'radio');
+  assert.equal(
+    (traccarNetworkFallback.measurements[0].metadata as any).traccarNetworkFallback,
+    true,
+  );
+  assert.equal(
+    (traccarNetworkFallback.measurements[0].wifiAccessPoints as any[])[0].macAddress,
+    '00:11:22:33:44:55',
+  );
+  assert.equal(
+    (traccarNetworkFallback.measurements[0].cellTowers as any[])[0].mobileNetworkCode,
+    260,
+  );
+
   console.log('SPECTRA open-source acquisition bridge verification passed');
 } finally {
   if (originalAnchors === undefined) delete process.env.SPECTRA_ANCHOR_CATALOG_JSON;
