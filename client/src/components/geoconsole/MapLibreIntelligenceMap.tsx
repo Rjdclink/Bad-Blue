@@ -813,7 +813,7 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
       pitch: layers.terrain || layers.buildings ? 52 : 0,
       bearing: 0,
       antialias: typeof navigator === 'undefined' || !navigator.hardwareConcurrency || navigator.hardwareConcurrency > 4,
-      attributionControl: true,
+      attributionControl: {},
       maxPitch: 85,
     });
 
