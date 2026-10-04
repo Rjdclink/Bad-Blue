@@ -40,7 +40,8 @@ test('SPECTRA begins with the target question',
   spectra.includes("What is it that you want to locate?"));
 test('SPECTRA waits for target information before acquisition',
   spectra.includes("phase === 'awaiting_details'") &&
-  spectra.includes('await acquireTarget(target, message)'));
+  spectra.includes("setPhase('awaiting_details')") &&
+  spectra.includes('await acquireTarget(targetRef.current || target, message)'));
 test('No manual coordinate-entry workflow remains in SPECTRA',
   !spectra.includes('Add Point') &&
   !spectra.includes('Enter latitude') &&

@@ -22,6 +22,7 @@ const test = (name, condition) => {
 
 const dashboard = read('client/src/components/geoconsole/GeoconsoleRadarDashboard.tsx');
 const map = read('client/src/components/geoconsole/MapLibreIntelligenceMap.tsx');
+const mapRenderer = read('client/src/components/geoconsole/MapRendererAdapter.ts');
 const runtime = read('client/src/hooks/useGeoRuntime.ts');
 const routes = read('server/routes/geoconsole.routes.ts');
 const hybrid = read('server/services/geoconsole/index.ts');
@@ -39,7 +40,10 @@ test('Dashboard exposes weather-map-style -1h/+1h timeline',
 test('Dashboard timeline distinguishes Futurecast',
   dashboard.includes('timelineIsPrediction') && dashboard.includes('Futurecast'));
 test('Map supports touch/mouse native navigation',
-  map.includes('new maplibregl.Map') && map.includes('NavigationControl'));
+  map.includes('renderer.adapter.createMap') &&
+  map.includes('renderer.adapter.createNavigationControl') &&
+  mapRenderer.includes('createMap: options => new MapLibreMap(options)') &&
+  mapRenderer.includes('createNavigationControl: options => new MapLibreNavigationControl'));
 test('Map follows target only while FIX remains enabled',
   map.includes('lockOnTarget') && map.includes('onUserInteraction'));
 
