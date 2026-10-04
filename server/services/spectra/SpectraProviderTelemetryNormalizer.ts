@@ -16,11 +16,18 @@ import {
   type SpectraInfrastructureProviderKind,
 } from './SpectraInfrastructureProviderNormalizer';
 
+import {
+  normalizeSpectraOpenSourceBridgePayload,
+  SPECTRA_OPEN_SOURCE_BRIDGE_KINDS,
+  type SpectraOpenSourceBridgeKind,
+} from './SpectraOpenSourceBridgeNormalizer';
+
 export type SpectraProviderNormalizerKind =
   | 'camara-location-retrieval'
   | 'bluetooth-scanner'
   | 'accessory-network'
   | SpectraInfrastructureProviderKind
+  | SpectraOpenSourceBridgeKind
   | SpectraAdvancedRadioNormalizerKind
   | SpectraExternalLocationNormalizerKind;
 
@@ -29,6 +36,7 @@ export const SPECTRA_PROVIDER_NORMALIZER_KINDS: readonly SpectraProviderNormaliz
   'bluetooth-scanner',
   'accessory-network',
   ...SPECTRA_INFRASTRUCTURE_PROVIDER_KINDS,
+  ...SPECTRA_OPEN_SOURCE_BRIDGE_KINDS,
   ...SPECTRA_ADVANCED_RADIO_NORMALIZER_KINDS,
   ...SPECTRA_EXTERNAL_LOCATION_NORMALIZER_KINDS,
 ] as const;
@@ -425,6 +433,13 @@ export function normalizeSpectraProviderPayload(
       if ((SPECTRA_INFRASTRUCTURE_PROVIDER_KINDS as readonly string[]).includes(kind)) {
         return normalizeSpectraInfrastructureProviderPayload(
           kind as SpectraInfrastructureProviderKind,
+          normalizedProviderId,
+          payload,
+        );
+      }
+      if ((SPECTRA_OPEN_SOURCE_BRIDGE_KINDS as readonly string[]).includes(kind)) {
+        return normalizeSpectraOpenSourceBridgePayload(
+          kind as SpectraOpenSourceBridgeKind,
           normalizedProviderId,
           payload,
         );
