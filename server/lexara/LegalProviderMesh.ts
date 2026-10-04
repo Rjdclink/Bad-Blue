@@ -44,6 +44,18 @@ const clean = (v: unknown) => {
   }
 };
 
+function independentSearchBase(value: string | undefined): string {
+  const base = String(value || '').trim();
+  if (!base) return '';
+  try {
+    const host = new URL(base).hostname.toLowerCase();
+    if (/^pantheon-(?:ddgs|searxng|openserp)\.railway\.internal$/.test(host)) return '';
+  } catch {
+    return base;
+  }
+  return base;
+}
+
 async function withTimeout<T>(
   timeoutMs: number,
   signal: AbortSignal | undefined,
@@ -184,7 +196,7 @@ async function duckDuckGoInstantAnswer(query: string, signal?: AbortSignal): Pro
 }
 
 async function searxng(query: string, signal?: AbortSignal): Promise<LegalMeshCandidate[]> {
-  const base = process.env.SEARXNG_URL?.trim();
+  const base = independentSearchBase(process.env.SEARXNG_URL);
   if (!base) return [];
   const result = await withTimeout(2_200, signal, async requestSignal => {
     const endpoint = new URL('/search', base.endsWith('/') ? base : base + '/');
@@ -203,7 +215,7 @@ async function searxng(query: string, signal?: AbortSignal): Promise<LegalMeshCa
 }
 
 async function ddgsBackend(query: string, backend: string, budgetMs: number, signal?: AbortSignal): Promise<LegalMeshCandidate[]> {
-  const base = process.env.DDGS_URL?.trim();
+  const base = independentSearchBase(process.env.DDGS_URL);
   if (!base) return [];
   const result = await withTimeout(budgetMs, signal, async requestSignal => {
     const endpoint = new URL('/search/text', base.endsWith('/') ? base : base + '/');
@@ -223,7 +235,7 @@ async function ddgsBackend(query: string, backend: string, budgetMs: number, sig
 }
 
 async function ddgs(query: string, signal?: AbortSignal): Promise<LegalMeshCandidate[]> {
-  if (!process.env.DDGS_URL?.trim()) return [];
+  if (!independentSearchBase(process.env.DDGS_URL)) return [];
   const primary = [...new Set((process.env.LEXARA_DDGS_BACKEND?.trim() || 'auto').split(',').map(x=>x.trim()).filter(Boolean))].join(',');
   const fallback = [...new Set((process.env.LEXARA_DDGS_FALLBACK_BACKENDS?.trim() || 'auto').split(',').map(x=>x.trim()).filter(x=>x && x!==primary))].join(',');
   const first = await ddgsBackend(query, primary, 1_300, signal);
@@ -231,7 +243,7 @@ async function ddgs(query: string, signal?: AbortSignal): Promise<LegalMeshCandi
 }
 
 async function openserp(query: string, signal?: AbortSignal): Promise<LegalMeshCandidate[]> {
-  const base = process.env.OPENSERP_URL?.trim();
+  const base = independentSearchBase(process.env.OPENSERP_URL);
   if (!base) return [];
   const result = await withTimeout(2_200, signal, async requestSignal => {
     const endpoint = new URL('/mega/search', base.endsWith('/') ? base : base + '/');
