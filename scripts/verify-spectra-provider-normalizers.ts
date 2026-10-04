@@ -1074,6 +1074,45 @@ function measurement(batch: ReturnType<typeof normalizeSpectraProviderPayload>, 
 }
 
 {
+  const originalAnchors = process.env.SPECTRA_ANCHOR_CATALOG_JSON;
+  try {
+    process.env.SPECTRA_ANCHOR_CATALOG_JSON = JSON.stringify([{
+      id: 'ap-fixture-1',
+      latitude: 43.5447,
+      longitude: -96.7312,
+      accuracyMeters: 8,
+      metadata: { coverageMeters: 40 },
+    }]);
+
+    const batch = normalizeSpectraProviderPayload(
+      'unifi-client-location',
+      'unifi-fixture',
+      {
+        clients: [{
+          mac: '00:11:22:33:44:66',
+          apId: 'ap-fixture-1',
+          lastSeen: '2026-10-03T23:04:00Z',
+          connected: true,
+        }],
+      },
+    );
+    const point = measurement(batch);
+    assert.equal(point.source, 'wifi_fingerprint');
+    assert.equal(point.latitude, 43.5447);
+    assert.equal(point.longitude, -96.7312);
+    assert.equal(point.accuracy, 40);
+    assert.equal(point.metadata.coordinateSource, 'configured-anchor');
+    assert.ok(point.confidence <= 0.72);
+  } finally {
+    if (originalAnchors === undefined) {
+      delete process.env.SPECTRA_ANCHOR_CATALOG_JSON;
+    } else {
+      process.env.SPECTRA_ANCHOR_CATALOG_JSON = originalAnchors;
+    }
+  }
+}
+
+{
   const batch = normalizeSpectraProviderPayload(
     'connected-vehicle-location',
     'tesla-fleet',
@@ -1151,6 +1190,11 @@ for (const kind of [
   'aws-iot-device-location',
   'arcore-geospatial-pose',
   'connected-vehicle-location',
+  'mist-location',
+  'extreme-location',
+  'unifi-client-location',
+  'aruba-location-json',
+  'generic-infrastructure-location',
 ]) {
   assert.ok(
     SPECTRA_PROVIDER_NORMALIZER_KINDS.includes(kind as any),
