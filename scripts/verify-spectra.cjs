@@ -414,6 +414,12 @@ test('Constraint solver is wired before posterior confidence and Futurecast',
   constraintSolver.includes('buildSpectraSpatialConstraints') &&
   constraintSolver.includes('dependencyGraph') &&
   constraintSolver.includes('spectra_forward_backward_motion_smoother'));
+test('Constraint solver scores bearing contradictions and scopes dependency penalties to relevant time windows',
+  constraintSolver.includes("c.kind === 'bearing' && c.anchor && c.bearingDegrees !== undefined") &&
+  constraintSolver.includes('(c.bearingSigmaDegrees ?? 12) * 4') &&
+  constraintSolver.includes('2 * rangeMeters * Math.sin(') &&
+  constraintSolver.includes('const effectiveWeights = dependencyAdjustedWeights(relevant)') &&
+  !constraintSolver.includes('const effectiveWeights = dependencyAdjustedWeights(constraints)'));
 test('Ranging keeps anchor geometry for the common constraint layer',
   geoconsoleRoutes.includes('constraintAnchors: anchors.map(anchor => ({') &&
   geoconsoleRoutes.includes('bearingUncertaintyDegrees: anchor.raw.bearingUncertaintyDegrees'));
