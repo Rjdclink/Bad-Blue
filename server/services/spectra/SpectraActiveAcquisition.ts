@@ -15,6 +15,7 @@ interface ActiveProviderConfig {
   normalizerKind: SpectraProviderNormalizerKind | 'canonical-telemetry';
   target: SpectraActiveAcquisitionTarget;
   headersFromEnv?: Record<string, string>;
+  queryFromEnv?: Record<string, string>;
   timeoutMs: number;
 }
 
@@ -264,6 +265,14 @@ function configuredAdapters(): ActiveProviderConfig[] {
                   .filter(([header, envName]) => header && envName),
               )
             : undefined,
+        queryFromEnv:
+          item?.queryFromEnv && typeof item.queryFromEnv === 'object'
+            ? Object.fromEntries(
+                Object.entries(item.queryFromEnv)
+                  .map(([parameter, envName]) => [String(parameter), String(envName)])
+                  .filter(([parameter, envName]) => parameter && envName),
+              )
+            : undefined,
         timeoutMs: timeoutMs(item?.timeoutMs),
       }];
     });
@@ -419,6 +428,11 @@ async function fetchAdapter(
 ): Promise<SpectraNormalizedProviderBatch> {
   const url = templateUrl(config.url, input);
   if (!url) throw new Error('Configured active-provider URL is invalid.');
+
+  for (const [parameter, envName] of Object.entries(config.queryFromEnv || {})) {
+    const value = String(process.env[envName] || '').trim();
+    if (value) url.searchParams.set(parameter, value);
+  }
 
   const headers = headersFromConfig(config);
   if (
