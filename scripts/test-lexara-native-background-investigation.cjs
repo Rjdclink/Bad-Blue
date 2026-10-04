@@ -280,6 +280,8 @@ function reset(mode) {
     ['https://records.example.test/profile'],
     ['https://records.example.test/dob'],
   ]);
+  assert.equal(state.tierCalls[0].options.firstUseful, true,
+    'ordinary live background turns request first-useful provider/query timing');
   assert.equal(state.tierCalls[0].options.subject, 'Avery Example', 'person name is normalized before search');
   assert.equal(state.tierCalls[0].options.jurisdiction, 'Des Moines, Iowa', 'city and state both survive subject normalization');
   assert.match(dob.evidenceSummary, /SOURCE: https:\/\/records\.example\.test\/dob/);
