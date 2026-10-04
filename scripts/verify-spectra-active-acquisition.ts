@@ -16,6 +16,7 @@ const savedEnv = {
   ciscoToken: process.env.SPECTRA_CISCO_SPACES_TOKEN,
   activeAdapters: process.env.SPECTRA_ACTIVE_PROVIDER_ADAPTERS,
   anchors: process.env.SPECTRA_ANCHOR_CATALOG_JSON,
+  infrastructureBindings: process.env.SPECTRA_INFRASTRUCTURE_SUBJECT_BINDINGS,
 };
 
 function restoreEnv(name: string, value: string | undefined) {
@@ -211,6 +212,46 @@ try {
   assert.equal(skipped.batches.length, 0);
   assert.equal(skipped.attempts[0]?.status, 'skipped');
 
+  process.env.SPECTRA_INFRASTRUCTURE_SUBJECT_BINDINGS = JSON.stringify([{
+    providerId: 'android-collector-fixture',
+    identifier: 'device:device-b',
+    sessionId: 'bound-session',
+    subjectLabel: 'Bound managed device',
+  }]);
+
+  globalThis.fetch = async (input: any, init?: RequestInit) => {
+    assert.equal(String(input), 'https://collector.example/device/device-b');
+    const body = JSON.parse(String(init?.body || '{}'));
+    assert.equal(body.deviceRef, 'device-b');
+    return new Response(JSON.stringify({
+      measurements: [{
+        kind: 'position',
+        source: 'device_gps',
+        timestamp: '2026-10-03T15:01:30Z',
+        latitude: 43.552,
+        longitude: -96.732,
+        accuracy: 5,
+        confidence: 0.94,
+        provider: 'android-device',
+      }],
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const configuredBindingAcquisition = await acquireSpectraActiveTelemetry({
+    sessionId: 'bound-session',
+    subjectLabel: 'Bound managed device',
+  });
+  assert.equal(configuredBindingAcquisition.batches.length, 1);
+  assert.equal(
+    configuredBindingAcquisition.attempts.find(
+      attempt => attempt.id === 'android-collector-fixture'
+    )?.status,
+    'fulfilled',
+  );
+
   process.env.SPECTRA_ANCHOR_CATALOG_JSON = JSON.stringify([
     { id: 'uwb-a', latitude: 43.55, longitude: -96.73, accuracyMeters: 0.1 },
     { id: 'uwb-b', latitude: 43.5505, longitude: -96.73, accuracyMeters: 0.1 },
@@ -293,6 +334,10 @@ try {
   restoreEnv(
     'SPECTRA_ANCHOR_CATALOG_JSON',
     savedEnv.anchors,
+  );
+  restoreEnv(
+    'SPECTRA_INFRASTRUCTURE_SUBJECT_BINDINGS',
+    savedEnv.infrastructureBindings,
   );
   delete process.env.FIXTURE_COLLECTOR_TOKEN;
 }
