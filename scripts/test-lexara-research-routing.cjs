@@ -219,6 +219,23 @@ test('Lexara live first-useful mode returns before a slow provider while default
   assert(allResults.some(item => item.url === urls[1]));
 });
 
+test('retired Pantheon internal search endpoints are ignored by the Lexara mesh', async () => {
+  const h = harness({
+    env: {
+      DDGS_URL: 'http://pantheon-ddgs.railway.internal:8080',
+      SEARXNG_URL: 'http://pantheon-searxng.railway.internal:8080',
+      OPENSERP_URL: 'http://pantheon-openserp.railway.internal:8080',
+    },
+  });
+  const mesh = h.load('server/lexara/LegalProviderMesh.ts');
+  await mesh.discoverLegalMeshTier3('contract fixture', undefined, { firstUseful: true });
+  assert.equal(
+    h.calls.http.some(call => /pantheon-(?:ddgs|searxng|openserp)\.railway\.internal/i.test(call.url)),
+    false,
+    'retired Pantheon internal endpoints must never receive Lexara search traffic',
+  );
+});
+
 test('legal discovery misses and learned-query retries never reopen OpenRouter', async () => {
   const h = harness({ env: { DDGS_URL: 'https://ddgs.fixture.test' }, learnedPattern: 'court records' });
   const result = await h.load('server/services/pantheon/PantheonDiscoveryCoordinator.ts').discoverPantheonSourcesParallel('contract fixture', [], { providerPolicy: 'legalwhat', includePaidFallback: true, timeoutMs: 250 });
