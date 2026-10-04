@@ -1,3 +1,4 @@
+import * as cheerio from 'cheerio';
 import { resolveConfiguredSpectraAnchor } from './SpectraAnchorRegistry';
 import { resolveSpectraInfrastructureBinding } from './SpectraInfrastructureIdentity';
 
@@ -9,7 +10,8 @@ export type SpectraOpenSourceBridgeKind =
   | 'kismet-device-location'
   | 'openwisp-wifi-session'
   | 'traccar-position'
-  | 'meshtastic-position';
+  | 'meshtastic-position'
+  | 'cot-location';
 
 export interface SpectraOpenSourceBridgeBatch {
   sessionId?: string;
@@ -1314,6 +1316,104 @@ function normalizeMeshtastic(
   };
 }
 
+function normalizeCot(
+  providerId: string,
+  payload: unknown,
+): SpectraOpenSourceBridgeBatch {
+  const outer = record(payload);
+  const rawXml = typeof payload === 'string'
+    ? payload
+    : String(
+        outer.xml
+        ?? outer.cot
+        ?? outer.eventXml
+        ?? outer.event_xml
+        ?? '',
+      );
+  if (!rawXml.trim() || rawXml.length > 2_000_000) {
+    throw new Error('Cursor-on-Target payload contains no bounded XML event.');
+  }
+
+  const $ = cheerio.load(rawXml, { xmlMode: true });
+  const event = $('event').first();
+  const point = event.children('point').first();
+  if (!event.length || !point.length) {
+    throw new Error('Cursor-on-Target payload is missing event/point elements.');
+  }
+
+  const latitude = bounded(point.attr('lat'), -90, 90);
+  const longitude = bounded(point.attr('lon'), -180, 180);
+  const timestamp = isoTimestamp(
+    event.attr('time')
+    ?? event.attr('start'),
+  );
+  if (latitude === null || longitude === null || !timestamp) {
+    throw new Error('Cursor-on-Target event lacks valid coordinates or event time.');
+  }
+
+  const circularError = finite(point.attr('ce'));
+  const linearError = finite(point.attr('le'));
+  const altitude = finite(point.attr('hae'));
+  const uid = text(event.attr('uid'), 300);
+  const type = text(event.attr('type'), 160);
+  const how = text(event.attr('how'), 80);
+  const stale = isoTimestamp(event.attr('stale'));
+  const contact = event.find('detail > contact').first();
+  const track = event.find('detail > track').first();
+  const callsign = text(contact.attr('callsign'), 300);
+  const speed = finite(track.attr('speed'));
+  const course = bounded(track.attr('course'), 0, 360);
+  const accuracy =
+    circularError !== null && circularError >= 0
+      ? Math.min(5_000_000, circularError)
+      : undefined;
+
+  return {
+    sessionId: text(outer.sessionId, 200),
+    subjectLabel: text(outer.subjectLabel, 500) || callsign,
+    sourceId: providerId.trim().slice(0, 200),
+    measurements: [{
+      kind: 'position',
+      source: 'device_gps',
+      timestamp,
+      latitude,
+      longitude,
+      altitude: altitude ?? undefined,
+      accuracy,
+      verticalAccuracy:
+        linearError !== null && linearError >= 0
+          ? Math.min(5_000_000, linearError)
+          : undefined,
+      speed:
+        speed !== null && speed >= 0
+          ? speed
+          : undefined,
+      heading: course ?? undefined,
+      confidence: confidenceForAccuracy(
+        accuracy !== undefined ? accuracy : 30,
+        0.96,
+      ),
+      provider: providerId.trim().slice(0, 200),
+      recordId: uid,
+      correlationGroup: `cot:${providerId.trim().slice(0, 120)}:${uid || callsign || 'event'}`,
+      metadata: {
+        acquisitionMethod: 'cursor-on-target',
+        cotUid: uid,
+        cotType: type,
+        cotHow: how,
+        cotCallsign: callsign,
+        cotStaleAt: stale,
+        cotEventVersion: text(event.attr('version'), 40),
+      },
+    }],
+    metadata: {
+      normalization: 'cot-location',
+      observationCount: 1,
+      normalizedAt: new Date().toISOString(),
+    },
+  };
+}
+
 function applyConfiguredBridgeIdentity(
   providerId: string,
   batch: SpectraOpenSourceBridgeBatch,
@@ -1338,6 +1438,7 @@ function applyConfiguredBridgeIdentity(
       ?? metadata.espresenseDeviceId
       ?? metadata.traccarDeviceId
       ?? metadata.meshtasticNodeId
+      ?? metadata.cotUid
       ?? metadata.find3Device,
       200,
     ),
@@ -1392,6 +1493,9 @@ export function normalizeSpectraOpenSourceBridgePayload(
     case 'meshtastic-position':
       batch = normalizeMeshtastic(providerId, payload);
       break;
+    case 'cot-location':
+      batch = normalizeCot(providerId, payload);
+      break;
     default: {
       const exhaustive: never = kind;
       throw new Error(`Unsupported open-source bridge normalizer: ${String(exhaustive)}`);
@@ -1411,4 +1515,5 @@ export const SPECTRA_OPEN_SOURCE_BRIDGE_KINDS:
     'openwisp-wifi-session',
     'traccar-position',
     'meshtastic-position',
+    'cot-location',
   ] as const;
