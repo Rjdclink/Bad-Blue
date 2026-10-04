@@ -10,6 +10,10 @@ export interface SpectraWzdxFeed {
   needsApiKey: boolean;
   startDate?: string;
   endDate?: string;
+  stateCoordinate?: {
+    latitude: number;
+    longitude: number;
+  };
   source: 'USDOT WZDx Feed Registry';
 }
 
@@ -72,6 +76,22 @@ export async function loadSpectraWzdxRegistry(
       const needsApiKey = boolValue(row?.needapikey);
       if (!url || !active || needsApiKey) return [];
 
+      const coordinates = Array.isArray(row?.geocoded_column?.coordinates)
+        ? row.geocoded_column.coordinates
+        : [];
+      const coordinateLongitude = Number(coordinates[0]);
+      const coordinateLatitude = Number(coordinates[1]);
+      const stateCoordinate =
+        Number.isFinite(coordinateLatitude)
+        && Number.isFinite(coordinateLongitude)
+        && coordinateLatitude >= -90 && coordinateLatitude <= 90
+        && coordinateLongitude >= -180 && coordinateLongitude <= 180
+          ? {
+              latitude: coordinateLatitude,
+              longitude: coordinateLongitude,
+            }
+          : undefined;
+
       return [{
         state: clean(row?.state, 80),
         issuingOrganization: clean(row?.issuingorganization, 200),
@@ -84,6 +104,7 @@ export async function loadSpectraWzdxRegistry(
         needsApiKey,
         startDate: clean(row?.sdate, 80),
         endDate: clean(row?.edate, 80),
+        stateCoordinate,
         source: 'USDOT WZDx Feed Registry' as const,
       }];
     });
