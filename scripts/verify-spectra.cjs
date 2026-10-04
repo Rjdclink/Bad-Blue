@@ -916,6 +916,7 @@ test('Open-source acquisition bridge normalizers cover the high-value GitHub bri
     'gpsd-tpv',
     'omlox-location',
     'mqtt-room-presence',
+    'openmqttgateway-ble',
   ].every(kind => openSourceBridgeNormalizer.includes(`'${kind}'`)) &&
   providerNormalizer.includes('SPECTRA_OPEN_SOURCE_BRIDGE_KINDS') &&
   providerNormalizer.includes('normalizeSpectraOpenSourceBridgePayload'));
@@ -929,6 +930,13 @@ test('ChirpStack preserves LocationEvent accuracy and device/application identit
   openSourceBridgeNormalizer.includes('chirpStackLocationSource') &&
   openSourceBridgeNormalizer.includes('chirpStackApplicationId') &&
   openSourceBridgeNormalizer.includes('location.accuracy'));
+test('OpenMQTTGateway adds raw BLE scanner ranging through the existing MQTT and anchor mesh',
+  openSourceBridgeNormalizer.includes("'openmqttgateway-ble'") &&
+  openSourceBridgeNormalizer.includes('OpenMQTTGateway BLE payload requires') &&
+  openSourceBridgeNormalizer.includes("acquisitionMethod: 'openmqttgateway-ble'") &&
+  adapterRegistry.includes("id: 'openmqttgateway-ble'") &&
+  railwayEnvExample.includes('"normalizerKind":"openmqttgateway-ble"') &&
+  openSourceBridgeVerifier.includes('const openMqttGateway ='));
 test('omlox and MQTT Room add standardized RTLS and room-ranging acquisition paths',
   openSourceBridgeNormalizer.includes("'omlox-location'") &&
   openSourceBridgeNormalizer.includes('location_updates:geojson') &&
@@ -1017,6 +1025,7 @@ test('Focused bridge behavior verifier exercises the complete open-source normal
     'gpsd-tpv',
     'omlox-location',
     'mqtt-room-presence',
+    'openmqttgateway-ble',
   ].every(kind => openSourceBridgeVerifier.includes(`'${kind}'`)));
 
 test('SPECTRA recursively reacquires until page exit with one stable session',
