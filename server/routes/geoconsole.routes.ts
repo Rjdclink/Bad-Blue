@@ -411,18 +411,29 @@ function stableJson(value: unknown): string {
   ).join(',')}}`;
 }
 
-function infrastructureWebhookAuthorized(req: Request, providerId: string): boolean {
+function infrastructureWebhookEntry(
+  providerId: string,
+): Record<string, any> | null {
   const raw = String(process.env.SPECTRA_INFRASTRUCTURE_WEBHOOK_AUTH || '').trim();
-  if (!raw || !providerId) return false;
+  if (!raw || !providerId) return null;
 
   try {
     const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return false;
+    if (!Array.isArray(parsed)) return null;
     const entry = parsed.find((item: any) =>
       String(item?.providerId || '').trim().toLowerCase() === providerId.toLowerCase()
     );
-    if (!entry) return false;
+    return entry && typeof entry === 'object' ? entry : null;
+  } catch {
+    return null;
+  }
+}
 
+function infrastructureWebhookAuthorized(req: Request, providerId: string): boolean {
+  const entry = infrastructureWebhookEntry(providerId);
+  if (!entry) return false;
+
+  try {
     const mode = String(entry?.mode || 'static-header').trim().toLowerCase();
     if (mode === 'mist-hmac-sha256') {
       const secretEnv = String(entry?.secretEnv || entry?.tokenEnv || '').trim();
@@ -440,6 +451,20 @@ function infrastructureWebhookAuthorized(req: Request, providerId: string): bool
         .digest('hex');
       const actualBuffer = Buffer.from(signature, 'hex');
       const expectedBuffer = Buffer.from(expected, 'hex');
+      return actualBuffer.length === expectedBuffer.length
+        && timingSafeEqual(actualBuffer, expectedBuffer);
+    }
+
+    if (mode === 'meraki-scanning-secret') {
+      const secretEnv = String(entry?.secretEnv || entry?.tokenEnv || '').trim();
+      const expected = String(process.env[secretEnv] || '').trim();
+      const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body)
+        ? req.body as Record<string, unknown>
+        : {};
+      const actual = String(body.secret || '').trim();
+      if (!expected || !actual) return false;
+      const actualBuffer = Buffer.from(actual, 'utf8');
+      const expectedBuffer = Buffer.from(expected, 'utf8');
       return actualBuffer.length === expectedBuffer.length
         && timingSafeEqual(actualBuffer, expectedBuffer);
     }
@@ -1703,6 +1728,23 @@ router.post('/traffic-context/provider/:providerId', async (req: Request, res: R
   });
 });
 
+router.get('/telemetry/infrastructure/:providerId/normalize/meraki-scanning', (req: Request, res: Response) => {
+  const providerId = String(req.params.providerId || '').trim().slice(0, 200);
+  const entry = infrastructureWebhookEntry(providerId);
+  const mode = String(entry?.mode || '').trim().toLowerCase();
+  const validatorEnv = String(entry?.validatorEnv || '').trim();
+  const validator = validatorEnv
+    ? String(process.env[validatorEnv] || '').trim()
+    : '';
+
+  if (mode !== 'meraki-scanning-secret' || !validator) {
+    return res.status(404).type('text/plain').send('Not configured');
+  }
+
+  res.setHeader('Cache-Control', 'no-store');
+  return res.status(200).type('text/plain').send(validator);
+});
+
 router.post('/telemetry/infrastructure/:providerId/normalize/:kind', async (req: Request, res: Response) => {
   const providerId = String(req.params.providerId || '').trim().slice(0, 200);
   const kind = String(req.params.kind || '').trim() as SpectraProviderNormalizerKind;
@@ -1714,9 +1756,21 @@ router.post('/telemetry/infrastructure/:providerId/normalize/:kind', async (req:
     return res.status(401).json({ success: false, error: 'Invalid infrastructure webhook credentials.' });
   }
 
+  const infrastructureEntry = infrastructureWebhookEntry(providerId);
+  const configuredSessionId = String(infrastructureEntry?.sessionId || '').trim().slice(0, 200);
+  const configuredSubjectLabel = String(infrastructureEntry?.subjectLabel || '').trim().slice(0, 500);
+  const rawBody =
+    req.body && typeof req.body === 'object' && !Array.isArray(req.body)
+      ? req.body as Record<string, unknown>
+      : {};
+
   let normalized;
   try {
-    normalized = normalizeSpectraProviderPayload(kind, providerId, req.body);
+    normalized = normalizeSpectraProviderPayload(kind, providerId, {
+      ...rawBody,
+      sessionId: configuredSessionId || rawBody.sessionId,
+      subjectLabel: configuredSubjectLabel || rawBody.subjectLabel,
+    });
   } catch (error) {
     return res.status(400).json({
       success: false,
