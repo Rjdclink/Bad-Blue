@@ -652,7 +652,6 @@ export function solveSpectraConstraintLayer(points: GPSPoint[]): SpectraConstrai
   }
 
   const constraints = buildSpectraSpatialConstraints(points);
-  const effectiveWeights = dependencyAdjustedWeights(constraints);
   const dependencyGraph = buildDependencyGraph(constraints);
   const solved: GPSPoint[] = [];
   let contradictoryConstraintCount = 0;
@@ -663,6 +662,9 @@ export function solveSpectraConstraintLayer(points: GPSPoint[]): SpectraConstrai
       c.sourcePointIndex === index
       || Math.abs(c.timestamp.getTime() - point.timestamp.getTime()) <= 1_500
     );
+    // Correlation penalties apply only to evidence that can influence this
+    // timestamp. Distant history must not weaken an otherwise identical fix.
+    const effectiveWeights = dependencyAdjustedWeights(relevant);
     const result = solveOnePoint(point, relevant, effectiveWeights);
     solved.push(result.point);
     contradictoryConstraintCount += result.contradictions;
