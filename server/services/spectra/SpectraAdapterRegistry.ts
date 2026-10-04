@@ -212,6 +212,16 @@ export const SPECTRA_ADAPTER_CAPABILITIES: SpectraAdapterCapability[] = [
     notes: 'Normalizes geolocated Kismet Wi-Fi/Bluetooth device records, including averaged/last geopoints and signal metadata, into the canonical telemetry path.',
   },
   {
+    id: 'frigate-camera-events',
+    label: 'Frigate tracked-camera events',
+    mode: 'live-telemetry',
+    sourceTypes: ['visual_detection','public_camera'],
+    configured: () => anyEnv('SPECTRA_MQTT_PROVIDER_ADAPTERS', 'SPECTRA_ANCHOR_CATALOG_JSON'),
+    priority: 'high',
+    supportsRealtime: true,
+    notes: 'Consumes configured Frigate MQTT tracked-object/recognition events and maps them conservatively to configured camera coverage anchors rather than pretending pixel detections are exact coordinates.',
+  },
+  {
     id: 'openmqttgateway-ble',
     label: 'OpenMQTTGateway BLE ranging',
     mode: 'live-telemetry',
