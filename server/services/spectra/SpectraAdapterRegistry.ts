@@ -182,6 +182,16 @@ export const SPECTRA_ADAPTER_CAPABILITIES: SpectraAdapterCapability[] = [
     notes: 'Reconnectable authenticated WSS transport for configured infrastructure providers, with deduplication and stream health reporting.',
   },
   {
+    id: 'chirpstack-location-bridge',
+    label: 'ChirpStack location-event bridge',
+    mode: 'live-telemetry',
+    sourceTypes: ['device_gps','lorawan_radio'],
+    configured: () => anyEnv('SPECTRA_MQTT_PROVIDER_ADAPTERS', 'SPECTRA_WSS_PROVIDER_ADAPTERS', 'SPECTRA_ACTIVE_PROVIDER_ADAPTERS'),
+    priority: 'high',
+    supportsRealtime: true,
+    notes: 'Normalizes ChirpStack LocationEvent coordinates and preserves device/application identity; raw LoRaWAN radio observations can continue through the existing TDOA/radio lane.',
+  },
+  {
     id: 'owntracks-location-bridge',
     label: 'OwnTracks Recorder location bridge',
     mode: 'live-telemetry',
