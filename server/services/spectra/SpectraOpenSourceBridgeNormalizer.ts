@@ -17,7 +17,8 @@ export type SpectraOpenSourceBridgeKind =
   | 'gpsd-tpv'
   | 'omlox-location'
   | 'mqtt-room-presence'
-  | 'openmqttgateway-ble';
+  | 'openmqttgateway-ble'
+  | 'frigate-event';
 
 export interface SpectraOpenSourceBridgeBatch {
   sessionId?: string;
@@ -1437,6 +1438,182 @@ function normalizeGpsd(
   };
 }
 
+function normalizeFrigateEvent(
+  providerId: string,
+  payload: unknown,
+): SpectraOpenSourceBridgeBatch {
+  const wrapped = envelope(payload, providerId);
+  const outer = wrapped.outer;
+  const after = record(outer.after);
+  const event = Object.keys(after).length ? after : outer;
+
+  const cameraId = text(event.camera ?? outer.camera, 200);
+  const eventId = text(event.id ?? outer.id ?? outer.event_id, 300);
+  const eventType = text(outer.type ?? event.type, 80);
+  const label = text(event.label ?? outer.label, 120);
+  const rawSubLabel = event.sub_label ?? event.subLabel ?? outer.sub_label;
+  const subLabel = Array.isArray(rawSubLabel)
+    ? text(rawSubLabel[0], 240)
+    : text(rawSubLabel, 240);
+  const subLabelScore = Array.isArray(rawSubLabel)
+    ? finite(rawSubLabel[1])
+    : finite(event.sub_label_score ?? event.subLabelScore ?? outer.score);
+  const score = finite(
+    event.score
+    ?? event.top_score
+    ?? event.topScore
+    ?? outer.score,
+  );
+  const timestamp = isoTimestamp(
+    event.frame_time
+    ?? event.frameTime
+    ?? event.start_time
+    ?? event.startTime
+    ?? outer.timestamp
+    ?? Date.now(),
+  );
+  if (!cameraId || !timestamp) {
+    throw new Error('Frigate event requires camera ID and timestamp.');
+  }
+
+  const cameraAnchor = resolveConfiguredSpectraAnchor({
+    id: cameraId,
+    anchorId: cameraId,
+    deviceId: cameraId,
+    locatorId: cameraId,
+  });
+
+  const currentZones = list(
+    event.current_zones
+    ?? event.currentZones,
+  ).map(item => text(item, 160)).filter((item): item is string => Boolean(item));
+  const enteredZones = list(
+    event.entered_zones
+    ?? event.enteredZones,
+  ).map(item => text(item, 160)).filter((item): item is string => Boolean(item));
+
+  const recognitionType = String(outer.type || '').toLowerCase();
+  const recognizedName = text(outer.name, 240);
+  const recognitionScore = finite(outer.score);
+  const identityLabel = recognizedName || subLabel;
+
+  const metadata = {
+    acquisitionMethod: 'frigate-camera-event',
+    frigateEventType: eventType,
+    frigateCameraId: cameraId,
+    frigateObjectLabel: label,
+    frigateIdentityLabel: identityLabel,
+    frigateIdentityScore:
+      recognitionScore ?? subLabelScore ?? undefined,
+    frigateCurrentZones: currentZones,
+    frigateEnteredZones: enteredZones,
+    frigateActive:
+      typeof event.active === 'boolean'
+        ? event.active
+        : undefined,
+    frigateStationary:
+      typeof event.stationary === 'boolean'
+        ? event.stationary
+        : undefined,
+    frigateRecognizedLicensePlate: text(
+      event.recognized_license_plate
+      ?? event.recognizedLicensePlate
+      ?? outer.plate,
+      80,
+    ),
+    frigateRecognitionType:
+      ['face', 'lpr', 'classification'].includes(recognitionType)
+        ? recognitionType
+        : undefined,
+  };
+
+  if (!cameraAnchor) {
+    return {
+      sessionId: wrapped.sessionId,
+      subjectLabel: wrapped.subjectLabel || identityLabel,
+      sourceId: wrapped.providerId,
+      measurements: [{
+        kind: 'sensor',
+        source: 'camera_detection',
+        timestamp,
+        provider: wrapped.providerId,
+        values: {
+          score: Math.max(
+            0,
+            Math.min(1, recognitionScore ?? subLabelScore ?? score ?? 0.5),
+          ),
+        },
+        metadata,
+      }],
+      metadata: {
+        normalization: 'frigate-event',
+        observationCount: 1,
+        contextOnly: true,
+        normalizedAt: new Date().toISOString(),
+      },
+    };
+  }
+
+  const coverageMeters = finite(
+    cameraAnchor.metadata?.coverageMeters
+    ?? cameraAnchor.metadata?.radiusMeters
+    ?? cameraAnchor.metadata?.fieldOfViewRangeMeters,
+  );
+  const accuracy = Math.max(
+    cameraAnchor.accuracyMeters ?? 0,
+    coverageMeters ?? 35,
+    5,
+  );
+  const identityEvidence = recognitionScore ?? subLabelScore;
+  const confidence = Math.min(
+    identityEvidence !== null && identityEvidence !== undefined
+      ? 0.88
+      : 0.72,
+    Math.max(
+      0.25,
+      Number.isFinite(identityEvidence)
+        ? Number(identityEvidence)
+        : score ?? 0.55,
+    ),
+  );
+
+  return {
+    sessionId: wrapped.sessionId,
+    subjectLabel: wrapped.subjectLabel || identityLabel,
+    sourceId: wrapped.providerId,
+    measurements: [{
+      kind: 'position',
+      source: 'visual_detection',
+      timestamp,
+      latitude: cameraAnchor.latitude,
+      longitude: cameraAnchor.longitude,
+      altitude: cameraAnchor.altitude,
+      accuracy,
+      confidence,
+      provider: wrapped.providerId,
+      recordId: eventId,
+      trackId: eventId,
+      cameraId,
+      objectClass: label,
+      correlationGroup:
+        `frigate:${wrapped.providerId}:${cameraId}:${eventId || identityLabel || label || 'object'}`,
+      metadata: {
+        ...metadata,
+        cameraAnchorId: cameraAnchor.id,
+        cameraAnchorAccuracyMeters: cameraAnchor.accuracyMeters,
+        cameraCoverageMeters: coverageMeters,
+        coordinateInterpretation:
+          'camera-coverage-region-not-object-pixel-geolocation',
+      },
+    }],
+    metadata: {
+      normalization: 'frigate-event',
+      observationCount: 1,
+      normalizedAt: new Date().toISOString(),
+    },
+  };
+}
+
 function normalizeOpenMqttGatewayBle(
   providerId: string,
   payload: unknown,
@@ -2251,6 +2428,9 @@ export function normalizeSpectraOpenSourceBridgePayload(
     case 'openmqttgateway-ble':
       batch = normalizeOpenMqttGatewayBle(providerId, payload);
       break;
+    case 'frigate-event':
+      batch = normalizeFrigateEvent(providerId, payload);
+      break;
     default: {
       const exhaustive: never = kind;
       throw new Error(`Unsupported open-source bridge normalizer: ${String(exhaustive)}`);
@@ -2276,4 +2456,5 @@ export const SPECTRA_OPEN_SOURCE_BRIDGE_KINDS:
     'omlox-location',
     'mqtt-room-presence',
     'openmqttgateway-ble',
+    'frigate-event',
   ] as const;
