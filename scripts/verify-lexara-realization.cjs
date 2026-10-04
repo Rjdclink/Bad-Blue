@@ -1005,6 +1005,16 @@ must(
   'Lexara keeps optimized breadth while supplemental parallel search returns on the first useful result',
 );
 must(
+  lexaraLegalMesh.includes('firstUseful?: boolean') &&
+    lexaraLegalMesh.includes('Promise.any(providerAttempts)') &&
+    lexaraLegalMesh.includes('Promise.any(variantAttempts)') &&
+    lexaraLegalMesh.includes('const groups=options.firstUseful') &&
+    lexaraBackgroundInvestigation.includes('firstUseful: !deepAcquisitionRequested') &&
+    lexaraBackgroundInvestigation.includes('LIVE_TOTAL_CANDIDATES = 18') &&
+    lexaraBackgroundInvestigation.includes('LIVE_TARGETS_PER_PASS = 6'),
+  'live background provider/query races return on first useful evidence without removing optimized breadth',
+);
+must(
   claudeService.includes("response?.stop_reason === 'max_tokens'") &&
     claudeService.includes('sourceMap.size === 0') &&
     claudeService.includes('preserving source evidence after max_tokens stop') &&
