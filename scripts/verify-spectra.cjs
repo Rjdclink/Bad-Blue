@@ -1125,6 +1125,13 @@ test('Major infrastructure feeds normalize through the canonical SPECTRA provide
   infrastructureNormalizer.includes('row.siteName') &&
   infrastructureNormalizer.includes('row.floorName') &&
   providerNormalizer.includes('SPECTRA_INFRASTRUCTURE_PROVIDER_KINDS'));
+test('Infrastructure multi-client payloads are isolated to one configured subject binding',
+  infrastructureNormalizer.includes('const normalizedEntries =') &&
+  infrastructureNormalizer.includes('const selectedSessionId =') &&
+  infrastructureNormalizer.includes('entry.binding.sessionId === selectedSessionId') &&
+  infrastructureNormalizer.includes('return !hasAnyConfiguredBinding && wrapped.sessionId === selectedSessionId') &&
+  infrastructureNormalizer.includes('droppedMismatchedBindingCount') &&
+  !infrastructureNormalizer.includes('const firstBinding ='));
 test('Aruba Central WSS decoder implements documented CloudEvents and location protobuf fields',
   arubaStreamDecoder.includes('parseCloudEvent') &&
   arubaStreamDecoder.includes('parseWifiClientLocation') &&
