@@ -38,8 +38,9 @@ const clean = (v: unknown) => {
     u.hash = '';
     for (const key of [...u.searchParams.keys()]) if (/^(?:utm_|gclid|fbclid|mc_)/i.test(key)) u.searchParams.delete(key);
     return u.toString();
-  } catch (error) {
-    console.warn('[LEXARA Discovery]', { outcome: controller.signal.aborted ? 'cancelled-or-timeout' : 'failed', error: error instanceof Error ? error.message : String(error) });
+  } catch {
+    // Invalid provider URLs are ordinary search noise; there is no request
+    // controller in this URL-normalization scope.
     return null;
   }
 };
