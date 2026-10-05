@@ -419,10 +419,24 @@ export async function discoverLegalMeshTier3(
   ]);
   const learnedCandidates=learnedSources.map(url=>({url,title:'Previously successful Lexara source',tier:3 as const,provider:'lexara-learned'}));
   const combined=[...fuseRankedCandidates(groups),...learnedCandidates];
-  const preferred=diversify(combined.filter(item=>isPreferredOfficialCandidate(item,options)),8);
-  const preferredUrls=new Set(preferred.map(item=>item.url));
-  const remainder=diversify(combined.filter(item=>!preferredUrls.has(item.url)),18);
-  return [...preferred,...remainder].slice(0,18);
+  // Subject relevance precedes domain authority: generic government roots are
+  // fallback leads, not evidence about this person. This only orders retrieval;
+  // the investigator still applies the unchanged identity and evidence gates.
+  const tokens = String(options.subject || '').toLowerCase().match(/[a-z0-9]+/g) || [];
+  const subjectRelevance = (item: LegalMeshCandidate): number => {
+    if (tokens.length < 2) return 0;
+    const words = new Set((item.title + ' ' + (item.excerpt || '') + ' ' + item.url).toLowerCase().match(/[a-z0-9]+/g) || []);
+    if (!words.has(tokens[0]) || !words.has(tokens[tokens.length - 1])) return 0;
+    return tokens.every(token => words.has(token)) ? 2 : 1;
+  };
+  const exact = diversify(combined.filter(item => subjectRelevance(item) === 2), 18);
+  const partial = diversify(combined.filter(item => subjectRelevance(item) === 1), 18);
+  const relevantUrls = new Set([...exact, ...partial].map(item => item.url));
+  const unmatched = combined.filter(item => !relevantUrls.has(item.url));
+  const preferred = diversify(unmatched.filter(item => isPreferredOfficialCandidate(item, options)), 8);
+  const preferredUrls = new Set(preferred.map(item => item.url));
+  const remainder = diversify(unmatched.filter(item => !preferredUrls.has(item.url)), 18);
+  return [...exact, ...partial, ...preferred, ...remainder].slice(0, 18);
 }
 
 export async function discoverLegalMeshSupplemental(
