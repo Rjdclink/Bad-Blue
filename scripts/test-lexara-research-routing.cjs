@@ -68,7 +68,7 @@ function harness(options = {}) {
     'server/lexara/LexaraDiscoveryLearning.ts': {
       rememberLexaraDiscoveryOutcome: async () => {},
       getLexaraLearnedQueryPatterns: async () => options.learnedPattern ? [options.learnedPattern] : [],
-      getLexaraLearnedSources: async () => [],
+      getLexaraLearnedSources: async () => options.learnedSources || [],
       rankLexaraDiscoveryUrls: values => [...new Set(values)],
     },
     'server/lexara/LexaraResearchAssist.ts': {
@@ -177,6 +177,25 @@ test('both legal discovery tiers preserve DDGS results while carrying the canoni
   assert.equal(primary[0].url, urls[0]); assert.equal(primary[0].excerpt, 'Fresh source evidence');
   assert.equal(supplemental[0].url, urls[0]); assert.equal(h.calls.gateway.length, 0);
 });
+test('duplicate discovery URLs retain complementary excerpts and survive empty learned records', async () => {
+  const url = 'https://example.test/obituary';
+  const h = harness({
+    env: { TAVILY_API_KEY: 'fixture', DDGS_URL: 'https://ddgs.example.test' },
+    learnedSources: [url],
+    fetchPayload: endpoint => endpoint.includes('api.tavily.com')
+      ? { results: [{ url, title: 'Obituary', content: 'Avery Morgan Example was born in Iowa.' }] }
+      : endpoint.includes('ddgs.example.test')
+        ? { results: [{ href: url, title: 'Obituary', body: 'Avery Morgan Example passed away February 6, 2020.' }] }
+        : { results: [] },
+  });
+  const mesh = h.load('server/lexara/LegalProviderMesh.ts');
+  const found = await mesh.discoverLegalMeshTier3('Avery Morgan Example death date', undefined, { firstUseful: true });
+  const result = found.find(item => item.url === url);
+  assert(result?.excerpt.includes('was born in Iowa'));
+  assert(result?.excerpt.includes('passed away February 6, 2020'));
+  assert.equal(found.filter(item => item.url === url).length, 1);
+});
+
 test('malformed search URLs do not discard valid discovery results', async () => {
   const h = harness({
     env: { TAVILY_API_KEY: 'fixture' },
