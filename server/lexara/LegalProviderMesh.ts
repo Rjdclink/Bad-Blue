@@ -228,8 +228,16 @@ async function searxng(query: string, signal?: AbortSignal): Promise<LegalMeshCa
   return result || [];
 }
 
+// The production engine is independently hosted; no custom Railway variable is
+// required. Explicit non-retired endpoints remain available for other installs.
+function lexaraDdgsBase(): string {
+  return independentSearchBase(process.env.DDGS_URL)
+    || (process.env.RAILWAY_ENVIRONMENT_ID === '91154a53-01a3-470c-8fdc-c0f13b4702fa'
+      ? 'http://lexara-ddgs.railway.internal:4479' : '');
+}
+
 async function ddgsBackend(query: string, backend: string, budgetMs: number, signal?: AbortSignal): Promise<LegalMeshCandidate[]> {
-  const base = independentSearchBase(process.env.DDGS_URL);
+  const base = lexaraDdgsBase();
   if (!base) return [];
   const result = await withTimeout('ddgsBackend', budgetMs, signal, async requestSignal => {
     const endpoint = new URL('/search/text', base.endsWith('/') ? base : base + '/');
@@ -249,7 +257,7 @@ async function ddgsBackend(query: string, backend: string, budgetMs: number, sig
 }
 
 async function ddgs(query: string, signal?: AbortSignal): Promise<LegalMeshCandidate[]> {
-  if (!independentSearchBase(process.env.DDGS_URL)) return [];
+  if (!lexaraDdgsBase()) return [];
   const primary = [...new Set((process.env.LEXARA_DDGS_BACKEND?.trim() || 'auto').split(',').map(x=>x.trim()).filter(Boolean))].join(',');
   const fallback = [...new Set((process.env.LEXARA_DDGS_FALLBACK_BACKENDS?.trim() || 'auto').split(',').map(x=>x.trim()).filter(x=>x && x!==primary))].join(',');
   const first = await ddgsBackend(query, primary, 1_300, signal);
@@ -360,7 +368,7 @@ async function freeSearch(
       openserp(query, controller.signal),
     ]);
     if (signal?.aborted) throw signal.reason || new DOMException('Discovery cancelled', 'AbortError');
-    const enabled = [Boolean(process.env.TAVILY_API_KEY?.trim()), true, Boolean(independentSearchBase(process.env.SEARXNG_URL)), Boolean(independentSearchBase(process.env.DDGS_URL)), Boolean(independentSearchBase(process.env.OPENSERP_URL))];
+    const enabled = [Boolean(process.env.TAVILY_API_KEY?.trim()), true, Boolean(independentSearchBase(process.env.SEARXNG_URL)), Boolean(lexaraDdgsBase()), Boolean(independentSearchBase(process.env.OPENSERP_URL))];
     console.info('[LEXARA Discovery Lanes]', JSON.stringify({ results: outcomes.map((outcome, index) => ({ lane: ['tavily', 'duckduckgo-instant-answer', 'searxng', 'ddgs', 'openserp'][index], enabled: enabled[index], candidates: outcome.status === 'fulfilled' ? outcome.value.length : 0, settled: outcome.status })) }));
     return fuseRankedCandidates(outcomes.flatMap(outcome =>
       outcome.status === 'fulfilled' ? [outcome.value] : []));
