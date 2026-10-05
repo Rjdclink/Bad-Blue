@@ -11,6 +11,7 @@ import {
 import {
   discoverLegalMeshSupplemental,
   discoverLegalMeshTier3,
+  mergeLegalMeshCandidateEvidence,
   type LegalMeshCandidate,
 } from './LegalProviderMesh';
 import { lexaraRetrievalAdapter } from './LexaraRetrievalBoundary';
@@ -319,12 +320,17 @@ function assessEvidence(
 
 function uniqueCandidates(items: readonly LegalMeshCandidate[]): LegalMeshCandidate[] {
   const out: LegalMeshCandidate[] = [];
-  const seen = new Set<string>();
+  const seen = new Map<string, number>();
   for (const item of items) {
-    if (!item.url || seen.has(item.url)) continue;
-    seen.add(item.url);
+    if (!item.url) continue;
+    const existingIndex = seen.get(item.url);
+    if (existingIndex !== undefined) {
+      out[existingIndex] = mergeLegalMeshCandidateEvidence(out[existingIndex], item);
+      continue;
+    }
+    if (out.length >= MAX_TOTAL_CANDIDATES) continue;
+    seen.set(item.url, out.length);
     out.push(item);
-    if (out.length >= MAX_TOTAL_CANDIDATES) break;
   }
   return out;
 }
