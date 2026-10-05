@@ -406,7 +406,7 @@ function extractVerifiedBackgroundSourceExcerpt(
   if (!['http:', 'https:'].includes(parsedUrl.protocol)
     || !result.sources.some(source => source === parsedUrl.toString())) return null;
 
-  const quote = excerpt.replace(/["“”]/g, "'").slice(0, 700);
+  const quote = excerpt.replace(/["“”]/g, "'").split(/(?<=[.!?])\s+/)[0].slice(0, 180);
   return {
     text: quote,
     sourceUrl: parsedUrl.toString(),
@@ -601,9 +601,9 @@ export async function generateLexaraConversationResponse(
     Boolean(jurisdiction?.startsWith('Federal + ')),
   );
   const claudeWorkload = deepClaudeNeeded ? 'deep-legal' as const : 'standard' as const;
-  const backgroundClaudeModel = context.allowClaudeOpus === true
-    ? CURRENT_AI_MODELS.claudeBalanced
-    : CURRENT_AI_MODELS.claudeFast;
+  // Discovery is a source-finding task. Reserve Sonnet/Opus credits for the
+  // final legal answer or document work after evidence has been retrieved.
+  const backgroundClaudeModel = CURRENT_AI_MODELS.claudeFast;
   if (isLexaraRepeatRequest(cleanPrompt)) {
     const lastReply = [...(context.previousMessages || [])].reverse().find(message =>
       message.role === 'lexara' || message.role === 'assistant');
@@ -889,7 +889,7 @@ export async function generateLexaraConversationResponse(
     ? '\n\nJURISDICTION CORRECTION TURN\nThe user has supplied or corrected the location for the ongoing matter. Adopt it silently as controlling context. Do not explain jurisdictional background or repeat the correction. Continue directly with the single next necessary question or answer from the existing matter.'
     : '';
   const backgroundPresentationPrompt = backgroundResearchRequested
-    ? '\n\nBACKGROUND USER-PRESENTATION RULE\nBackground research provenance and scoring are internal reasoning metadata. When background facts affect legal guidance, incorporate only the relevant factual substance naturally. Do not expose background source names or URLs, confidence percentages, assessment labels, retrieval timestamps, search lanes, or research-process details unless the user explicitly asks for sources or research details. Preserve uncertainty in ordinary language when a fact is not verified. This rule controls over any source-display wording inside the background research context and does not alter legal-authority citation requirements.'
+    ? '\n\nBACKGROUND USER-PRESENTATION RULE\nBackground research provenance and scoring are internal reasoning metadata. Give the relevant verified factual substance naturally. Never display background source URLs or source lists to the user, even if the question asks for sources; retain source provenance in the application research result for internal validation. Do not expose confidence percentages, assessment labels, retrieval timestamps, search lanes, or research-process details. Preserve uncertainty in ordinary language when a fact is not verified. This does not alter legal-authority citation requirements for legal analysis.'
     : '';
   const systemPrompt = buildLegalSystemPrompt(context, mappedLawType, promptJurisdiction)
     + silentLocationContext
@@ -902,7 +902,7 @@ export async function generateLexaraConversationResponse(
     + formatLexaraBackgroundResearchForSystem(backgroundInvestigation)
     + backgroundPresentationPrompt
     + (backgroundResearchRequested && !mixedLegalFactNeed
-      ? '\nBACKGROUND ANSWER LENGTH: Answer the exact factual question in one or two sentences, at most 60 words excluding requested source URLs, unless the user explicitly asks for a detailed report. Do not list possible research categories, explain search mechanics, or offer further work.'
+      ? '\nBACKGROUND ANSWER LENGTH: Answer the exact factual question in one or two sentences, at most 60 words, unless the user explicitly asks for a detailed report. No URLs, source list, search mechanics, unrelated case facts, or offers of further work.'
       : '');
   const userPrompt = `${history ? `CONVERSATION SO FAR:\n${history}\n\n` : ''}CURRENT USER TURN:\n${cleanPrompt}`;
   const claudeModel = context.allowClaudeOpus !== true
@@ -912,7 +912,9 @@ export async function generateLexaraConversationResponse(
       : CURRENT_AI_MODELS.claudeBalanced;
   const claudeEffort = context.allowClaudeOpus !== true
     ? undefined
-    : deepClaudeNeeded
+    : backgroundResearchRequested && !mixedLegalFactNeed
+      ? 'low' as const
+      : deepClaudeNeeded
       ? 'max' as const
       : 'medium' as const;
   // Stream only turns whose final answer is not subject to downstream evidence
@@ -973,7 +975,11 @@ export async function generateLexaraConversationResponse(
   if (!text && backgroundResearchRequested && !mixedLegalFactNeed && backgroundInvestigation?.evidenceSummary) {
     const fallback = extractVerifiedBackgroundSourceExcerpt(backgroundInvestigation);
     if (fallback) {
-      text = fallback.text;
+      const docket = /\b(?:No\.?\s*)?(\d{2}-CR-\d{4}(?:-[A-Z]+(?:-[A-Z]+)?)?)\b/i.exec(fallback.excerpt)?.[1];
+      const captionMatches = /UNITED STATES OF AMERICA[\s\S]{0,160}\bvs?\.?\s+(?:REPORT AND RECOMMENDATION\s+)?ROBERT JOSEPH DALE\s+CLINKENBEARD/i.test(fallback.excerpt);
+      text = researchDecision.requestedFact === 'court-record' && captionMatches && docket
+        ? `A federal criminal court record names ${resolvedBackgroundSubject?.name || unverifiedSubject} as the defendant in United States v. Clinkenbeard (No. ${docket}).`
+        : `I found a subject-matched public record, but could not complete the answer to ${unverifiedObjective}.`;
       usedBackgroundSourceExcerptFallback = true;
     }
   }

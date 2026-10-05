@@ -518,21 +518,28 @@ export async function investigateLexaraBackgroundQuestion(
     const initialQuery = decision.standaloneQuery || decision.objective || prompt;
     context.onProgress?.({ type: 'searching', pass: 0 });
 
-    // Start Claude beside native discovery, but never let a slower model lane
-    // block authoritative/public-source retrieval from beginning.
+    // Spend Claude web-search credits only after the first native evidence pass
+    // fails to establish the requested fact. Native discovery and retrieval
+    // retain their independent timing and source selection.
     let claudeParallel = { candidates: [] as LegalMeshCandidate[], citationEvidence: [] as Array<{ url: string; content: string; retrievedAt: string }>, searches: 0 };
     let claudeIntegrated = false;
-    const claudeSearchPromise = searchLexaraBackgroundWithClaude({
-      prompt,
-      subject,
-      decision,
-      jurisdiction: subject.location || context.jurisdiction,
-      model: context.claudeResearchModel,
-      signal: laneSignal,
-    }).then(result => {
-      claudeParallel = result;
-      return result;
-    });
+    let claudeSearchPromise: Promise<typeof claudeParallel> | null = null;
+    const startClaudeSearch = () => {
+      if (!claudeSearchPromise && !laneSignal.aborted && Date.now() < deadlineAt) {
+        claudeSearchPromise = searchLexaraBackgroundWithClaude({
+          prompt,
+          subject,
+          decision,
+          jurisdiction: subject.location || context.jurisdiction,
+          model: context.claudeResearchModel,
+          signal: laneSignal,
+        }).then(result => {
+          claudeParallel = result;
+          return result;
+        });
+      }
+      return claudeSearchPromise;
+    };
 
     const nativeDiscoveryPromise = discoverLegalMeshTier3(initialQuery, laneSignal, {
       categories,
@@ -710,7 +717,6 @@ export async function investigateLexaraBackgroundQuestion(
       claudeParallel.candidates.forEach(item => discoveryLanes.add(item.provider));
       claudeIntegrated = true;
     };
-    void claudeSearchPromise;
 
     for (let pass = 0; pass < maxPasses && Date.now() < deadlineAt; pass += 1) {
       recursionPasses = pass + 1;
@@ -822,6 +828,9 @@ export async function investigateLexaraBackgroundQuestion(
         converged = true;
         break;
       }
+      // The native first pass did not answer the question. Start the paid
+      // research lane while any broader native queries continue.
+      if (pass === 0) startClaudeSearch();
       if (pass + 1 >= maxPasses || Date.now() >= deadlineAt || seenUrls.size >= maxCandidates) break;
 
       const query = broadenedQuery(subject, decision, categories, context.jurisdiction, pass);
@@ -859,11 +868,13 @@ export async function investigateLexaraBackgroundQuestion(
       integrateClaudeParallel();
       const usefulBeforeClaude = [...assessed.values()]
         .filter(item => item.confidence >= PARTIAL_EVIDENCE_THRESHOLD);
-      if (!usefulBeforeClaude.length && !claudeIntegrated && Date.now() < deadlineAt) {
+      if (!usefulBeforeClaude.some(item => item.directlyAnswers && item.confidence >= SUFFICIENT_EVIDENCE_THRESHOLD)
+        && !claudeIntegrated && Date.now() < deadlineAt) {
         const remainingMs = Math.max(0, deadlineAt - Date.now());
         if (remainingMs > 0) {
+          const pendingClaude = startClaudeSearch();
           await Promise.race([
-            claudeSearchPromise.catch(() => claudeParallel),
+            pendingClaude?.catch(() => claudeParallel) || Promise.resolve(claudeParallel),
             new Promise(resolve => setTimeout(resolve, remainingMs)),
           ]);
           integrateClaudeParallel();

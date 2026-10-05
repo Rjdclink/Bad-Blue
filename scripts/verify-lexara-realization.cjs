@@ -1317,7 +1317,7 @@ must(
     lexaraConversationOrchestrator.includes('value.slice(0, 500).trim()') &&
     lexaraConversationOrchestrator.includes("backgroundDocumentContext: formatBackgroundFactsForDocument(backgroundInvestigation)") &&
     lexaraConversationOrchestrator.includes('BACKGROUND USER-PRESENTATION RULE') &&
-    lexaraConversationOrchestrator.includes('Do not expose background source names or URLs, confidence percentages') &&
+    lexaraConversationOrchestrator.includes('Never display background source URLs or source lists to the user') &&
     lexaraConversationOrchestrator.includes('text: quote,') &&
     !lexaraConversationOrchestrator.includes('The source says:') &&
     lexaraChatRoutes.includes('backgroundDocumentContext: result.backgroundDocumentContext') &&
@@ -1432,4 +1432,3 @@ require('node:child_process').execFileSync(process.execPath, [require('node:path
 require('node:child_process').execFileSync(process.execPath, [require('node:path').join(__dirname, 'test-lexara-native-factual-routing.cjs')], { stdio: 'inherit' });
 require('node:child_process').execFileSync(process.execPath, [require('node:path').join(__dirname, 'test-lexara-native-background-investigation.cjs')], { stdio: 'inherit' });
 if (!process.exitCode) console.log('LEXARA realization verification passed.');
-

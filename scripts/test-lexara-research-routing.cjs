@@ -177,6 +177,18 @@ test('both legal discovery tiers preserve DDGS results while carrying the canoni
   assert.equal(primary[0].url, urls[0]); assert.equal(primary[0].excerpt, 'Fresh source evidence');
   assert.equal(supplemental[0].url, urls[0]); assert.equal(h.calls.gateway.length, 0);
 });
+test('malformed search URLs do not discard valid discovery results', async () => {
+  const h = harness({
+    env: { TAVILY_API_KEY: 'fixture' },
+    fetchPayload: () => ({ results: [
+      { url: 'not a URL', title: 'Malformed provider item' },
+      { url: urls[0], title: 'Valid provider item', content: 'Relevant evidence' },
+    ] }),
+  });
+  const mesh = h.load('server/lexara/LegalProviderMesh.ts');
+  const result = await mesh.discoverLegalMeshTier3('contract fixture');
+  assert(result.some(item => item.url === urls[0]));
+});
 test('Lexara retains slower provider evidence after fast discovery leads in live and default modes', async () => {
   let liveSlowProviderFinished = false;
   const live = harness({
