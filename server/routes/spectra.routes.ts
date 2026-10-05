@@ -50,6 +50,7 @@ import {
 import { acquireSpectraPlaceContext } from '../services/spectra/SpectraPlaceContext';
 import { retrieveSpectraPublicEvidence } from '../services/spectra/SpectraPublicRetrieval';
 import { assessSpectraLiveLocation } from '../services/spectra/SpectraLiveConfidence';
+import { solveSpectraConstraintLayer } from '../services/spectra/SpectraConstraintSolver';
 import { acquireConfiguredSpectraCameras } from '../services/spectra/SpectraCameraDirectoryAdapters';
 import { acquireSpectraActiveTelemetry } from '../services/spectra/SpectraActiveAcquisition';
 
@@ -1107,12 +1108,14 @@ router.post('/acquire', async (req: Request, res: Response) => {
 
     const locationQuality = assessLocationQuality(normalizedLocationObservations);
     const qualityLocationObservations = locationQuality.points;
+    const constraintSolution = solveSpectraConstraintLayer(qualityLocationObservations);
+    const solvedLocationObservations = constraintSolution.points;
 
-    const fusedLocationEvidence = qualityLocationObservations.length > 0
-      ? await inputFusionEngine.fuseInputs(qualityLocationObservations)
+    const fusedLocationEvidence = solvedLocationObservations.length > 0
+      ? await inputFusionEngine.fuseInputs(solvedLocationObservations)
       : [];
 
-    const locationObservations = qualityLocationObservations
+    const locationObservations = solvedLocationObservations
       .map(point => signServerEvidence(point));
 
     const candidateLocations: Array<{
@@ -1189,7 +1192,7 @@ router.post('/acquire', async (req: Request, res: Response) => {
     const baselineLocationConfidence = canonicalLatest?.qualityScore
       ?? candidateLocations[0]?.confidence
       ?? 0;
-    const liveLocationAssessment = assessSpectraLiveLocation(qualityLocationObservations);
+    const liveLocationAssessment = assessSpectraLiveLocation(solvedLocationObservations);
     const locationConfidence = liveLocationAssessment.isLive
       ? liveLocationAssessment.confidenceScore
       : baselineLocationConfidence;
@@ -1275,8 +1278,9 @@ router.post('/acquire', async (req: Request, res: Response) => {
       sessionId: requestedSessionId,
       subjectLabel: resolvedTargetLabel,
       clues: [target, details],
-      observations: qualityLocationObservations,
+      observations: solvedLocationObservations,
       state: {
+        constraintSolverDiagnostics: constraintSolution.diagnostics,
         identityConfidence,
         boundIdentityConfidence,
         identityBindingEvidenceCount: identityBindingAssessment.evidenceCount,
