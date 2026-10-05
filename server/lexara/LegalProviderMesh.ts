@@ -433,7 +433,7 @@ export async function discoverLegalMeshTier3(
   const partial = diversify(combined.filter(item => subjectRelevance(item) === 1), 18);
   const relevantUrls = new Set([...exact, ...partial].map(item => item.url));
   const unmatched = combined.filter(item => !relevantUrls.has(item.url));
-  const preferred = diversify(unmatched.filter(item => isPreferredOfficialCandidate(item, options)), 8);
+  const preferred=diversify(unmatched.filter(item => isPreferredOfficialCandidate(item, options)), 8);
   const preferredUrls = new Set(preferred.map(item => item.url));
   const remainder = diversify(unmatched.filter(item => !preferredUrls.has(item.url)), 18);
   return [...exact, ...partial, ...preferred, ...remainder].slice(0, 18);
