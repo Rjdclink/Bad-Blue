@@ -282,6 +282,20 @@ function reset(mode) {
 }
 
 (async () => {
+  const paidOptions = [];
+  const paidLane = execute('server/lexara/LexaraClaudeBackgroundSearch.ts', {
+    '../claude': { async callClaudeWebSearch(_prompt, options) {
+      paidOptions.push(options); return { sources: [], searches: 0 };
+    } },
+    './LexaraPublicSourceRegistry': registry,
+  });
+  for (const requestedFact of ['business', 'general-public-record']) {
+    await paidLane.searchLexaraBackgroundWithClaude({ prompt: 'Fixture inquiry',
+      decision: { requestedFact, sourceCategories: [] }, model: 'fixture-model' });
+  }
+  assert.deepEqual(paidOptions.map(x => x.maxUses), [1, 2], 'targeted fallback spends one search; broad research retains two');
+  assert.deepEqual(paidOptions.map(x => x.maxTokens), [384, 1024]);
+  assert(paidOptions.every(x => x.model === 'fixture-model' && x.maxFetchUses === 1), 'budget applies across selected Claude models');
   for (const mode of ['business-directory', 'business-owner']) {
     reset(mode);
     const result = await investigator.investigateLexaraBackgroundQuestion('What business does Avery Example operate?', {
@@ -292,6 +306,10 @@ function reset(mode) {
       'business sufficiency requires a subject-linked operation or role, not directory navigation');
     assert.equal(state.claudeCalls.length, mode === 'business-owner' ? 0 : 1,
       'only a relevant business fact may suppress further research');
+    if (mode === 'business-directory') {
+      assert.equal(result.evidenceSummary, undefined, 'unrelated identity records must not leak into a targeted answer');
+      assert.match(investigator.formatLexaraBackgroundResearchForSystem(result), /one short sentence/);
+    }
   }
   reset('reported-death');
   const reportedDeath = await investigator.investigateLexaraBackgroundQuestion(
