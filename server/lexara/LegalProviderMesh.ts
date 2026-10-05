@@ -110,12 +110,18 @@ function isPreferredOfficialCandidate(item: LegalMeshCandidate, options: LegalMe
   return preferredHosts.some(preferred => host === preferred || host.endsWith(`.${preferred}`));
 }
 
+export function mergeLegalMeshCandidateEvidence(existing: LegalMeshCandidate, incoming: LegalMeshCandidate): LegalMeshCandidate {
+  const excerpts = [...new Set([existing.excerpt, incoming.excerpt].map(value => String(value || '').trim()).filter(Boolean))];
+  return { ...existing, excerpt: excerpts.join('\n').slice(0, 4800) || undefined };
+}
+
 function fuseRankedCandidates(groups: readonly LegalMeshCandidate[][]): LegalMeshCandidate[] {
   const scores = new Map<string, number>();
   const byUrl = new Map<string, LegalMeshCandidate>();
   for (const group of groups) {
     group.forEach((item, index) => {
-      if (!byUrl.has(item.url)) byUrl.set(item.url, item);
+      const existing = byUrl.get(item.url);
+      byUrl.set(item.url, existing ? mergeLegalMeshCandidateEvidence(existing, item) : item);
       scores.set(item.url, (scores.get(item.url) || 0) + 1 / (60 + index + 1));
     });
   }
@@ -124,7 +130,12 @@ function fuseRankedCandidates(groups: readonly LegalMeshCandidate[][]): LegalMes
 }
 
 function diversify(items: LegalMeshCandidate[], limit = 16): LegalMeshCandidate[] {
-  const byUrl = [...new Map(items.map(item => [item.url, item])).values()];
+  const merged = new Map<string, LegalMeshCandidate>();
+  for (const item of items) {
+    const existing = merged.get(item.url);
+    merged.set(item.url, existing ? mergeLegalMeshCandidateEvidence(existing, item) : item);
+  }
+  const byUrl = [...merged.values()];
   const ranked = rankLexaraDiscoveryUrls(byUrl.map(item => item.url));
   const itemByUrl = new Map(byUrl.map(item => [item.url, item]));
   const selected: LegalMeshCandidate[] = [];
