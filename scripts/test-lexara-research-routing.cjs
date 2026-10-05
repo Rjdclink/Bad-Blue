@@ -196,6 +196,25 @@ test('duplicate discovery URLs retain complementary excerpts and survive empty l
   assert.equal(found.filter(item => item.url === url).length, 1);
 });
 
+test('subject-specific evidence precedes generic official and learned sources', async () => {
+  const h = harness({
+    env: { TAVILY_API_KEY: 'fixture' },
+    learnedSources: ['https://generic.gov/records'],
+    fetchPayload: endpoint => endpoint.includes('api.tavily.com') ? { results: [
+      { url: 'https://generic.gov/records', title: 'Vital records', content: 'General registration instructions' },
+      { url: 'https://example.test/short', title: 'Avery Example obituary', content: 'A partial name lead' },
+      { url: 'https://example.org/full', title: 'Avery Morgan Example obituary', content: 'Avery Morgan Example passed away February 6, 2020.' },
+    ] } : { results: [] },
+  });
+  const mesh = h.load('server/lexara/LegalProviderMesh.ts');
+  const found = await mesh.discoverLegalMeshTier3('Avery Morgan Example death date', undefined, {
+    subject: 'Avery Morgan Example', requestedFact: 'death-date', firstUseful: true,
+  });
+  assert.equal(found[0].url, 'https://example.org/full');
+  assert.equal(found[1].url, 'https://example.test/short');
+  assert(found.some(item => item.url === 'https://generic.gov/records'), 'official fallback remains available');
+});
+
 test('malformed search URLs do not discard valid discovery results', async () => {
   const h = harness({
     env: { TAVILY_API_KEY: 'fixture' },
