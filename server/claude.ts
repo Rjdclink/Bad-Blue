@@ -220,6 +220,8 @@ export interface ClaudeWebSearchOptions {
   model?: string;
   signal?: AbortSignal;
   allowFetch?: boolean;
+  maxFetchUses?: number;
+  maxFetchContentTokens?: number;
 }
 
 /**
@@ -251,8 +253,8 @@ export async function callClaudeWebSearch(
     tools.push({
       type: 'web_fetch_20260318',
       name: 'web_fetch',
-      max_uses: 1,
-      max_content_tokens: 1_500,
+      max_uses: Math.max(1, Math.min(options.maxFetchUses ?? maxUses, 8)),
+      ...(options.maxFetchContentTokens ? { max_content_tokens: Math.max(1, Math.floor(options.maxFetchContentTokens)) } : {}),
       allowed_callers: ['direct'],
       citations: { enabled: true },
       response_inclusion: 'full',
