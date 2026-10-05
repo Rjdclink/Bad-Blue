@@ -288,6 +288,20 @@ function excerptAround(content: string, pattern: RegExp, subject: LexaraBackgrou
   return content.slice(start, Math.min(content.length, center + 520)).replace(/\s+/g, ' ').trim();
 }
 
+function businessRelationshipEvidence(content: string, subject: LexaraBackgroundSubject): boolean {
+  // A directory's navigation or corporate footer is not this person's business.
+  // Require a role/operation claim in the same sentence or record as the name.
+  const tokens = normalize(subject.name).split(' ').filter(Boolean);
+  if (tokens.length < 2) return false;
+  return content.split(/[.!?\n]+/).some(record => {
+    const text = normalize(record);
+    const words = new Set(text.split(' '));
+    if (!words.has(tokens[0]) || !words.has(tokens[tokens.length - 1])) return false;
+    return /\b(?:owns?|owned|operates?|operated|founded|cofounder|founder|owner|proprietor|president|ceo|chief executive|registered agent|officer|director|managing member)\b/.test(text)
+      && !/\b(?:search for|find an?|find the|no information|not available|unknown)\b/.test(text);
+  });
+}
+
 function assessEvidence(
   content: string,
   url: string,
@@ -301,8 +315,10 @@ function assessEvidence(
   if (identity < MIN_IDENTITY_CONFIDENCE) return null;
   const pattern = factPattern(decision, prompt);
   const relevantWindow = subjectRelevantWindow(content, subject);
-  const directlyAnswers = pattern.test(relevantWindow)
-    || (identity >= MIN_IDENTITY_CONFIDENCE && dynamicGeneralObjectiveMatch(relevantWindow, subject, decision));
+  const directlyAnswers = decision.requestedFact === 'business'
+    ? businessRelationshipEvidence(relevantWindow, subject)
+    : pattern.test(relevantWindow)
+      || (identity >= MIN_IDENTITY_CONFIDENCE && dynamicGeneralObjectiveMatch(relevantWindow, subject, decision));
   const inferencePattern = INFERENCE_EVIDENCE_PATTERNS[decision.requestedFact];
   const inferentiallySupports = !directlyAnswers && Boolean(inferencePattern?.test(relevantWindow));
   const confidence = Math.max(0, Math.min(1,
