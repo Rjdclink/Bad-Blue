@@ -293,7 +293,7 @@ function discoveryResultFromCandidate(candidate: LegalMeshCandidate): SpectraDis
 
 async function runDiscoveryPass(
   queries: string[],
-  context: { subject?: string; location?: string } = {},
+  context: { subject?: string; location?: string; useClaude?: boolean } = {},
 ): Promise<{
   results: SpectraDiscoveryResult[];
   attempted: number;
@@ -341,7 +341,11 @@ async function runDiscoveryPass(
       ...uniqueQueries.map((query, index) => `${index + 1}. ${query}`),
     ].filter(Boolean).join('\n');
 
-    const claudePromise = callClaudeWebSearch(claudePrompt, {
+    // Recursive passes broaden native retrieval without purchasing the same
+    // model-assisted investigation on every pass.
+    const claudePromise = context.useClaude === false
+      ? Promise.resolve({ content: '', sources: [] })
+      : callClaudeWebSearch(claudePrompt, {
       maxTokens: 1_200,
       maxUses: 6,
       allowFetch: true,
@@ -384,7 +388,7 @@ async function runDiscoveryPass(
 
     const claudeNotes: string[] = [];
     if (claudeSettled.status === 'fulfilled') {
-      claudeNotes.push(claudeSettled.value.content);
+      if (claudeSettled.value.content) claudeNotes.push(claudeSettled.value.content);
       for (const source of claudeSettled.value.sources) {
         const reliability = reliabilityForUrl(source.url);
         results.push({
@@ -463,7 +467,7 @@ async function runDiscoveryPass(
 
     return {
       results: enrichedResults,
-      attempted: uniqueQueries.length + 1,
+      attempted: uniqueQueries.length + (context.useClaude === false ? 0 : 1),
       failed,
       claudeNotes,
     };
@@ -984,6 +988,7 @@ router.post('/acquire', async (req: Request, res: Response) => {
       const nextPass = await runDiscoveryPass(nextQueries, {
         subject: resolvedSubjectName,
         location: semanticSubject?.location || details,
+        useClaude: false,
       });
       discoveryQueriesAttempted += nextPass.attempted;
       discoveryQueriesFailed += nextPass.failed;
