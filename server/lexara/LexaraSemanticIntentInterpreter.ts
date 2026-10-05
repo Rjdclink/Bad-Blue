@@ -13,6 +13,7 @@ import {
 
 const REQUESTED_FACTS = new Set<LexaraRequestedFact>([
   'age-dob',
+  'death-date',
   'professional-license',
   'marriage-divorce',
   'employment',
@@ -145,7 +146,7 @@ Return JSON only:
 {
   "needed": boolean,
   "intent": "factual" | "mixed" | "legal" | "conversation",
-  "requestedFact": "age-dob" | "professional-license" | "marriage-divorce" | "employment" | "property" | "court-record" | "incarceration" | "business" | "financial-professional" | "healthcare-professional" | "sanctions-discipline" | "intellectual-property" | "domain-web" | "news-history" | "identity" | "contact-address" | "relatives-associates" | "social-online" | "public-image" | "government-public" | "education" | "vehicle" | "criminal-arrest" | "probation-parole" | "warrant" | "sex-offender" | "bankruptcy-financial" | "relationship-timeline" | "general-public-record" | "none",
+  "requestedFact": "age-dob" | "death-date" | "professional-license" | "marriage-divorce" | "employment" | "property" | "court-record" | "incarceration" | "business" | "financial-professional" | "healthcare-professional" | "sanctions-discipline" | "intellectual-property" | "domain-web" | "news-history" | "identity" | "contact-address" | "relatives-associates" | "social-online" | "public-image" | "government-public" | "education" | "vehicle" | "criminal-arrest" | "probation-parole" | "warrant" | "sex-offender" | "bankruptcy-financial" | "relationship-timeline" | "general-public-record" | "none",
   "subject": "exact subject from the conversation or empty string",
   "subjectKind": "person" | "organization" | "place" | "entity",
   "objective": "one short description of exactly what external fact must be established"
