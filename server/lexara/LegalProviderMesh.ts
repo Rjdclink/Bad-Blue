@@ -58,6 +58,7 @@ function independentSearchBase(value: string | undefined): string {
 }
 
 async function withTimeout<T>(
+  lane: string,
   timeoutMs: number,
   signal: AbortSignal | undefined,
   work: (signal: AbortSignal) => Promise<T>,
@@ -70,7 +71,7 @@ async function withTimeout<T>(
   try {
     return await work(controller.signal);
   } catch (error) {
-    console.warn('[LEXARA Discovery]', { outcome: controller.signal.aborted ? 'cancelled-or-timeout' : 'failed', error: error instanceof Error ? error.message : String(error) });
+    console.warn('[LEXARA Discovery]', JSON.stringify({ lane, outcome: controller.signal.aborted ? 'cancelled-or-timeout' : 'failed', error: error instanceof Error ? error.message : String(error), causeCode: (error as any)?.cause?.code || undefined }));
     return null;
   } finally {
     clearTimeout(timer);
@@ -165,13 +166,13 @@ function diversify(items: LegalMeshCandidate[], limit = 16): LegalMeshCandidate[
 async function tavily(query: string, signal?: AbortSignal): Promise<LegalMeshCandidate[]> {
   const key = process.env.TAVILY_API_KEY?.trim();
   if (!key) return [];
-  const result = await withTimeout(2_000, signal, async requestSignal => {
+  const result = await withTimeout('tavily', 2_000, signal, async requestSignal => {
     const r = await fetch('https://api.tavily.com/search', {
       method: 'POST', signal: requestSignal,
       headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
       body: JSON.stringify({ query, search_depth: 'basic', max_results: 10, include_answer: false, include_raw_content: false }),
     });
-    if (!r.ok) return [];
+    if (!r.ok) throw new Error(`Discovery HTTP ${r.status}`);
     const j:any = await r.json();
     return (j.results || []).flatMap((x:any) => {
       const url=clean(x.url);
@@ -182,7 +183,7 @@ async function tavily(query: string, signal?: AbortSignal): Promise<LegalMeshCan
 }
 
 async function duckDuckGoInstantAnswer(query: string, signal?: AbortSignal): Promise<LegalMeshCandidate[]> {
-  const result=await withTimeout(1_500,signal,async requestSignal=>{
+  const result=await withTimeout('duckDuckGoInstantAnswer', 1_500,signal,async requestSignal=>{
     const endpoint=new URL('https://api.duckduckgo.com/');
     endpoint.searchParams.set('q',query);
     endpoint.searchParams.set('format','json');
@@ -211,7 +212,7 @@ async function duckDuckGoInstantAnswer(query: string, signal?: AbortSignal): Pro
 async function searxng(query: string, signal?: AbortSignal): Promise<LegalMeshCandidate[]> {
   const base = independentSearchBase(process.env.SEARXNG_URL);
   if (!base) return [];
-  const result = await withTimeout(2_200, signal, async requestSignal => {
+  const result = await withTimeout('searxng', 2_200, signal, async requestSignal => {
     const endpoint = new URL('/search', base.endsWith('/') ? base : base + '/');
     endpoint.searchParams.set('q', query);
     endpoint.searchParams.set('format', 'json');
@@ -230,7 +231,7 @@ async function searxng(query: string, signal?: AbortSignal): Promise<LegalMeshCa
 async function ddgsBackend(query: string, backend: string, budgetMs: number, signal?: AbortSignal): Promise<LegalMeshCandidate[]> {
   const base = independentSearchBase(process.env.DDGS_URL);
   if (!base) return [];
-  const result = await withTimeout(budgetMs, signal, async requestSignal => {
+  const result = await withTimeout('ddgsBackend', budgetMs, signal, async requestSignal => {
     const endpoint = new URL('/search/text', base.endsWith('/') ? base : base + '/');
     const response = await fetch(endpoint, {
       method: 'POST', signal: requestSignal,
@@ -258,7 +259,7 @@ async function ddgs(query: string, signal?: AbortSignal): Promise<LegalMeshCandi
 async function openserp(query: string, signal?: AbortSignal): Promise<LegalMeshCandidate[]> {
   const base = independentSearchBase(process.env.OPENSERP_URL);
   if (!base) return [];
-  const result = await withTimeout(2_200, signal, async requestSignal => {
+  const result = await withTimeout('openserp', 2_200, signal, async requestSignal => {
     const endpoint = new URL('/mega/search', base.endsWith('/') ? base : base + '/');
     endpoint.searchParams.set('text', query);
     endpoint.searchParams.set('limit', '12');
@@ -280,7 +281,7 @@ async function serpApi(query: string, existingUrls: readonly string[], signal?: 
   const key=process.env.SERPAPI_KEY?.trim() || process.env.SERPAPI_API_KEY?.trim();
   if(!key) return [];
   const seen=new Set(existingUrls);
-  const result=await withTimeout(2_500,signal,async requestSignal=>{
+  const result=await withTimeout('serpApi', 2_500,signal,async requestSignal=>{
     const endpoint=new URL('https://serpapi.com/search.json');
     endpoint.searchParams.set('engine','google'); endpoint.searchParams.set('q',query);
     endpoint.searchParams.set('api_key',key); endpoint.searchParams.set('num','10');
@@ -297,7 +298,7 @@ async function serpApi(query: string, existingUrls: readonly string[], signal?: 
 async function scrapingBee(query: string, existingUrls: readonly string[], signal?: AbortSignal): Promise<LegalMeshCandidate[]> {
   const key=process.env.SCRAPINGBEE_API_KEY?.trim(); if(!key) return [];
   const seen=new Set(existingUrls);
-  const result=await withTimeout(2_500,signal,async requestSignal=>{
+  const result=await withTimeout('scrapingBee', 2_500,signal,async requestSignal=>{
     const google=`https://www.google.com/search?q=${encodeURIComponent(query)}&num=10`;
     const endpoint=new URL('https://app.scrapingbee.com/api/v1/');
     endpoint.searchParams.set('api_key',key); endpoint.searchParams.set('url',google); endpoint.searchParams.set('render_js','false');
@@ -319,7 +320,7 @@ async function commonCrawl(query: string, existingUrls: readonly string[], optio
   if (!commonCrawlUseful(query, options.categories) || !existingUrls.length) return [];
   const hosts=[...new Set(existingUrls.flatMap(raw=>{try{return [new URL(raw).hostname];}catch{return [];}}))].slice(0,3);
   if(!hosts.length) return [];
-  const result=await withTimeout(2_500,signal,async requestSignal=>{
+  const result=await withTimeout('commonCrawl', 2_500,signal,async requestSignal=>{
     const collections=await fetch('https://index.commoncrawl.org/collinfo.json',{signal:requestSignal,headers:{accept:'application/json','user-agent':'LegalWhat-Lexara/1.0'}});
     if(!collections.ok) return [];
     const data:any[]=await collections.json(); const indexApi=String(data?.[0]?.['cdx-api']||'');
@@ -359,7 +360,8 @@ async function freeSearch(
       openserp(query, controller.signal),
     ]);
     if (signal?.aborted) throw signal.reason || new DOMException('Discovery cancelled', 'AbortError');
-    console.info('[LEXARA Discovery Lanes]', { results: outcomes.map((outcome, index) => ({ lane: ['tavily', 'duckduckgo-instant-answer', 'searxng', 'ddgs', 'openserp'][index], candidates: outcome.status === 'fulfilled' ? outcome.value.length : 0, settled: outcome.status })) });
+    const enabled = [Boolean(process.env.TAVILY_API_KEY?.trim()), true, Boolean(independentSearchBase(process.env.SEARXNG_URL)), Boolean(independentSearchBase(process.env.DDGS_URL)), Boolean(independentSearchBase(process.env.OPENSERP_URL))];
+    console.info('[LEXARA Discovery Lanes]', JSON.stringify({ results: outcomes.map((outcome, index) => ({ lane: ['tavily', 'duckduckgo-instant-answer', 'searxng', 'ddgs', 'openserp'][index], enabled: enabled[index], candidates: outcome.status === 'fulfilled' ? outcome.value.length : 0, settled: outcome.status })) }));
     return fuseRankedCandidates(outcomes.flatMap(outcome =>
       outcome.status === 'fulfilled' ? [outcome.value] : []));
   } finally {
