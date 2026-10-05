@@ -296,6 +296,15 @@ test('production DDGS uses its independent code default without custom variables
   assert(!h.calls.http.some(call => call.url.includes('pantheon-ddgs')));
 });
 
+test('learned query history cannot insert a prior person or answer instruction into a new search', async () => {
+  const h = harness({ learnedPattern: 'Previous Privateperson answer briefly and give your sources business registry' });
+  const mesh = h.load('server/lexara/LegalProviderMesh.ts');
+  await mesh.discoverLegalMeshTier3('Avery Example business', undefined, { categories: ['business'], subject: 'Avery Example' });
+  await mesh.discoverLegalMeshSupplemental('Avery Example business', [], undefined, { categories: ['business'], subject: 'Avery Example' });
+  assert(!JSON.stringify(h.calls.http).includes('Previous Privateperson'));
+  assert(!JSON.stringify(h.calls.http).includes('answer briefly'));
+});
+
 test('production code defaults activate all independent engines and aggregate OpenSERP', async () => {
   const h = harness({
     env: {
