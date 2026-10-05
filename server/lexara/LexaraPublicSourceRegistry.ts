@@ -163,5 +163,5 @@ export function buildLexaraSourceQueries(input: {
       return '';
     }
   }).filter(Boolean);
-  return [...new Set([base, hinted, jurisdictionOfficial, ...official, ...discovery].filter(Boolean))].slice(0, 6);
+  return [...new Set([identity ? [identity, jurisdiction].filter(Boolean).join(' ') : base, base, jurisdictionOfficial, ...official, ...discovery, hinted].filter(Boolean))].slice(0, 6);
 }

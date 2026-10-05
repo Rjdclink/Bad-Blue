@@ -900,7 +900,10 @@ export async function generateLexaraConversationResponse(
     + resolvedBackgroundSubjectPrompt
     + researchStatusPrompt
     + formatLexaraBackgroundResearchForSystem(backgroundInvestigation)
-    + backgroundPresentationPrompt;
+    + backgroundPresentationPrompt
+    + (backgroundResearchRequested && !mixedLegalFactNeed
+      ? '\nBACKGROUND ANSWER LENGTH: Answer the exact factual question in one or two sentences, at most 60 words excluding requested source URLs, unless the user explicitly asks for a detailed report. Do not list possible research categories, explain search mechanics, or offer further work.'
+      : '');
   const userPrompt = `${history ? `CONVERSATION SO FAR:\n${history}\n\n` : ''}CURRENT USER TURN:\n${cleanPrompt}`;
   const claudeModel = context.allowClaudeOpus !== true
     ? CURRENT_AI_MODELS.claudeFast
@@ -919,9 +922,20 @@ export async function generateLexaraConversationResponse(
     && !researchDecision.needed
     && !sequencePlan.documentAction;
 
-  let text = '';
+  const unverifiedBackgroundOnly = backgroundResearchRequested && !mixedLegalFactNeed
+    && !backgroundInvestigation?.evidenceSummary;
+  const unverifiedSubject = resolvedBackgroundSubject?.name || researchDecision.subject || 'this subject';
+  const unverifiedObjective = researchDecision.requestedFact === 'court-record'
+    ? `court records involving ${unverifiedSubject}`
+    : researchDecision.requestedFact === 'business'
+      ? `which business ${unverifiedSubject} operates`
+      : `the requested information about ${unverifiedSubject}`;
+  let text = unverifiedBackgroundOnly
+    ? `I couldn't verify ${unverifiedObjective} from the completed sources.`
+    : '';
   const claudeStartedAt = Date.now();
   try {
+    if (!text) {
     const claude = progressiveClaudeAllowed
       ? await callClaudeStreaming(userPrompt, {
           systemPrompt,
@@ -944,6 +958,7 @@ export async function generateLexaraConversationResponse(
           signal: context.signal,
         });
     text = claude.content.trim();
+    }
   } catch (error) {
     console.warn('[LEXARA Claude] Live legal reasoning unavailable', {
       error: error instanceof Error ? error.message : String(error),

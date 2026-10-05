@@ -995,24 +995,24 @@ must(
 );
 must(
   lexaraLegalMesh.includes('async function firstUsefulParallelSearch') &&
-    lexaraLegalMesh.includes('Promise.any(attempts)') &&
+    lexaraLegalMesh.includes('Promise.allSettled([') &&
     !lexaraLegalMesh.includes('const learnedOutcomes=await Promise.allSettled') &&
     !lexaraLegalMesh.includes('const plannedOutcomes=await Promise.allSettled') &&
     lexaraBackgroundInvestigation.includes('LIVE_TOTAL_CANDIDATES = 18') &&
     lexaraBackgroundInvestigation.includes('LIVE_TARGETS_PER_PASS = 6') &&
     !lexaraBackgroundInvestigation.includes('BROAD_PERSON_LIVE_TOTAL_CANDIDATES') &&
     !lexaraBackgroundInvestigation.includes('BROAD_PERSON_LIVE_TARGETS_PER_PASS'),
-  'Lexara keeps optimized breadth while supplemental parallel search returns on the first useful result',
+  'Lexara keeps optimized breadth while supplemental parallel search retains bounded results until evidence scoring',
 );
 must(
   lexaraLegalMesh.includes('firstUseful?: boolean') &&
-    lexaraLegalMesh.includes('Promise.any(providerAttempts)') &&
-    lexaraLegalMesh.includes('Promise.any(variantAttempts)') &&
+    !lexaraLegalMesh.includes('Promise.any(') &&
+    lexaraLegalMesh.includes('Promise.allSettled(queries.map(query => freeSearch') &&
     lexaraLegalMesh.includes('const groups=options.firstUseful') &&
     lexaraBackgroundInvestigation.includes('firstUseful: !deepAcquisitionRequested') &&
     lexaraBackgroundInvestigation.includes('LIVE_TOTAL_CANDIDATES = 18') &&
     lexaraBackgroundInvestigation.includes('LIVE_TARGETS_PER_PASS = 6'),
-  'live background provider/query races return on first useful evidence without removing optimized breadth',
+  'live background provider/query races retain bounded results for evidence scoring without removing optimized breadth',
 );
 must(
   lexaraLegalMesh.includes('function independentSearchBase') &&
@@ -1424,6 +1424,7 @@ must(
   'LEXARA keeps evidence, cross-document consistency, filing/service/fee procedure, and exact saved-file retrieval inside the persistent matter record',
 );
 
+require('node:child_process').execFileSync(process.execPath, [require('node:path').join(__dirname, 'test-lexara-background-plumbing.cjs')], { stdio: 'inherit' });
 require('node:child_process').execFileSync(process.execPath, [require('node:path').join(__dirname, 'test-lexara-location-fusion.cjs')], { stdio: 'inherit' });
 require('node:child_process').execFileSync(process.execPath, [require('node:path').join(__dirname, 'test-lexara-document-handoff.cjs')], { stdio: 'inherit' });
 require('node:child_process').execFileSync(process.execPath, [require('node:path').join(__dirname, 'verify-lexara-pantheon-disconnect.cjs')], { stdio: 'inherit' });
@@ -1431,3 +1432,4 @@ require('node:child_process').execFileSync(process.execPath, [require('node:path
 require('node:child_process').execFileSync(process.execPath, [require('node:path').join(__dirname, 'test-lexara-native-factual-routing.cjs')], { stdio: 'inherit' });
 require('node:child_process').execFileSync(process.execPath, [require('node:path').join(__dirname, 'test-lexara-native-background-investigation.cjs')], { stdio: 'inherit' });
 if (!process.exitCode) console.log('LEXARA realization verification passed.');
+

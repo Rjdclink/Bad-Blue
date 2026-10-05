@@ -100,7 +100,7 @@ function requestedFact(text: string): LexaraRequestedFact {
   if (/\b(?:government employee|government employment|public service|public office|campaign contribution|campaign donation|lobbying|lobbyist|government contract)\b/.test(value)) return 'government-public';
   if (/\b(?:employ(?:er|ment|ed)|works?\s+(?:at|for)|where\s+(?:does|did)\s+.+\s+work|work history|job|occupation|profession|career|for a living)\b/.test(value)) return 'employment';
   if (/\b(?:property|real estate|parcel|deed|assessor|mortgage|owns?\s+(?:a\s+)?(?:house|home|land)|home ownership)\b/.test(value)) return 'property';
-  if (/\b(?:court record|court case|docket|case filing|judgment|lawsuit|litigation)\b/.test(value)) return 'court-record';
+  if (/\b(?:court records?|court cases?|dockets?|case filings?|judgments?|lawsuits?|litigation)\b/.test(value)) return 'court-record';
   if (/\b(?:inmate|incarcerat\w*|prison|jail|custody|correctional|where is .+ (?:held|locked up))\b/.test(value)) return 'incarceration';
   if (/\b(?:business|company|corporation|corp\.?|inc\.?|llc|ltd\.?|holdings|technologies|industries|enterprises|registered agent|company officer|director|ownership)\b/.test(value)) return 'business';
   if (/\b(?:broker|financial adviser|investment adviser|finra|crd|securities license)\b/.test(value)) return 'financial-professional';

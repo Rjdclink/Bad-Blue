@@ -112,12 +112,23 @@ export function resolveLexaraBackgroundSubject(
     : null;
   const explicitEntity = current.match(/\b([Cc]ompany|[Bb]usiness|[Oo]rganization|[Cc]orporation|[Ff]irm|[Nn]onprofit|[Ww]ebsite|[Dd]omain|[Ee]ntity)\s+(?:(?:named|called)\s+)?["“]?([A-Z][\p{L}\p{N}.'’&-]*(?:\s+[A-Z][\p{L}\p{N}.'’&-]*){0,5})["”]?/u);
   const standaloneSubject = current.trim().match(/^[A-Z][\p{L}\p{N}.'’&-]{1,120}$/u)?.[0];
-  const name = explicitEntity?.[2]
+  let name = explicitEntity?.[2]
     || candidates(current)[0]
     || (standaloneSubject && !CONVERSATIONAL_LEAD.test(standaloneSubject) ? standaloneSubject : undefined)
     || (explicitPlace ? explicitPlace[1] : undefined)
     || (followsPrior ? [...previousUserTurns].reverse().flatMap(candidates)[0] : undefined);
   if (!name) return null;
+  // A shorter repeat of the same person's name must retain previously supplied
+  // middle names. Conflicting middle names remain separate identities.
+  if (!explicitEntity && previousUserTurns.length) {
+    for (const priorName of [...previousUserTurns].reverse().flatMap(candidates)) {
+      const merged = mergeCompatibleLexaraBackgroundSubjects(
+        { name, kind: 'person', identifiable: false },
+        { name: priorName, kind: 'person', identifiable: false },
+      );
+      if (merged && merged.name.split(/\s+/).length > name.split(/\s+/).length) name = merged.name;
+    }
+  }
   const context = `${followsPrior ? previousUserTurns.slice(-2).join(' ') : ''} ${current}`;
   const kind = explicitEntity?.[2] === name
     ? /^(?:website|domain|entity)$/i.test(explicitEntity[1]) ? 'entity' : 'organization'

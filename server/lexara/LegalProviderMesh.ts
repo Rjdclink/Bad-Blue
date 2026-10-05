@@ -25,9 +25,8 @@ export interface LegalMeshSearchOptions {
   jurisdiction?: string;
   subject?: string;
   requestedFact?: string;
-  // Live Lexara background turns can return as soon as one independent
-  // provider/query variant yields useful candidates. Default false preserves
-  // comprehensive discovery for legal research, SPECTRA and other callers.
+  // Compatibility flag for live discovery. All bounded provider/query results
+  // are retained until the investigator evaluates identity and factual evidence.
   firstUseful?: boolean;
 }
 
@@ -39,7 +38,8 @@ const clean = (v: unknown) => {
     u.hash = '';
     for (const key of [...u.searchParams.keys()]) if (/^(?:utm_|gclid|fbclid|mc_)/i.test(key)) u.searchParams.delete(key);
     return u.toString();
-  } catch {
+  } catch (error) {
+    console.warn('[LEXARA Discovery]', { outcome: controller.signal.aborted ? 'cancelled-or-timeout' : 'failed', error: error instanceof Error ? error.message : String(error) });
     return null;
   }
 };
@@ -68,7 +68,8 @@ async function withTimeout<T>(
   const timer = setTimeout(() => controller.abort(new Error('Lexara discovery timeout')), Math.max(250, timeoutMs));
   try {
     return await work(controller.signal);
-  } catch {
+  } catch (error) {
+    console.warn('[LEXARA Discovery]', { outcome: controller.signal.aborted ? 'cancelled-or-timeout' : 'failed', error: error instanceof Error ? error.message : String(error) });
     return null;
   } finally {
     clearTimeout(timer);
@@ -176,7 +177,7 @@ async function duckDuckGoInstantAnswer(query: string, signal?: AbortSignal): Pro
     endpoint.searchParams.set('no_html','1');
     endpoint.searchParams.set('no_redirect','1');
     const response=await fetch(endpoint,{signal:requestSignal,headers:{accept:'application/json'}});
-    if(!response.ok) return [];
+    if(!response.ok) throw new Error(`Discovery HTTP ${response.status}`);
     const payload:any=await response.json();
     const candidates:LegalMeshCandidate[]=[];
     const abstractUrl=clean(payload?.AbstractURL);
@@ -204,7 +205,7 @@ async function searxng(query: string, signal?: AbortSignal): Promise<LegalMeshCa
     endpoint.searchParams.set('format', 'json');
     endpoint.searchParams.set('safesearch', '0');
     const response = await fetch(endpoint, { signal: requestSignal, headers: { accept: 'application/json' } });
-    if (!response.ok) return [];
+    if (!response.ok) throw new Error(`Discovery HTTP ${response.status}`);
     const payload:any = await response.json();
     return (Array.isArray(payload?.results) ? payload.results : []).slice(0, 12).flatMap((item:any) => {
       const url=clean(item?.url || item?.link);
@@ -224,7 +225,7 @@ async function ddgsBackend(query: string, backend: string, budgetMs: number, sig
       headers: { 'content-type': 'application/json', accept: 'application/json' },
       body: JSON.stringify({ query, max_results: 12, safesearch: 'off', backend }),
     });
-    if (!response.ok) return [];
+    if (!response.ok) throw new Error(`Discovery HTTP ${response.status}`);
     const payload:any = await response.json();
     return (Array.isArray(payload?.results) ? payload.results : []).slice(0, 12).flatMap((item:any) => {
       const url=clean(item?.href || item?.url || item?.link);
@@ -252,7 +253,7 @@ async function openserp(query: string, signal?: AbortSignal): Promise<LegalMeshC
     endpoint.searchParams.set('mode', 'any');
     endpoint.searchParams.set('engines', 'baidu,ecosia,yandex,google');
     const response = await fetch(endpoint, { signal: requestSignal, headers: { accept: 'application/json' } });
-    if (!response.ok) return [];
+    if (!response.ok) throw new Error(`Discovery HTTP ${response.status}`);
     const payload:any = await response.json();
     const rows = Array.isArray(payload?.results) ? payload.results : Array.isArray(payload?.data?.results) ? payload.data.results : [];
     return rows.slice(0, 12).flatMap((item:any) => {
@@ -271,7 +272,7 @@ async function serpApi(query: string, existingUrls: readonly string[], signal?: 
     const endpoint=new URL('https://serpapi.com/search.json');
     endpoint.searchParams.set('engine','google'); endpoint.searchParams.set('q',query);
     endpoint.searchParams.set('api_key',key); endpoint.searchParams.set('num','10');
-    const response=await fetch(endpoint,{signal:requestSignal}); if(!response.ok) return [];
+    const response=await fetch(endpoint,{signal:requestSignal}); if(!response.ok) throw new Error(`Discovery HTTP ${response.status}`);
     const payload:any=await response.json();
     return (payload.organic_results||[]).flatMap((item:any)=>{
       const url=clean(item?.link); return url && !seen.has(url)
@@ -288,7 +289,7 @@ async function scrapingBee(query: string, existingUrls: readonly string[], signa
     const google=`https://www.google.com/search?q=${encodeURIComponent(query)}&num=10`;
     const endpoint=new URL('https://app.scrapingbee.com/api/v1/');
     endpoint.searchParams.set('api_key',key); endpoint.searchParams.set('url',google); endpoint.searchParams.set('render_js','false');
-    const response=await fetch(endpoint,{signal:requestSignal}); if(!response.ok) return [];
+    const response=await fetch(endpoint,{signal:requestSignal}); if(!response.ok) throw new Error(`Discovery HTTP ${response.status}`);
     const html=await response.text();
     return [...html.matchAll(/href=["'](?:\/url\?q=)?(https?:\/\/[^"'& ]+)/gi)].flatMap(match=>{
       const url=clean(match[1]); return url && !/google\.com/i.test(url) && !seen.has(url)
@@ -316,7 +317,7 @@ async function commonCrawl(query: string, existingUrls: readonly string[], optio
       endpoint.searchParams.set('matchType','domain'); endpoint.searchParams.set('output','json');
       endpoint.searchParams.set('filter','status:200'); endpoint.searchParams.set('limit','8');
       const response=await fetch(endpoint,{signal:requestSignal,headers:{accept:'application/x-ndjson,text/plain','user-agent':'LegalWhat-Lexara/1.0'}});
-      if(!response.ok) return [];
+      if(!response.ok) throw new Error(`Discovery HTTP ${response.status}`);
       return (await response.text()).split(/\r?\n/).flatMap(line=>{
         if(!line.trim()) return []; try{const row=JSON.parse(line); const url=clean(row?.url); return url?[{url,title:'Common Crawl historical capture',tier:5 as const,provider:'commoncrawl'}]:[];}catch{return [];}
       });
@@ -329,45 +330,26 @@ async function commonCrawl(query: string, existingUrls: readonly string[], optio
 async function freeSearch(
   query: string,
   signal?: AbortSignal,
-  firstUseful = false,
+  _firstUseful = false,
 ): Promise<LegalMeshCandidate[]> {
-  // One parent listener per query variant prevents the shared turn signal from
-  // accumulating a listener for every parallel search provider.
+  // Discovery URLs are leads, not verified answers. Preserve every bounded
+  // provider result; only the investigator's evidence gate may end research.
   const controller = new AbortController();
   const relayAbort = () => controller.abort(signal?.reason);
   if (signal?.aborted) controller.abort(signal.reason);
   else signal?.addEventListener('abort', relayAbort, { once: true });
-  const providerSearches = [
-    () => tavily(query,controller.signal),
-    () => duckDuckGoInstantAnswer(query,controller.signal),
-    () => searxng(query,controller.signal),
-    () => ddgs(query,controller.signal),
-    () => openserp(query,controller.signal),
-  ];
   try {
-    if (firstUseful) {
-      const providerAttempts = providerSearches.map(search =>
-        search().then(results => {
-          if (!results.length) throw new Error('Lexara search provider returned no candidates');
-          return results;
-        }),
-      );
-      try {
-        const firstUsefulResults = await Promise.any(providerAttempts);
-        controller.abort(new Error('Lexara first useful provider result selected'));
-        return firstUsefulResults;
-      } catch (error) {
-        if (signal?.aborted) {
-          const reason = signal.reason;
-          if (reason instanceof Error || reason instanceof DOMException) throw reason;
-          throw new DOMException(typeof reason === 'string' ? reason : 'Lexara discovery cancelled', 'AbortError');
-        }
-        return [];
-      }
-    }
-
-    const groups=await Promise.all(providerSearches.map(search => search()));
-    return fuseRankedCandidates(groups);
+    const outcomes = await Promise.allSettled([
+      tavily(query, controller.signal),
+      duckDuckGoInstantAnswer(query, controller.signal),
+      searxng(query, controller.signal),
+      ddgs(query, controller.signal),
+      openserp(query, controller.signal),
+    ]);
+    if (signal?.aborted) throw signal.reason || new DOMException('Discovery cancelled', 'AbortError');
+    console.info('[LEXARA Discovery Lanes]', { results: outcomes.map((outcome, index) => ({ lane: ['tavily', 'duckduckgo-instant-answer', 'searxng', 'ddgs', 'openserp'][index], candidates: outcome.status === 'fulfilled' ? outcome.value.length : 0, settled: outcome.status })) });
+    return fuseRankedCandidates(outcomes.flatMap(outcome =>
+      outcome.status === 'fulfilled' ? [outcome.value] : []));
   } finally {
     signal?.removeEventListener('abort', relayAbort);
   }
@@ -377,33 +359,10 @@ async function firstUsefulSearchVariants(
   queries: readonly string[],
   signal?: AbortSignal,
 ): Promise<LegalMeshCandidate[]> {
-  if (!queries.length) return [];
-
-  const controller = new AbortController();
-  const relayAbort = () => controller.abort(signal?.reason);
-  if (signal?.aborted) controller.abort(signal.reason);
-  else signal?.addEventListener('abort', relayAbort, { once: true });
-
-  try {
-    const variantAttempts = queries.map(query =>
-      freeSearch(query, controller.signal, true).then(results => {
-        if (!results.length) throw new Error('Lexara search variant returned no candidates');
-        return results;
-      }),
-    );
-    const firstUsefulResults = await Promise.any(variantAttempts);
-    controller.abort(new Error('Lexara first useful query variant selected'));
-    return firstUsefulResults;
-  } catch (error) {
-    if (signal?.aborted) {
-      const reason = signal.reason;
-      if (reason instanceof Error || reason instanceof DOMException) throw reason;
-      throw new DOMException(typeof reason === 'string' ? reason : 'Lexara discovery cancelled', 'AbortError');
-    }
-    return [];
-  } finally {
-    signal?.removeEventListener('abort', relayAbort);
-  }
+  const outcomes = await Promise.allSettled(queries.map(query => freeSearch(query, signal)));
+  if (signal?.aborted) throw signal.reason || new DOMException('Discovery cancelled', 'AbortError');
+  return fuseRankedCandidates(outcomes.flatMap(outcome =>
+    outcome.status === 'fulfilled' ? [outcome.value] : []));
 }
 
 async function firstUsefulParallelSearch(
@@ -411,39 +370,12 @@ async function firstUsefulParallelSearch(
   seen: ReadonlySet<string>,
   providerPrefix: 'supplemental' | 'planned',
   signal?: AbortSignal,
-  providerFirstUseful = false,
+  _providerFirstUseful = false,
 ): Promise<LegalMeshCandidate[]> {
-  if (!queries.length) return [];
-
-  const controller = new AbortController();
-  const relayAbort = () => controller.abort(signal?.reason);
-  if (signal?.aborted) controller.abort(signal.reason);
-  else signal?.addEventListener('abort', relayAbort, { once: true });
-
-  try {
-    const attempts = queries.map(query =>
-      freeSearch(query, controller.signal, providerFirstUseful).then(results => {
-        const fresh = results
-          .filter(item => !seen.has(item.url))
-          .map(item => ({ ...item, tier: 5 as const, provider: `${providerPrefix}-${item.provider}` }));
-        if (!fresh.length) throw new Error('Lexara search variant returned no fresh candidates');
-        return diversify(fresh, 12);
-      }),
-    );
-
-    const firstUseful = await Promise.any(attempts);
-    controller.abort(new Error('Lexara first useful supplemental result selected'));
-    return firstUseful;
-  } catch (error) {
-    if (signal?.aborted) {
-      const reason = signal.reason;
-      if (reason instanceof Error || reason instanceof DOMException) throw reason;
-      throw new DOMException(typeof reason === 'string' ? reason : 'Lexara discovery cancelled', 'AbortError');
-    }
-    return [];
-  } finally {
-    signal?.removeEventListener('abort', relayAbort);
-  }
+  const results = await firstUsefulSearchVariants(queries, signal);
+  return diversify(results
+    .filter(item => !seen.has(item.url))
+    .map(item => ({ ...item, tier: 5 as const, provider: `${providerPrefix}-${item.provider}` })), 12);
 }
 
 export async function discoverLegalMeshTier3(
