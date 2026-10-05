@@ -84,6 +84,7 @@ function harness(options = {}) {
   async function fixtureFetch(raw, init) {
     const url = String(raw); calls.http.push({ url, init });
     assert(!forbidden.test(url), 'removed transport received an HTTP request: ' + url);
+    if (options.fetchResponse) return options.fetchResponse(url, init);
     const payload = options.fetchPayload?.(url, init, calls.http.length) ?? { results: [] };
     return { ok: true, json: async () => payload };
   }
@@ -111,6 +112,7 @@ function harness(options = {}) {
     vm.runInNewContext(`(function(require,module,exports){${compiled.outputText}\n})`, {
       process: { env }, console: { log() {}, warn() {}, error() {}, info() {} },
       fetch: fixtureFetch, URL, AbortController, DOMException, setTimeout, clearTimeout,
+      Date: class extends Date { static now() { return options.now ? options.now() : Date.now(); } },
     }, { filename })(requireLocal, module, module.exports);
     return module.exports;
   }
@@ -294,6 +296,46 @@ test('production DDGS uses its independent code default without custom variables
   assert(result.some(item => item.url === urls[0]));
   assert(h.calls.http.some(call => call.url === 'http://lexara-ddgs.railway.internal:4479/search/text'));
   assert(!h.calls.http.some(call => call.url.includes('pantheon-ddgs')));
+});
+
+test('CAPTCHA engines are excluded and rate-limited engines cool down without stopping healthy engines', async () => {
+  const h = harness({ env: { SEARXNG_URL: 'https://searx.fixture.test' },
+    fetchPayload: url => url.includes('searx.fixture') ? {
+      results: [{ url: urls[0], title: 'Healthy engine evidence', engine: 'bing' }],
+      unresponsive_engines: [['brave', 'CAPTCHA'], ['google cse', 'Too many requests']],
+    } : { results: [] },
+  });
+  const mesh = h.load('server/lexara/LegalProviderMesh.ts');
+  await mesh.discoverLegalMeshTier3('first fixture', undefined, { firstUseful: true });
+  const before = h.calls.http.length;
+  const results = await mesh.discoverLegalMeshTier3('second fixture', undefined, { firstUseful: true });
+  const requests = h.calls.http.slice(before).filter(x => x.url.includes('searx.fixture'));
+  assert(requests.length > 0);
+  assert(requests.every(x => new URL(x.url).searchParams.get('engines') === 'bing'));
+  assert(results.some(x => x.url === urls[0]), 'working-engine evidence survives');
+  assert(!h.calls.http.some(x => /engines=.*duckduckgo/.test(x.url)), 'known CAPTCHA engine is never selected');
+});
+
+test('HTTP 429 honors Retry-After and auto DDGS cannot restore CAPTCHA engines', async () => {
+  let now = 1000000;
+  let limited = true;
+  const h = harness({ env: { DDGS_URL: 'https://ddgs.fixture.test', LEXARA_DDGS_BACKEND: 'auto,duckduckgo' }, now: () => now,
+    fetchResponse: url => url.includes('ddgs.fixture') && limited
+      ? { ok: false, status: 429, headers: { get: () => '600' }, text: async () => 'Too many requests' }
+      : { ok: true, json: async () => ({ results: [] }) },
+  });
+  const mesh = h.load('server/lexara/LegalProviderMesh.ts');
+  await mesh.discoverLegalMeshTier3('first fixture', undefined, { firstUseful: true });
+  const requests = () => h.calls.http.filter(x => x.url.includes('ddgs.fixture'));
+  const count = requests().length;
+  assert(count > 0);
+  assert(requests().every(x => JSON.parse(x.init.body).backend === 'bing'));
+  now += 180001;
+  await mesh.discoverLegalMeshTier3('during cooldown', undefined, { firstUseful: true });
+  assert.equal(requests().length, count, 'default cooldown must not shorten Retry-After');
+  now += 420000; limited = false;
+  await mesh.discoverLegalMeshTier3('after cooldown', undefined, { firstUseful: true });
+  assert(requests().length > count, 'rate-limited engine can recover after the server-specified cooldown');
 });
 
 test('learned query history cannot insert a prior person or answer instruction into a new search', async () => {
