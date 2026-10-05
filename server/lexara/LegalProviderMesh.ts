@@ -266,7 +266,7 @@ async function ddgs(query: string, signal?: AbortSignal): Promise<LegalMeshCandi
   if (!lexaraDdgsBase()) return [];
   const primary = [...new Set((process.env.LEXARA_DDGS_BACKEND?.trim() || 'auto').split(',').map(x=>x.trim()).filter(Boolean))].join(',');
   const fallback = [...new Set((process.env.LEXARA_DDGS_FALLBACK_BACKENDS?.trim() || 'auto').split(',').map(x=>x.trim()).filter(x=>x && x!==primary))].join(',');
-  const first = await ddgsBackend(query, primary, 1_300, signal);
+  const first = await ddgsBackend(query, primary, 2_200, signal);
   return first.length || !fallback ? first : ddgsBackend(query, fallback, 900, signal);
 }
 
@@ -436,7 +436,7 @@ export async function discoverLegalMeshTier3(
     jurisdiction:options.jurisdiction,
   });
   if(learnedPatterns[0]) variants.push(`${query} ${learnedPatterns[0]}`);
-  const uniqueVariants=[...new Set(variants)].slice(0,6);
+  const uniqueVariants=[...new Set(variants)].slice(0,options.firstUseful ? 2 : 6);
   const groups=options.firstUseful
     ? [await firstUsefulSearchVariants(uniqueVariants,signal)]
     : await Promise.all(uniqueVariants.map(variant=>freeSearch(variant,signal)));
