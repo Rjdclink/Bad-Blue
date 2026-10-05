@@ -59,6 +59,7 @@ export interface LexaraConversationResult {
   jurisdiction?: string;
   mappedLawType?: ExpertLawType;
   backgroundEndpoint?: LexaraBackgroundResearchResult['endpoint'];
+  backgroundOnly?: boolean;
   backgroundStatus?: 'completed' | 'partial' | 'unavailable' | 'failed' | 'clarification-required' | 'consent-required';
   backgroundDocumentContext?: string;
   deadline?: LegalDeadlineCalculation;
@@ -1151,6 +1152,7 @@ export async function generateLexaraConversationResponse(
     jurisdiction: publicJurisdiction,
     mappedLawType,
     backgroundEndpoint,
+    backgroundOnly: backgroundResearchRequested && !mixedLegalFactNeed,
     backgroundDocumentContext: formatBackgroundFactsForDocument(backgroundInvestigation),
     deadline: verifiedDeterministicDeadline || undefined,
     backgroundStatus: permissionRefusalUnverified ? 'partial'

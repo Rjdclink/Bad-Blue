@@ -251,7 +251,8 @@ export async function callClaudeWebSearch(
     tools.push({
       type: 'web_fetch_20260318',
       name: 'web_fetch',
-      max_uses: maxUses,
+      max_uses: 1,
+      max_content_tokens: 1_500,
       allowed_callers: ['direct'],
       citations: { enabled: true },
       response_inclusion: 'full',

@@ -54,7 +54,7 @@ export async function searchLexaraBackgroundWithClaude(input: {
   try {
     const result = await callClaudeWebSearch(prompt, {
       maxTokens: 1024,
-      maxUses: 4,
+      maxUses: 2,
       allowFetch: true,
       model: input.model,
       signal: input.signal,
@@ -103,4 +103,3 @@ export async function searchLexaraBackgroundWithClaude(input: {
     return { candidates: [], citationEvidence: [], searches: 0 };
   }
 }
-
