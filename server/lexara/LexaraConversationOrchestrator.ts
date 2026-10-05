@@ -905,11 +905,13 @@ export async function generateLexaraConversationResponse(
       ? '\nBACKGROUND ANSWER LENGTH: Answer the exact factual question in one or two sentences, at most 60 words, unless the user explicitly asks for a detailed report. No URLs, source list, search mechanics, unrelated case facts, or offers of further work.'
       : '');
   const userPrompt = `${history ? `CONVERSATION SO FAR:\n${history}\n\n` : ''}CURRENT USER TURN:\n${cleanPrompt}`;
-  const claudeModel = context.allowClaudeOpus !== true
-    ? CURRENT_AI_MODELS.claudeFast
-    : deepClaudeNeeded
-      ? CURRENT_AI_MODELS.claudeDeep
-      : CURRENT_AI_MODELS.claudeBalanced;
+  const claudeModel = backgroundResearchRequested && !mixedLegalFactNeed
+    ? context.allowClaudeOpus === true ? CURRENT_AI_MODELS.claudeBalanced : CURRENT_AI_MODELS.claudeFast
+    : context.allowClaudeOpus !== true
+      ? CURRENT_AI_MODELS.claudeFast
+      : deepClaudeNeeded
+        ? CURRENT_AI_MODELS.claudeDeep
+        : CURRENT_AI_MODELS.claudeBalanced;
   const claudeEffort = context.allowClaudeOpus !== true
     ? undefined
     : backgroundResearchRequested && !mixedLegalFactNeed
