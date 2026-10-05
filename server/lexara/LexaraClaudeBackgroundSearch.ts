@@ -53,8 +53,8 @@ export async function searchLexaraBackgroundWithClaude(input: {
 
   try {
     const result = await callClaudeWebSearch(prompt, {
-      maxTokens: 1024,
-      maxUses: 2,
+      maxTokens: input.decision.requestedFact === 'general-public-record' ? 1024 : 384,
+      maxUses: input.decision.requestedFact === 'general-public-record' ? 2 : 1,
       allowFetch: true,
       maxFetchUses: 1,
       maxFetchContentTokens: 1_500,
@@ -105,3 +105,4 @@ export async function searchLexaraBackgroundWithClaude(input: {
     return { candidates: [], citationEvidence: [], searches: 0 };
   }
 }
+
