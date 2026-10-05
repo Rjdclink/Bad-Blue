@@ -70,9 +70,17 @@ function candidate(url, provider = 'fixture-search') {
   return { url, title: 'Fixture result', excerpt: 'discovery only', tier: 3, provider };
 }
 
+const meshEvidence = execute('server/lexara/LegalProviderMesh.ts', {
+  './LexaraPublicSourceRegistry': {},
+  './LexaraDiscoveryLearning': {},
+  './LexaraResearchAssist': {},
+});
+
 const mesh = {
+  mergeLegalMeshCandidateEvidence: meshEvidence.mergeLegalMeshCandidateEvidence,
   async discoverLegalMeshTier3(query, _signal, options) {
     state.tierCalls.push({ query, options });
+    if (state.mode === 'reported-death') return [{ ...candidate('https://records.example.test/obituary'), excerpt: 'Avery Morgan Example passed away February 6, 2020.' }];
     if (state.mode === 'native-failure') throw new Error('fixture native discovery outage');
     if (state.mode === 'empty') return [candidate('https://records.example.test/empty')];
     if (state.mode === 'employment') return [candidate('https://records.example.test/employer')];
@@ -268,6 +276,18 @@ function reset(mode) {
 }
 
 (async () => {
+  reset('reported-death');
+  const reportedDeath = await investigator.investigateLexaraBackgroundQuestion(
+    'When did Avery Morgan Example pass away?',
+    { resolvedSubject: { name: 'Avery Morgan Example', kind: 'person', identifiable: true },
+      researchDecision: { needed: true, reason: 'external-fact-question', objective: 'Find the death date of Avery Morgan Example', objectiveKind: 'external-fact', intent: 'factual', requestedFact: 'death-date', sourceCategories: ['vital-records'], subject: 'Avery Morgan Example', standaloneQuery: 'Avery Morgan Example death date', inferred: true } },
+  );
+  assert.equal(reportedDeath.endpoint, 'best-available-evidence');
+  assert.match(reportedDeath.evidenceSummary, /REPORTED IN SEARCH EXCERPT/);
+  assert.match(reportedDeath.evidenceSummary, /February 6, 2020/);
+  assert.equal(state.claudeCalls.length, 0, 'an explicit subject-matched obituary excerpt avoids redundant Claude research');
+  assert.equal(reportedDeath.coverageLimited, true, 'a search excerpt is not upgraded to independent page verification');
+
   reset('dob-recursive');
   const progress = [];
   const dob = await investigator.investigateLexaraBackgroundQuestion(
@@ -437,8 +457,9 @@ function reset(mode) {
   assert.match(inferredAge.evidenceSummary, /juvenile/i);
   const inferredPrompt = investigator.formatLexaraBackgroundResearchForSystem(inferredAge);
   assert.match(inferredPrompt, /strongest defensible estimate/i);
-  assert.match(inferredPrompt, /first sentence must contain only the requested fact/i);
-  assert.match(inferredPrompt, /did NOT clear Lexara's verification threshold/i);
+  assert.match(inferredPrompt, /answer in one sentence containing the requested fact/i);
+  assert.match(inferredPrompt, /did NOT clear Lexara's independent verification threshold/i);
+  assert.match(inferredPrompt, /Keep source URLs internal/i);
   assert.match(inferredPrompt, /This is only a guess, not a verified fact/i);
 
   reset('converged-inference');
