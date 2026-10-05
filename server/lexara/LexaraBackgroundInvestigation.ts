@@ -781,7 +781,7 @@ export async function investigateLexaraBackgroundQuestion(
                 ...snippetEvaluationRaw,
                 confidence: Math.min(snippetEvaluationRaw.confidence, 0.69),
                 directlyAnswers: false,
-                inferentiallySupports: true,
+                inferentiallySupports: snippetEvaluationRaw.directlyAnswers || snippetEvaluationRaw.inferentiallySupports,
                 sourceReported: decision.requestedFact === 'death-date' && snippetEvaluationRaw.directlyAnswers && snippetEvaluationRaw.identityConfidence >= 0.72,
               }
             : null;
@@ -991,7 +991,8 @@ export async function investigateLexaraBackgroundQuestion(
     const ranked = [...assessed.values()].sort((a, b) => b.confidence - a.confidence);
     const best = ranked[0];
     const directlyAnswered = Boolean(best?.directlyAnswers && best.confidence >= SUFFICIENT_EVIDENCE_THRESHOLD);
-    const useful = ranked.filter(item => item.confidence >= PARTIAL_EVIDENCE_THRESHOLD);
+    const useful = ranked.filter(item => item.confidence >= PARTIAL_EVIDENCE_THRESHOLD
+      && (broadPersonBackground || item.directlyAnswers || item.inferentiallySupports || item.sourceReported));
     const evidenceSummary = useful.slice(0, 10).map((item, index) =>
       `${index + 1}. SOURCE: ${item.url}\nRETRIEVED: ${item.retrievedAt}\nASSESSMENT: ${item.sourceReported ? 'REPORTED IN SEARCH EXCERPT; PAGE NOT INDEPENDENTLY RETRIEVED' : item.directlyAnswers ? 'DIRECT' : item.inferentiallySupports ? 'INFERENTIAL' : 'PARTIAL'} (${Math.round(item.confidence * 100)}%)\nEVIDENCE: ${item.excerpt}`,
     ).join('\n\n');
@@ -1071,7 +1072,7 @@ export function formatLexaraBackgroundResearchForSystem(
       ? `\nUNVERIFIED SEARCH LEADS (discovery only; do not state their contents as facts):\n${result.searchLeads.map(url => `- ${url}`).join('\n')}`
       : '';
     return `\n\nAPPLICATION-SUPPLIED LEXARA BACKGROUND RESEARCH${categories}${coverage}
-Endpoint: ${result.endpoint}. No verified subject-specific source content established the requested fact. Do not infer a negative fact from an empty, inaccessible, failed, partial, or time-limited search.${leads}`;
+Endpoint: ${result.endpoint}. No verified subject-specific source content established the requested fact. Do not infer a negative fact from an empty, inaccessible, failed, partial, or time-limited search. Answer the exact question in one short sentence. Do not repeat identity clues, describe the research process, or mention unrelated records. Keep source URLs internal.${leads}`;
   }
   const verificationStatus = result.endpoint === 'evidence-sufficient'
     ? '\nVERIFICATION STATUS: The exact requested fact cleared Lexara\'s subject-match and evidence threshold. State it directly; do not call it a guess.'
