@@ -1,6 +1,7 @@
 import {
   buildLexaraSourceQueries,
   getLexaraPublicSources,
+  getLexaraSourceQueryHints,
   type LexaraSourceCategory,
 } from './LexaraPublicSourceRegistry';
 import {
@@ -435,7 +436,12 @@ export async function discoverLegalMeshTier3(
     categories:options.categories,
     jurisdiction:options.jurisdiction,
   });
-  if(learnedPatterns[0]) variants.push(`${query} ${learnedPatterns[0]}`);
+  // Stored patterns contain prior user wording, not reusable templates. Reuse
+  // only curated source-family hints so names/instructions cannot cross turns.
+  if(learnedPatterns[0]) {
+    const hint = getLexaraSourceQueryHints(options.categories || []).find(value => learnedPatterns[0].includes(value));
+    if (hint) variants.push(`${query} ${hint}`);
+  }
   const uniqueVariants=[...new Set(variants)].slice(0,options.firstUseful ? 2 : 6);
   const groups=options.firstUseful
     ? [await firstUsefulSearchVariants(uniqueVariants,signal)]
@@ -480,7 +486,7 @@ export async function discoverLegalMeshSupplemental(
   const learnedPatterns=await getLexaraLearnedQueryPatterns(options.categories||[],options.jurisdiction,2);
   if(learnedPatterns.length){
     const learnedFresh=await firstUsefulParallelSearch(
-      learnedPatterns.map(pattern=>`${query} ${pattern}`),
+      getLexaraSourceQueryHints(options.categories || []).slice(0, 2).map(hint=>`${query} ${hint}`),
       seen,
       'supplemental',
       signal,
