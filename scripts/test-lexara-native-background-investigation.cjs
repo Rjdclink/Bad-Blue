@@ -80,6 +80,7 @@ const mesh = {
   mergeLegalMeshCandidateEvidence: meshEvidence.mergeLegalMeshCandidateEvidence,
   async discoverLegalMeshTier3(query, _signal, options) {
     state.tierCalls.push({ query, options });
+    if (state.mode.startsWith('business-')) return [candidate('https://records.example.test/' + state.mode)];
     if (state.mode === 'reported-death') return [{ ...candidate('https://records.example.test/obituary'), excerpt: 'Avery Morgan Example passed away February 6, 2020.' }];
     if (state.mode === 'native-failure') throw new Error('fixture native discovery outage');
     if (state.mode === 'empty') return [candidate('https://records.example.test/empty')];
@@ -119,6 +120,11 @@ const retrieval = {
     async retrieve(request) {
       state.retrievalCalls.push([...request.targets]);
       const evidence = request.targets.flatMap(target => {
+        if (target.includes('/business-')) return [{ target,
+          content: state.mode === 'business-owner'
+            ? 'Avery Example of Iowa owns Cedar Example LLC.'
+            : 'Avery Example of Iowa appears in this directory. Business search. Company records. Copyright Directory LLC.',
+          retrievedAt: '2026-10-05T12:00:00.000Z', contentType: 'text/html' }];
         if (target.endsWith('/profile')) {
           return [{
             target,
@@ -276,6 +282,17 @@ function reset(mode) {
 }
 
 (async () => {
+  for (const mode of ['business-directory', 'business-owner']) {
+    reset(mode);
+    const result = await investigator.investigateLexaraBackgroundQuestion('What business does Avery Example operate?', {
+      jurisdiction: 'Iowa',
+      researchDecision: { needed: true, reason: 'external-fact-question', objective: 'Find the business operated by Avery Example', objectiveKind: 'external-fact', intent: 'factual', requestedFact: 'business', sourceCategories: ['business'], subject: 'Avery Example', standaloneQuery: 'Avery Example business Iowa', inferred: true },
+    });
+    assert.equal(result.endpoint === 'evidence-sufficient', mode === 'business-owner',
+      'business sufficiency requires a subject-linked operation or role, not directory navigation');
+    assert.equal(state.claudeCalls.length, mode === 'business-owner' ? 0 : 1,
+      'only a relevant business fact may suppress further research');
+  }
   reset('reported-death');
   const reportedDeath = await investigator.investigateLexaraBackgroundQuestion(
     'When did Avery Morgan Example pass away?',
