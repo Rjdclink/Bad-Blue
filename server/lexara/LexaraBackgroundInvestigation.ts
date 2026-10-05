@@ -102,6 +102,7 @@ const PROMPT_CATEGORY_RULES: Array<[RegExp, LexaraSourceCategory[]]> = [
 ];
 
 const FACT_EVIDENCE_PATTERNS: Partial<Record<LexaraRequestedFact, RegExp>> = {
+  'death-date': /\b(?:died|passed\s+away|date\s+of\s+death|death\s+date)\b[^.\n]{0,95}(?:(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{1,2},?\s+(?:19|20)\d{2}|\d{1,2}[\/-]\d{1,2}[\/-](?:19|20)?\d{2}|(?:19|20)\d{2})/i,
   'age-dob': /\b(?:date\s+of\s+birth|birth\s+date|birthday|dob)\b[^.\n]{0,90}(?:\d{1,2}[\/-]\d{1,2}[\/-](?:19|20)?\d{2}|(?:19|20)\d{2})|\bborn\b[^.\n]{0,60}(?:\d{1,2}[\/-]\d{1,2}[\/-](?:19|20)?\d{2}|(?:19|20)\d{2})|\bage\s+\d{1,3}\b/i,
   'professional-license': /\b(?:license|licensure|credential|certification|board certified|disciplin|registration)\b/i,
   'marriage-divorce': /\b(?:married|marriage|spouse|husband|wife|divorc|marital)\b/i,
