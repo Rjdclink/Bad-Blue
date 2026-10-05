@@ -67,7 +67,9 @@ must(
 must(
   claude.includes('MessageCreateParamsNonStreaming') &&
     claude.split("const effectiveEffort = /^claude-haiku-/i.test(model) ? undefined : options.effort;").length === 3 &&
-    claude.split('output_config: { effort: effectiveEffort }').length === 3 &&
+    claude.split('output_config: { effort: effectiveEffort }').length === 2 &&
+    claude.includes('output_config: { effort: retryEffort }') &&
+    claude.includes("response = await createMessage(retryBudget, effectiveEffort ? 'low' : undefined)") &&
     claude.includes("cache_control: { type: 'ephemeral' }") &&
     claude.includes("console.info('[Claude Usage]'") &&
     collaboration.includes('allowClaudeOpus?: boolean') &&
