@@ -279,7 +279,7 @@ function lexaraOpenserpBase(): string {
 async function openserp(query: string, signal?: AbortSignal): Promise<LegalMeshCandidate[]> {
   const base = lexaraOpenserpBase();
   if (!base) return [];
-  const result = await withTimeout('openserp', 2_200, signal, async requestSignal => {
+  const result = await withTimeout('openserp', 3_000, signal, async requestSignal => {
     const endpoint = new URL('/mega/search', base.endsWith('/') ? base : base + '/');
     endpoint.searchParams.set('text', query);
     endpoint.searchParams.set('limit', '12');
@@ -289,6 +289,13 @@ async function openserp(query: string, signal?: AbortSignal): Promise<LegalMeshC
     if (!response.ok) throw new Error(`Discovery HTTP ${response.status}`);
     const payload:any = await response.json();
     const rows = Array.isArray(payload?.results) ? payload.results : Array.isArray(payload?.data?.results) ? payload.data.results : [];
+    if (Array.isArray(payload?.meta?.engines_failed) && payload.meta.engines_failed.length) {
+      console.info('[LEXARA OpenSERP Coverage]', JSON.stringify({
+        responded: payload.meta.engines_responded || [],
+        failed: payload.meta.engines_failed,
+        errors: (payload.meta.engine_errors || []).map((item:any) => ({ engine: item.engine, error: item.error })),
+      }));
+    }
     return rows.slice(0, 12).flatMap((item:any) => {
       const url=clean(item?.url || item?.link || item?.href);
       return url ? [{url,title:String(item?.title||'OpenSERP result'),excerpt:String(item?.description||item?.snippet||item?.text||'').slice(0,1200),tier:3 as const,provider:'openserp'}] : [];
