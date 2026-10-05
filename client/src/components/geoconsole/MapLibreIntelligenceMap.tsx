@@ -726,6 +726,7 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
   const [streetPhoto, setStreetPhoto] = useState<KartaViewPhoto | null>(null);
   const [streetLoading, setStreetLoading] = useState(false);
   const [rendererRecovering, setRendererRecovering] = useState(false);
+  const [rendererUnavailable, setRendererUnavailable] = useState(false);
   const [providerStatus, setProviderStatus] = useState<MapProviderStatus>({
     basemap: 'primary',
     satellite: 'primary',
@@ -797,7 +798,9 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
 
-    const map = new maplibregl.Map({
+    let map: MapLibreMap;
+    try {
+      map = new maplibregl.Map({
       container: containerRef.current,
       style: mapMode === 'dark' ? OPENFREEMAP_DARK : OPENFREEMAP_LIBERTY,
       center: initialCenter,
@@ -813,7 +816,14 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
       antialias: typeof navigator === 'undefined' || !navigator.hardwareConcurrency || navigator.hardwareConcurrency > 4,
       attributionControl: true,
       maxPitch: 85,
-    });
+      });
+    } catch {
+      // Some browsers cannot create a WebGL context. Keep the investigation
+      // and its evidence usable instead of triggering the app error boundary.
+      containerRef.current.replaceChildren();
+      setRendererUnavailable(true);
+      return;
+    }
 
     map.addControl(new maplibregl.NavigationControl({
       showCompass: true,
@@ -1282,6 +1292,16 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
   return (
     <div className="absolute inset-0" data-gesture-navigation="ignore">
       <div ref={containerRef} className="absolute inset-0" />
+      {rendererUnavailable && (
+        <div role="status" data-testid="spectra-map-unavailable" className="absolute inset-0 flex items-center justify-center bg-slate-950 p-6 text-center text-sm text-slate-300">
+          <div>
+            <p>The map cannot run in this browser. You can still use the Spectra conversation and add evidence.</p>
+            {currentFrame && (
+              <p className="mt-2">Recorded position: {currentFrame.position.latitude.toFixed(6)}, {currentFrame.position.longitude.toFixed(6)}. This does not independently verify a current location.</p>
+            )}
+          </div>
+        </div>
+      )}
 
       {Object.values(providerStatus).some(state => state !== 'primary') && (
         <div
