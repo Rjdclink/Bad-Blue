@@ -56,6 +56,8 @@ export async function searchLexaraBackgroundWithClaude(input: {
       maxTokens: 1024,
       maxUses: 2,
       allowFetch: true,
+      maxFetchUses: 1,
+      maxFetchContentTokens: 1_500,
       model: input.model,
       signal: input.signal,
       systemPrompt: [
