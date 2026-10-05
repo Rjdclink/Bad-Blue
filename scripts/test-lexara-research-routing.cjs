@@ -283,6 +283,19 @@ test('Lexara retains slower provider evidence after fast discovery leads in live
   assert(allResults.some(item => item.url === urls[1]));
 });
 
+test('production DDGS uses its independent code default without custom variables', async () => {
+  const h = harness({
+    env: { RAILWAY_ENVIRONMENT_ID: '91154a53-01a3-470c-8fdc-c0f13b4702fa', DDGS_URL: '' },
+    fetchPayload: endpoint => endpoint.includes('lexara-ddgs.railway.internal')
+      ? { results: [{ href: urls[0], title: 'Independent engine result', body: 'Source evidence' }] }
+      : { results: [] },
+  });
+  const result = await h.load('server/lexara/LegalProviderMesh.ts').discoverLegalMeshTier3('fixture');
+  assert(result.some(item => item.url === urls[0]));
+  assert(h.calls.http.some(call => call.url === 'http://lexara-ddgs.railway.internal:4479/search/text'));
+  assert(!h.calls.http.some(call => call.url.includes('pantheon-ddgs')));
+});
+
 test('retired Pantheon internal search endpoints are ignored by the Lexara mesh', async () => {
   const h = harness({
     env: {
