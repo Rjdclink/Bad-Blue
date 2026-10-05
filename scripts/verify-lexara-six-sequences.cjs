@@ -121,17 +121,17 @@ if (!legalMesh.includes('isPreferredOfficialCandidate') || !legalMesh.includes('
   throw new Error('Lexara factual discovery does not prioritize matching official registries');
 }
 if (!legalMesh.includes('async function firstUsefulParallelSearch')
-  || !legalMesh.includes('Promise.any(attempts)')
+  || !legalMesh.includes('Promise.allSettled([')
   || legalMesh.includes('const learnedOutcomes=await Promise.allSettled')
   || legalMesh.includes('const plannedOutcomes=await Promise.allSettled')) {
-  throw new Error('Lexara supplemental discovery lost optimized parallel first-useful-result behavior');
+  throw new Error('Lexara supplemental discovery must preserve parallel provider evidence until scoring');
 }
 if (!legalMesh.includes('firstUseful?: boolean')
-  || !legalMesh.includes('Promise.any(providerAttempts)')
-  || !legalMesh.includes('Promise.any(variantAttempts)')
+  || legalMesh.includes('Promise.any(')
+  || !legalMesh.includes('Promise.allSettled(queries.map(query => freeSearch')
   || !legalMesh.includes('const groups=options.firstUseful')
   || !background.includes('firstUseful: !deepAcquisitionRequested')) {
-  throw new Error('Lexara live background discovery lost first-useful provider/query timing');
+  throw new Error('Lexara live background discovery must not cancel provider/query results before evidence scoring');
 }
 if (!legalMesh.includes('function independentSearchBase')
   || !legalMesh.includes('pantheon-(?:ddgs|searxng|openserp)')
@@ -212,3 +212,4 @@ if (!routes.includes('documentIntent') || !routes.includes("send('complete'")) {
 }
 
 console.log('LEXARA six-sequence routing verification passed with Pantheon disconnected and Lexara-native factual research wired.');
+

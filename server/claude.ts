@@ -1,3 +1,4 @@
+import { meterClaudeRequest } from './claudeUsage';
 /**
  * Claude (Anthropic) AI Service - High-quality reasoning
  * Used for 5-10% of AI requests
@@ -114,10 +115,10 @@ export async function callClaude(
           }
         ]
       };
-      return client.messages.create(requestBody, {
+      return meterClaudeRequest(model, 'messages', () => client.messages.create(requestBody, {
         signal: options.signal,
         ...(options.providerPolicy === 'legalwhat' ? { maxRetries: 0 } : {}),
-      });
+      }));
     };
 
     const extractText = (message: Awaited<ReturnType<typeof createMessage>>) =>
@@ -299,7 +300,7 @@ export async function callClaudeWebSearch(
 
   try {
     for (let continuation = 0; continuation < 4; continuation += 1) {
-      response = await (client.messages as any).create({
+      response = await meterClaudeRequest<any>(model, 'web-search', () => (client.messages as any).create({
         model,
         max_tokens: requestMaxTokens,
         system: options.systemPrompt || 'Use web search only as needed. Prefer reliable, directly relevant sources and do not invent unsupported facts.',
@@ -308,7 +309,7 @@ export async function callClaudeWebSearch(
       }, {
         signal: options.signal,
         maxRetries: 0,
-      });
+      }));
 
       const usage = response?.usage || {};
       tokensUsed += Number(usage.input_tokens || 0)
@@ -419,7 +420,7 @@ export async function callClaudeMediaExtraction(input: {
       };
 
   try {
-    const response = await (client.messages as any).create({
+    const response = await meterClaudeRequest<any>(model, 'media', () => (client.messages as any).create({
       model,
       max_tokens: 12_000,
       messages: [{
@@ -432,7 +433,7 @@ export async function callClaudeMediaExtraction(input: {
     }, {
       signal: input.signal,
       maxRetries: 0,
-    });
+    }));
 
     const content = (response.content || [])
       .flatMap((block: any) => block?.type === 'text' && typeof block.text === 'string' ? [block.text] : [])
@@ -509,7 +510,7 @@ export async function callClaudeStreaming(
       }
     });
 
-    const response = await stream.finalMessage();
+    const response = await meterClaudeRequest<any>(model, 'streaming', () => stream.finalMessage());
     const content = response.content
       .flatMap(block =>
         block.type === 'text' && typeof (block as any).text === 'string'

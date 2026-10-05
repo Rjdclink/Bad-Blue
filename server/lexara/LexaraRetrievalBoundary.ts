@@ -1,6 +1,7 @@
 import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 import { load } from 'cheerio';
+import { getDocument } from 'pdfjs-dist/build/pdf.js';
 
 export interface LexaraRetrievalEvidence {
   target: string;
@@ -81,6 +82,20 @@ function textFromResponse(raw: string, contentType: string): string {
   return '';
 }
 
+async function textFromPdf(buffer: Buffer): Promise<string> {
+  const task = getDocument({ data: new Uint8Array(buffer), disableFontFace: true, isEvalSupported: false, useSystemFonts: true });
+  const document = await task.promise;
+  try {
+    const pages: string[] = [];
+    for (let page = 1; page <= Math.min(document.numPages, 20); page++) {
+      const content = await (await document.getPage(page)).getTextContent();
+      pages.push(content.items.map(item => 'str' in item ? item.str : '').join(' '));
+      if (pages.join(' ').length >= MAX_CONTENT_CHARACTERS) break;
+    }
+    return pages.join(' ').replace(/\s+/g, ' ').trim().slice(0, MAX_CONTENT_CHARACTERS);
+  } finally { await document.destroy(); }
+}
+
 async function retrieveOne(target: string, parentSignal?: AbortSignal): Promise<LexaraRetrievalEvidence | null> {
   let current = await assertPublicUrl(target);
   for (let redirectCount = 0; redirectCount <= MAX_REDIRECTS; redirectCount++) {
@@ -105,21 +120,35 @@ async function retrieveOne(target: string, parentSignal?: AbortSignal): Promise<
         current = await assertPublicUrl(new URL(location, current).toString());
         continue;
       }
-      if (!response.ok) return null;
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const length = Number(response.headers.get('content-length') || 0);
       if (Number.isFinite(length) && length > MAX_RESPONSE_BYTES) return null;
       const contentType = response.headers.get('content-type') || '';
-      const raw = await response.text();
-      if (raw.length > MAX_RESPONSE_BYTES) return null;
-      const content = textFromResponse(raw, contentType);
-      if (!content) return null;
+      // Bound bytes while reading, including responses without Content-Length.
+      if (!response.body) return null;
+      const reader = response.body.getReader();
+      const chunks: Uint8Array[] = [];
+      let bytes = 0;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        bytes += value.byteLength;
+        if (bytes > MAX_RESPONSE_BYTES) { await reader.cancel(); return null; }
+        chunks.push(value);
+      }
+      const buffer = Buffer.concat(chunks);
+      const content = /application\/pdf/i.test(contentType) || buffer.subarray(0, 5).toString() === '%PDF-'
+        ? await textFromPdf(buffer)
+        : textFromResponse(buffer.toString('utf8'), contentType);
+      if (!content) { console.info('[LEXARA Retrieval]', { host: current.hostname, outcome: 'no-extractable-text', contentType }); return null; }
       return {
         target,
         content,
         retrievedAt: new Date().toISOString(),
         contentType,
       };
-    } catch {
+    } catch (error) {
+      console.warn('[LEXARA Retrieval]', { host: current.hostname, outcome: controller.signal.aborted ? 'cancelled-or-timeout' : 'failed', error: error instanceof Error ? error.message : String(error) });
       return null;
     } finally {
       clearTimeout(timer);
@@ -147,3 +176,4 @@ export const lexaraRetrievalAdapter = {
     };
   },
 };
+

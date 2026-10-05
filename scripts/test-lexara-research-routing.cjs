@@ -65,6 +65,19 @@ function harness(options = {}) {
       calls.crawlers.push(request);
       return { evidence: request.targets.map(target => ({ target, content: 'Extracted fixture source evidence' })) };
     } } },
+    'server/lexara/LexaraDiscoveryLearning.ts': {
+      rememberLexaraDiscoveryOutcome: async () => {},
+      getLexaraLearnedQueryPatterns: async () => options.learnedPattern ? [options.learnedPattern] : [],
+      getLexaraLearnedSources: async () => [],
+      rankLexaraDiscoveryUrls: values => [...new Set(values)],
+    },
+    'server/lexara/LexaraResearchAssist.ts': {
+      planLexaraResearchQueries: async query => ({ queries: [query + ' official'], providers: ['claude'] }),
+    },
+    'server/lexara/LexaraRetrievalBoundary.ts': { lexaraRetrievalAdapter: { retrieve: async request => {
+      calls.crawlers.push(request);
+      return { evidence: request.targets.map(target => ({ target, content: 'Extracted fixture source evidence' })) };
+    } } },
     'server/lexara/LexaraResearchIntentRouter.ts': { decideLexaraResearchNeed: () => ({ needed: true }) },
   };
   const forbidden = /openrouter|firecrawl/i;
@@ -164,13 +177,13 @@ test('both legal discovery tiers preserve DDGS results while carrying the canoni
   assert.equal(primary[0].url, urls[0]); assert.equal(primary[0].excerpt, 'Fresh source evidence');
   assert.equal(supplemental[0].url, urls[0]); assert.equal(h.calls.gateway.length, 0);
 });
-test('Lexara live first-useful mode returns before a slow provider while default discovery stays comprehensive', async () => {
+test('Lexara retains slower provider evidence after fast discovery leads in live and default modes', async () => {
   let liveSlowProviderFinished = false;
   const live = harness({
     env: { TAVILY_API_KEY: 'fixture', DDGS_URL: 'https://ddgs.fixture.test' },
     fetchPayload: async url => {
       if (url.includes('api.tavily.com')) {
-        return { results: [{ url: urls[0], title: 'Fast Tavily result', content: 'Fast useful evidence' }] };
+        return { results: [{ url: urls[0], title: 'Fast Tavily result', content: 'Fast irrelevant discovery lead' }] };
       }
       if (url.includes('ddgs.fixture.test')) {
         await new Promise(resolve => setTimeout(resolve, 120));
@@ -186,11 +199,12 @@ test('Lexara live first-useful mode returns before a slow provider while default
     undefined,
     { firstUseful: true },
   );
-  assert(firstUseful.some(item => item.url === urls[0]), 'fast useful provider result must survive');
+  assert(firstUseful.some(item => item.url === urls[0]), 'fast discovery lead remains available');
+  assert(firstUseful.some(item => item.url === urls[1]), 'slower independent evidence must survive');
   assert.equal(
     liveSlowProviderFinished,
-    false,
-    'live first-useful discovery must not wait for a slower provider after useful evidence arrives',
+    true,
+    'unverified discovery leads must not cancel slower provider evidence',
   );
 
   let comprehensiveSlowProviderFinished = false;
@@ -300,7 +314,7 @@ test('discovered legal URLs still reach crawler enrichment and return to Lexara'
 test('complete discovery exhaustion cannot activate removed emergency providers even with their keys set', async () => {
   const h = harness({ learnedPattern: 'court records' });
   const result = await h.load('server/lexara/LexaraAuthorityResearch.ts').researchLegalAuthority('Find the statute');
-  assert.equal(result, null); assert.equal(h.calls.gateway.length, 0); assert.equal(h.calls.http.length, 0);
+  assert.equal(result, null); assert.equal(h.calls.gateway.length, 0); assert(h.calls.http.every(call => !/openrouter|firecrawl/i.test(call.url)));
 });
 test('cancelled research starts no provider or crawler work', async () => {
   const h = harness(); const controller = new AbortController(); controller.abort();
@@ -320,7 +334,7 @@ test('release source-registry guard requires independent discovery and rejects t
   for (const forbidden of ['orchestratedWebSearch', 'FIRECRAWL_API_KEY', 'api.firecrawl.dev']) {
     assert.throws(() => verify(authority + '\n' + forbidden), /Removed Lexara research route/);
   }
-  assert.throws(() => verify(authority, legalMesh.replaceAll("providerPolicy: 'legalwhat'", '')), /canonical provider policy/);
+  assert.throws(() => verify(authority, legalMesh.replaceAll('discoverPantheonSourcesParallel', '') + '\nPantheonDiscoveryCoordinator'), /depends on Pantheon/);
 });
 (async () => {
   let passed = 0;

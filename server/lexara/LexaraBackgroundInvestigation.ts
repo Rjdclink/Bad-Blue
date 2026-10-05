@@ -852,11 +852,10 @@ export async function investigateLexaraBackgroundQuestion(
       if (exhausted) break;
     }
 
-    // Broad person lookups used to succeed because Claude's parallel web lane
-    // had enough of the live window to finish. If faster native broadening
-    // exhausts first, reserve the remaining live budget for that already-running
-    // lane instead of aborting it and converting a timing race into zero evidence.
-    if (broadPersonBackground && !deepAcquisitionRequested) {
+    // Any factual lookup may need the already-running Claude lane after native
+    // sources are exhausted. Reserve the remaining budget for cited evidence
+    // before returning an empty answer or aborting paid research.
+    if (!deepAcquisitionRequested) {
       integrateClaudeParallel();
       const usefulBeforeClaude = [...assessed.values()]
         .filter(item => item.confidence >= PARTIAL_EVIDENCE_THRESHOLD);

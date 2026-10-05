@@ -1,3 +1,4 @@
+import { runClaudeUsageScope, createClaudeUsageReporter } from '../claudeUsage';
 /**
  * LEXARA API Routes
  * Conversational legal analysis + voice/persona endpoints.
@@ -32,6 +33,10 @@ import { isLexaraGenericLegalIntake } from '../lexara/LexaraResearchIntentRouter
 
 const router = express.Router();
 router.use(isAuthenticated);
+router.use(['/chat', '/chat/stream'], (_req, res, next) => runClaudeUsageScope(() => {
+  res.once('finish', createClaudeUsageReporter());
+  next();
+}));
 const log = createLogger('LEXARARoutes');
 
 const MAX_CHAT_PROMPT_CHARACTERS = 8_000;
