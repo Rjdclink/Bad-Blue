@@ -209,8 +209,14 @@ async function duckDuckGoInstantAnswer(query: string, signal?: AbortSignal): Pro
   return result||[];
 }
 
+function lexaraSearxngBase(): string {
+  return independentSearchBase(process.env.SEARXNG_URL)
+    || (process.env.RAILWAY_ENVIRONMENT_ID === '91154a53-01a3-470c-8fdc-c0f13b4702fa'
+      ? 'http://lexara-searxng.railway.internal:8080' : '');
+}
+
 async function searxng(query: string, signal?: AbortSignal): Promise<LegalMeshCandidate[]> {
-  const base = independentSearchBase(process.env.SEARXNG_URL);
+  const base = lexaraSearxngBase();
   if (!base) return [];
   const result = await withTimeout('searxng', 2_200, signal, async requestSignal => {
     const endpoint = new URL('/search', base.endsWith('/') ? base : base + '/');
@@ -264,14 +270,20 @@ async function ddgs(query: string, signal?: AbortSignal): Promise<LegalMeshCandi
   return first.length || !fallback ? first : ddgsBackend(query, fallback, 900, signal);
 }
 
+function lexaraOpenserpBase(): string {
+  return independentSearchBase(process.env.OPENSERP_URL)
+    || (process.env.RAILWAY_ENVIRONMENT_ID === '91154a53-01a3-470c-8fdc-c0f13b4702fa'
+      ? 'http://lexara-openserp.railway.internal:7000' : '');
+}
+
 async function openserp(query: string, signal?: AbortSignal): Promise<LegalMeshCandidate[]> {
-  const base = independentSearchBase(process.env.OPENSERP_URL);
+  const base = lexaraOpenserpBase();
   if (!base) return [];
   const result = await withTimeout('openserp', 2_200, signal, async requestSignal => {
     const endpoint = new URL('/mega/search', base.endsWith('/') ? base : base + '/');
     endpoint.searchParams.set('text', query);
     endpoint.searchParams.set('limit', '12');
-    endpoint.searchParams.set('mode', 'any');
+    endpoint.searchParams.set('mode', 'balanced');
     endpoint.searchParams.set('engines', 'baidu,ecosia,yandex,google');
     const response = await fetch(endpoint, { signal: requestSignal, headers: { accept: 'application/json' } });
     if (!response.ok) throw new Error(`Discovery HTTP ${response.status}`);
@@ -368,7 +380,7 @@ async function freeSearch(
       openserp(query, controller.signal),
     ]);
     if (signal?.aborted) throw signal.reason || new DOMException('Discovery cancelled', 'AbortError');
-    const enabled = [Boolean(process.env.TAVILY_API_KEY?.trim()), true, Boolean(independentSearchBase(process.env.SEARXNG_URL)), Boolean(lexaraDdgsBase()), Boolean(independentSearchBase(process.env.OPENSERP_URL))];
+    const enabled = [Boolean(process.env.TAVILY_API_KEY?.trim()), true, Boolean(lexaraSearxngBase()), Boolean(lexaraDdgsBase()), Boolean(lexaraOpenserpBase())];
     console.info('[LEXARA Discovery Lanes]', JSON.stringify({ results: outcomes.map((outcome, index) => ({ lane: ['tavily', 'duckduckgo-instant-answer', 'searxng', 'ddgs', 'openserp'][index], enabled: enabled[index], candidates: outcome.status === 'fulfilled' ? outcome.value.length : 0, settled: outcome.status })) }));
     return fuseRankedCandidates(outcomes.flatMap(outcome =>
       outcome.status === 'fulfilled' ? [outcome.value] : []));
