@@ -252,6 +252,7 @@ export async function callClaudeWebSearch(
       type: 'web_fetch_20260318',
       name: 'web_fetch',
       max_uses: maxUses,
+      allowed_callers: ['direct'],
       citations: { enabled: true },
       response_inclusion: 'full',
     });
