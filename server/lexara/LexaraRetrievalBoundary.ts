@@ -1,7 +1,9 @@
 import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 import { load } from 'cheerio';
-import { getDocument } from 'pdfjs-dist/build/pdf.js';
+import * as pdfjsModule from 'pdfjs-dist/build/pdf.js';
+// Node 20 exposes this CommonJS package through its default namespace.
+const { getDocument } = ((pdfjsModule as any).default || pdfjsModule) as typeof pdfjsModule;
 
 export interface LexaraRetrievalEvidence {
   target: string;
