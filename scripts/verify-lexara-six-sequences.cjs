@@ -173,8 +173,9 @@ for (const claudeToken of [
 }
 if (!background.includes('Promise.allSettled([')
   || !background.includes('searchLexaraBackgroundWithClaude({')
+  || !background.includes('if (pass === 0) startClaudeSearch()')
   || !background.includes('claudeCitationEvidence')) {
-  throw new Error('Claude web search is not running in parallel with Lexara native background discovery/evidence scoring');
+  throw new Error('Claude web search must start when native evidence is insufficient and feed the same evidence gate');
 }
 for (const claudeTransportToken of [
   'callClaudeWebSearch',
@@ -188,11 +189,10 @@ for (const claudeTransportToken of [
 ]) {
   if (!claudeTransport.includes(claudeTransportToken)) throw new Error('Claude web-search transport missing: '+claudeTransportToken);
 }
-if (!orchestrator.includes('const backgroundClaudeModel = context.allowClaudeOpus === true')
+if (!orchestrator.includes('const backgroundClaudeModel = CURRENT_AI_MODELS.claudeFast;')
   || !orchestrator.includes('CURRENT_AI_MODELS.claudeBalanced')
-  || !orchestrator.includes('CURRENT_AI_MODELS.claudeFast')
   || !orchestrator.includes('claudeResearchModel: backgroundClaudeModel')) {
-  throw new Error('Claude background web search does not preserve trial/paid model routing');
+  throw new Error('Claude background web search must use Haiku while paid final reasoning retains Sonnet');
 }
 if (!background.includes('dynamicGeneralObjectiveMatch')
   || !background.includes("decision.requestedFact !== 'general-public-record'")
@@ -212,4 +212,3 @@ if (!routes.includes('documentIntent') || !routes.includes("send('complete'")) {
 }
 
 console.log('LEXARA six-sequence routing verification passed with Pantheon disconnected and Lexara-native factual research wired.');
-

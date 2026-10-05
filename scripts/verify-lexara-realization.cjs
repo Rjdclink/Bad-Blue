@@ -990,8 +990,10 @@ must(
     claudeService.includes('callClaudeWebSearch') &&
     claudeService.includes('web_search_20260318') &&
     claudeService.includes("allowed_callers: ['direct']") &&
-    lexaraConversationOrchestrator.includes('const backgroundClaudeModel = context.allowClaudeOpus === true'),
-  'Claude web search runs in parallel with Lexara native background discovery and feeds the same evidence gate',
+    lexaraBackgroundInvestigation.includes('if (pass === 0) startClaudeSearch()') &&
+    lexaraBackgroundInvestigation.includes('const pendingClaude = startClaudeSearch()') &&
+    lexaraConversationOrchestrator.includes('const backgroundClaudeModel = CURRENT_AI_MODELS.claudeFast;'),
+  'Claude web search starts after native evidence needs it and feeds the same evidence gate',
 );
 must(
   lexaraLegalMesh.includes('async function firstUsefulParallelSearch') &&
