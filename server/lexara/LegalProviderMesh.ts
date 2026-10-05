@@ -1,6 +1,7 @@
 import {
   buildLexaraSourceQueries,
   getLexaraPublicSources,
+  getLexaraSourceQueryHints,
   type LexaraSourceCategory,
 } from './LexaraPublicSourceRegistry';
 import {
@@ -57,23 +58,66 @@ function independentSearchBase(value: string | undefined): string {
   return base;
 }
 
+// Known CAPTCHA sources are excluded explicitly; never use automatic backend
+// selection that can silently reintroduce them.
+const captchaDisabledEngines = new Set(['duckduckgo']);
+const engineCooldownUntil = new Map<string, number>();
+const laneInFlight = new Map<string, number>();
+
+function engineAvailable(engine: string): boolean {
+  return !captchaDisabledEngines.has(engine) && (engineCooldownUntil.get(engine) || 0) <= Date.now();
+}
+
+function recordEngineFailure(engine: string, reason: string, retryAfterMs = 180_000): void {
+  if (/captcha|human verification|verify you are human/i.test(reason)) {
+    captchaDisabledEngines.add(engine);
+    console.warn('[LEXARA Search Availability]', JSON.stringify({ engine, status: 'disabled-captcha' }));
+  } else if (/429|rate.?limit|too many|unusual traffic/i.test(reason)) {
+    engineCooldownUntil.set(engine, Math.max(engineCooldownUntil.get(engine) || 0, Date.now() + Math.max(180_000, retryAfterMs)));
+    console.warn('[LEXARA Search Availability]', JSON.stringify({ engine, status: 'rate-limit-cooldown', retryAfterMs: Math.max(180_000, retryAfterMs) }));
+  }
+}
+
+async function checkDiscoveryResponse(response: Response, engine: string | string[]): Promise<void> {
+  if (response.ok) return;
+  const retryAfter = response.headers?.get('retry-after');
+  const retryAfterMs = retryAfter
+    ? (/^\d+$/.test(retryAfter) ? Number(retryAfter) * 1000 : Math.max(0, Date.parse(retryAfter) - Date.now()))
+    : 180_000;
+  const detail = typeof response.text === 'function' ? (await response.text()).slice(0, 2000) : '';
+  for (const name of Array.isArray(engine) ? engine : [engine]) {
+    recordEngineFailure(name, `HTTP ${response.status} ${detail}`, Number.isFinite(retryAfterMs) ? retryAfterMs : 180_000);
+  }
+  throw new Error(`Discovery HTTP ${response.status}`);
+}
+
 async function withTimeout<T>(
   lane: string,
   timeoutMs: number,
   signal: AbortSignal | undefined,
   work: (signal: AbortSignal) => Promise<T>,
 ): Promise<T | null> {
+  if (!engineAvailable(lane)) return null;
   const controller = new AbortController();
   const relay = () => controller.abort(signal?.reason);
   if (signal?.aborted) controller.abort(signal.reason);
   else signal?.addEventListener('abort', relay, { once: true });
   const timer = setTimeout(() => controller.abort(new Error('Lexara discovery timeout')), Math.max(250, timeoutMs));
+  let acquired = false;
   try {
+    while ((laneInFlight.get(lane) || 0) >= 2 && !controller.signal.aborted && engineAvailable(lane)) {
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    if (controller.signal.aborted || !engineAvailable(lane)) return null;
+    laneInFlight.set(lane, (laneInFlight.get(lane) || 0) + 1);
+    acquired = true;
     return await work(controller.signal);
   } catch (error) {
+    recordEngineFailure(lane, error instanceof Error ? error.message : String(error));
     console.warn('[LEXARA Discovery]', JSON.stringify({ lane, outcome: controller.signal.aborted ? 'cancelled-or-timeout' : 'failed', error: error instanceof Error ? error.message : String(error), causeCode: (error as any)?.cause?.code || undefined }));
     return null;
   } finally {
+    if (acquired) laneInFlight.set(lane, Math.max(0, (laneInFlight.get(lane) || 1) - 1));
     clearTimeout(timer);
     signal?.removeEventListener('abort', relay);
   }
@@ -172,7 +216,7 @@ async function tavily(query: string, signal?: AbortSignal): Promise<LegalMeshCan
       headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
       body: JSON.stringify({ query, search_depth: 'basic', max_results: 10, include_answer: false, include_raw_content: false }),
     });
-    if (!r.ok) throw new Error(`Discovery HTTP ${r.status}`);
+    await checkDiscoveryResponse(r, 'tavily');
     const j:any = await r.json();
     return (j.results || []).flatMap((x:any) => {
       const url=clean(x.url);
@@ -209,17 +253,27 @@ async function duckDuckGoInstantAnswer(query: string, signal?: AbortSignal): Pro
   return result||[];
 }
 
+function lexaraSearxngBase(): string {
+  return independentSearchBase(process.env.SEARXNG_URL)
+    || (process.env.RAILWAY_ENVIRONMENT_ID === '91154a53-01a3-470c-8fdc-c0f13b4702fa'
+      ? 'http://lexara-searxng.railway.internal:8080' : '');
+}
+
 async function searxng(query: string, signal?: AbortSignal): Promise<LegalMeshCandidate[]> {
-  const base = independentSearchBase(process.env.SEARXNG_URL);
+  const base = lexaraSearxngBase();
   if (!base) return [];
   const result = await withTimeout('searxng', 2_200, signal, async requestSignal => {
+    const engines = ['google cse', 'brave', 'bing'].filter(engineAvailable);
+    if (!engines.length) return [];
     const endpoint = new URL('/search', base.endsWith('/') ? base : base + '/');
     endpoint.searchParams.set('q', query);
     endpoint.searchParams.set('format', 'json');
     endpoint.searchParams.set('safesearch', '0');
+    endpoint.searchParams.set('engines', engines.join(','));
     const response = await fetch(endpoint, { signal: requestSignal, headers: { accept: 'application/json' } });
-    if (!response.ok) throw new Error(`Discovery HTTP ${response.status}`);
+    await checkDiscoveryResponse(response, 'searxng');
     const payload:any = await response.json();
+    for (const [engine, reason] of payload?.unresponsive_engines || []) recordEngineFailure(String(engine), String(reason));
     return (Array.isArray(payload?.results) ? payload.results : []).slice(0, 12).flatMap((item:any) => {
       const url=clean(item?.url || item?.link);
       return url ? [{url,title:String(item?.title||'SearXNG result'),excerpt:String(item?.content||item?.snippet||'').slice(0,1200),tier:3 as const,provider:'searxng'}] : [];
@@ -228,8 +282,16 @@ async function searxng(query: string, signal?: AbortSignal): Promise<LegalMeshCa
   return result || [];
 }
 
+// The production engine is independently hosted; no custom Railway variable is
+// required. Explicit non-retired endpoints remain available for other installs.
+function lexaraDdgsBase(): string {
+  return independentSearchBase(process.env.DDGS_URL)
+    || (process.env.RAILWAY_ENVIRONMENT_ID === '91154a53-01a3-470c-8fdc-c0f13b4702fa'
+      ? 'http://lexara-ddgs.railway.internal:4479' : '');
+}
+
 async function ddgsBackend(query: string, backend: string, budgetMs: number, signal?: AbortSignal): Promise<LegalMeshCandidate[]> {
-  const base = independentSearchBase(process.env.DDGS_URL);
+  const base = lexaraDdgsBase();
   if (!base) return [];
   const result = await withTimeout('ddgsBackend', budgetMs, signal, async requestSignal => {
     const endpoint = new URL('/search/text', base.endsWith('/') ? base : base + '/');
@@ -238,7 +300,7 @@ async function ddgsBackend(query: string, backend: string, budgetMs: number, sig
       headers: { 'content-type': 'application/json', accept: 'application/json' },
       body: JSON.stringify({ query, max_results: 12, safesearch: 'off', backend }),
     });
-    if (!response.ok) throw new Error(`Discovery HTTP ${response.status}`);
+    await checkDiscoveryResponse(response, ['ddgsBackend', ...backend.split(',')]);
     const payload:any = await response.json();
     return (Array.isArray(payload?.results) ? payload.results : []).slice(0, 12).flatMap((item:any) => {
       const url=clean(item?.href || item?.url || item?.link);
@@ -249,26 +311,47 @@ async function ddgsBackend(query: string, backend: string, budgetMs: number, sig
 }
 
 async function ddgs(query: string, signal?: AbortSignal): Promise<LegalMeshCandidate[]> {
-  if (!independentSearchBase(process.env.DDGS_URL)) return [];
-  const primary = [...new Set((process.env.LEXARA_DDGS_BACKEND?.trim() || 'auto').split(',').map(x=>x.trim()).filter(Boolean))].join(',');
-  const fallback = [...new Set((process.env.LEXARA_DDGS_FALLBACK_BACKENDS?.trim() || 'auto').split(',').map(x=>x.trim()).filter(x=>x && x!==primary))].join(',');
-  const first = await ddgsBackend(query, primary, 1_300, signal);
+  if (!lexaraDdgsBase()) return [];
+  // Installed DDGS rejects Bing and silently substitutes auto. Allow only
+  // supported backends so an invalid name cannot reopen excluded engines.
+  const supported = new Set(['brave', 'google', 'grokipedia', 'mojeek', 'startpage', 'wikipedia', 'yahoo']);
+  const permittedBackends = (value: string) => [...new Set(value.split(',').map(x=>x.trim() === 'auto' ? 'yahoo' : x.trim()).filter(x=>supported.has(x) && engineAvailable(x)))].join(',');
+  const primary = permittedBackends(process.env.LEXARA_DDGS_BACKEND?.trim() || 'yahoo');
+  const fallback = permittedBackends(process.env.LEXARA_DDGS_FALLBACK_BACKENDS?.trim() || '');
+  if (!primary) return [];
+  const first = await ddgsBackend(query, primary, 2_200, signal);
   return first.length || !fallback ? first : ddgsBackend(query, fallback, 900, signal);
 }
 
+function lexaraOpenserpBase(): string {
+  return independentSearchBase(process.env.OPENSERP_URL)
+    || (process.env.RAILWAY_ENVIRONMENT_ID === '91154a53-01a3-470c-8fdc-c0f13b4702fa'
+      ? 'http://lexara-openserp.railway.internal:7000' : '');
+}
+
 async function openserp(query: string, signal?: AbortSignal): Promise<LegalMeshCandidate[]> {
-  const base = independentSearchBase(process.env.OPENSERP_URL);
+  const base = lexaraOpenserpBase();
   if (!base) return [];
-  const result = await withTimeout('openserp', 2_200, signal, async requestSignal => {
+  const result = await withTimeout('openserp', 3_000, signal, async requestSignal => {
+    const engines = ['baidu'].filter(engineAvailable);
+    if (!engines.length) return [];
     const endpoint = new URL('/mega/search', base.endsWith('/') ? base : base + '/');
     endpoint.searchParams.set('text', query);
     endpoint.searchParams.set('limit', '12');
-    endpoint.searchParams.set('mode', 'any');
-    endpoint.searchParams.set('engines', 'baidu,ecosia,yandex,google');
+    endpoint.searchParams.set('mode', 'balanced');
+    endpoint.searchParams.set('engines', engines.join(','));
     const response = await fetch(endpoint, { signal: requestSignal, headers: { accept: 'application/json' } });
-    if (!response.ok) throw new Error(`Discovery HTTP ${response.status}`);
+    await checkDiscoveryResponse(response, 'openserp');
     const payload:any = await response.json();
+    for (const failure of payload?.meta?.engine_errors || []) recordEngineFailure(String(failure.engine), String(failure.error));
     const rows = Array.isArray(payload?.results) ? payload.results : Array.isArray(payload?.data?.results) ? payload.data.results : [];
+    if (Array.isArray(payload?.meta?.engines_failed) && payload.meta.engines_failed.length) {
+      console.info('[LEXARA OpenSERP Coverage]', JSON.stringify({
+        responded: payload.meta.engines_responded || [],
+        failed: payload.meta.engines_failed,
+        errors: (payload.meta.engine_errors || []).map((item:any) => ({ engine: item.engine, error: item.error })),
+      }));
+    }
     return rows.slice(0, 12).flatMap((item:any) => {
       const url=clean(item?.url || item?.link || item?.href);
       return url ? [{url,title:String(item?.title||'OpenSERP result'),excerpt:String(item?.description||item?.snippet||item?.text||'').slice(0,1200),tier:3 as const,provider:'openserp'}] : [];
@@ -360,7 +443,7 @@ async function freeSearch(
       openserp(query, controller.signal),
     ]);
     if (signal?.aborted) throw signal.reason || new DOMException('Discovery cancelled', 'AbortError');
-    const enabled = [Boolean(process.env.TAVILY_API_KEY?.trim()), true, Boolean(independentSearchBase(process.env.SEARXNG_URL)), Boolean(independentSearchBase(process.env.DDGS_URL)), Boolean(independentSearchBase(process.env.OPENSERP_URL))];
+    const enabled = [Boolean(process.env.TAVILY_API_KEY?.trim()), true, Boolean(lexaraSearxngBase()), Boolean(lexaraDdgsBase()), Boolean(lexaraOpenserpBase())];
     console.info('[LEXARA Discovery Lanes]', JSON.stringify({ results: outcomes.map((outcome, index) => ({ lane: ['tavily', 'duckduckgo-instant-answer', 'searxng', 'ddgs', 'openserp'][index], enabled: enabled[index], candidates: outcome.status === 'fulfilled' ? outcome.value.length : 0, settled: outcome.status })) }));
     return fuseRankedCandidates(outcomes.flatMap(outcome =>
       outcome.status === 'fulfilled' ? [outcome.value] : []));
@@ -408,8 +491,13 @@ export async function discoverLegalMeshTier3(
     categories:options.categories,
     jurisdiction:options.jurisdiction,
   });
-  if(learnedPatterns[0]) variants.push(`${query} ${learnedPatterns[0]}`);
-  const uniqueVariants=[...new Set(variants)].slice(0,6);
+  // Stored patterns contain prior user wording, not reusable templates. Reuse
+  // only curated source-family hints so names/instructions cannot cross turns.
+  if(learnedPatterns[0]) {
+    const hint = getLexaraSourceQueryHints(options.categories || []).find(value => learnedPatterns[0].includes(value));
+    if (hint) variants.push(`${query} ${hint}`);
+  }
+  const uniqueVariants=[...new Set(variants)].slice(0,options.firstUseful ? 2 : 6);
   const groups=options.firstUseful
     ? [await firstUsefulSearchVariants(uniqueVariants,signal)]
     : await Promise.all(uniqueVariants.map(variant=>freeSearch(variant,signal)));
@@ -453,7 +541,7 @@ export async function discoverLegalMeshSupplemental(
   const learnedPatterns=await getLexaraLearnedQueryPatterns(options.categories||[],options.jurisdiction,2);
   if(learnedPatterns.length){
     const learnedFresh=await firstUsefulParallelSearch(
-      learnedPatterns.map(pattern=>`${query} ${pattern}`),
+      getLexaraSourceQueryHints(options.categories || []).slice(0, 2).map(hint=>`${query} ${hint}`),
       seen,
       'supplemental',
       signal,

@@ -288,6 +288,20 @@ function excerptAround(content: string, pattern: RegExp, subject: LexaraBackgrou
   return content.slice(start, Math.min(content.length, center + 520)).replace(/\s+/g, ' ').trim();
 }
 
+function businessRelationshipEvidence(content: string, subject: LexaraBackgroundSubject): boolean {
+  // A directory's navigation or corporate footer is not this person's business.
+  // Require a role/operation claim in the same sentence or record as the name.
+  const tokens = normalize(subject.name).split(' ').filter(Boolean);
+  if (tokens.length < 2) return false;
+  return content.split(/[.!?\n]+/).some(record => {
+    const text = normalize(record);
+    const words = new Set(text.split(' '));
+    if (!words.has(tokens[0]) || !words.has(tokens[tokens.length - 1])) return false;
+    return /\b(?:owns?|owned|operates?|operated|founded|cofounder|founder|owner|proprietor|president|ceo|chief executive|registered agent|officer|director|managing member)\b/.test(text)
+      && !/\b(?:search for|find an?|find the|no information|not available|unknown)\b/.test(text);
+  });
+}
+
 function assessEvidence(
   content: string,
   url: string,
@@ -301,8 +315,10 @@ function assessEvidence(
   if (identity < MIN_IDENTITY_CONFIDENCE) return null;
   const pattern = factPattern(decision, prompt);
   const relevantWindow = subjectRelevantWindow(content, subject);
-  const directlyAnswers = pattern.test(relevantWindow)
-    || (identity >= MIN_IDENTITY_CONFIDENCE && dynamicGeneralObjectiveMatch(relevantWindow, subject, decision));
+  const directlyAnswers = decision.requestedFact === 'business'
+    ? businessRelationshipEvidence(relevantWindow, subject)
+    : pattern.test(relevantWindow)
+      || (identity >= MIN_IDENTITY_CONFIDENCE && dynamicGeneralObjectiveMatch(relevantWindow, subject, decision));
   const inferencePattern = INFERENCE_EVIDENCE_PATTERNS[decision.requestedFact];
   const inferentiallySupports = !directlyAnswers && Boolean(inferencePattern?.test(relevantWindow));
   const confidence = Math.max(0, Math.min(1,
@@ -765,7 +781,7 @@ export async function investigateLexaraBackgroundQuestion(
                 ...snippetEvaluationRaw,
                 confidence: Math.min(snippetEvaluationRaw.confidence, 0.69),
                 directlyAnswers: false,
-                inferentiallySupports: true,
+                inferentiallySupports: snippetEvaluationRaw.directlyAnswers || snippetEvaluationRaw.inferentiallySupports,
                 sourceReported: decision.requestedFact === 'death-date' && snippetEvaluationRaw.directlyAnswers && snippetEvaluationRaw.identityConfidence >= 0.72,
               }
             : null;
@@ -975,7 +991,8 @@ export async function investigateLexaraBackgroundQuestion(
     const ranked = [...assessed.values()].sort((a, b) => b.confidence - a.confidence);
     const best = ranked[0];
     const directlyAnswered = Boolean(best?.directlyAnswers && best.confidence >= SUFFICIENT_EVIDENCE_THRESHOLD);
-    const useful = ranked.filter(item => item.confidence >= PARTIAL_EVIDENCE_THRESHOLD);
+    const useful = ranked.filter(item => item.confidence >= PARTIAL_EVIDENCE_THRESHOLD
+      && (broadPersonBackground || item.directlyAnswers || item.inferentiallySupports || item.sourceReported));
     const evidenceSummary = useful.slice(0, 10).map((item, index) =>
       `${index + 1}. SOURCE: ${item.url}\nRETRIEVED: ${item.retrievedAt}\nASSESSMENT: ${item.sourceReported ? 'REPORTED IN SEARCH EXCERPT; PAGE NOT INDEPENDENTLY RETRIEVED' : item.directlyAnswers ? 'DIRECT' : item.inferentiallySupports ? 'INFERENTIAL' : 'PARTIAL'} (${Math.round(item.confidence * 100)}%)\nEVIDENCE: ${item.excerpt}`,
     ).join('\n\n');
@@ -1055,7 +1072,7 @@ export function formatLexaraBackgroundResearchForSystem(
       ? `\nUNVERIFIED SEARCH LEADS (discovery only; do not state their contents as facts):\n${result.searchLeads.map(url => `- ${url}`).join('\n')}`
       : '';
     return `\n\nAPPLICATION-SUPPLIED LEXARA BACKGROUND RESEARCH${categories}${coverage}
-Endpoint: ${result.endpoint}. No verified subject-specific source content established the requested fact. Do not infer a negative fact from an empty, inaccessible, failed, partial, or time-limited search.${leads}`;
+Endpoint: ${result.endpoint}. No verified subject-specific source content established the requested fact. Do not infer a negative fact from an empty, inaccessible, failed, partial, or time-limited search. Answer the exact question in one short sentence. Do not repeat identity clues, describe the research process, or mention unrelated records. Keep source URLs internal.${leads}`;
   }
   const verificationStatus = result.endpoint === 'evidence-sufficient'
     ? '\nVERIFICATION STATUS: The exact requested fact cleared Lexara\'s subject-match and evidence threshold. State it directly; do not call it a guess.'
