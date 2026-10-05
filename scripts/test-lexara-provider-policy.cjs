@@ -494,6 +494,7 @@ for (const [name, env, expectedKey] of [
     } }).outputText;
     const module = { exports: {} };
     const requireFixture = spec => {
+      if (spec === './claudeUsage') return { meterClaudeRequest: (_model, _operation, request) => request() };
       if (spec === '@anthropic-ai/sdk') return FixtureAnthropic;
       if (spec === './aiHarmonyModelRegistry') return { CURRENT_AI_MODELS: { claudeBalanced: 'fixture-model' } };
       throw new Error('Unexpected Claude dependency: ' + spec);
@@ -546,7 +547,8 @@ test('Claude adapter strips unsupported effort from Haiku while preserving paid-
   } }).outputText;
   const module = { exports: {} };
   const requireFixture = spec => {
-    if (spec === '@anthropic-ai/sdk') return FixtureAnthropic;
+    if (spec === './claudeUsage') return { meterClaudeRequest: (_model, _operation, request) => request() };
+      if (spec === '@anthropic-ai/sdk') return FixtureAnthropic;
     if (spec === './aiHarmonyModelRegistry') {
       return { CURRENT_AI_MODELS: { claudeBalanced: 'claude-sonnet-5-5' } };
     }
@@ -985,3 +987,4 @@ test('Claude runtime failure cannot recover through a removed provider', async (
   console.log(`${tests.length - failures}/${tests.length} scoped behavior checks passed; provider I/O was mocked.`);
   process.exitCode = failures ? 1 : 0;
 })();
+
