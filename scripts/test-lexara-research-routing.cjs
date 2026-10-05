@@ -329,7 +329,7 @@ test('HTTP 429 honors Retry-After and auto DDGS cannot restore CAPTCHA engines',
   const requests = () => h.calls.http.filter(x => x.url.includes('ddgs.fixture'));
   const count = requests().length;
   assert(count > 0);
-  assert(requests().every(x => JSON.parse(x.init.body).backend === 'bing'));
+  assert(requests().every(x => JSON.parse(x.init.body).backend === 'yahoo'));
   now += 180001;
   await mesh.discoverLegalMeshTier3('during cooldown', undefined, { firstUseful: true });
   assert.equal(requests().length, count, 'default cooldown must not shorten Retry-After');

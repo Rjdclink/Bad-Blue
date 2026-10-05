@@ -312,8 +312,11 @@ async function ddgsBackend(query: string, backend: string, budgetMs: number, sig
 
 async function ddgs(query: string, signal?: AbortSignal): Promise<LegalMeshCandidate[]> {
   if (!lexaraDdgsBase()) return [];
-  const permittedBackends = (value: string) => [...new Set(value.split(',').map(x=>x.trim() === 'auto' ? 'bing' : x.trim()).filter(x=>x && engineAvailable(x)))].join(',');
-  const primary = permittedBackends(process.env.LEXARA_DDGS_BACKEND?.trim() || 'bing');
+  // Installed DDGS rejects Bing and silently substitutes auto. Allow only
+  // supported backends so an invalid name cannot reopen excluded engines.
+  const supported = new Set(['brave', 'google', 'grokipedia', 'mojeek', 'startpage', 'wikipedia', 'yahoo']);
+  const permittedBackends = (value: string) => [...new Set(value.split(',').map(x=>x.trim() === 'auto' ? 'yahoo' : x.trim()).filter(x=>supported.has(x) && engineAvailable(x)))].join(',');
+  const primary = permittedBackends(process.env.LEXARA_DDGS_BACKEND?.trim() || 'yahoo');
   const fallback = permittedBackends(process.env.LEXARA_DDGS_FALLBACK_BACKENDS?.trim() || '');
   if (!primary) return [];
   const first = await ddgsBackend(query, primary, 2_200, signal);
