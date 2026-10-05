@@ -708,9 +708,10 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
     const durableEnrichmentNeeded = Boolean(
       representationContext.persistent
       && baseRepresentationMatter
+      && result.backgroundOnly !== true
       && shouldEnrichRepresentationMatter(prompt, response, baseRepresentationMatter)
     );
-    const representationMatter = !representationContext.persistent && !genericLegalIntake
+    const representationMatter = !representationContext.persistent && !genericLegalIntake && result.backgroundOnly !== true
       ? await advanceRepresentationMatter({
           prompt,
           response,
@@ -901,7 +902,7 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
 
 
     const responseText = conversationResult.text;
-    const representationMatter = genericLegalIntake
+    const representationMatter = genericLegalIntake || conversationResult.backgroundOnly === true
       ? preRepresentationMatter || representationContext.activeMatter
       : await advanceRepresentationMatter({
           prompt,
