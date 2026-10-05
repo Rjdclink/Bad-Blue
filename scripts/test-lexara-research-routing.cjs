@@ -296,6 +296,24 @@ test('production DDGS uses its independent code default without custom variables
   assert(!h.calls.http.some(call => call.url.includes('pantheon-ddgs')));
 });
 
+test('production code defaults activate all independent engines and aggregate OpenSERP', async () => {
+  const h = harness({
+    env: {
+      RAILWAY_ENVIRONMENT_ID: '91154a53-01a3-470c-8fdc-c0f13b4702fa',
+      SEARXNG_URL: '', DDGS_URL: '', OPENSERP_URL: '',
+    },
+    fetchPayload: endpoint => endpoint.includes('railway.internal')
+      ? { results: [{ url: urls[0], href: urls[0], title: 'Engine evidence', content: 'Source excerpt', body: 'Source excerpt' }] }
+      : { results: [] },
+  });
+  await h.load('server/lexara/LegalProviderMesh.ts').discoverLegalMeshTier3('fixture');
+  for (const lane of ['searxng', 'ddgs', 'openserp']) {
+    assert(h.calls.http.some(call => call.url.includes('lexara-' + lane + '.railway.internal')));
+  }
+  const openserp = h.calls.http.find(call => call.url.includes('lexara-openserp'));
+  assert.equal(new URL(openserp.url).searchParams.get('mode'), 'balanced');
+});
+
 test('retired Pantheon internal search endpoints are ignored by the Lexara mesh', async () => {
   const h = harness({
     env: {
