@@ -21,6 +21,7 @@ export type LexaraResearchIntent = 'legal' | 'factual' | 'mixed' | 'conversation
 
 export type LexaraRequestedFact =
   | 'age-dob'
+  | 'death-date'
   | 'professional-license'
   | 'marriage-divorce'
   | 'employment'
@@ -94,6 +95,7 @@ export function isLexaraLegalAuthorityIntent(text: string): boolean {
 
 function requestedFact(text: string): LexaraRequestedFact {
   const value = text.toLowerCase();
+  if (/\b(?:die(?:d)?|pass(?:ed)?\s+away|date\s+of\s+death)\b/.test(value)) return 'death-date';
   if (/\b(?:how old|age|date of birth|birth date|birthday|dob|born)\b/.test(value)) return 'age-dob';
   if (/\b(?:(?:nurs(?:e|ing)|medical|physician|lawyer|attorney|realtor|contractor|professional)\s+)?licen[cs](?:e|es|ed|ing)|licensure|credentials?|certifications?|board certified\b/.test(value)) return 'professional-license';
   if (/\b(?:married|marriage|spouse|husband|wife|divorc(?:e|ed)|marital status)\b/.test(value)) return 'marriage-divorce';
@@ -129,6 +131,7 @@ function requestedFact(text: string): LexaraRequestedFact {
 export function sourceCategoriesForFact(fact: LexaraRequestedFact, text: string): LexaraSourceCategory[] {
   switch (fact) {
     case 'age-dob': return ['vital-records','identity','general-public-records'];
+    case 'death-date': return ['vital-records','news-history','general-public-records'];
     case 'professional-license':
       return /\b(?:nurs\w*|medical|physician|health(?:care)?)\b/i.test(text)
         ? ['professional-license','healthcare-professional','sanctions-discipline']
