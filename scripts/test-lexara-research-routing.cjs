@@ -468,6 +468,13 @@ test('release source-registry guard requires independent discovery and rejects t
   }
   assert.throws(() => verify(authority, legalMesh.replaceAll('discoverPantheonSourcesParallel', '') + '\nPantheonDiscoveryCoordinator'), /depends on Pantheon/);
 });
+test('bounded live queries retain the requested fact without copying conversational wording', () => {
+  const registry = harness().load('server/lexara/LexaraPublicSourceRegistry.ts');
+  const queries = registry.buildLexaraSourceQueries({ query: 'Hello, please answer briefly: what business does Avery Morgan Example operate?', subject: 'Avery Morgan Example', requestedFact: 'business', categories: ['business'], jurisdiction: 'Iowa' });
+  assert.equal(queries[0], '"Avery Morgan Example" business Iowa');
+  assert.equal(queries[1], 'Avery Morgan Example business Iowa');
+  assert(!queries.slice(0, 2).some(q => /Hello|answer briefly/.test(q)));
+});
 (async () => {
   let passed = 0;
   for (const { name, run } of testCases) { await run(); passed++; console.log('PASS', name); }

@@ -81,7 +81,7 @@ const mesh = {
   async discoverLegalMeshTier3(query, _signal, options) {
     state.tierCalls.push({ query, options });
     if (state.mode.startsWith('business-')) return [candidate('https://records.example.test/' + state.mode)];
-    if (state.mode === 'reported-death') return [{ ...candidate('https://records.example.test/obituary'), excerpt: 'Avery Morgan Example passed away February 6, 2020.' }];
+    if (state.mode === 'reported-death') return [{ ...candidate('https://records.example.test/obituary'), excerpt: 'Avery Example obituary. February 6, 2020. ' + 'Memorial information. '.repeat(45) + 'Avery Morgan Example passed away February 6, 2020.' }];
     if (state.mode === 'native-failure') throw new Error('fixture native discovery outage');
     if (state.mode === 'empty') return [candidate('https://records.example.test/empty')];
     if (state.mode === 'employment') return [candidate('https://records.example.test/employer')];
@@ -289,13 +289,14 @@ function reset(mode) {
     } },
     './LexaraPublicSourceRegistry': registry,
   });
-  for (const requestedFact of ['business', 'general-public-record']) {
+  const budgetModels = ['claude-haiku-4-5-20251001', 'claude-sonnet-5-5', 'claude-opus-fixture'];
+  for (const model of budgetModels) for (const requestedFact of ['business', 'general-public-record']) {
     await paidLane.searchLexaraBackgroundWithClaude({ prompt: 'Fixture inquiry',
-      decision: { requestedFact, sourceCategories: [] }, model: 'fixture-model' });
+      decision: { requestedFact, sourceCategories: [] }, model });
   }
-  assert.deepEqual(paidOptions.map(x => x.maxUses), [1, 2], 'targeted fallback spends one search; broad research retains two');
-  assert.deepEqual(paidOptions.map(x => x.maxTokens), [384, 1024]);
-  assert(paidOptions.every(x => x.model === 'fixture-model' && x.maxFetchUses === 1), 'budget applies across selected Claude models');
+  assert.deepEqual(paidOptions.map(x => x.maxUses), [1, 2, 1, 2, 1, 2], 'targeted fallback spends one search; broad research retains two');
+  assert.deepEqual(paidOptions.map(x => x.maxTokens), [384, 1024, 384, 1024, 384, 1024]);
+  assert(paidOptions.every((x, i) => x.model === budgetModels[Math.floor(i / 2)] && x.maxFetchUses === 1), 'budget applies across Haiku, Sonnet and Opus without live provider calls');
   for (const mode of ['business-directory', 'business-owner']) {
     reset(mode);
     const result = await investigator.investigateLexaraBackgroundQuestion('What business does Avery Example operate?', {
@@ -320,6 +321,7 @@ function reset(mode) {
   assert.equal(reportedDeath.endpoint, 'best-available-evidence');
   assert.match(reportedDeath.evidenceSummary, /REPORTED IN SEARCH EXCERPT/);
   assert.match(reportedDeath.evidenceSummary, /February 6, 2020/);
+  assert.match(reportedDeath.evidenceSummary, /Avery Morgan Example/, 'synthesis retains the full name even when an earlier title/date controls the excerpt');
   assert.equal(state.claudeCalls.length, 0, 'an explicit subject-matched obituary excerpt avoids redundant Claude research');
   assert.equal(reportedDeath.coverageLimited, true, 'a search excerpt is not upgraded to independent page verification');
 

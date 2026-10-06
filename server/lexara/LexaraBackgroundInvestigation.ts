@@ -282,10 +282,18 @@ function sourceAuthorityBonus(rawUrl: string): number {
 
 function excerptAround(content: string, pattern: RegExp, subject: LexaraBackgroundSubject): string {
   const fact = pattern.exec(content);
-  const subjectIndex = normalize(content).indexOf(normalize(subject.name));
+  const subjectIndex = content.toLocaleLowerCase().indexOf(subject.name.toLocaleLowerCase());
   const center = fact?.index ?? (subjectIndex >= 0 ? subjectIndex : 0);
   const start = Math.max(0, center - 280);
-  return content.slice(start, Math.min(content.length, center + 520)).replace(/\s+/g, ' ').trim();
+  const end = Math.min(content.length, center + 520);
+  const factExcerpt = content.slice(start, end);
+  // Keep the identity evidence used for scoring when a title/date appears far
+  // from the full name. Otherwise synthesis sees only the shortened title and
+  // invents an identity caveat even though the source supplied the full name.
+  const identityExcerpt = subjectIndex >= 0 && (subjectIndex < start || subjectIndex + subject.name.length > end)
+    ? content.slice(Math.max(0, subjectIndex - 80), Math.min(content.length, subjectIndex + subject.name.length + 160))
+    : '';
+  return [factExcerpt, identityExcerpt].filter(Boolean).join(' … ').replace(/\s+/g, ' ').trim();
 }
 
 function businessRelationshipEvidence(content: string, subject: LexaraBackgroundSubject): boolean {
