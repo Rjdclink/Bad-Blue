@@ -163,5 +163,11 @@ export function buildLexaraSourceQueries(input: {
       return '';
     }
   }).filter(Boolean);
-  return [...new Set([identity ? [identity, jurisdiction].filter(Boolean).join(' ') : base, base, jurisdictionOfficial, ...official, ...discovery, hinted].filter(Boolean))].slice(0, 6);
+  const fact = input.requestedFact && input.requestedFact !== 'none' ? input.requestedFact.replace(/-/g, ' ') : '';
+  // Live discovery uses the first two variants. Keep both focused on the fact,
+  // and let the unquoted variant find records that omit middle names. Identity
+  // matching still happens after retrieval; this does not accept namesakes.
+  const focused = identity && fact ? [identity, fact, jurisdiction].filter(Boolean).join(' ') : base;
+  const relaxed = identity && fact ? [input.subject, fact, jurisdiction].filter(Boolean).join(' ') : hinted;
+  return [...new Set([focused, relaxed, jurisdictionOfficial, ...official, ...discovery, hinted].filter(Boolean))].slice(0, 6);
 }
