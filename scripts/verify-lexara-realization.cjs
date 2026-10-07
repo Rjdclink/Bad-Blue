@@ -1091,9 +1091,11 @@ must(
     consultationRoutes.includes("res.json({ types: LEGAL_DOCUMENT_TYPES })") &&
     consultationRoutes.includes('validated: true') &&
     consultationRoutes.includes('templateMode') &&
-    lexaraChatRoutes.includes("documentType: currentType || historyType || 'Custom Document'") &&
-    conversation.includes("data?.validated !== true || String(data?.documentType || '') !== pendingDocument.title") &&
-  'LEXARA uses one canonical legal-document registry, current-turn precedence, template mode, and validated same-type export handoff',
+    legalDocumentRegistry.includes('export function inferLegalDocumentNeed') &&
+    lexaraChatRoutes.includes('inferLegalDocumentNeed(prompt)') &&
+    lexaraChatRoutes.includes("documentType: inferredType || currentType || historyType || 'Custom Document'") &&
+    conversation.includes("data?.validated !== true || String(data?.documentType || '') !== pendingDocument.title"),
+  'LEXARA uses one canonical legal-document registry, inferred intent, current-turn precedence, and validated same-type export handoff',
 );
 must(
   lawTypesSource.includes("name: 'Post Conviction'") &&
