@@ -367,7 +367,10 @@ function requiresDeepClaudeForTurn(
   mixedLegalFact: boolean,
   multiJurisdiction: boolean,
 ): boolean {
-  if (documentAction || mixedLegalFact || multiJurisdiction) return true;
+  if (mixedLegalFact || multiJurisdiction) return true;
+  // Document format selection is a separate verified workflow; preserve deeper
+  // reasoning for genuinely complex legal matters rather than every draft.
+  if (documentAction && /\b(?:appeal|habeas|post[- ]conviction|constitutional|injunction|summary judgment|suppression|sentencing)\b/i.test(prompt)) return true;
   const text = `${prompt}\n${history}`.toLowerCase();
   const explicitComplexity = /\b(?:complex|complicated|deep(?:ly)? analyze|thorough analysis|litigation strategy|legal strategy|appeal|appellate|post[- ]conviction|habeas|injunction|summary judgment|qualified immunity|constitutional claim|class action|multi[- ]jurisdiction|choice of law|preemption|statutory interpretation|evidentiary hearing|suppression motion|sentencing guideline|competing claims|alternative theories)\b/i.test(text);
   if (explicitComplexity) return true;
@@ -924,8 +927,9 @@ export async function generateLexaraConversationResponse(
   // correction. Research-backed turns remain final-answer-first so a preliminary
   // model sentence can never outrun source validation.
   const progressiveClaudeAllowed = !backgroundResearchRequested
-    && !researchDecision.needed
-    && !sequencePlan.documentAction;
+    && !researchDecision.needed;
+  // Document-routing answers may stream text immediately. The existing route
+  // still blocks document text from the real-time speech channel.
 
   const unverifiedBackgroundOnly = backgroundResearchRequested && !mixedLegalFactNeed
     && !backgroundInvestigation?.evidenceSummary;

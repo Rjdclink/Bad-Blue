@@ -24,16 +24,17 @@ export function resolveOfficialLegalForm(research: LexaraAuthorityResearch | nul
   const documentTokens=String(documentType||'').toLowerCase().split(/[^a-z0-9]+/).filter(token=>token.length>=4 && !['form','legal','document','official'].includes(token));
   const scored=relevant.map(source=>{
     const haystack=[source.title,source.excerpt].filter(Boolean).join(' ').toLowerCase();
-    const score=documentTokens.reduce((total,token)=>total+(haystack.includes(token)?1:0),0)
-      +(typeOf(source.url)!=='html'?1:0);
-    return {source,score,haystack};
-  }).sort((a,b)=>b.score-a.score);
+    const tokenScore=documentTokens.reduce((total,token)=>total+(haystack.includes(token)?1:0),0);
+    const score=tokenScore+(typeOf(source.url)!=='html'?1:0);
+    return {source,score,tokenScore,haystack};
+  }).filter(entry=>entry.tokenScore>0).sort((a,b)=>b.score-a.score);
   const bestScore=scored[0]?.score||0;
-  const specific=scored.filter(entry=>entry.score>0 && entry.score>=Math.max(1,bestScore-1));
-  const requirementText=(specific.length?specific:scored.slice(0,1)).map(entry=>entry.haystack).join('\n');
+  const specific=scored.filter(entry=>entry.score>=Math.max(1,bestScore-1));
+  if (!specific.length) return { requirement:'unverified', verifiedOfficial:false, localRules:[], companionDocuments:[], provenance:[] };
+  const requirementText=specific.map(entry=>entry.haystack).join('\n');
   const combined=relevant.map(source=>[source.title,source.excerpt].filter(Boolean).join(' ')).join('\n');
   const requirement: OfficialFormRequirement = MANDATORY_HINT.test(requirementText) ? 'mandatory' : OPTIONAL_HINT.test(requirementText) ? 'optional' : CUSTOM_HINT.test(requirementText) ? 'custom_allowed' : 'unverified';
-  const direct=(specific.find(entry=>FORM_HINT.test(entry.source.title) && typeOf(entry.source.url)!=='html') || specific[0] || scored.find(entry=>FORM_HINT.test(entry.source.title) && typeOf(entry.source.url)!=='html') || scored[0])?.source;
+  const direct=(specific.find(entry=>FORM_HINT.test(entry.source.title) && typeOf(entry.source.url)!=='html') || specific[0])?.source;
   const title=direct?.title;
   const directText=[direct?.title,direct?.excerpt].filter(Boolean).join(' ');
   const formNumber=directText.match(/\b(?:form|ao|dc|civ|fam|div|eoir|va|official form)\s*[-#:]*\s*([A-Z0-9.:-]{1,24})\b/i)?.[1];

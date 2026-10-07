@@ -387,6 +387,20 @@ export function setupConsultationRoutes(app: Express): void {
     const officialForm = resolveOfficialLegalForm(authorityResearch, documentLabel);
     const formDirective = officialFormDirective(officialForm);
 
+    // A state alone does not identify the local filing court. Never hand out a
+    // potentially wrong mandatory form or custom-drafted substitute when the
+    // exact court/venue is still needed to determine its local requirements.
+    const courtFiling = /\b(?:motion|complaint|answer|counterclaim|petition|appeal|brief|summons|subpoena|proposed order)\b/i.test(documentLabel);
+    if (!templateMode && courtFiling && (!documentJurisdictionProfile || documentJurisdictionProfile.needsCourtClarification)) {
+      return res.status(422).json({
+        error: 'The filing court or venue must be established before selecting a local form.',
+        needsCourtJurisdiction: true,
+        missingFields: ['courtOrCounty'],
+        question: 'Which court or county is this filing for?',
+        jurisdiction: documentJurisdiction,
+      });
+    }
+
     if (officialForm.requirement === 'mandatory') {
       return res.status(409).json({
         error: 'A mandatory official form applies. Lexara will use the verified official form rather than substitute a custom draft.',
