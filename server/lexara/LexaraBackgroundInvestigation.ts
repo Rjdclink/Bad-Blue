@@ -237,6 +237,13 @@ function subjectRelevantWindow(content: string, subject: LexaraBackgroundSubject
 }
 
 function factPattern(decision: LexaraResearchDecision, prompt: string): RegExp {
+  if (decision.requestedFact === 'contact-address') {
+    if (/\b(?:street|mailing|postal|official)\s+address|\bwhere\s+(?:is|are|does)\b|\baddress\b/i.test(prompt)) {
+      return /\b\d{1,6}\s+[\w .'-]{2,80}\s(?:street|st\.?|avenue|ave\.?|road|rd\.?|boulevard|blvd\.?|drive|dr\.?|lane|ln\.?|way|place|pl\.?)\b|\bP\.?\s*O\.?\s+Box\s+\d+\b/i;
+    }
+    if (/\b(?:phone|telephone)\b/i.test(prompt)) return /(?:\+?\d[\d ().-]{7,}\d)/;
+    if (/\bemail\b/i.test(prompt)) return /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i;
+  }
   const direct = FACT_EVIDENCE_PATTERNS[decision.requestedFact];
   if (direct) return direct;
   for (const [pattern] of PROMPT_CATEGORY_RULES) if (pattern.test(prompt)) return pattern;
@@ -636,7 +643,7 @@ export async function investigateLexaraBackgroundQuestion(
 
     for (const evidence of authoritativeEvidence) {
       discoveryLanes.add(evidence.provider);
-      const evaluation = evidence.directlyAnswers === true
+      const evaluation = decision.requestedFact !== 'contact-address' && evidence.directlyAnswers === true
         && Number.isFinite(evidence.confidence)
         && Number.isFinite(evidence.identityConfidence)
         ? {
