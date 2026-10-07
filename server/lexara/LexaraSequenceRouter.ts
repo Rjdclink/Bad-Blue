@@ -21,7 +21,7 @@ export interface LexaraSequencePlan {
 }
 
 const DEEP_PATTERN = /\b(?:deep|thorough|comprehensive|recursive|broaden|keep looking|look harder|search again|investigate|everything|full background|background report)\b/i;
-const DOCUMENT_PATTERN = /\b(?:draft|prepare|create|generate|write|download|export|pdf|docx|word document|demand|complaint|petition|motion|affidavit|declaration|letter|request)\b/i;
+const DOCUMENT_PATTERN = /\b(?:draft|prepare|create|generate|write|download|export|pdf|docx|documents?|forms?|paperwork|word document|demand|complaint|petition|motion|affidavit|declaration|letter|request)\b/i;
 const ACTION_PATTERN = /\b(?:need|want|give|provide|make|prepare|draft|create|generate|write|download|export|file|serve|send)\b/i;
 
 export function planLexaraSequence(

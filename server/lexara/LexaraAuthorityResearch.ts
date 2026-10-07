@@ -175,6 +175,12 @@ async function discoverAuthoritySources(
   const intent=context.researchIntent || 'legal';
   const categories=context.sourceCategories || [];
   const includeLegalAuthorities=intent==='legal' || intent==='mixed' || categories.includes('courts');
+  // Federal publications and opinion indexes cannot establish which current
+  // state/county form is required. Their date-only snippets must not end that
+  // discovery before the official court and agency sources are searched.
+  const formObjective = context.standaloneQuery || query.match(/Question(?:\/facts)?:\s*([\s\S]*)/i)?.[1] || query;
+  const formLookup = /\bforms?\b/i.test(formObjective)
+    && /\b(?:official|prescribed|required|mandatory|local|court|filing)\b/i.test(formObjective);
 
   if(includeLegalAuthorities){
     const [courtListenerResult, govInfoResult] = await Promise.all([
@@ -182,7 +188,7 @@ async function discoverAuthoritySources(
       searchGovInfo(query, signal),
     ]);
     [...courtListenerResult, ...govInfoResult].forEach(add);
-    if (intent==='legal' && (sources.some(source => source.kind === 'primary' && Boolean(source.excerpt?.trim()))
+    if (!formLookup && intent==='legal' && (sources.some(source => source.kind === 'primary' && Boolean(source.excerpt?.trim()))
       || courtListenerResult.some(source => Boolean(source.excerpt?.trim())))) return sources;
   }
 
@@ -192,11 +198,24 @@ async function discoverAuthoritySources(
     subject:context.subject,
     requestedFact:context.requestedFact,
   };
-  const mesh = await discoverLegalMeshTier3(query, signal, meshOptions);
-  mesh.forEach(item => add(item));
+  const discoveryQuery = formLookup
+    ? [context.jurisdiction, formObjective]
+        .filter(Boolean).join(' ').replace(/\b(?:Do not draft a document|Answer briefly)\.?/gi, '').trim().slice(0, 390)
+    : query;
+  const mesh = await discoverLegalMeshTier3(discoveryQuery, signal, meshOptions);
+  if (formLookup) {
+    // Prioritize the actual form sources over unrelated federal leads while
+    // retaining the other authorities as fallback context.
+    const priorSources = sources.splice(0);
+    seen.clear();
+    mesh.forEach(item => add(item));
+    priorSources.forEach(item => add(item));
+  } else {
+    mesh.forEach(item => add(item));
+  }
   if (legalMeshSufficient(mesh) || sources.length >= MAX_AUTHORITY_SOURCES) return sources;
 
-  const supplemental = await discoverLegalMeshSupplemental(query, [...seen], signal, meshOptions);
+  const supplemental = await discoverLegalMeshSupplemental(discoveryQuery, [...seen], signal, meshOptions);
   supplemental.forEach(item => add(item));
   return sources;
 }

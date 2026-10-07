@@ -906,15 +906,16 @@ export async function generateLexaraConversationResponse(
     + formatLexaraBackgroundResearchForSystem(backgroundInvestigation)
     + backgroundPresentationPrompt
     + (isLexaraDocumentIntakeQuestion(cleanPrompt)
-      ? '\nDOCUMENT INTAKE RESPONSE: In at most 50 words, ask for only the essential facts and evidence needed for the filing the user named. No numbered list, document offer, or closing paragraph. Do not claim that a document has been prepared.'
+      ? '\nDOCUMENT INTAKE RESPONSE: In at most 50 words, ask for only the essential facts and evidence needed for the filing the user named. Ask for the claimed amount, but do not volunteer statutory dollar limits, filing fees, deadlines, or other legal requirements: this intake turn has not researched those facts. No numbered list, document offer, or closing paragraph. Do not claim that a document has been prepared.'
+      : '')
+    + (sequencePlan.documentAction
+      ? '\nDOCUMENT WORKFLOW REPLY: Use one concise sentence, at most 30 words, identifying the appropriate legal instrument and any indispensable missing fact. The document workflow handles placeholders, full drafting and download controls. Keep the document body and export instructions out of this conversational reply.'
       : '')
     + (backgroundResearchRequested && !mixedLegalFactNeed
       ? '\nBACKGROUND ANSWER LENGTH: Answer the exact factual question in one or two sentences, at most 60 words, unless the user explicitly asks for a detailed report. No URLs, source list, search mechanics, unrelated case facts, or offers of further work.'
       : '');
   const userPrompt = `${history ? `CONVERSATION SO FAR:\n${history}\n\n` : ''}CURRENT USER TURN:\n${cleanPrompt}`;
-  const claudeModel = isLexaraDocumentIntakeQuestion(cleanPrompt)
-    ? CURRENT_AI_MODELS.claudeFast
-    : backgroundResearchRequested && !mixedLegalFactNeed
+  const claudeModel = backgroundResearchRequested && !mixedLegalFactNeed
     ? context.allowClaudeOpus === true ? CURRENT_AI_MODELS.claudeBalanced : CURRENT_AI_MODELS.claudeFast
     : context.allowClaudeOpus !== true
       ? CURRENT_AI_MODELS.claudeFast

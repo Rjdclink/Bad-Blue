@@ -269,7 +269,10 @@ function detectDocumentIntent(prompt: string, previousMessages: LexaraConversati
   if (isLexaraDocumentIntakeQuestion(prompt)) return {
     requested: false, explicit: false, inferred: false, documentType: 'Custom Document', templateMode: false,
   };
-  const explicit = /\b(draft|prepare|create|generate|write|download|downloadable|export|pdf|docx|word document)\b/.test(p);
+  const genericDocumentRequest = /^(?:please\s+)?(?:i\s+(?:need|want)|(?:give|provide|make|prepare|draft|create|generate|write|download|export)\b)/i.test(prompt.trim())
+    && /\b(?:documents?|forms?|paperwork)\b/.test(p)
+    && !/\b(?:want|need)\s+to\s+(?:know|understand|learn)\b/.test(p);
+  const explicit = genericDocumentRequest || /\b(draft|prepare|create|generate|write|download|downloadable|export|pdf|docx|word document)\b/.test(p);
   const currentType = resolveLegalDocumentType(prompt);
   const candidateInference = explicit ? null : inferLegalDocumentNeed(prompt);
   const inferredType = !currentType || (candidateInference === 'Answer' && currentType === 'Complaint') ? candidateInference : null;
@@ -610,6 +613,7 @@ router.post('/acknowledge', express.json(), (req: Request, res: Response) => {
  * matter record immediately; durable packet planning follows after the reply.
  */
 function shouldPreflightFilingPacket(prompt: string): boolean {
+  if (isLexaraDocumentIntakeQuestion(prompt)) return false;
   return /\b(?:complete|full|entire|all|required|mandatory|local)\b.{0,55}\b(?:forms?|packet|paperwork|filing)\b|\b(?:forms?|packet|paperwork|filing)\b.{0,55}\b(?:complete|full|entire|all|required|mandatory|local)\b/i.test(prompt);
 }
 
@@ -765,6 +769,9 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
       ...effectivePreviousMessages,
       { role: 'user', content: prompt },
     ]);
+    if (documentIntent.requested && documentIntent.documentType === 'Custom Document' && reasoningDocumentIntent.requested && reasoningDocumentIntent.documentType !== 'Custom Document') {
+      documentIntent.documentType = reasoningDocumentIntent.documentType;
+    }
     if (!savedArtifact && !documentIntent.requested && !isLexaraDocumentIntakeQuestion(prompt) && !/\b(?:do not|don't|dont|never)\s+(?:draft|prepare|create|generate|write)\b/i.test(prompt) && reasoningDocumentIntent.requested && reasoningDocumentIntent.explicit && reasoningDocumentIntent.documentType !== 'Custom Document') {
       documentIntent.requested = true;
       if (documentIntent.documentType === 'Custom Document') {
@@ -775,11 +782,12 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
     const baseRepresentationMatter = preRepresentationMatter || representationContext.activeMatter;
     const durableEnrichmentNeeded = Boolean(
       representationContext.persistent
+      && !isLexaraDocumentIntakeQuestion(prompt)
       && baseRepresentationMatter
       && result.backgroundOnly !== true
       && shouldEnrichRepresentationMatter(prompt, response, baseRepresentationMatter)
     );
-    const representationMatter = !representationContext.persistent && !genericLegalIntake && result.backgroundOnly !== true
+    const representationMatter = !representationContext.persistent && !genericLegalIntake && !isLexaraDocumentIntakeQuestion(prompt) && result.backgroundOnly !== true
       ? await recoverEphemeralMatter({
           prompt,
           response,
@@ -969,7 +977,7 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
 
 
     const responseText = conversationResult.text;
-    const representationMatter = genericLegalIntake || conversationResult.backgroundOnly === true
+    const representationMatter = genericLegalIntake || isLexaraDocumentIntakeQuestion(prompt) || conversationResult.backgroundOnly === true
       ? preRepresentationMatter || representationContext.activeMatter
       : await recoverEphemeralMatter({
           prompt,
@@ -990,6 +998,9 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
       ...effectivePreviousMessages,
       { role: 'user', content: prompt },
     ]);
+    if (documentIntent.requested && documentIntent.documentType === 'Custom Document' && reasoningDocumentIntent.requested && reasoningDocumentIntent.documentType !== 'Custom Document') {
+      documentIntent.documentType = reasoningDocumentIntent.documentType;
+    }
     if (!savedArtifact && !documentIntent.requested && !isLexaraDocumentIntakeQuestion(prompt) && !/\b(?:do not|don't|dont|never)\s+(?:draft|prepare|create|generate|write)\b/i.test(prompt) && reasoningDocumentIntent.requested && reasoningDocumentIntent.explicit && reasoningDocumentIntent.documentType !== 'Custom Document') {
       documentIntent.requested = true;
       if (documentIntent.documentType === 'Custom Document') {

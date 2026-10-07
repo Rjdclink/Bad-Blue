@@ -40,7 +40,7 @@ const TYPE_ALIASES: ReadonlyArray<readonly [LegalDocumentType, readonly string[]
   ['Trial Brief', ['trial brief']],
   ['Habeas Petition', ['habeas petition', 'habeas corpus petition']],
   ['Notice of Appeal', ['notice of appeal', 'appeal notice']],
-  ['FOIA or Public Records Request', ['foia request', 'public records request', 'open records request']],
+  ['FOIA or Public Records Request', ['foia request', 'freedom of information act request', 'freedom of information request', 'public records request', 'open records request']],
   ['Lease Agreement', ['lease', 'lease agreement']],
   ['Release Agreement', ['release agreement']],
   ['Waiver', ['waiver']],
