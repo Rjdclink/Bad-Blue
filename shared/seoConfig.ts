@@ -239,6 +239,15 @@ export const SEO_CONFIG: Record<string, PageSEO> = {
     breadcrumbs: [{ name: "AI Legal Consultation", url: `${BASE_URL}/legal-consultation` }],
     includeInSitemap: true,
   },
+  "/about": {
+    title: "About LegalWhat | Founder & Mission",
+    description: "Learn about Robert Clinkenbeard, founder, sole proprietor, and developer of LegalWhat, and the mission to make sophisticated legal technology more accessible and affordable.",
+    canonicalPath: "/about",
+    priority: 0.6,
+    changefreq: "monthly",
+    breadcrumbs: [{ name: "About", url: `${BASE_URL}/about` }],
+    includeInSitemap: true,
+  },
   "/contact": {
     title: "Contact Legal What? | Support",
     description: "Contact Legal What? for account, subscription, platform, or Lexara support and questions.",
