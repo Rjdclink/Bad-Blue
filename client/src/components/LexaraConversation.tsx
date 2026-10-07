@@ -1407,7 +1407,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
             .join('\n\n')
             .slice(backgroundDocumentContext ? -20_000 : -30_000);
           const facts = backgroundDocumentContext
-            ? `${conversationFacts}\n\nAPPLICATION-SUPPLIED LEXARA DIRECT-SOURCE EVIDENCE (ONLY IF SAME PERSON/MATTER; NOT AUTOMATICALLY ADMITTED FACTS):\n${backgroundDocumentContext}`
+            ? `${conversationFacts}\n\nAPPLICATION-SUPPLIED LEXARA BACKGROUND EVIDENCE (DIRECT-SOURCE, SAME PERSON/MATTER ONLY, NOT AUTOMATICALLY ADMITTED FACTS):\n${backgroundDocumentContext}`
             : conversationFacts;
           const pendingTitle = String(data.documentIntent.documentType || 'Legal Document');
           // A newly requested document replaces the prior document task UI.
