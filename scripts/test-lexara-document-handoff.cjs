@@ -8,7 +8,7 @@ function load(file, imports = {}) {
   const exports = {};
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(root, file), 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
-  }).outputText, { exports, require: name => imports[name] || {}, console });
+  }).outputText, { exports, require: name => imports[name] || {}, console, URL });
   return exports;
 }
 const { lexaraDocumentSpeech } = load('shared/lexaraDocumentSpeech.ts');
