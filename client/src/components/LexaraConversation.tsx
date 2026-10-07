@@ -1830,7 +1830,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       if (generated.status === 422 && data?.needsCourtJurisdiction === true) {
         const missing = Array.isArray(data?.missingFields) ? data.missingFields : ['courtOrCounty'];
         setPendingDocument(previous => previous ? { ...previous, missingFields: missing } : previous);
-        const question = String(data?.question || 'Which court or county is this filing for?');
+        const question = String(data?.question || 'Which court, agency, or county will receive this filing?');
         appendMessage('lexara', question);
         void speakLexara(question, generationRef.current).catch(() => undefined);
         return;

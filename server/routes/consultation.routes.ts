@@ -391,12 +391,12 @@ export function setupConsultationRoutes(app: Express): void {
     // potentially wrong mandatory form or custom-drafted substitute when the
     // exact court/venue is still needed to determine its local requirements.
     const courtFiling = /\b(?:motion|complaint|answer|counterclaim|petition|appeal|brief|summons|subpoena|proposed order)\b/i.test(documentLabel);
-    if (!templateMode && courtFiling && (!documentJurisdictionProfile || documentJurisdictionProfile.needsCourtClarification)) {
+    if (!templateMode && courtFiling && documentJurisdictionProfile?.needsCourtClarification === true) {
       return res.status(422).json({
         error: 'The filing court or venue must be established before selecting a local form.',
         needsCourtJurisdiction: true,
         missingFields: ['courtOrCounty'],
-        question: 'Which court or county is this filing for?',
+        question: 'Which court, agency, or county will receive this filing?',
         jurisdiction: documentJurisdiction,
       });
     }

@@ -260,6 +260,7 @@ function cleanDeviceLocation(value: unknown): BrowserLocationSignal | undefined 
 function detectDocumentIntent(prompt: string, previousMessages: LexaraConversationMessage[] = []): {
   requested: boolean;
   explicit: boolean;
+  inferred: boolean;
   documentType: string;
   templateMode: boolean;
   packetItem?: boolean;
@@ -291,6 +292,7 @@ function detectDocumentIntent(prompt: string, previousMessages: LexaraConversati
   return {
     requested,
     explicit,
+    inferred: Boolean(inferredType),
     documentType: inferredType || currentType || historyType || 'Custom Document',
     templateMode: isBlankLegalDocumentRequest(prompt),
   };
@@ -735,7 +737,7 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
       onTextDelta: delta => send('answer-delta', { delta }),
       // A document turn must never enter realtime TTS. Flux can emit audio as
       // soon as Speak text arrives, so gate speech before the first chunk.
-      onSpeechChunk: documentIntent.requested
+      onSpeechChunk: documentIntent.requested && !documentIntent.inferred
         ? undefined
         : chunk => send('speech-chunk', { chunk }),
     });
