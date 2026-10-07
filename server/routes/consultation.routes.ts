@@ -433,6 +433,8 @@ export function setupConsultationRoutes(app: Express): void {
       formatJurisdictionAuthorityForSystem(documentJurisdictionProfile),
       `OFFICIAL-FORM DETERMINATION:\n${formDirective}`,
       'Use ONLY facts supplied below. Never invent names, dates, courts, case numbers, quotations, authorities, procedural posture, or requested relief.',
+      'The application-supplied Lexara background evidence below contains directly retrieved facts for this same matter. Preserve relevant facts supported there without adding a re-verification placeholder merely because the drafting turn did not repeat the background search. Keep placeholders for facts absent from that evidence; factual verification does not establish legal admissibility.',
+      'Return plain document text. The PDF and DOCX exporters use that text directly: do not use Markdown heading markers, asterisks for emphasis, backticks, or code fences. Use ordinary section titles and lettered or numbered paragraphs.',
       'Where a required fact is unknown, insert a conspicuous bracketed placeholder such as [COURT NAME NEEDED].',
       templateMode ? 'The user explicitly requested a blank/template document. Preserve unknown facts as bracketed placeholders and do not turn the draft into a questionnaire.' : '',
       'Use conventional legal-document structure appropriate to the requested document, with a caption placeholder when court filing format is applicable.',
