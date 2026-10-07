@@ -21,9 +21,41 @@ function requestPathname(originalUrl: string): string {
   return (originalUrl || "/").split("?")[0].split("#")[0] || "/";
 }
 
+// Consolidate SPA aliases so the same page does not compete under different URLs.
+function installCanonicalSeoRedirects(app: Express): void {
+  app.use((req, res, next) => {
+    if (req.method !== "GET" && req.method !== "HEAD") return next();
+
+    const pathname = requestPathname(req.originalUrl);
+    const canonicalAliases: Record<string, string> = {
+      "/landing": "/",
+      "/landing/": "/",
+      "/support": "/contact",
+      "/support/": "/contact",
+    };
+    let destination = canonicalAliases[pathname];
+
+    if (!destination && /^\/(?:legal-consultation|faq|contact|reviews|privacy|terms|about)\/+$/i.test(pathname)) {
+      destination = pathname.replace(/\/+$/, "");
+    }
+    if (!destination || destination === pathname) return next();
+
+    // Preserve query parameters and deep links during canonical redirects.
+    return res.redirect(301, destination + req.originalUrl.slice(pathname.length));
+  });
+}
+
 function renderSeoShell(template: string, pathname: string): string {
   const config = SEO_CONFIG[pathname];
-  if (!config) return template;
+  if (!config) {
+    // Unknown, private, and gated SPA pages must not inherit the homepage's
+    // indexability, canonical URL, or SEO text before React loads.
+    return template
+      .replace(/<meta\s+name=["']robots["'][^>]*>/i, '<meta name="robots" content="noindex, nofollow" />')
+      .replace(/<link\s+rel=["']canonical["'][^>]*>/i, "")
+      .replace(/<meta\s+property=["']og:url["'][^>]*>/i, "")
+      .replace(/<main\s+id=["']initial-seo-content["'][^>]*>[\s\S]*?<\/main>/i, "");
+  }
 
   const canonicalUrl = `${BASE_URL}${config.canonicalPath}`;
   const robots = config.noIndex
@@ -62,6 +94,7 @@ export function log(message: string, source = "express") {
 }
 
 export async function setupVite(app: Express, server: Server) {
+  installCanonicalSeoRedirects(app);
   // Dynamic imports - only load Vite in development mode
   const { createServer: createViteServer, createLogger } = await import("vite");
   const viteConfig = (await import("../vite.config.ts")).default;
@@ -118,6 +151,7 @@ export async function setupVite(app: Express, server: Server) {
 }
 
 export function serveStatic(app: Express) {
+  installCanonicalSeoRedirects(app);
   // Try multiple path resolution strategies for production deployment
   // Based on vite.config.ts, the build output is in dist/public
   const possiblePaths = [
