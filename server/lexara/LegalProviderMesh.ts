@@ -210,11 +210,18 @@ function diversify(items: LegalMeshCandidate[], limit = 16): LegalMeshCandidate[
 async function tavily(query: string, signal?: AbortSignal): Promise<LegalMeshCandidate[]> {
   const key = process.env.TAVILY_API_KEY?.trim();
   if (!key) return [];
+  // Keep the actual objective and venue; research-hint prefixes can otherwise
+  // consume the query limit before the user's question is reached.
+  const objective = query.match(/\bQuestion(?:\/facts)?:\s*([\s\S]*)/i)?.[1];
+  const venue = query.match(/\bJurisdiction(?:\/location)?:\s*([^\n.]{1,110})/i)?.[1];
+  const searchQuery = (objective ? [venue, objective].filter(Boolean).join(' ') : query)
+    .replace(/\s+/g, ' ').trim().slice(0, 399);
   const result = await withTimeout('tavily', 2_000, signal, async requestSignal => {
     const r = await fetch('https://api.tavily.com/search', {
       method: 'POST', signal: requestSignal,
       headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
-      body: JSON.stringify({ query, search_depth: 'basic', max_results: 10, include_answer: false, include_raw_content: false }),
+      // Tavily accepts search queries under 400 characters, not full legal prompts.
+      body: JSON.stringify({ query: searchQuery, search_depth: 'basic', max_results: 10, include_answer: false, include_raw_content: false }),
     });
     await checkDiscoveryResponse(r, 'tavily');
     const j:any = await r.json();

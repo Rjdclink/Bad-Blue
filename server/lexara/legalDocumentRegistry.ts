@@ -90,7 +90,11 @@ export function resolveLegalDocumentType(text: string): LegalDocumentType | null
 
   for (const type of canonicalByLength) {
     const canonical = normalize(type);
-    if (canonical && normalized.includes(canonical)) return type;
+    if (type === 'Complaint' && /\banswer\s+to\s+(?:the\s+|a\s+)?complaint\b/.test(normalized)) continue;
+    // "Answer briefly" describes conversation style, not an answer pleading.
+    // Keep bare pleading requests and explicit drafting language recognizable.
+    if (type === 'Answer' && !/^(?:an? )?answer$|\b(?:draft|prepare|create|generate|write|file|filing|submit|serve|need|want)\s+(?:(?:me|my|an?|the)\s+)*answer\b|\banswer\s+(?:pleading|to\s+(?:the\s+|a\s+)?(?:complaint|lawsuit|summons))\b/.test(normalized)) continue;
+    if (canonical && new RegExp(`(?:^| )${canonical}(?: |$)`).test(normalized)) return type;
   }
   for (const [type, aliases] of TYPE_ALIASES) {
     if (aliases.some(alias => normalized.includes(normalize(alias)))) return type;
@@ -134,6 +138,10 @@ export function validateLegalDocumentDraft(
   }
 
   if (requestedType !== 'Custom Document') {
+    if (requestedType === 'FOIA or Public Records Request'
+      && !/\b(?:foia|freedom of information|public records?|open records?)\b/i.test(trimmed)) {
+      return { valid: false, reason: 'draft is not a public-records request' };
+    }
     const normalizedHead = normalize(trimmed.slice(0, 2200));
     const canonicalTokens = normalize(requestedType)
       .split(' ')

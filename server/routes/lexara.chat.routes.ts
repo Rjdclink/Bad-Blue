@@ -29,7 +29,7 @@ import {
 } from '../lexara/LexaraRepresentationEngine';
 import { readMatterBuffer } from '../lexara/LexaraMatterStorage';
 import { buildDeadlineCalendar, calculateLegalDeadline, LEGAL_DEADLINE_RULES, type LegalDeadlineRuleId } from '../lexara/LegalDeadlineEngine';
-import { isLexaraGenericLegalIntake } from '../lexara/LexaraResearchIntentRouter';
+import { isLexaraGenericLegalIntake, isLexaraDocumentIntakeQuestion } from '../lexara/LexaraResearchIntentRouter';
 
 const router = express.Router();
 router.use(isAuthenticated);
@@ -266,6 +266,9 @@ function detectDocumentIntent(prompt: string, previousMessages: LexaraConversati
   packetItem?: boolean;
 } {
   const p = prompt.toLowerCase();
+  if (isLexaraDocumentIntakeQuestion(prompt)) return {
+    requested: false, explicit: false, inferred: false, documentType: 'Custom Document', templateMode: false,
+  };
   const explicit = /\b(draft|prepare|create|generate|write|download|downloadable|export|pdf|docx|word document)\b/.test(p);
   const currentType = resolveLegalDocumentType(prompt);
   const candidateInference = explicit ? null : inferLegalDocumentNeed(prompt);
@@ -287,7 +290,8 @@ function detectDocumentIntent(prompt: string, previousMessages: LexaraConversati
   const negated = /\b(?:do not|don't|dont|never|no longer|not trying to)\s+(?:want|need|plan|intend|file|prepare|draft|create)\b/i.test(prompt);
   const requested = !negated && (explicit || Boolean(inferredType)
     || Boolean(currentType && currentAction)
-    || Boolean(!currentType && historyType && referentialFollowup));
+    || Boolean(!currentType && historyType && referentialFollowup
+      && (currentAction || /\b(?:document|form|template|blank|pdf|docx)\b/.test(p))));
 
   return {
     requested,
