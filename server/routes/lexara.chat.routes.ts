@@ -598,6 +598,16 @@ router.post('/acknowledge', express.json(), (req: Request, res: Response) => {
 });
 
 /**
+ * Full court-packet discovery can entail recursive official-form retrieval.
+ * Run that ahead of the answer only when the user explicitly requests the
+ * packet or all required/local forms. Ordinary conversations still create the
+ * matter record immediately; durable packet planning follows after the reply.
+ */
+function shouldPreflightFilingPacket(prompt: string): boolean {
+  return /\b(?:complete|full|entire|all|required|mandatory|local)\b.{0,55}\b(?:forms?|packet|paperwork|filing)\b|\b(?:forms?|packet|paperwork|filing)\b.{0,55}\b(?:complete|full|entire|all|required|mandatory|local)\b/i.test(prompt);
+}
+
+/**
  * Non-persistent matter enrichment is advisory. An optional secondary provider
  * must never delay or cancel the already-completed legal answer. Persistent
  * users continue to get the existing durable post-response enrichment queue.
@@ -701,6 +711,7 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
           jurisdiction: explicitJurisdiction || representationContext.activeMatter?.jurisdiction,
           prior: representationContext.activeMatter,
           allowClaudeOpus: canUseClaudeOpus(req),
+          skipPacketPlanning: !shouldPreflightFilingPacket(prompt),
           signal: controller.signal,
         }).catch(error => {
           log.warn('[LEXARA] Matter preflight unavailable; continuing legal answer', {
@@ -711,7 +722,7 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
     const savedArtifact = selectSavedArtifactRequest(prompt, preRepresentationMatter || representationContext.activeMatter);
     const packetDocumentIntent = savedArtifact ? null : selectPacketDocumentIntent(prompt, preRepresentationMatter);
     if (savedArtifact) {
-      documentIntent = { requested: false, explicit: true, documentType: 'Custom Document', templateMode: false };
+      documentIntent = { requested: false, explicit: true, inferred: false, documentType: 'Custom Document', templateMode: false };
     } else if (packetDocumentIntent) {
       documentIntent = packetDocumentIntent;
     }
@@ -899,12 +910,13 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
           jurisdiction: explicitJurisdiction || representationContext.activeMatter?.jurisdiction,
           prior: representationContext.activeMatter,
           allowClaudeOpus: canUseClaudeOpus(req),
+          skipPacketPlanning: !shouldPreflightFilingPacket(prompt),
         });
     let documentIntent = detectDocumentIntent(prompt, effectivePreviousMessages);
     const savedArtifact = selectSavedArtifactRequest(prompt, preRepresentationMatter || representationContext.activeMatter);
     const packetDocumentIntent = savedArtifact ? null : selectPacketDocumentIntent(prompt, preRepresentationMatter);
     if (savedArtifact) {
-      documentIntent = { requested: false, explicit: true, documentType: 'Custom Document', templateMode: false };
+      documentIntent = { requested: false, explicit: true, inferred: false, documentType: 'Custom Document', templateMode: false };
     } else if (packetDocumentIntent) {
       documentIntent = packetDocumentIntent;
     }
