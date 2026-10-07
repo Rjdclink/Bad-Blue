@@ -310,6 +310,8 @@ function selectPacketDocumentIntent(prompt: string, matter: RepresentationMatter
   inferred: false;
   packetItem: true;
 } | null {
+  if (isLexaraDocumentIntakeQuestion(prompt)
+    || /\b(?:do not|don't|dont|never)\s+(?:draft|prepare|create|generate|write)\b/i.test(prompt)) return null;
   const packet = matter?.packet;
   if (!packet?.items?.length) return null;
   const text = String(prompt || '').trim().toLowerCase();
@@ -763,7 +765,7 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
       ...effectivePreviousMessages,
       { role: 'user', content: prompt },
     ]);
-    if (!savedArtifact && !documentIntent.requested && reasoningDocumentIntent.requested && reasoningDocumentIntent.explicit && reasoningDocumentIntent.documentType !== 'Custom Document') {
+    if (!savedArtifact && !documentIntent.requested && !isLexaraDocumentIntakeQuestion(prompt) && !/\b(?:do not|don't|dont|never)\s+(?:draft|prepare|create|generate|write)\b/i.test(prompt) && reasoningDocumentIntent.requested && reasoningDocumentIntent.explicit && reasoningDocumentIntent.documentType !== 'Custom Document') {
       documentIntent.requested = true;
       if (documentIntent.documentType === 'Custom Document') {
         documentIntent.documentType = reasoningDocumentIntent.documentType;
@@ -988,7 +990,7 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
       ...effectivePreviousMessages,
       { role: 'user', content: prompt },
     ]);
-    if (!savedArtifact && !documentIntent.requested && reasoningDocumentIntent.requested && reasoningDocumentIntent.explicit && reasoningDocumentIntent.documentType !== 'Custom Document') {
+    if (!savedArtifact && !documentIntent.requested && !isLexaraDocumentIntakeQuestion(prompt) && !/\b(?:do not|don't|dont|never)\s+(?:draft|prepare|create|generate|write)\b/i.test(prompt) && reasoningDocumentIntent.requested && reasoningDocumentIntent.explicit && reasoningDocumentIntent.documentType !== 'Custom Document') {
       documentIntent.requested = true;
       if (documentIntent.documentType === 'Custom Document') {
         documentIntent.documentType = reasoningDocumentIntent.documentType;

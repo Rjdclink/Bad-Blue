@@ -905,6 +905,9 @@ export async function generateLexaraConversationResponse(
     + researchStatusPrompt
     + formatLexaraBackgroundResearchForSystem(backgroundInvestigation)
     + backgroundPresentationPrompt
+    + (isLexaraDocumentIntakeQuestion(cleanPrompt)
+      ? '\nDOCUMENT INTAKE RESPONSE: In at most 50 words, ask for only the essential facts and evidence needed for the filing the user named. No numbered list, document offer, or closing paragraph. Do not claim that a document has been prepared.'
+      : '')
     + (backgroundResearchRequested && !mixedLegalFactNeed
       ? '\nBACKGROUND ANSWER LENGTH: Answer the exact factual question in one or two sentences, at most 60 words, unless the user explicitly asks for a detailed report. No URLs, source list, search mechanics, unrelated case facts, or offers of further work.'
       : '');
