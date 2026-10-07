@@ -73,6 +73,7 @@ mustNot(seoHead, '@BadBlueApp', 'SEOHead must not restore legacy social handle')
 must(seoConfig.includes('export const BASE_URL = "https://legalwhat.com"'), 'central SEO base URL must be legalwhat.com');
 must(seoConfig.includes('export const SITE_NAME = "Legal What?"'), 'central SEO site name must be Legal What?');
 must(seoConfig.includes('"/legal-consultation": {'), 'public legal consultation route must have SEO config');
+must(seoConfig.includes('"/about": {'), 'public About route must have server-renderable SEO config');
 for (const privatePath of ['/officer', '/complaint-form', '/lawsuit-form', '/foia-request-form', '/petitions', '/evidence-hub']) {
   const marker = `  "${privatePath}": {`;
   const start = seoConfig.indexOf(marker);
@@ -97,7 +98,7 @@ mustNot(robots, 'BadBlue', 'robots must not use legacy brand');
 mustNot(robots, 'Bad Blue', 'robots must not use legacy brand');
 mustNot(robots, 'example.com', 'robots must not use example.com');
 
-for (const publicPath of ['https://legalwhat.com/', 'https://legalwhat.com/affordable-legal-guidance/', 'https://legalwhat.com/guides/affordable-answers-to-legal-questions/', 'https://legalwhat.com/legal-consultation', 'https://legalwhat.com/faq', 'https://legalwhat.com/contact', 'https://legalwhat.com/privacy', 'https://legalwhat.com/terms']) {
+for (const publicPath of ['https://legalwhat.com/', 'https://legalwhat.com/affordable-legal-guidance/', 'https://legalwhat.com/guides/affordable-answers-to-legal-questions/', 'https://legalwhat.com/legal-consultation', 'https://legalwhat.com/faq', 'https://legalwhat.com/contact', 'https://legalwhat.com/about', 'https://legalwhat.com/privacy', 'https://legalwhat.com/terms']) {
   must(sitemap.includes(`<loc>${publicPath}</loc>`), `static sitemap missing ${publicPath}`);
 }
 mustNot(sitemap, 'https://legalwhat.com/landing', 'duplicate /landing URL must stay out of sitemap');
@@ -132,6 +133,9 @@ must(serverIndex.includes('Do not emit synthetic freshness'), 'dynamic sitemap m
 must(viteServer.includes('renderSeoShell') && viteServer.includes('SEO_CONFIG[pathname]'), 'SPA fallback must render route-specific SEO metadata before React');
 must(viteServer.includes('rel="canonical"') && viteServer.includes('canonicalUrl'), 'SPA fallback must emit a route-correct canonical in initial HTML');
 must(viteServer.includes('config.noIndex') && viteServer.includes('noindex, nofollow'), 'SPA fallback must preserve noindex on protected configured routes');
+must(viteServer.includes('function installCanonicalSeoRedirects') && viteServer.includes('"/landing": "/"') && viteServer.includes('"/support": "/contact"'), 'SPA SEO must redirect alternate URLs to canonical pages');
+const unconfiguredFallback = viteServer.slice(viteServer.indexOf('if (!config) {'), viteServer.indexOf('const canonicalUrl'));
+must(unconfiguredFallback.includes('noindex, nofollow') && unconfiguredFallback.includes('initial-seo-content'), 'unknown and gated SPA routes must be noindex without the homepage shell');
 must(viteServer.includes('function requestPathname') && viteServer.includes('requestPathname(req.originalUrl)'), 'SPA SEO rendering must use the original requested URL before wildcard mount stripping');
 mustNot(viteServer, 'renderSeoShell(template, req.path', 'SPA SEO rendering must not use mount-stripped req.path');
 must(viteServer.includes('data-seo-shell-title') && viteServer.includes('data-seo-shell-description'), 'SPA fallback must render route-specific crawlable H1 and summary text');
