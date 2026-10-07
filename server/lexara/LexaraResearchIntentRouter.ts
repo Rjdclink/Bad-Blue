@@ -76,6 +76,13 @@ export function isLexaraGenericLegalIntake(text: string): boolean {
   return /^(?:(?:hi|hello|hey)[, ]+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?help\s+me(?:\s+out)?\s+with\s+(?:a|an|my)?\s*(?:(?:[a-z][a-z -]{0,48}\s+law)|law|legal)\s+(?:issue|matter|question|problem|case)|(?:i\s+(?:need|want|would\s+like)\s+(?:some\s+)?help\s+with|i\s+have)\s+(?:a|an|my)?\s*(?:(?:[a-z][a-z -]{0,48}\s+law)|law|legal)\s+(?:issue|matter|question|problem|case))[?.! ]*$/i.test(value);
 }
 
+/** Asking which facts to supply does not require investigating the named venue. */
+export function isLexaraDocumentIntakeQuestion(text: string): boolean {
+  return /\bwhat\s+(?:information|facts|details|documents)\s+(?:do|would|will)\s+you\s+need\b/i.test(text)
+    && /\b(?:filing|file|claim|claims|complaint|motion|petition|draft|prepare|document|lawsuit)\b/i.test(text)
+    && !/\b(?:background|investigate|verify|look\s+up|search|check\s+(?:whether|if))\b/i.test(text);
+}
+
 export function isLexaraConversationControl(text: string): boolean {
   return isLexaraRepeatRequest(text)
     || isLexaraGenericLegalIntake(text)
@@ -215,6 +222,7 @@ export function decideLexaraResearchNeed(
   const text = String(prompt || '').trim();
   if (!text) return baseDecision('');
   if (isLexaraConversationControl(text)) return baseDecision(text);
+  if (isLexaraDocumentIntakeQuestion(text)) return baseDecision(text);
 
   const legal = isLexaraLegalAuthorityIntent(text);
   const fact = requestedFact(text);
