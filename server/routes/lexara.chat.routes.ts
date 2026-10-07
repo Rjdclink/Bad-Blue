@@ -303,6 +303,7 @@ function selectPacketDocumentIntent(prompt: string, matter: RepresentationMatter
   explicit: boolean;
   documentType: string;
   templateMode: boolean;
+  inferred: false;
   packetItem: true;
 } | null {
   const packet = matter?.packet;
@@ -341,6 +342,7 @@ function selectPacketDocumentIntent(prompt: string, matter: RepresentationMatter
     explicit: true,
     documentType: selected.title,
     templateMode: false,
+    inferred: false,
     packetItem: true,
   };
 }
