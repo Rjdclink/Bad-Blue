@@ -8,12 +8,12 @@ export interface OfficialLegalForm {
   localRules: string[]; companionDocuments: string[];
   provenance: Array<{ title: string; url: string; retrievedAt: string }>;
 }
-const OFFICIAL_HOST = /(?:\\.gov|\\.uscourts\\.gov|\\.courts?\\.[a-z]{2}\\.us|\\.judicial\\.[a-z]{2}\\.gov)$/i;
-const FORM_HINT = /\\b(form|petition|complaint|motion|notice|summons|cover sheet|affidavit|application|order|pleading)\\b/i;
-const MANDATORY_HINT = /\\b(must|required|shall|required form|prescribed form|use (?:this|the) form)\\b/i;
-const OPTIONAL_HINT = /\\b(optional|may use|provided for convenience)\\b/i;
-const CUSTOM_HINT = /\\b(no official form|no prescribed form|may be drafted|local form not required)\\b/i;
-function official(url: string): boolean { try { const host=new URL(url).hostname.toLowerCase(); return host.endsWith('.gov') || host==='gov' || host.endsWith('.uscourts.gov') || /(?:^|\\.)courts?\\.[a-z]{2}\\.us$/.test(host); } catch { return false; } }
+const OFFICIAL_HOST = /(?:\.gov|\.uscourts\.gov|\.courts?\.[a-z]{2}\.us|\.judicial\.[a-z]{2}\.gov)$/i;
+const FORM_HINT = /\b(form|petition|complaint|motion|notice|summons|cover sheet|affidavit|application|order|pleading)\b/i;
+const MANDATORY_HINT = /\b(?:required\s+(?:official\s+)?form|mandatory\s+(?:official\s+)?form|prescribed form|must\s+(?:use|complete|file|submit)\s+(?:(?:this|the)\s+)?form|shall\s+(?:use|file|submit)\s+(?:(?:this|the)\s+)?form|use (?:this|the) form)\b/i;
+const OPTIONAL_HINT = /\b(optional|may use|provided for convenience)\b/i;
+const CUSTOM_HINT = /\b(no official form|no prescribed form|may be drafted|local form not required)\b/i;
+function official(url: string): boolean { try { const host=new URL(url).hostname.toLowerCase(); return host.endsWith('.gov') || host==='gov' || host.endsWith('.uscourts.gov') || /(?:^|\.)courts?\.[a-z]{2}\.us$/.test(host); } catch { return false; } }
 function typeOf(url: string): OfficialLegalForm['contentType'] {
   const clean=url.toLowerCase().split('?')[0]; if(clean.endsWith('.pdf')) return 'pdf';
   if(clean.endsWith('.docx')||clean.endsWith('.doc')) return 'docx'; if(clean.startsWith('http')) return 'html'; return 'unknown';
@@ -40,8 +40,8 @@ export function resolveOfficialLegalForm(research: LexaraAuthorityResearch | nul
   const formNumber=directText.match(/\b(?:form|ao|dc|civ|fam|div|eoir|va|official form)\s*[-#:]*\s*([A-Z0-9.:-]{1,24})\b/i)?.[1];
   const revisionText=directText;
   const revision=revisionText.match(/\b(?:revision|revised|edition|effective|updated|rev\.?)\s*(?:date)?\s*[:#-]?\s*((?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{1,2},?\s+\d{4}|(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{4}|\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4})\b/i)?.[1];
-  const localRules=relevant.filter(s=>/\\b(local rule|court rule|filing requirement|instructions?)\\b/i.test([s.title,s.excerpt].filter(Boolean).join(' '))).map(s=>s.title).slice(0,8);
-  const companionDocuments=relevant.filter(s=>/\\b(summons|civil cover sheet|fee waiver|service|appearance|proposed order)\\b/i.test([s.title,s.excerpt].filter(Boolean).join(' '))).map(s=>s.title).slice(0,8);
+  const localRules=relevant.filter(s=>/\b(local rule|court rule|filing requirement|instructions?)\b/i.test([s.title,s.excerpt].filter(Boolean).join(' '))).map(s=>s.title).slice(0,8);
+  const companionDocuments=relevant.filter(s=>/\b(summons|civil cover sheet|fee waiver|service|appearance|proposed order)\b/i.test([s.title,s.excerpt].filter(Boolean).join(' '))).map(s=>s.title).slice(0,8);
   return { requirement,title,formNumber,url:direct?.url,sourceTitle:direct?.title,revision,contentType:direct?.url?typeOf(direct.url):undefined,verifiedOfficial:!!direct,localRules,companionDocuments,provenance:relevant.slice(0,12).map(s=>({title:s.title,url:s.url,retrievedAt:research.searchedAt})) };
 }
 export function officialFormDirective(form: OfficialLegalForm): string {
