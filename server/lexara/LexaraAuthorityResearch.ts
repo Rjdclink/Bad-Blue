@@ -264,7 +264,7 @@ async function enrichAuthoritySourcesWithLexaraRetrieval(
     if (!enrichment?.evidence?.length) return sources;
 
     const byTarget = new Map(enrichment.evidence.filter(item => item.content?.trim())
-      .map(item => [item.target, item.content.trim().slice(0, formLookup ? 2400 : 900)]));
+      .map(item => [item.target, item.content.trim().slice(0, formLookup ? 4000 : 900)]));
     return sources.map(source => ({ ...source, excerpt: formLookup
       ? [source.excerpt, byTarget.get(source.url)].filter(Boolean).join('\n') || undefined
       : source.excerpt || byTarget.get(source.url) || undefined }));

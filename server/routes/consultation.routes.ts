@@ -408,7 +408,7 @@ export function setupConsultationRoutes(app: Express): void {
       });
     }
 
-    if (officialFormRequested && !officialForm.verifiedOfficial) {
+    if ((officialFormRequested || officialForm.requirement === 'mandatory') && !officialForm.verifiedOfficial) {
       return res.status(422).json({ error: 'The requested official form could not be verified from current court sources. No custom substitute was generated.' });
     }
     if (officialForm.requirement === 'mandatory' || (officialFormRequested && officialForm.verifiedOfficial)) {
