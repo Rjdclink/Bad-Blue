@@ -613,7 +613,7 @@ router.post('/acknowledge', express.json(), (req: Request, res: Response) => {
  * matter record immediately; durable packet planning follows after the reply.
  */
 function shouldPreflightFilingPacket(prompt: string): boolean {
-  if (isLexaraDocumentIntakeQuestion(prompt)
+  if (isLexaraDocumentIntakeQuestion(prompt) || isBlankLegalDocumentRequest(prompt)
     || /\b(?:do not|don't|dont|never)\s+(?:draft|prepare|create|generate|write)\b/i.test(prompt)) return false;
   return /\b(?:complete|full|entire|all|required|mandatory|local)\b.{0,55}\b(?:forms?|packet|paperwork|filing)\b|\b(?:forms?|packet|paperwork|filing)\b.{0,55}\b(?:complete|full|entire|all|required|mandatory|local)\b/i.test(prompt);
 }
@@ -784,11 +784,12 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
     const durableEnrichmentNeeded = Boolean(
       representationContext.persistent
       && !isLexaraDocumentIntakeQuestion(prompt)
+      && !isBlankLegalDocumentRequest(prompt)
       && baseRepresentationMatter
       && result.backgroundOnly !== true
       && shouldEnrichRepresentationMatter(prompt, response, baseRepresentationMatter)
     );
-    const representationMatter = !representationContext.persistent && !genericLegalIntake && !isLexaraDocumentIntakeQuestion(prompt) && result.backgroundOnly !== true
+    const representationMatter = !representationContext.persistent && !genericLegalIntake && !isLexaraDocumentIntakeQuestion(prompt) && !isBlankLegalDocumentRequest(prompt) && result.backgroundOnly !== true
       ? await recoverEphemeralMatter({
           prompt,
           response,
@@ -978,7 +979,7 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
 
 
     const responseText = conversationResult.text;
-    const representationMatter = genericLegalIntake || isLexaraDocumentIntakeQuestion(prompt) || conversationResult.backgroundOnly === true
+    const representationMatter = genericLegalIntake || isLexaraDocumentIntakeQuestion(prompt) || isBlankLegalDocumentRequest(prompt) || conversationResult.backgroundOnly === true
       ? preRepresentationMatter || representationContext.activeMatter
       : await recoverEphemeralMatter({
           prompt,
