@@ -29,7 +29,7 @@ import {
 } from '../lexara/LexaraRepresentationEngine';
 import { readMatterBuffer } from '../lexara/LexaraMatterStorage';
 import { buildDeadlineCalendar, calculateLegalDeadline, LEGAL_DEADLINE_RULES, type LegalDeadlineRuleId } from '../lexara/LegalDeadlineEngine';
-import { isLexaraGenericLegalIntake, isLexaraDocumentIntakeQuestion } from '../lexara/LexaraResearchIntentRouter';
+import { isLexaraGenericLegalIntake, isLexaraDocumentIntakeQuestion, isLexaraOfficialFormQuestion } from '../lexara/LexaraResearchIntentRouter';
 
 const router = express.Router();
 router.use(isAuthenticated);
@@ -785,11 +785,12 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
       representationContext.persistent
       && !isLexaraDocumentIntakeQuestion(prompt)
       && !isBlankLegalDocumentRequest(prompt)
+      && (documentIntent.requested || !isLexaraOfficialFormQuestion(prompt))
       && baseRepresentationMatter
       && result.backgroundOnly !== true
       && shouldEnrichRepresentationMatter(prompt, response, baseRepresentationMatter)
     );
-    const representationMatter = !representationContext.persistent && !genericLegalIntake && !isLexaraDocumentIntakeQuestion(prompt) && !isBlankLegalDocumentRequest(prompt) && result.backgroundOnly !== true
+    const representationMatter = !representationContext.persistent && !genericLegalIntake && !isLexaraDocumentIntakeQuestion(prompt) && !isBlankLegalDocumentRequest(prompt) && (documentIntent.requested || !isLexaraOfficialFormQuestion(prompt)) && result.backgroundOnly !== true
       ? await recoverEphemeralMatter({
           prompt,
           response,
@@ -979,7 +980,7 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
 
 
     const responseText = conversationResult.text;
-    const representationMatter = genericLegalIntake || isLexaraDocumentIntakeQuestion(prompt) || isBlankLegalDocumentRequest(prompt) || conversationResult.backgroundOnly === true
+    const representationMatter = genericLegalIntake || isLexaraDocumentIntakeQuestion(prompt) || isBlankLegalDocumentRequest(prompt) || (!documentIntent.requested && isLexaraOfficialFormQuestion(prompt)) || conversationResult.backgroundOnly === true
       ? preRepresentationMatter || representationContext.activeMatter
       : await recoverEphemeralMatter({
           prompt,
