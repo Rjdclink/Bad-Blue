@@ -391,12 +391,29 @@ export function setupConsultationRoutes(app: Express): void {
     });
     const authorityAssessment = formatAuthorityResearchForSystem(authorityResearch)
       || 'No current authority was retrieved. Do not invent or claim verification of legal requirements, citations, deadlines, or official forms. Do not present this as ready to file.';
-    const officialForm = resolveOfficialLegalForm(authorityResearch, documentLabel, requestedFormNumber,
-      requestedFormNumber ? documentJurisdictionProfile?.officialResources
+    // Jurisdiction-specific discovery seeds are application-owned court
+    // directory entries. Preserve their issuer when the general directory is
+    // unavailable; arbitrary search-result hosts cannot establish this scope.
+    const discoveredCourtDomains = (authorityResearch?.sources || [])
+      .filter(source => source.kind === 'primary' && source.provider === 'official-form-directory')
+      .flatMap(source => { try { return [new URL(source.url).hostname.toLowerCase().replace(/^www\./, '')]; } catch { return []; } });
+    const issuingDomains = requestedFormNumber ? [...new Set([
+      ...(documentJurisdictionProfile?.officialResources || [])
         .filter(resource => resource.kind !== 'directory'
           && (!(documentJurisdictionProfile?.system === 'state' || documentJurisdictionProfile?.system === 'local')
             || !['federal-circuit', 'federal-district'].includes(resource.kind) && resource.host !== 'uscourts.gov'))
-        .map(resource => resource.host) : undefined);
+        .map(resource => resource.host),
+      ...discoveredCourtDomains,
+    ])] : undefined;
+    const officialForm = resolveOfficialLegalForm(authorityResearch, documentLabel, requestedFormNumber, issuingDomains);
+    if (requestedFormNumber) console.info('[LEXARA OfficialForm]', {
+      requestedFormNumber,
+      documentType: documentLabel,
+      issuingDomains,
+      verifiedOfficial: officialForm.verifiedOfficial,
+      sourceTitle: officialForm.sourceTitle,
+      sourceCount: authorityResearch?.sources.length || 0,
+    });
     const formDirective = officialFormDirective(officialForm);
 
     // A state alone does not identify the local filing court. Never hand out a
