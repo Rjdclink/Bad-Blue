@@ -25,7 +25,7 @@ export function resolveOfficialLegalForm(research: LexaraAuthorityResearch | nul
   const relevant=research.sources.filter(source=>official(source.url) && FORM_HINT.test([source.title,source.excerpt].filter(Boolean).join(' '))
     && (!numberPattern || numberPattern.test([source.title, source.excerpt].filter(Boolean).join(' '))));
   const documentTokens=String(documentType||'').toLowerCase().split(/[^a-z0-9]+/).filter(token=>token.length>=4 && !['form','legal','document','official'].includes(token));
-  const scored=relevant.map(source=>{
+  const scored=relevant.filter(source => !requestedFormNumber || !/\b(?:instructions?|guide|guidance|checklist)\b/i.test(source.title)).map(source=>{
     const haystack=[source.title,source.excerpt].filter(Boolean).join(' ').toLowerCase();
     const tokenScore=documentTokens.reduce((total,token)=>total+(haystack.includes(token)?1:0),0);
     const score=tokenScore+(typeOf(source.url)!=='html'?1:0);

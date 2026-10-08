@@ -208,7 +208,7 @@ function diversify(items: LegalMeshCandidate[], limit = 16): LegalMeshCandidate[
   return selected;
 }
 
-async function tavily(query: string, signal?: AbortSignal): Promise<LegalMeshCandidate[]> {
+async function tavily(query: string, signal?: AbortSignal, budgetMs = 2_000): Promise<LegalMeshCandidate[]> {
   const key = process.env.TAVILY_API_KEY?.trim();
   if (!key) return [];
   // Keep the actual objective and venue; research-hint prefixes can otherwise
@@ -217,7 +217,7 @@ async function tavily(query: string, signal?: AbortSignal): Promise<LegalMeshCan
   const venue = query.match(/\bJurisdiction(?:\/location)?:\s*([^\n.]{1,110})/i)?.[1];
   const searchQuery = (objective ? [venue, objective].filter(Boolean).join(' ') : query)
     .replace(/\s+/g, ' ').trim().slice(0, 399);
-  const result = await withTimeout('tavily', 2_000, signal, async requestSignal => {
+  const result = await withTimeout('tavily', budgetMs, signal, async requestSignal => {
     const r = await fetch('https://api.tavily.com/search', {
       method: 'POST', signal: requestSignal,
       headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
@@ -435,6 +435,7 @@ async function freeSearch(
   query: string,
   signal?: AbortSignal,
   _firstUseful = false,
+  officialFormQuery = false,
 ): Promise<LegalMeshCandidate[]> {
   // Discovery URLs are leads, not verified answers. Preserve every bounded
   // provider result; only the investigator's evidence gate may end research.
@@ -444,7 +445,7 @@ async function freeSearch(
   else signal?.addEventListener('abort', relayAbort, { once: true });
   try {
     const outcomes = await Promise.allSettled([
-      tavily(query, controller.signal),
+      tavily(query, controller.signal, officialFormQuery ? 5_000 : 2_000),
       duckDuckGoInstantAnswer(query, controller.signal),
       searxng(query, controller.signal),
       ddgs(query, controller.signal),
@@ -508,7 +509,7 @@ export async function discoverLegalMeshTier3(
   const uniqueVariants=[...new Set(variants)].slice(0,options.firstUseful ? 2 : 6);
   const groups=options.firstUseful
     ? [await firstUsefulSearchVariants(uniqueVariants,signal)]
-    : await Promise.all(uniqueVariants.map(variant=>freeSearch(variant,signal)));
+    : await Promise.all(uniqueVariants.map(variant=>freeSearch(variant,signal,false,options.officialFormQuery)));
   const learnedSources=await Promise.race([
     getLexaraLearnedSources(options.categories||[],options.jurisdiction,8),
     new Promise<string[]>(resolve=>setTimeout(()=>resolve([]),75)),
