@@ -22,9 +22,9 @@ function refersToPriorSubject(text: string): boolean {
 
 function candidates(text: string): string[] {
   // A sentence-ending period is not an internal name abbreviation. Preserve
-  // single-letter initials while preventing the next instruction from joining
+  // initials and short titles while preventing the next instruction from joining
   // the name and later replacing a compatible shorter subject from history.
-  const subjectText = text.replace(/([\p{L}]{2})\.(?=\s+[A-Z])/gu, '$1;');
+  const subjectText = text.replace(/([\p{L}]{3})\.(?=\s+[A-Z])/gu, '$1;');
   return [...subjectText.matchAll(PROPER_NAME)]
     .map(match => match[0]
       .replace(/^(?:(?:Please|Research|Lexara|Pantheon|Tell|Find|Check|Show|Look|Full|Complete|Current|Background|The|Is|Are|Has|Have|Who|Where|When|How|Does|Did|Can|Could|Would|Should)\s+)+/i, '')
