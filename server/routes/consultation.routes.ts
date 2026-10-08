@@ -391,7 +391,12 @@ export function setupConsultationRoutes(app: Express): void {
     });
     const authorityAssessment = formatAuthorityResearchForSystem(authorityResearch)
       || 'No current authority was retrieved. Do not invent or claim verification of legal requirements, citations, deadlines, or official forms. Do not present this as ready to file.';
-    const officialForm = resolveOfficialLegalForm(authorityResearch, documentLabel, requestedFormNumber);
+    const officialForm = resolveOfficialLegalForm(authorityResearch, documentLabel, requestedFormNumber,
+      requestedFormNumber ? documentJurisdictionProfile?.officialResources
+        .filter(resource => resource.kind !== 'directory'
+          && (!(documentJurisdictionProfile?.system === 'state' || documentJurisdictionProfile?.system === 'local')
+            || !['federal-circuit', 'federal-district'].includes(resource.kind) && resource.host !== 'uscourts.gov'))
+        .map(resource => resource.host) : undefined);
     const formDirective = officialFormDirective(officialForm);
 
     // A state alone does not identify the local filing court. Never hand out a
