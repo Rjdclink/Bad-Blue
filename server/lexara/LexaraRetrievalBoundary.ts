@@ -75,8 +75,9 @@ function textFromResponse(raw: string, contentType: string): string {
   const bounded = raw.slice(0, MAX_CONTENT_CHARACTERS);
   if (/html|xhtml/i.test(contentType)) {
     const $ = load(bounded);
-    $('script,style,noscript,svg,canvas').remove();
-    return $('body').text().replace(/\s+/g, ' ').trim().slice(0, MAX_CONTENT_CHARACTERS);
+    $('script,style,noscript,svg,canvas,nav,header,footer,[role="navigation"]').remove();
+    const main = $('main,[role="main"],article').first();
+    return (main.length ? main : $('body')).text().replace(/\s+/g, ' ').trim().slice(0, MAX_CONTENT_CHARACTERS);
   }
   if (/json|xml|text|javascript/i.test(contentType)) {
     return bounded.replace(/\s+/g, ' ').trim();
