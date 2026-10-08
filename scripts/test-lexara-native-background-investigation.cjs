@@ -297,6 +297,19 @@ function reset(mode) {
   assert.deepEqual(paidOptions.map(x => x.maxUses), [1, 2, 1, 2, 1, 2], 'targeted fallback spends one search; broad research retains two');
   assert.deepEqual(paidOptions.map(x => x.maxTokens), [384, 1024, 384, 1024, 384, 1024]);
   assert(paidOptions.every((x, i) => x.model === budgetModels[Math.floor(i / 2)] && x.maxFetchUses === 1), 'budget applies across Haiku, Sonnet and Opus without live provider calls');
+  await paidLane.searchLexaraBackgroundWithClaude({ prompt: 'Fixture Spectra inquiry',
+    decision: { requestedFact: 'contact-address', sourceCategories: [] },
+    maxTokens: 2048, retryTruncatedOutput: false });
+  assert.equal(paidOptions.at(-1).maxTokens, 2048);
+  assert.equal(paidOptions.at(-1).retryTruncatedOutput, false);
+  assert.equal(paidOptions.at(-1).maxUses, 1, 'Spectra keeps the bounded research fallback');
+  reset('empty');
+  await investigator.investigateLexaraBackgroundQuestion('Fixture unresolved fact about Avery Example', {
+    resolvedSubject: { name: 'Avery Example', kind: 'person', identifiable: true },
+    claudeResearchMaxTokens: 2048, claudeRetryTruncatedOutput: false,
+  });
+  assert.equal(state.claudeCalls[0].maxTokens, 2048, 'Spectra budget reaches the conditional paid lane');
+  assert.equal(state.claudeCalls[0].retryTruncatedOutput, false);
   for (const mode of ['business-directory', 'business-owner']) {
     reset(mode);
     const result = await investigator.investigateLexaraBackgroundQuestion('What business does Avery Example operate?', {

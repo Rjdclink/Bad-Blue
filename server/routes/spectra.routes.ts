@@ -866,6 +866,10 @@ router.post('/acquire', async (req: Request, res: Response) => {
           previousMessages: [{ role: 'user', content: details }],
           delegatedByLexara: true,
           resolvedSubject: semanticSubject || undefined,
+          // Start with the usable fallback budget instead of buying a short
+          // truncated request followed by the same search again.
+          claudeResearchMaxTokens: 2_048,
+          claudeRetryTruncatedOutput: false,
           signal: AbortSignal.timeout(backgroundBudgetMs),
         },
       ),
