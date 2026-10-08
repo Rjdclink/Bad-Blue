@@ -332,6 +332,7 @@ async function runDiscoveryPass(
         jurisdiction: context.location,
         subject: context.subject,
         requestedFact: 'contact-address',
+        allowClaudePlanning: context.useClaude !== false,
       })
     ));
 
@@ -385,6 +386,7 @@ async function runDiscoveryPass(
           jurisdiction: context.location,
           subject: context.subject,
           requestedFact: 'contact-address',
+          allowClaudePlanning: context.useClaude !== false,
         },
       ).catch(() => []);
       results.push(...supplemental.map(discoveryResultFromCandidate));
