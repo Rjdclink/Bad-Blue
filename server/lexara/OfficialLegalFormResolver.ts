@@ -37,7 +37,10 @@ export function resolveOfficialLegalForm(research: LexaraAuthorityResearch | nul
   const requirementText=specific.map(entry=>entry.haystack).join('\n');
   const combined=relevant.map(source=>[source.title,source.excerpt].filter(Boolean).join(' ')).join('\n');
   const requirement: OfficialFormRequirement = MANDATORY_HINT.test(requirementText) ? 'mandatory' : OPTIONAL_HINT.test(requirementText) ? 'optional' : CUSTOM_HINT.test(requirementText) ? 'custom_allowed' : 'unverified';
-  const direct=(specific.find(entry=>FORM_HINT.test(entry.source.title) && typeOf(entry.source.url)!=='html') || specific[0])?.source;
+  // Instructions can establish requirements, but are not the court form to
+  // complete. Courts often expose the actual form at extensionless URLs.
+  const formEntries=specific.filter(entry=>FORM_HINT.test(entry.source.title) && !/\b(?:instructions?|guide|guidance|checklist)\b/i.test(entry.source.title));
+  const direct=(formEntries.find(entry=>typeOf(entry.source.url)!=='html') || formEntries[0])?.source;
   const title=direct?.title;
   const directText=[direct?.title,direct?.excerpt].filter(Boolean).join(' ');
   const formNumber=requestedFormNumber || directText.match(/\b(?:form|ao|dc|civ|fam|div|eoir|va|official form)\s*[-#:]*\s*([A-Z0-9.:-]{1,24})\b/i)?.[1];
