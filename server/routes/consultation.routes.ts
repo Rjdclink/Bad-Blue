@@ -361,7 +361,16 @@ export function setupConsultationRoutes(app: Express): void {
     if (!state || !facts || !requestedType || !documentLabel) return res.status(400).json({ error: 'Jurisdiction, case facts, and a supported document type are required' });
     if (facts.length > 30_000 || customInstructions.length > 8_000) return res.status(413).json({ error: 'Document request is too large' });
     const latestUserRequest = [...facts.matchAll(/(?:^|\n)USER:\s*([^\n]+)/g)].at(-1)?.[1] || facts;
-    const officialFormRequested = /\bofficial\b/i.test(latestUserRequest) && /\bform\b/i.test(latestUserRequest);
+    const localCoverSheetRequested = /\bcover\s+sheet\b/i.test(latestUserRequest)
+      && /\b(?:case|court|local|filing)\b/i.test(latestUserRequest);
+    const officialFormRequested = (/\bofficial\b/i.test(latestUserRequest) && /\bform\b/i.test(latestUserRequest))
+      || localCoverSheetRequested;
+    // The generic artifact type must not erase the named local instrument.
+    const formDocumentLabel = localCoverSheetRequested
+      ? [/\b(?:family|divorce|dissolution)\b/i.test(latestUserRequest) ? 'Family'
+        : /\b(?:probate|guardianship)\b/i.test(latestUserRequest) ? 'Probate'
+        : /\bcivil\b/i.test(latestUserRequest) ? 'Civil' : '', 'Case Information Cover Sheet'].filter(Boolean).join(' ')
+      : documentLabel;
     const requestedFormNumber = officialFormRequested ? latestUserRequest.match(/\bform\s+((?=[A-Z0-9.:-]*\d)[A-Z0-9](?:[A-Z0-9.:-]*[A-Z0-9])?)\b/i)?.[1] : undefined;
 
     const resolvedJurisdiction = await resolveUSJurisdiction(facts, state);
@@ -383,7 +392,7 @@ export function setupConsultationRoutes(app: Express): void {
     const authorityResearch = await researchLegalAuthority(authorityPrompt, {
       jurisdiction: documentJurisdiction,
       standaloneQuery: [documentJurisdiction, documentJurisdictionProfile?.county,
-        documentJurisdictionProfile?.explicitCourt, documentLabel,
+        documentJurisdictionProfile?.explicitCourt, formDocumentLabel,
         officialFormRequested ? latestUserRequest.replace(/\b(?:give me|keep it blank|answer briefly)\b/gi, '').slice(0, 220) : '',
         'official prescribed form required local rules filing instructions'].filter(Boolean).join(' '),
       researchHints: documentJurisdictionProfile?.researchHints,
@@ -405,7 +414,7 @@ export function setupConsultationRoutes(app: Express): void {
         .map(resource => resource.host),
       ...discoveredCourtDomains,
     ])] : undefined;
-    const officialForm = resolveOfficialLegalForm(authorityResearch, documentLabel, requestedFormNumber, issuingDomains);
+    const officialForm = resolveOfficialLegalForm(authorityResearch, formDocumentLabel, requestedFormNumber, issuingDomains);
     if (requestedFormNumber) console.info('[LEXARA OfficialForm]', {
       requestedFormNumber,
       documentType: documentLabel,
