@@ -59,6 +59,9 @@ function spectraTargetFromPrompt(value: string): string | null {
     .split(/[,;]|\s+(?:(?:my|his|her|their)\s+)?(?:email|phone|mobile|cell)\b/i)[0]
     .replace(/[?.!]+$/g, '').trim() || '';
   if (target.length < 2 || target.length > 500) return null;
+  // A state/county prefix can precede the artifact name. These are legal
+  // requests even when they start with the hidden location-command wording.
+  if (/\b(?:official|court|local|required|prescribed|mandatory|blank|template|legal|small\s+claims|money\s+judgment)\b[\s\S]*\b(?:forms?|petition|motion|complaint|cover\s+sheet)\b|\b(?:form\s+(?=[A-Z0-9.:-]*\d)[A-Z0-9.:-]+|case[- ]assignment|foia)\b/i.test(target)) return null;
   if (NON_PERSON_SPECTRA_TARGET_RE.test(target)) return null;
   return target;
 }
