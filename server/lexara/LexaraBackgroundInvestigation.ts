@@ -302,7 +302,10 @@ function excerptAround(content: string, pattern: RegExp, subject: LexaraBackgrou
   const identityExcerpt = subjectIndex >= 0 && (subjectIndex < start || subjectIndex + subject.name.length > end)
     ? content.slice(Math.max(0, subjectIndex - 80), Math.min(content.length, subjectIndex + subject.name.length + 160))
     : '';
-  return [factExcerpt, identityExcerpt].filter(Boolean).join(' … ').replace(/\s+/g, ' ').trim();
+  const publisherIndex = content.indexOf('Source publisher/contact information:');
+  const publisherExcerpt = subject.kind !== 'person' && publisherIndex >= 0
+    ? content.slice(publisherIndex, publisherIndex + 1000) : '';
+  return [factExcerpt, identityExcerpt, publisherExcerpt].filter(Boolean).join(' … ').replace(/\s+/g, ' ').trim();
 }
 
 function businessRelationshipEvidence(content: string, subject: LexaraBackgroundSubject): boolean {
@@ -331,7 +334,8 @@ function assessEvidence(
   const identity = subjectConfidence(content, subject);
   if (identity < MIN_IDENTITY_CONFIDENCE) return null;
   const pattern = factPattern(decision, prompt);
-  const relevantWindow = subjectRelevantWindow(content, subject);
+  const relevantWindow = decision.requestedFact === 'contact-address' && subject.kind !== 'person'
+    ? content : subjectRelevantWindow(content, subject);
   const directlyAnswers = decision.requestedFact === 'business'
     ? businessRelationshipEvidence(relevantWindow, subject)
     : pattern.test(relevantWindow)
@@ -501,6 +505,7 @@ export async function investigateLexaraBackgroundQuestion(
     const retrieval = targets.length
       ? await lexaraRetrievalAdapter.retrieve({
           purpose: 'lexara_legal_research',
+          includePublisherMetadata: true,
           targets: targets.map(item => item.url),
           signal: context.signal,
         }).catch(() => ({ evidence: [] }))
@@ -617,6 +622,7 @@ export async function investigateLexaraBackgroundQuestion(
       if (targets.length && !laneSignal.aborted) {
         const retrieval = await lexaraRetrievalAdapter.retrieve({
           purpose: 'lexara_legal_research',
+          includePublisherMetadata: true,
           targets: targets.map(item => item.url),
           signal: laneSignal,
         }).catch(() => ({ evidence: [] }));
@@ -773,6 +779,7 @@ export async function investigateLexaraBackgroundQuestion(
         fresh.forEach(item => seenUrls.add(item.url));
         const retrieval = await lexaraRetrievalAdapter.retrieve({
           purpose: 'lexara_legal_research',
+          includePublisherMetadata: true,
           targets: fresh.map(item => item.url),
           signal: laneSignal,
         }).catch(error => {
@@ -975,6 +982,7 @@ export async function investigateLexaraBackgroundQuestion(
           try {
             const retrieval = await lexaraRetrievalAdapter.retrieve({
               purpose: 'lexara_legal_research',
+              includePublisherMetadata: true,
               targets: claudeTargets.map(item => item.url),
               signal: retrievalController.signal,
             }).catch(() => ({ evidence: [] }));
