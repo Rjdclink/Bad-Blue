@@ -71,13 +71,21 @@ async function assertPublicUrl(raw: string): Promise<URL> {
   return url;
 }
 
-function textFromResponse(raw: string, contentType: string): string {
-  const bounded = raw.slice(0, MAX_CONTENT_CHARACTERS);
+function textFromResponse(raw: string, contentType: string, includePublisherMetadata = false): string {
+  const bounded = raw.slice(0, includePublisherMetadata && /html|xhtml/i.test(contentType)
+    ? MAX_RESPONSE_BYTES : MAX_CONTENT_CHARACTERS);
   if (/html|xhtml/i.test(contentType)) {
     const $ = load(bounded);
+    const title = includePublisherMetadata ? $('title').first().text().replace(/\s+/g, ' ').trim() : '';
+    const publisher = includePublisherMetadata ? $('footer,[role="contentinfo"]').clone() : null;
+    publisher?.find('script,style,noscript,svg,canvas,nav,[role="navigation"]').remove();
+    const publisherText = publisher?.text().replace(/\s+/g, ' ').trim().slice(0, 2000) || '';
     $('script,style,noscript,svg,canvas,nav,header,footer,[role="navigation"]').remove();
     const main = $('main,[role="main"],article').first();
-    return (main.length ? main : $('body')).text().replace(/\s+/g, ' ').trim().slice(0, MAX_CONTENT_CHARACTERS);
+    const body = (main.length ? main : $('body')).text().replace(/\s+/g, ' ').trim();
+    const boundedBody = body.slice(0, Math.max(0, MAX_CONTENT_CHARACTERS - title.length - publisherText.length - 100));
+    return [title, boundedBody, publisherText ? 'Source publisher/contact information: ' + publisherText : '']
+      .filter(Boolean).join('\n').slice(0, MAX_CONTENT_CHARACTERS);
   }
   if (/json|xml|text|javascript/i.test(contentType)) {
     return bounded.replace(/\s+/g, ' ').trim();
@@ -99,7 +107,7 @@ async function textFromPdf(buffer: Buffer): Promise<string> {
   } finally { await document.destroy(); }
 }
 
-async function retrieveOne(target: string, parentSignal?: AbortSignal): Promise<LexaraRetrievalEvidence | null> {
+async function retrieveOne(target: string, parentSignal?: AbortSignal, includePublisherMetadata = false): Promise<LexaraRetrievalEvidence | null> {
   let current = await assertPublicUrl(target);
   for (let redirectCount = 0; redirectCount <= MAX_REDIRECTS; redirectCount++) {
     const controller = new AbortController();
@@ -142,7 +150,7 @@ async function retrieveOne(target: string, parentSignal?: AbortSignal): Promise<
       const buffer = Buffer.concat(chunks);
       const content = /application\/pdf/i.test(contentType) || buffer.subarray(0, 5).toString() === '%PDF-'
         ? await textFromPdf(buffer)
-        : textFromResponse(buffer.toString('utf8'), contentType);
+        : textFromResponse(buffer.toString('utf8'), contentType, includePublisherMetadata);
       if (!content) { console.info('[LEXARA Retrieval]', { host: current.hostname, outcome: 'no-extractable-text', contentType }); return null; }
       return {
         target,
@@ -166,12 +174,13 @@ export const lexaraRetrievalAdapter = {
     purpose: 'lexara_legal_research';
     targets: string[];
     signal?: AbortSignal;
+    includePublisherMetadata?: boolean;
   }): Promise<LexaraRetrievalResponse> {
     if (request.purpose !== 'lexara_legal_research') {
       throw new Error('Lexara retrieval only serves Lexara legal research.');
     }
     const targets = [...new Set(request.targets)].slice(0, MAX_TARGETS);
-    const settled = await Promise.allSettled(targets.map(target => retrieveOne(target, request.signal)));
+    const settled = await Promise.allSettled(targets.map(target => retrieveOne(target, request.signal, request.includePublisherMetadata)));
     return {
       evidence: settled.flatMap(result =>
         result.status === 'fulfilled' && result.value ? [result.value] : []
