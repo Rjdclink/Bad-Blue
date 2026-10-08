@@ -50,7 +50,7 @@ function normalizeState(value: string): string | null {
 
 function cleanCity(value: string): string {
   return normalizeSpaces(value)
-    .replace(/^(?:in|at|from|near|around|city of|located in)\s+/i, '')
+    .replace(/^(?:in|at|from|near|around|city of|located in|last known (?:in|at))\s+/i, '')
     .replace(/^[,;:\-\s]+|[,;:\-\s]+$/g, '')
     .trim();
 }
@@ -150,6 +150,13 @@ export function extractCityStateHint(input: string): { city: string; state: stri
     const state = normalizeState(match[1]);
     if (!state) continue;
     const before = text.slice(0, match.index).trim();
+    // In conversation these codes are also ordinary words. Require geographic
+    // context instead of interpreting "Show me" as the city "Show" in Maine.
+    // Whole city/state hints have already been handled above.
+    if (
+      /^(?:IN|ME|OR|HI|OK)$/i.test(match[1]) &&
+      !/(?:[,;.]|\b(?:located\s+in|last\s+known\s+(?:in|at)|in|at|from|near|around|city(?:\s+of)?)\s+[A-Za-z][A-Za-z.'\-]*(?:\s+[A-Za-z][A-Za-z.'\-]*){0,3})\s*$/i.test(before)
+    ) continue;
     const cityMatch = before.match(/(?:^|[,;.]|\b(?:in|at|from|near|around|city(?:\s+of)?)\s+)([A-Za-z][A-Za-z.'\-]*(?:\s+[A-Za-z][A-Za-z.'\-]*){0,3})\s*$/i);
     const city = cleanCity(cityMatch?.[1] || '');
     if (city.length >= 2 && city.length <= 100) return { city, state, query: `${city}, ${state}` };
@@ -189,7 +196,8 @@ export function extractFreeformLocationHint(input: string): string | null {
     if (
       phrase.length >= 2 &&
       phrase.length <= 120 &&
-      !/\d{7,}/.test(phrase)
+      !/\d{7,}/.test(phrase) &&
+      !/^(?:(?:my|your|his|her|their|our|the)\s+)?(?:contacts|emails?|inbox|files?|photos?|pictures?|browser|history|accounts?|messages|records|documents)\b/i.test(phrase)
     ) {
       return phrase;
     }

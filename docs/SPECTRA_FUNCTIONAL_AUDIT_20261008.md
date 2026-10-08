@@ -103,3 +103,20 @@ location was found.
 
 Further source discovery can find additional evidence or a usable upstream
 integration. It cannot substitute for absent current spatial observations.
+
+## Production follow-up
+
+PR #1271 deployed successfully to Bad-Blue production. The full production
+build and Spectra suite passed; repository-wide type checking retained the
+same 246 pre-existing diagnostics after worktree-path and union-order
+normalization, with no added errors.
+
+The live `Show me` launch at 03:30 UTC completed across nine source groups in
+5.816 seconds. It still supplied no timestamped subject coordinate evidence.
+The browser/log comparison exposed a separate false regional candidate:
+the conversational word `me` was parsed as the state abbreviation `ME`,
+producing `Show, ME` and an unrelated geocoder match. Follow-up repairs require
+geographic context for ambiguous conversational/state words and reject
+account containers such as `in my contacts` as physical locations. Regression
+checks require identity-only launches to issue zero geocoder requests while
+preserving actual city/state and street-address clues.
