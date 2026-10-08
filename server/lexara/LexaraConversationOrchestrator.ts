@@ -11,7 +11,7 @@ import {
   formatLexaraDomainSpecialization,
   getLexaraLegalDomainProfile,
 } from './LexaraLegalDomainProfiles';
-import { decideLexaraResearchNeed, isLexaraGenericLegalIntake, isLexaraRepeatRequest, isLexaraDocumentIntakeQuestion } from './LexaraResearchIntentRouter';
+import { decideLexaraResearchNeed, isLexaraGenericLegalIntake, isLexaraRepeatRequest, isLexaraDocumentIntakeQuestion, isLexaraOfficialFormQuestion } from './LexaraResearchIntentRouter';
 import { planLexaraSequence } from './LexaraSequenceRouter';
 import { resolveLexaraResearchDecisionSemantic } from './LexaraSemanticIntentInterpreter';
 import { mergeCompatibleLexaraBackgroundSubjects, resolveLexaraBackgroundSubject } from './LexaraBackgroundSubject';
@@ -910,6 +910,9 @@ export async function generateLexaraConversationResponse(
       : '')
     + (sequencePlan.documentAction
       ? '\nDOCUMENT WORKFLOW REPLY: Use one concise sentence, at most 30 words, identifying the appropriate legal instrument and any indispensable missing fact. The document workflow handles supplied background evidence, placeholders, full drafting and download controls. Do not repeat addresses or other document-body facts, re-evaluate prior background verification, add a general verification warning, or give export instructions in this conversational acknowledgment.'
+      : '')
+    + (isLexaraOfficialFormQuestion(cleanPrompt) && !sequencePlan.documentAction
+      ? '\nOFFICIAL FORM ANSWER: In at most 60 words, name the verified form and any essential selection condition or companion form stated in the retrieved official instructions. Do not infer residency, party type, or case-type conditions from a form title or model memory. If the instructions do not establish a condition, leave it unresolved. State an unverified local requirement briefly rather than asserting it is absent. Omit unasked fees, deadlines, and procedural background. Correct a relevant earlier error within the same short answer, without recounting prior research failures.'
       : '')
     + (backgroundResearchRequested && !mixedLegalFactNeed
       ? '\nBACKGROUND ANSWER LENGTH: Answer the exact factual question in one or two sentences, at most 60 words, unless the user explicitly asks for a detailed report. No URLs, source list, search mechanics, unrelated case facts, or offers of further work.'
