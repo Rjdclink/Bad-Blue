@@ -1090,14 +1090,17 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     if (spectraTarget) {
       const queuedMessageId = currentPreRenderedTurnIdRef.current;
       currentPreRenderedTurnIdRef.current = null;
-      if (!queuedMessageId) appendMessage('user', message);
+      const userMessageId = queuedMessageId || appendMessage('user', message);
       setUserInput('');
       setErrorMessage(null);
       const response = `Open SPECTRA to locate ${spectraTarget}.`;
       appendMessage('lexara', response, {
         target: spectraTarget,
-        clues: conversationRef.current.filter(item => item.role === 'user')
-          .slice(-12).map(item => item.content).join('\n').slice(-8_000),
+        clues: [
+          ...conversationRef.current.filter(item => item.role === 'user' && item.id !== userMessageId)
+            .slice(-12).map(item => item.content),
+          message,
+        ].join('\n').slice(-8_000),
         lexaraSessionId: sessionIdRef.current,
       });
       if (liveEnabled && voiceReady) void speakLexara(response, generationRef.current).catch(() => undefined);
