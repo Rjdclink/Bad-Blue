@@ -184,6 +184,17 @@ async function discoverAuthoritySources(
   // discovery before the official court and agency sources are searched.
   const formObjective = context.standaloneQuery || query.match(/Question(?:\/facts)?:\s*([\s\S]*)/i)?.[1] || query;
   const formLookup = isOfficialFormLookup(formObjective);
+  // Official files are discovery seeds, never cached legal conclusions. Each
+  // turn still retrieves their current contents and retains normal mesh search.
+  if (formLookup && /\biowa\b/i.test([context.jurisdiction, formObjective].join(' '))
+    && /\b(?:small claims?|form\s*3\.1|money judgment)\b/i.test(formObjective)) {
+    add({title:'Iowa Judicial Branch Instructions for Filing a Small Claims Action for Money Judgment', url:'https://www.iowacourts.gov/browse/files/cc85952321f54914bf6ba14535b8ac9d/download', kind:'primary', provider:'official-form-directory'});
+    add({title:'Small Claims Form 3.1: Original Notice and Petition for a Money Judgment', url:'https://www.iowacourts.gov/collections/304/files/535/embedDocument', kind:'primary', provider:'official-form-directory'});
+  }
+  if (formLookup && /\bking county\b/i.test(formObjective)
+    && /\b(?:divorce|family|dissolution)\b/i.test(formObjective)) {
+    add({title:'King County Superior Court Family Case Assignment Area Designation and Case Information Cover Sheet (CICS)', url:'https://cdn.kingcounty.gov/-/media/king-county/depts/dja/forms/cics-family-pdf.pdf', kind:'primary', provider:'official-form-directory'});
+  }
 
   if(includeLegalAuthorities){
     const [courtListenerResult, govInfoResult] = await Promise.all([
@@ -212,8 +223,9 @@ async function discoverAuthoritySources(
     // retaining the other authorities as fallback context.
     const priorSources = sources.splice(0);
     seen.clear();
+    priorSources.filter(item => item.provider === 'official-form-directory').forEach(item => add(item));
     mesh.forEach(item => add(item));
-    priorSources.forEach(item => add(item));
+    priorSources.filter(item => item.provider !== 'official-form-directory').forEach(item => add(item));
   } else {
     mesh.forEach(item => add(item));
   }
@@ -254,7 +266,7 @@ async function enrichAuthoritySourcesWithLexaraRetrieval(
     const byTarget = new Map(enrichment.evidence.filter(item => item.content?.trim())
       .map(item => [item.target, item.content.trim().slice(0, formLookup ? 2400 : 900)]));
     return sources.map(source => ({ ...source, excerpt: formLookup
-      ? byTarget.get(source.url) || source.excerpt
+      ? [source.excerpt, byTarget.get(source.url)].filter(Boolean).join('\n') || undefined
       : source.excerpt || byTarget.get(source.url) || undefined }));
   } catch (error) {
     console.warn('[LEXARA Research] Direct source retrieval failed route-locally', {
