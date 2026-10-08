@@ -613,7 +613,8 @@ router.post('/acknowledge', express.json(), (req: Request, res: Response) => {
  * matter record immediately; durable packet planning follows after the reply.
  */
 function shouldPreflightFilingPacket(prompt: string): boolean {
-  if (isLexaraDocumentIntakeQuestion(prompt)) return false;
+  if (isLexaraDocumentIntakeQuestion(prompt)
+    || /\b(?:do not|don't|dont|never)\s+(?:draft|prepare|create|generate|write)\b/i.test(prompt)) return false;
   return /\b(?:complete|full|entire|all|required|mandatory|local)\b.{0,55}\b(?:forms?|packet|paperwork|filing)\b|\b(?:forms?|packet|paperwork|filing)\b.{0,55}\b(?:complete|full|entire|all|required|mandatory|local)\b/i.test(prompt);
 }
 
