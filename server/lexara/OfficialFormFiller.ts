@@ -50,13 +50,19 @@ function officialHost(url: string): boolean {
   }
 }
 
-async function resolveDownloadableOfficialForm(form: OfficialLegalForm): Promise<{ url: string; contentType: 'pdf' | 'docx' }> {
+async function resolveDownloadableOfficialForm(form: OfficialLegalForm): Promise<{ url: string; contentType: 'pdf' | 'docx'; bytes?: Buffer }> {
   if(!form.verifiedOfficial || !form.url || !officialHost(form.url)) throw new Error('No verified official form source is available');
   const directType=downloadableType(form.url);
   if(directType) return {url:form.url,contentType:directType};
   if(form.contentType!=='html') throw new Error('No verified downloadable official form is available');
 
-  const html=(await download(form.url)).toString('utf8');
+  // Courts also serve PDFs at /download and /embedDocument URLs. Detect the
+  // actual file before treating an extensionless official response as HTML.
+  const sourceBytes=await download(form.url);
+  if (sourceBytes.subarray(0,5).toString('ascii') === '%PDF-') {
+    return { url: form.url, contentType: 'pdf', bytes: sourceBytes };
+  }
+  const html=sourceBytes.toString('utf8');
   const $=load(html);
   const formNumber=String(form.formNumber || '').trim().toLowerCase();
   const titleTokens=String(form.title || form.sourceTitle || '')
@@ -109,7 +115,7 @@ async function inspectDocxFields(bytes: Buffer): Promise<OfficialFormField[]> {
 
 export async function inspectOfficialForm(form: OfficialLegalForm): Promise<InspectedOfficialForm> {
   const resolved=await resolveDownloadableOfficialForm(form);
-  const bytes=await download(resolved.url);
+  const bytes=resolved.bytes || await download(resolved.url);
   if(resolved.contentType==='docx') {
     const fields=await inspectDocxFields(bytes);
     return {sourceUrl:resolved.url,contentType:'docx',bytes,fields,fillable:fields.length>0};

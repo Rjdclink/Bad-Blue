@@ -1840,6 +1840,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
           method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             officialForm: data.officialForm,
+            templateMode: pendingDocument.templateMode,
             facts: pendingDocument.facts,
             sessionId: sessionIdRef.current,
             lawType: lawTypeId,

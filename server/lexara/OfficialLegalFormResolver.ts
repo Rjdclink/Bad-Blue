@@ -18,9 +18,12 @@ function typeOf(url: string): OfficialLegalForm['contentType'] {
   const clean=url.toLowerCase().split('?')[0]; if(clean.endsWith('.pdf')) return 'pdf';
   if(clean.endsWith('.docx')||clean.endsWith('.doc')) return 'docx'; if(clean.startsWith('http')) return 'html'; return 'unknown';
 }
-export function resolveOfficialLegalForm(research: LexaraAuthorityResearch | null, documentType: string): OfficialLegalForm {
+export function resolveOfficialLegalForm(research: LexaraAuthorityResearch | null, documentType: string, requestedFormNumber?: string): OfficialLegalForm {
   if(!research?.sources?.length) return { requirement:'unverified', verifiedOfficial:false, localRules:[], companionDocuments:[], provenance:[] };
-  const relevant=research.sources.filter(source=>official(source.url) && FORM_HINT.test([source.title,source.excerpt].filter(Boolean).join(' ')));
+  const escapedNumber = requestedFormNumber?.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const numberPattern = escapedNumber ? new RegExp(`(?:^|[^a-z0-9.])${escapedNumber}(?:$|[^a-z0-9.])`, 'i') : null;
+  const relevant=research.sources.filter(source=>official(source.url) && FORM_HINT.test([source.title,source.excerpt].filter(Boolean).join(' '))
+    && (!numberPattern || numberPattern.test([source.title, source.excerpt].filter(Boolean).join(' '))));
   const documentTokens=String(documentType||'').toLowerCase().split(/[^a-z0-9]+/).filter(token=>token.length>=4 && !['form','legal','document','official'].includes(token));
   const scored=relevant.map(source=>{
     const haystack=[source.title,source.excerpt].filter(Boolean).join(' ').toLowerCase();
@@ -37,7 +40,7 @@ export function resolveOfficialLegalForm(research: LexaraAuthorityResearch | nul
   const direct=(specific.find(entry=>FORM_HINT.test(entry.source.title) && typeOf(entry.source.url)!=='html') || specific[0])?.source;
   const title=direct?.title;
   const directText=[direct?.title,direct?.excerpt].filter(Boolean).join(' ');
-  const formNumber=directText.match(/\b(?:form|ao|dc|civ|fam|div|eoir|va|official form)\s*[-#:]*\s*([A-Z0-9.:-]{1,24})\b/i)?.[1];
+  const formNumber=requestedFormNumber || directText.match(/\b(?:form|ao|dc|civ|fam|div|eoir|va|official form)\s*[-#:]*\s*([A-Z0-9.:-]{1,24})\b/i)?.[1];
   const revisionText=directText;
   const revision=revisionText.match(/\b(?:revision|revised|edition|effective|updated|rev\.?)\s*(?:date)?\s*[:#-]?\s*((?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{1,2},?\s+\d{4}|(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{4}|\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4})\b/i)?.[1];
   const localRules=relevant.filter(s=>/\b(local rule|court rule|filing requirement|instructions?)\b/i.test([s.title,s.excerpt].filter(Boolean).join(' '))).map(s=>s.title).slice(0,8);
