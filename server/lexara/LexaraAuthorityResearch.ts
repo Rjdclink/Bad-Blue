@@ -60,7 +60,18 @@ const AUTHORITY_SENSITIVE_PATTERN = /\b(?:cite|citation|source|authority|case\s*
 const HIGH_CONSEQUENCE_PATTERN = /\b(?:criminal\s+charge|charged\s+with|arrested|indicted|sentencing|post[- ]conviction|habeas|2254|2255|ineffective\s+assistance|actual\s+innocence|deportation|removal\s+proceedings|asylum|child\s+custody|termination\s+of\s+parental\s+rights|restraining\s+order|protective\s+order|eviction|foreclosure|injunction|appeal|hearing\s+(?:today|tomorrow)|court\s+(?:today|tomorrow))\b/i;
 
 function isOfficialFormLookup(text: string): boolean {
-  return /\bforms?\b/i.test(text) && /\b(?:official|prescribed|required|mandatory|local|court|filing)\b/i.test(text);
+  return /\b(?:forms?|cover\s+sheet|case[- ]assignment)\b/i.test(text)
+    && /\b(?:official|prescribed|required|mandatory|local|court|filing)\b/i.test(text);
+}
+
+function officialFormEvidenceExcerpt(content: string): string {
+  const prefix = content.slice(0, 4000);
+  // Later filing-method exceptions can qualify an earlier requirement. Keep
+  // those source clauses alongside the existing form excerpt.
+  const conditions = [...content.matchAll(/\b(?:if|when|unless)\b[^.\n]{0,180}\b(?:filing|file|electronic)[^.\n]{0,220}/gi)]
+    .filter(match => (match.index || 0) >= 3800)
+    .slice(0, 5).map(match => content.slice(Math.max(0, (match.index || 0) - 80), (match.index || 0) + match[0].length + 160));
+  return [prefix, conditions.join('\n').slice(0, 1400)].filter(Boolean).join('\n');
 }
 
 function clampTail(value: string, maxLength: number): string {
@@ -193,6 +204,7 @@ async function discoverAuthoritySources(
   }
   if (formLookup && /\bking county\b/i.test(formObjective)
     && /\b(?:divorce|family|dissolution)\b/i.test(formObjective)) {
+    add({title:'King County Superior Court official forms and filing requirements', url:'https://kingcounty.gov/en/dept/dja/courts-jails-legal-system/court-forms-document-filing/forms', kind:'primary', provider:'official-form-directory'});
     add({title:'King County Superior Court Family Case Assignment Area Designation and Case Information Cover Sheet (CICS)', url:'https://cdn.kingcounty.gov/-/media/king-county/depts/dja/forms/cics-family-pdf.pdf', kind:'primary', provider:'official-form-directory'});
   }
 
@@ -264,7 +276,7 @@ async function enrichAuthoritySourcesWithLexaraRetrieval(
     if (!enrichment?.evidence?.length) return sources;
 
     const byTarget = new Map(enrichment.evidence.filter(item => item.content?.trim())
-      .map(item => [item.target, item.content.trim().slice(0, formLookup ? 4000 : 900)]));
+      .map(item => [item.target, formLookup ? officialFormEvidenceExcerpt(item.content.trim()) : item.content.trim().slice(0, 900)]));
     return sources.map(source => ({ ...source, excerpt: formLookup
       ? [source.excerpt, byTarget.get(source.url)].filter(Boolean).join('\n') || undefined
       : source.excerpt || byTarget.get(source.url) || undefined }));

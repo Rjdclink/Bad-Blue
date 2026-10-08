@@ -577,7 +577,8 @@ export function setupConsultationRoutes(app: Express): void {
     const fieldNames = inspected.fields.map(field => field.name);
     if (facts && fieldNames.length && Object.keys(values).length === 0) {
       const mappingRaw = await generateLegalAnalysis('document-drafting', [
-        'Map ONLY facts explicitly supplied by the user to the official form field names below.',
+        'Map ONLY user-supplied facts and relevant directly retrieved facts in the APPLICATION-SUPPLIED LEXARA BACKGROUND EVIDENCE section to the official form field names below.',
+        'Background facts must concern the same person or entity and matter. Match each fact to its proper party and field; do not treat ordinary assistant replies, unrelated history, or unverified search leads as verified evidence.',
         'Return one JSON object whose keys exactly match applicable field names. Omit any field whose value is unknown. Never infer names, dates, addresses, identifiers, signatures, case numbers, or factual allegations.',
         'FORM FIELDS: ' + JSON.stringify(fieldNames),
         'USER FACTS: ' + facts,
@@ -592,7 +593,8 @@ export function setupConsultationRoutes(app: Express): void {
       if (facts && Object.keys(values).length === 0) {
         const labels = [...new Set(checkedLayout.anchors.map(field => field.label))];
         const mappingRaw = await generateLegalAnalysis('document-drafting', [
-          'Map ONLY facts explicitly supplied by the user to the visible official-form labels below.',
+          'Map ONLY user-supplied facts and relevant directly retrieved facts in the APPLICATION-SUPPLIED LEXARA BACKGROUND EVIDENCE section to the visible official-form labels below.',
+          'Background facts must concern the same person or entity and matter. Match each fact to its proper party and field; do not treat ordinary assistant replies, unrelated history, or unverified search leads as verified evidence.',
           'Return one JSON object whose keys exactly match applicable labels. Omit unknown values. Never invent missing facts.',
           'FORM LABELS: ' + JSON.stringify(labels),
           'USER FACTS: ' + facts,
