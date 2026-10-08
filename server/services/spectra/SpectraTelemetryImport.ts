@@ -40,6 +40,8 @@ function validTimestamp(value: unknown): string | null {
 }
 
 function numberOrUndefined(value: unknown): number | undefined {
+  if (value === undefined || value === null || typeof value === 'boolean'
+    || (typeof value === 'string' && !value.trim())) return undefined;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : undefined;
 }
@@ -56,8 +58,9 @@ function observation(
     metadata?: Record<string, unknown>;
   } = {},
 ): SpectraImportedObservation | null {
-  const lat = Number(latitude);
-  const lon = Number(longitude);
+  const lat = numberOrUndefined(latitude);
+  const lon = numberOrUndefined(longitude);
+  if (lat === undefined || lon === undefined) return null;
   const time = validTimestamp(timestamp);
   if (!validCoordinate(lat, lon) || !time) return null;
 
@@ -138,10 +141,14 @@ function parseGeoJson(content: string): SpectraImportedObservation[] {
     }
   };
 
-  const visit = (value: any) => {
-    if (!value || typeof value !== 'object' || out.length >= MAX_IMPORTED_POINTS) return;
+  const visit = (value: any, depth = 0) => {
+    if (!value || typeof value !== 'object' || out.length >= MAX_IMPORTED_POINTS || depth > 8) return;
+    if (Array.isArray(value)) {
+      for (const item of value.slice(0, MAX_IMPORTED_POINTS)) visit(item, depth + 1);
+      return;
+    }
     if (value.type === 'FeatureCollection') {
-      for (const feature of Array.isArray(value.features) ? value.features : []) visit(feature);
+      for (const feature of Array.isArray(value.features) ? value.features : []) visit(feature, depth + 1);
       return;
     }
     if (value.type === 'Feature') {
@@ -153,6 +160,26 @@ function parseGeoJson(content: string): SpectraImportedObservation[] {
       return;
     }
     geometryPoints(value, value.properties || {}, value.id === undefined ? undefined : String(value.id));
+    // Downloaded location exports may be ordinary JSON rather than GeoJSON.
+    // Accept only explicit coordinates with their own recorded timestamp.
+    const latitudeE7 = numberOrUndefined(value.latitudeE7);
+    const longitudeE7 = numberOrUndefined(value.longitudeE7);
+    const latitude = value.latitude ?? value.lat
+      ?? (latitudeE7 !== undefined ? latitudeE7 / 1e7 : undefined);
+    const longitude = value.longitude ?? value.lon ?? value.lng
+      ?? (longitudeE7 !== undefined ? longitudeE7 / 1e7 : undefined);
+    const time = value.timestampMs !== undefined ? numberOrUndefined(value.timestampMs) : propertyTimestamp(value);
+    const point = observation(latitude, longitude, time, {
+      accuracy: value.accuracy ?? value.horizontalAccuracy,
+      altitude: value.altitude,
+      confidence: 0.55,
+      recordId: value.id === undefined ? undefined : String(value.id),
+      metadata: { format: 'json-location-export', imported: true },
+    });
+    if (point) out.push(point);
+    for (const key of ['locations', 'observations', 'measurements', 'positions', 'data']) {
+      if (value[key] && typeof value[key] === 'object') visit(value[key], depth + 1);
+    }
   };
 
   visit(payload);
