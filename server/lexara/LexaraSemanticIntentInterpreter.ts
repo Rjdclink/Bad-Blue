@@ -5,6 +5,7 @@ import {
   decideLexaraResearchNeed,
   isLexaraConversationControl,
   isLexaraDocumentIntakeQuestion,
+  isLexaraOfficialFormQuestion,
   objectiveKindForFact,
   sourceCategoriesForFact,
   type LexaraRequestedFact,
@@ -127,7 +128,7 @@ export async function resolveLexaraResearchDecisionSemantic(
     || hasMultipleLexaraBackgroundSubjectCandidates(text)
   );
   if ((deterministicFactual && !needsSubjectReview)
-    || !text || isLexaraConversationControl(text) || isLexaraDocumentIntakeQuestion(text) || LOW_VALUE_CONVERSATION.test(text)) {
+    || !text || isLexaraConversationControl(text) || isLexaraDocumentIntakeQuestion(text) || isLexaraOfficialFormQuestion(text) || LOW_VALUE_CONVERSATION.test(text)) {
     return deterministic;
   }
 

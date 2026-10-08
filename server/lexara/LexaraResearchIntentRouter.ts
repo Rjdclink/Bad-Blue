@@ -83,6 +83,12 @@ export function isLexaraDocumentIntakeQuestion(text: string): boolean {
     && !/\b(?:background|investigate|verify|look\s+up|search|check\s+(?:whether|if))\b/i.test(text);
 }
 
+export function isLexaraOfficialFormQuestion(text: string): boolean {
+  return /\b(?:forms?|cover\s+sheet|case[- ]assignment)\b/i.test(text)
+    && /\b(?:official|prescribed|required|mandatory|local|court|filing)\b/i.test(text)
+    && !/\b(?:background|criminal\s+history|marital\s+status|employment\s+history|investigate)\b/i.test(text);
+}
+
 export function isLexaraConversationControl(text: string): boolean {
   return isLexaraRepeatRequest(text)
     || isLexaraGenericLegalIntake(text)
@@ -224,6 +230,11 @@ export function decideLexaraResearchNeed(
   if (!text) return baseDecision('');
   if (isLexaraConversationControl(text)) return baseDecision(text);
   if (isLexaraDocumentIntakeQuestion(text)) return baseDecision(text);
+  if (isLexaraOfficialFormQuestion(text)) return {
+    ...baseDecision(text), needed: true, reason: 'legal-authority',
+    objectiveKind: 'legal-authority', intent: 'legal', requestedFact: 'none',
+    sourceCategories: ['courts'], standaloneQuery: text,
+  };
 
   const legal = isLexaraLegalAuthorityIntent(text);
   const fact = requestedFact(text);

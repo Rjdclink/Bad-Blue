@@ -197,6 +197,7 @@ async function discoverAuthoritySources(
     jurisdiction:context.jurisdiction,
     subject:context.subject,
     requestedFact:context.requestedFact,
+    officialFormQuery: formLookup,
   };
   const discoveryQuery = formLookup
     ? [context.jurisdiction, formObjective]

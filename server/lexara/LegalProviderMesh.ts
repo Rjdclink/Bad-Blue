@@ -29,6 +29,7 @@ export interface LegalMeshSearchOptions {
   // Compatibility flag for live discovery. All bounded provider/query results
   // are retained until the investigator evaluates identity and factual evidence.
   firstUseful?: boolean;
+  officialFormQuery?: boolean;
 }
 
 const clean = (v: unknown) => {
@@ -491,7 +492,7 @@ export async function discoverLegalMeshTier3(
     getLexaraLearnedQueryPatterns(options.categories||[],options.jurisdiction,1),
     new Promise<string[]>(resolve=>setTimeout(()=>resolve([]),75)),
   ]);
-  const variants=buildLexaraSourceQueries({
+  const variants=options.officialFormQuery ? [query, `${query} site:.gov`] : buildLexaraSourceQueries({
     query,
     subject:options.subject,
     requestedFact:options.requestedFact,
@@ -500,7 +501,7 @@ export async function discoverLegalMeshTier3(
   });
   // Stored patterns contain prior user wording, not reusable templates. Reuse
   // only curated source-family hints so names/instructions cannot cross turns.
-  if(learnedPatterns[0]) {
+  if(!options.officialFormQuery && learnedPatterns[0]) {
     const hint = getLexaraSourceQueryHints(options.categories || []).find(value => learnedPatterns[0].includes(value));
     if (hint) variants.push(`${query} ${hint}`);
   }
@@ -513,7 +514,17 @@ export async function discoverLegalMeshTier3(
     new Promise<string[]>(resolve=>setTimeout(()=>resolve([]),75)),
   ]);
   const learnedCandidates=learnedSources.map(url=>({url,title:'Previously successful Lexara source',tier:3 as const,provider:'lexara-learned'}));
-  const combined=[...fuseRankedCandidates(groups),...learnedCandidates];
+  const combined=[...fuseRankedCandidates(groups),...(options.officialFormQuery ? [] : learnedCandidates)];
+  if (options.officialFormQuery) {
+    const generic = new Set(['what','which','current','official','form','forms','must','used','start','case','court','county','local','required','there','does','have','from','with','filing','document','answer','briefly']);
+    const tokens = [...new Set(query.toLowerCase().match(/[a-z0-9]+/g) || [])].filter(word => word.length > 3 && !generic.has(word));
+    const score = (item: LegalMeshCandidate) => {
+      const words = new Set((item.title + ' ' + (item.excerpt || '') + ' ' + item.url).toLowerCase().match(/[a-z0-9]+/g) || []);
+      const overlap = tokens.filter(word => words.has(word)).length;
+      return overlap * 3 + (isPreferredOfficialCandidate(item, options) ? 2 : 0);
+    };
+    return combined.sort((a,b) => score(b)-score(a)).slice(0,18);
+  }
   // Subject relevance precedes domain authority: generic government roots are
   // fallback leads, not evidence about this person. This only orders retrieval;
   // the investigator still applies the unchanged identity and evidence gates.
