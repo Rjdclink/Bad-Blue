@@ -188,7 +188,11 @@ ${text}`;
 
     const subject = supportedSubject(semantic.subject, text, previousUserTurns, needsSubjectReview);
     const subjectKind = subjectKindFromSemantic(semantic.subjectKind);
-    const requestedFact = requestedFactFromSemantic(semantic.requestedFact);
+    // Subject clarification must not drop an explicit contact/address
+    // request in favor of the organization's broader topic label.
+    const requestedFact = deterministicFactual && deterministic.requestedFact === 'contact-address'
+      && /\b(?:phone|telephone|email|address)\b/i.test(text)
+      ? deterministic.requestedFact : requestedFactFromSemantic(semantic.requestedFact);
     const effectiveFact = requestedFact === 'none' ? 'general-public-record' : requestedFact;
     const sourceCategories = sourceCategoriesForFact(effectiveFact, text);
     const objective = String(semantic.objective || text).trim().slice(0, 600) || text;
