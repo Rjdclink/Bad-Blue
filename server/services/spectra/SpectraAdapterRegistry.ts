@@ -29,6 +29,8 @@ export interface SpectraAdapterCapability {
 
 const anyEnv = (...names: string[]) =>
   names.some(name => Boolean(String(process.env[name] || '').trim()));
+const allEnv = (...names: string[]) =>
+  names.every(name => Boolean(String(process.env[name] || '').trim()));
 
 export const SPECTRA_ADAPTER_CAPABILITIES: SpectraAdapterCapability[] = [
   {
@@ -46,7 +48,7 @@ export const SPECTRA_ADAPTER_CAPABILITIES: SpectraAdapterCapability[] = [
     label: 'Android managed-device latest location',
     mode: 'provider-pull',
     sourceTypes: ['device_gps'],
-    configured: () => anyEnv(
+    configured: () => allEnv(
       'SPECTRA_ANDROID_MDM_LOCATION_URL_TEMPLATE',
       'SPECTRA_ANDROID_MDM_LOCATION_TOKEN',
     ),
@@ -59,7 +61,7 @@ export const SPECTRA_ADAPTER_CAPABILITIES: SpectraAdapterCapability[] = [
     label: 'Apple supervised-device latest location',
     mode: 'provider-pull',
     sourceTypes: ['device_gps'],
-    configured: () => anyEnv(
+    configured: () => allEnv(
       'SPECTRA_APPLE_MDM_LOCATION_URL_TEMPLATE',
       'SPECTRA_APPLE_MDM_LOCATION_TOKEN',
     ),
@@ -72,7 +74,7 @@ export const SPECTRA_ADAPTER_CAPABILITIES: SpectraAdapterCapability[] = [
     label: 'Cisco Spaces active device location',
     mode: 'provider-pull',
     sourceTypes: ['wifi_fingerprint'],
-    configured: () => anyEnv(
+    configured: () => allEnv(
       'SPECTRA_CISCO_SPACES_DEVICE_URL_TEMPLATE',
       'SPECTRA_CISCO_SPACES_TOKEN',
     ),

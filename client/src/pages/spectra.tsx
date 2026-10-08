@@ -974,10 +974,10 @@ export default function SpectraPage() {
             }}
             className="border-t border-slate-800 p-3"
           >
+            {/* Use the original-file picker: mobile image/* pickers can strip GPS metadata. */}
             <input
               ref={mediaInputRef}
               type="file"
-              accept="image/*,video/*,.geojson,.gpx,.kml,.nmea,.csv,.ndjson,.jsonl,.log,.txt,.json"
               className="hidden"
               onChange={event => {
                 const file = event.target.files?.[0];
@@ -1006,7 +1006,7 @@ export default function SpectraPage() {
                 onClick={() => mediaInputRef.current?.click()}
                 className="h-11 w-11 shrink-0 rounded-full text-slate-400 hover:text-cyan-300"
                 title="Add target media or telemetry"
-                aria-label="Add target photo or video"
+                aria-label="Add target photo, video, or location file"
               >
                 <Paperclip className="h-4 w-4" />
               </Button>

@@ -5,6 +5,7 @@ import {
 } from '../server/services/spectra/SpectraActiveAcquisition';
 import { resolveConfiguredSpectraAnchor } from '../server/services/spectra/SpectraAnchorRegistry';
 import { normalizeSpectraProviderPayload } from '../server/services/spectra/SpectraProviderTelemetryNormalizer';
+import { SPECTRA_ADAPTER_CAPABILITIES } from '../server/services/spectra/SpectraAdapterRegistry';
 
 const originalFetch = globalThis.fetch;
 const savedEnv = {
@@ -24,6 +25,25 @@ function restoreEnv(name: string, value: string | undefined) {
 }
 
 try {
+  for (const [id, urlName, tokenName] of [
+    ['android-managed-location-active', 'SPECTRA_ANDROID_MDM_LOCATION_URL_TEMPLATE', 'SPECTRA_ANDROID_MDM_LOCATION_TOKEN'],
+    ['apple-managed-location-active', 'SPECTRA_APPLE_MDM_LOCATION_URL_TEMPLATE', 'SPECTRA_APPLE_MDM_LOCATION_TOKEN'],
+    ['cisco-spaces-active-location', 'SPECTRA_CISCO_SPACES_DEVICE_URL_TEMPLATE', 'SPECTRA_CISCO_SPACES_TOKEN'],
+  ]) {
+    const adapter = SPECTRA_ADAPTER_CAPABILITIES.find(item => item.id === id)!;
+    delete process.env[urlName];
+    delete process.env[tokenName];
+    assert.equal(adapter.configured(), false);
+    process.env[urlName] = 'https://provider.example/latest';
+    assert.equal(adapter.configured(), false, `${id} must not claim readiness without its token`);
+    delete process.env[urlName];
+    process.env[tokenName] = 'fixture-token';
+    assert.equal(adapter.configured(), false, `${id} must not claim readiness without its endpoint`);
+    process.env[urlName] = 'https://provider.example/latest';
+    assert.equal(adapter.configured(), true);
+    delete process.env[urlName];
+    delete process.env[tokenName];
+  }
   process.env.SPECTRA_ANDROID_MDM_LOCATION_URL_TEMPLATE =
     'https://emm.example/devices/{{deviceRef}}/latest-location';
   process.env.SPECTRA_ANDROID_MDM_LOCATION_TOKEN = 'android-token';
