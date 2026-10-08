@@ -136,6 +136,16 @@ const semantic = execute('server/lexara/LexaraSemanticIntentInterpreter.ts', {
   assert.equal(known.requestedFact, 'employment');
 
   before = claudeCalls;
+  const operatorAddress = await semantic.resolveLexaraResearchDecisionSemantic(
+    'Run a public-record background check on the National Archives Museum in Washington, DC. Identify its operator and current street address in two sentences.',
+    [],
+  );
+  assert.equal(claudeCalls, before, 'sentence instructions after a location abbreviation must not buy subject clarification');
+  assert.equal(operatorAddress.requestedFact, 'contact-address');
+  assert.equal(operatorAddress.subject, 'National Archives Museum');
+  assert.equal(subject.resolveLexaraBackgroundSubject('Find St. Louis Art Museum in Missouri. Include its current address.')?.name, 'St. Louis Art Museum');
+
+  before = claudeCalls;
   const pureLegal = await semantic.resolveLexaraResearchDecisionSemantic('How do I file for divorce in Iowa?', []);
   assert.equal(claudeCalls, before + 1, 'semantic layer checks legal turns for a hidden background component');
   assert.equal(pureLegal.intent, 'legal');
