@@ -1809,6 +1809,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
 
   const generateAndDownloadPendingDocument = async (format?: 'docx' | 'pdf') => {
     if (!pendingDocument || documentBusy) return;
+    setErrorMessage(null);
     setDocumentBusy(true);
     try {
       const generated = await fetch('/api/lexara/documents/generate', {
