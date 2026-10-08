@@ -681,7 +681,8 @@ test('SPECTRA attachment flow accepts both media and structured telemetry files'
   spectra.includes('/api/gps/extract-upload') &&
   spectra.includes('/api/geoconsole/telemetry/import-file') &&
   spectra.includes('handleTargetFile') &&
-  spectra.includes('.geojson,.gpx,.kml,.nmea,.csv,.ndjson,.jsonl,.log,.txt'));
+  spectra.includes("['geojson', 'json', 'gpx', 'kml', 'nmea', 'csv', 'ndjson', 'jsonl', 'log', 'txt']") &&
+  !/accept=["'][^"']*image\/\*/.test(spectra));
 test('Lexara exposes the SPECTRA icon only on matching location command responses',
   lexaraConversation.includes('spectraTargetFromPrompt') &&
   lexaraConversation.includes('data-testid="lexara-spectra-launch"') &&

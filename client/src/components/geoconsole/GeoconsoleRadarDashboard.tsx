@@ -105,6 +105,7 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({
     interpolationEnabled: true,
     predictiveEnabled: true,
     sessionId: sessionId || undefined,
+    subjectLabel: subject,
     onSessionCreated,
   });
 
