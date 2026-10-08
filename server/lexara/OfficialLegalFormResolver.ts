@@ -28,9 +28,10 @@ export function resolveOfficialLegalForm(research: LexaraAuthorityResearch | nul
   const scored=relevant.filter(source => !requestedFormNumber || !/\b(?:instructions?|guide|guidance|checklist)\b/i.test(source.title)).map(source=>{
     const haystack=[source.title,source.excerpt].filter(Boolean).join(' ').toLowerCase();
     const tokenScore=documentTokens.reduce((total,token)=>total+(haystack.includes(token)?1:0),0);
-    const score=tokenScore+(typeOf(source.url)!=='html'?1:0);
+    const exactFormScore=numberPattern ? (numberPattern.test(source.title)?3:1) : 0;
+    const score=tokenScore+exactFormScore+(typeOf(source.url)!=='html'?1:0);
     return {source,score,tokenScore,haystack};
-  }).filter(entry=>entry.tokenScore>0).sort((a,b)=>b.score-a.score);
+  }).filter(entry=>entry.tokenScore>0 || Boolean(requestedFormNumber)).sort((a,b)=>b.score-a.score);
   const bestScore=scored[0]?.score||0;
   const specific=scored.filter(entry=>entry.score>=Math.max(1,bestScore-1));
   if (!specific.length) return { requirement:'unverified', verifiedOfficial:false, localRules:[], companionDocuments:[], provenance:[] };
