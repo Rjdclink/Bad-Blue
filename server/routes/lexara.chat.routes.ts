@@ -270,7 +270,7 @@ function detectDocumentIntent(prompt: string, previousMessages: LexaraConversati
     requested: false, explicit: false, inferred: false, documentType: 'Custom Document', templateMode: false,
   };
   const genericDocumentRequest = (/^(?:please\s+)?(?:i\s+(?:need|want)|(?:give|provide|make|prepare|draft|create|generate|write|download|export)\b)/i.test(prompt.trim())
-    || (/^(?:please\s+)?show\s+me\b/i.test(prompt.trim()) && isBlankLegalDocumentRequest(prompt)))
+    || (/^(?:please\s+)?show\s+me\b/i.test(prompt.trim()) && /\b(?:blank|template|empty|fillable)\b/i.test(prompt)))
     && /\b(?:documents?|forms?|paperwork)\b/.test(p)
     && !/\b(?:want|need)\s+to\s+(?:know|understand|learn)\b/.test(p);
   const explicit = genericDocumentRequest || /\b(draft|prepare|create|generate|write|download|downloadable|export|pdf|docx|word document)\b/.test(p);
