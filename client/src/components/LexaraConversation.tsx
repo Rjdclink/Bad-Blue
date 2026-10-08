@@ -50,12 +50,14 @@ interface ConversationMessage {
   };
 }
 
-const NON_PERSON_SPECTRA_TARGET_RE = /^(?:(?:the|this|that|a|an|my|your)\s+)?(?:document|form|law|statute|case|website|page|button|map|file|letter|motion|complaint|petition|contract|calendar|deadline|answer|response|evidence|photo|video|address|property|vehicle|car|truck|business|company|organization|phone|device)(?:\b|$)/i;
+const NON_PERSON_SPECTRA_TARGET_RE = /^(?:(?:the|this|that|a|an|my|your)\s+)?(?:document|form|law|statute|case|court|hearing|website|page|button|map|file|letter|motion|complaint|petition|contract|calendar|(?:filing\s+)?deadline|answer|response|evidence|photo|video|address|property|vehicle|car|truck|business|company|organization|phone|device)(?:\b|$)/i;
 
 function spectraTargetFromPrompt(value: string): string | null {
   const normalized = value.replace(/\s+/g, ' ').trim();
   const match = normalized.match(/^(?:please\s+)?(?:show\s+me|where\s+is|where's)\s+(.+?)[?.!]*$/i);
-  const target = match?.[1]?.trim().replace(/[?.!]+$/g, '').trim() || '';
+  const target = match?.[1]?.trim()
+    .split(/[,;]|\s+(?:(?:my|his|her|their)\s+)?(?:email|phone|mobile|cell)\b/i)[0]
+    .replace(/[?.!]+$/g, '').trim() || '';
   if (target.length < 2 || target.length > 500) return null;
   if (NON_PERSON_SPECTRA_TARGET_RE.test(target)) return null;
   return target;
@@ -1079,6 +1081,25 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
 
     userSpeechObservedRef.current = true;
     clearVoiceTurnBuffer();
+
+    // Hidden location commands are navigation, so their launch control must
+    // not wait for a paid legal answer or a failing research request.
+    if (spectraTarget) {
+      const queuedMessageId = currentPreRenderedTurnIdRef.current;
+      currentPreRenderedTurnIdRef.current = null;
+      if (!queuedMessageId) appendMessage('user', message);
+      setUserInput('');
+      setErrorMessage(null);
+      const response = `Open SPECTRA to locate ${spectraTarget}.`;
+      appendMessage('lexara', response, {
+        target: spectraTarget,
+        clues: conversationRef.current.filter(item => item.role === 'user')
+          .slice(-12).map(item => item.content).join('\n').slice(-8_000),
+        lexaraSessionId: sessionIdRef.current,
+      });
+      if (liveEnabled && voiceReady) void speakLexara(response, generationRef.current).catch(() => undefined);
+      return;
+    }
 
     const generation = generationRef.current + 1;
     generationRef.current = generation;

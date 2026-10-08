@@ -36,6 +36,7 @@ interface GeoconsoleProps {
   spectraShell?: boolean;
   subject?: string;
   sessionId?: string | null;
+  onSessionCreated?: (sessionId: string) => void;
 }
 
 interface LayerState {
@@ -95,6 +96,7 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({
   spectraShell = false,
   subject = 'SPECTRA target',
   sessionId = null,
+  onSessionCreated,
 }) => {
   // Runtime hook - source of truth for frames
   const [state, actions] = useGeoRuntime(initialData, {
@@ -103,6 +105,7 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({
     interpolationEnabled: true,
     predictiveEnabled: true,
     sessionId: sessionId || undefined,
+    onSessionCreated,
   });
 
   useEffect(() => {
@@ -111,7 +114,7 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({
 
   // UI state (not affecting frame data)
   const [mapMode, setMapMode] = useState<MapMode>('satellite');
-  const [layerCfg, setLayerCfg] = useState<LayerState>({ satellite: true, earthObservation: false, trail: true, heatmap: true, markers: true, futurecast: true, reticle: true, weather: false, terrain: true, buildings: true, uncertainty: true, streetImagery: false });
+  const [layerCfg, setLayerCfg] = useState<LayerState>({ satellite: true, earthObservation: false, trail: true, heatmap: true, markers: true, futurecast: true, reticle: true, weather: false, terrain: false, buildings: false, uncertainty: true, streetImagery: false });
   const [lockOnTarget, setLockOnTarget] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(() =>
@@ -215,8 +218,13 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({
   useEffect(() => {
     const previousOverflow = document.body.style.overflow;
     if (isFullscreen) document.body.style.overflow = 'hidden';
+    const exitFullscreen = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setIsFullscreen(false);
+    };
+    if (isFullscreen) window.addEventListener('keydown', exitFullscreen);
     return () => {
       document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', exitFullscreen);
     };
   }, [isFullscreen]);
 
@@ -598,6 +606,28 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({
                 <button
                   type="button"
                   onClick={() => {
+                    setLockOnTarget(true);
+                    actions.toggleLive();
+                  }}
+                  className="flex h-11 w-11 items-center justify-center rounded-full border border-slate-600/60 bg-slate-950/85 text-cyan-300 shadow-xl backdrop-blur hover:bg-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
+                  title={state.isLive ? 'Stop sharing this device location' : 'Use this device location'}
+                  aria-label={state.isLive ? 'Stop sharing this device location' : 'Use this device location'}
+                  aria-pressed={state.isLive}
+                >
+                  <Crosshair className="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsFullscreen(value => !value)}
+                  className="flex h-11 w-11 items-center justify-center rounded-full border border-slate-600/60 bg-slate-950/85 text-slate-200 shadow-xl backdrop-blur hover:bg-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
+                  title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen map'}
+                  aria-label={isFullscreen ? 'Exit fullscreen' : 'Fullscreen map'}
+                >
+                  {isFullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
                     setReportOpen(false);
                     setQuickLayersOpen(value => !value);
                   }}
@@ -632,6 +662,14 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({
                   </button>
                 )}
               </div>
+
+              {state.isLive && (
+                <div role="status" className="pointer-events-none absolute bottom-12 left-3 z-20 max-w-[min(320px,calc(100%-1.5rem))] rounded-lg border border-slate-700 bg-slate-950/90 px-3 py-2 text-xs text-slate-200">
+                  {state.error ? state.error : state.currentFrame?.source === 'browser_geolocation'
+                    ? `This device · reported accuracy ${Number.isFinite(state.currentFrame.position.accuracy) ? `±${Math.ceil(state.currentFrame.position.accuracy! / 0.3048)} ft` : 'unavailable'}`
+                    : 'Waiting for this device location. Allow location access when your browser asks.'}
+                </div>
+              )}
 
               {quickLayersOpen && (
                 <div className="absolute right-3 top-16 z-30 w-[min(280px,calc(100%-1.5rem))] rounded-xl border border-slate-700/70 bg-slate-950/95 p-3 shadow-2xl backdrop-blur">

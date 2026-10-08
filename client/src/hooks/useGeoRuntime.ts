@@ -43,6 +43,7 @@ export interface GeoRuntimeConfig {
   interpolationEnabled: boolean;
   predictiveEnabled: boolean;
   sessionId?: string;
+  onSessionCreated?: (sessionId: string) => void;
 }
 
 export interface GeoRuntimeState {
@@ -97,6 +98,18 @@ const DEFAULT_CONFIG: GeoRuntimeConfig = {
 
 const generateId = (): string => `f_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
 
+// Futurecast may use only the latest uninterrupted observation segment.
+const continuousTail = (frames: GeoFrame[], limit: number): GeoFrame[] => {
+  let start = Math.max(0, frames.length - limit);
+  for (let index = frames.length - 1; index > start; index -= 1) {
+    if (Number(frames[index].metadata?.gapBeforeSeconds || 0) > 0) {
+      start = index;
+      break;
+    }
+  }
+  return frames.slice(start);
+};
+
 const haversineDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
   const R = 6371000;
   const φ1 = (lat1 * Math.PI) / 180;
@@ -147,6 +160,10 @@ export function useGeoRuntime(
   // Control state
   const [isPlaying, setIsPlaying] = useState(false);
   const [isLive, setIsLive] = useState(false);
+  const isLiveRef = useRef(isLive);
+  isLiveRef.current = isLive;
+  const onSessionCreatedRef = useRef(cfg.onSessionCreated);
+  onSessionCreatedRef.current = cfg.onSessionCreated;
   const [playbackSpeed, setPlaybackSpeed] = useState(cfg.playbackSpeed);
   const [status, setStatus] = useState<GeoRuntimeState['status']>('idle');
   const [error, setError] = useState<string | null>(null);
@@ -334,6 +351,13 @@ export function useGeoRuntime(
 
     try {
       if (points.length === 0) {
+        // A newly persisted device session can reach the parent before its
+        // observations are loaded. Keep its live fixes during that handoff.
+        if (isLiveRef.current && configuredSessionId
+          && configuredSessionId === sessionIdRef.current && framesRef.current.length > 0) {
+          setStatus('playing');
+          return;
+        }
         framesRef.current = [];
         setFrames([]);
         setFuturecastFrames([]);
@@ -560,6 +584,7 @@ export function useGeoRuntime(
 
     const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
 
+    let cancelled = false;
     const watchId = navigator.geolocation.watchPosition(
       (pos) => {
         const now = new Date(pos.timestamp || Date.now());
@@ -656,10 +681,15 @@ export function useGeoRuntime(
         })
           .then(async response => response.ok ? response.json() : null)
           .then(payload => {
+            if (cancelled) return;
             const telemetrySessionId = typeof payload?.data?.sessionId === 'string'
               ? payload.data.sessionId.trim()
               : '';
-            if (telemetrySessionId && !sessionId) setSessionId(telemetrySessionId);
+            if (telemetrySessionId && !sessionId) {
+              sessionIdRef.current = telemetrySessionId;
+              setSessionId(telemetrySessionId);
+              onSessionCreatedRef.current?.(telemetrySessionId);
+            }
           })
           .catch(() => undefined);
 
@@ -696,6 +726,7 @@ export function useGeoRuntime(
     );
 
     return () => {
+      cancelled = true;
       try {
         navigator.geolocation.clearWatch(watchId);
       } catch {

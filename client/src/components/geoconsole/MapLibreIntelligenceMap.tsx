@@ -17,6 +17,7 @@ import maplibregl, { GeoJSONSource, Map as MapLibreMap, MapLayerMouseEvent } fro
 import 'maplibre-gl/dist/maplibre-gl.css';
 import type { GeoFrame } from '@/hooks/useGeoRuntime';
 import type { LocationCandidate } from '@shared/geoconsoleTypes';
+import RasterIntelligenceMap from './RasterIntelligenceMap';
 
 export type IntelligenceMapMode = 'satellite' | 'hybrid' | 'street' | 'dark';
 
@@ -35,7 +36,7 @@ export interface IntelligenceLayerState {
   streetImagery: boolean;
 }
 
-interface Props {
+export interface IntelligenceMapProps {
   currentFrame: GeoFrame | null;
   trail: GeoFrame[];
   futurecast: GeoFrame[];
@@ -708,7 +709,7 @@ function setRasterTiles(map: MapLibreMap, sourceId: string, tiles: string[]) {
   if (source?.setTiles) source.setTiles(tiles);
 }
 
-export const MapLibreIntelligenceMap: React.FC<Props> = ({
+export const MapLibreIntelligenceMap: React.FC<IntelligenceMapProps> = ({
   currentFrame,
   trail,
   futurecast,
@@ -814,7 +815,7 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
       pitch: layers.terrain || layers.buildings ? 52 : 0,
       bearing: 0,
       antialias: typeof navigator === 'undefined' || !navigator.hardwareConcurrency || navigator.hardwareConcurrency > 4,
-      attributionControl: true,
+      attributionControl: {},
       maxPitch: 85,
       });
     } catch {
@@ -829,7 +830,7 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
       showCompass: true,
       showZoom: true,
       visualizePitch: true,
-    }), 'top-left');
+    }), 'bottom-right');
     map.addControl(new maplibregl.ScaleControl({ unit: 'imperial', maxWidth: 140 }), 'bottom-left');
 
     const canvas = map.getCanvas();
@@ -1292,16 +1293,12 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
   return (
     <div className="absolute inset-0" data-gesture-navigation="ignore">
       <div ref={containerRef} className="absolute inset-0" />
-      {rendererUnavailable && (
-        <div role="status" data-testid="spectra-map-unavailable" className="absolute inset-0 flex items-center justify-center bg-slate-950 p-6 text-center text-sm text-slate-300">
-          <div>
-            <p>The map cannot run in this browser. You can still use the Spectra conversation and add evidence.</p>
-            {currentFrame && (
-              <p className="mt-2">Recorded position: {currentFrame.position.latitude.toFixed(6)}, {currentFrame.position.longitude.toFixed(6)}. This does not independently verify a current location.</p>
-            )}
-          </div>
-        </div>
-      )}
+      {rendererUnavailable && <RasterIntelligenceMap
+        currentFrame={currentFrame} trail={trail} futurecast={futurecast}
+        candidateLocations={candidateLocations} displayTime={displayTime}
+        mapMode={mapMode} layers={layers} isLive={isLive}
+        lockOnTarget={lockOnTarget} onUserInteraction={onUserInteraction}
+      />}
 
       {Object.values(providerStatus).some(state => state !== 'primary') && (
         <div

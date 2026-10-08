@@ -175,11 +175,11 @@ function extractLikelyName(value: string): string | null {
     const phone = extractPhoneNumber(text);
     return phone ? text.replace(phone, ' ') : text;
   })();
-  const firstSegment = withoutPhone.split(/[,;|\n]/)[0]
+  const firstSegment = withoutPhone.split(/[,;|\n]|\s+(?:(?:my|his|her|their)\s+)?(?:email|phone|mobile|cell)\b/i)[0]
     .replace(/\b(?:phone|number|cell|mobile)\b.*$/i, '')
     .replace(/\b(?:last\s+known|located|lives?|from|near|around)\b.*$/i, '')
     .replace(/^[^A-Za-z]+|[^A-Za-z'’.-]+$/g, '')
-    .trim();
+    .trim().replace(/[.!?]+$/, '');
 
   const looksLikeLocation =
     Boolean(extractCityStateHint(firstSegment)) ||
@@ -228,11 +228,15 @@ function buildDiscoveryQueries(args: {
   const quotedPhone = phone ? `"${phone}"` : '';
   const phoneDigits = phone?.replace(/\D/g, '') || '';
   const compactDetails = details.replace(/\s+/g, ' ').trim();
+  const email = [normalizedTarget, details].join(' ').match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0];
   const genericTarget = GENERIC_TARGET_RE.test(normalizedTarget);
   const identityAnchor = quotedName || quotedPhone || (!genericTarget ? normalizedTarget : '');
 
   const firstPass = [
     [quotedName, quotedPhone].filter(Boolean).join(' '),
+    email ? `"${email}"` : '',
+    email && quotedName ? `${quotedName} "${email}"` : '',
+    phoneDigits.length >= 7 ? `"${phoneDigits}"` : '',
     [identityAnchor, compactDetails].filter(Boolean).join(' '),
     [normalizedTarget, compactDetails].filter(Boolean).join(' '),
     compactDetails,
@@ -823,7 +827,7 @@ router.post('/acquire', async (req: Request, res: Response) => {
   const subject = targetSubject(normalizedTarget);
   const resolvedName = genericTarget || targetIsPhone
     ? suppliedName || ''
-    : subject;
+    : extractLikelyName(normalizedTarget) || subject;
   const resolvedTargetLabel = resolvedName || phone || normalizedTarget;
 
   try {
@@ -852,6 +856,7 @@ router.post('/acquire', async (req: Request, res: Response) => {
       ...waveQueries.slice(0, 4),
     ])];
 
+    const backgroundBudgetMs = Math.min(SPECTRA_OSINT_TIMEOUT_MS, 20_000);
     const backgroundPromise = settleWithin(
       investigateLexaraBackgroundQuestion(
         `Where is ${resolvedTargetLabel}? ${details}`,
@@ -859,15 +864,19 @@ router.post('/acquire', async (req: Request, res: Response) => {
           previousMessages: [{ role: 'user', content: details }],
           delegatedByLexara: true,
           resolvedSubject: semanticSubject || undefined,
+          signal: AbortSignal.timeout(backgroundBudgetMs),
         },
       ),
-      Math.min(SPECTRA_OSINT_TIMEOUT_MS, 20_000),
+      backgroundBudgetMs,
       'SPECTRA background research',
     );
 
     const firstPassPromise = runDiscoveryPass(initialQueries, {
       subject: resolvedSubjectName,
       location: semanticSubject?.location || details,
+      // The native-first background lane owns the paid fallback. Avoid
+      // duplicate Claude searches for this same subject in parallel.
+      useClaude: false,
     });
     const activeAcquisitionPromise = acquireSpectraActiveTelemetry({
       deviceRef,

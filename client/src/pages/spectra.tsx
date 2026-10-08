@@ -39,7 +39,7 @@ interface TelemetryImportResponse {
 
 function isSpectraTelemetryFile(file: File): boolean {
   const extension = file.name.toLowerCase().split('.').pop() || '';
-  return ['geojson', 'gpx', 'kml', 'nmea', 'csv', 'ndjson', 'jsonl', 'log', 'txt'].includes(extension);
+  return ['geojson', 'json', 'gpx', 'kml', 'nmea', 'csv', 'ndjson', 'jsonl', 'log', 'txt'].includes(extension);
 }
 
 interface SpectraLaunchPayload {
@@ -874,6 +874,7 @@ export default function SpectraPage() {
             candidateLocations={candidateLocations}
             subject={target || 'SPECTRA target'}
             sessionId={spectraSessionId}
+            onSessionCreated={setSpectraSessionId}
             spectraShell
           />
 
@@ -976,7 +977,7 @@ export default function SpectraPage() {
             <input
               ref={mediaInputRef}
               type="file"
-              accept="image/*,video/*,.geojson,.gpx,.kml,.nmea,.csv,.ndjson,.jsonl,.log,.txt"
+              accept="image/*,video/*,.geojson,.gpx,.kml,.nmea,.csv,.ndjson,.jsonl,.log,.txt,.json"
               className="hidden"
               onChange={event => {
                 const file = event.target.files?.[0];
