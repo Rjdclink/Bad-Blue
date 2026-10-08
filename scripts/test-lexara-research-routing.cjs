@@ -18,7 +18,7 @@ const contribution = (provider, index, role = 'legal-analyst') => ({
 function harness(options = {}) {
   const env = { ANTHROPIC_API_KEY: 'fixture', MISTRAL_API_KEY: 'fixture',
     OPENROUTER_API_KEY: 'forbidden-fixture', FIRECRAWL_API_KEY: 'forbidden-fixture', ...options.env };
-  const calls = { gateway: [], http: [], reasoning: [], crawlers: [], paid: 0 };
+  const calls = { gateway: [], http: [], reasoning: [], crawlers: [], paid: 0, queryPlanning: [] };
   const cache = new Map();
   const enums = fs.readFileSync(path.join(root, 'server/aiTokenGovernor.ts'), 'utf8')
     .match(/export enum (?:AIProvider|UsageContext|TaskPriority|TaskComplexity)\s*\{[^}]+\}/g).join('\n');
@@ -72,7 +72,10 @@ function harness(options = {}) {
       rankLexaraDiscoveryUrls: values => [...new Set(values)],
     },
     'server/lexara/LexaraResearchAssist.ts': {
-      planLexaraResearchQueries: async query => ({ queries: [query + ' official'], providers: ['claude'] }),
+      planLexaraResearchQueries: async query => {
+        calls.queryPlanning.push(query);
+        return { queries: [query + ' official'], providers: ['claude'] };
+      },
     },
     'server/lexara/LexaraRetrievalBoundary.ts': { lexaraRetrievalAdapter: { retrieve: async request => {
       calls.crawlers.push(request);
@@ -179,6 +182,58 @@ test('both legal discovery tiers preserve DDGS results while carrying the canoni
   assert.equal(primary[0].url, urls[0]); assert.equal(primary[0].excerpt, 'Fresh source evidence');
   assert.equal(supplemental[0].url, urls[0]); assert.equal(h.calls.gateway.length, 0);
 });
+for (const allowClaudePlanning of [undefined, false]) {
+  test(`supplemental discovery preserves source fallback with Claude planning ${allowClaudePlanning === false ? 'disabled' : 'default'}`, async () => {
+    const h = harness({
+      env: { SERPAPI_KEY: 'fixture' },
+      fetchPayload: url => url.includes('serpapi.com')
+        ? { organic_results: [{ link: urls[0], title: 'Verified fixture source', snippet: 'Source evidence' }] }
+        : { results: [] },
+    });
+    const mesh = h.load('server/lexara/LegalProviderMesh.ts');
+    const results = await mesh.discoverLegalMeshSupplemental('unresolved fixture objective', [], undefined, { allowClaudePlanning });
+    assert.equal(h.calls.queryPlanning.length, allowClaudePlanning === false ? 0 : 1);
+    assert.equal(results[0].url, urls[0]);
+    assert.equal(results[0].provider, 'serpapi');
+    assert(h.calls.http.some(call => call.url.includes('serpapi.com')), 'source fallback must still execute');
+  });
+}
+
+test('Spectra native discovery does not buy query planning and retains supplemental sources', async () => {
+  const h = harness({
+    env: { DDGS_URL: 'https://ddgs.fixture.test', SERPAPI_KEY: 'fixture' },
+    fetchPayload: url => url.includes('serpapi.com')
+      ? { organic_results: [{ link: urls[1], title: 'Supplemental fixture source', snippet: 'Independent source' }] }
+      : { results: [{ href: urls[0], title: 'Native fixture source', body: 'Native source' }] },
+  });
+  const mesh = h.load('server/lexara/LegalProviderMesh.ts');
+  const route = fs.readFileSync(path.join(root, 'server/routes/spectra.routes.ts'), 'utf8');
+  const start = route.indexOf('async function runDiscoveryPass(');
+  const end = route.indexOf('\nfunction normalizeConfidence(', start);
+  assert(start >= 0 && end > start, 'execute the real Spectra discovery entry point');
+  const compiled = ts.transpileModule(route.slice(start, end) + '\nexports.runDiscoveryPass = runDiscoveryPass;', {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  const exports = {};
+  let webSearchCalls = 0;
+  let retrievalCalls = 0;
+  vm.runInNewContext(compiled, {
+    exports, AbortController, setTimeout, clearTimeout,
+    discoverLegalMeshTier3: mesh.discoverLegalMeshTier3,
+    discoverLegalMeshSupplemental: mesh.discoverLegalMeshSupplemental,
+    discoveryResultFromCandidate: item => ({ ...item, reliability: 'medium', relevanceScore: 70 }),
+    dedupeDiscoveryResults: items => items,
+    callClaudeWebSearch: async () => { webSearchCalls++; return { content: '', sources: [] }; },
+    retrieveSpectraPublicEvidence: async () => { retrievalCalls++; return []; },
+  });
+  const result = await exports.runDiscoveryPass(['fictional fixture subject contact'], { useClaude: false });
+  assert.equal(webSearchCalls, 0);
+  assert.equal(h.calls.queryPlanning.length, 0, 'native-only mode must reach the nested planner');
+  assert(result.results.some(item => item.url === urls[0]));
+  assert(result.results.some(item => item.url === urls[1]), 'supplemental source lanes remain available');
+  assert.equal(retrievalCalls, 1, 'discovered sources still reach direct evidence retrieval');
+});
+
 test('duplicate discovery URLs retain complementary excerpts and survive empty learned records', async () => {
   const url = 'https://example.test/obituary';
   const h = harness({

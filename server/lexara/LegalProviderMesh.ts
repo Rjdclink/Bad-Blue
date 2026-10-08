@@ -30,6 +30,9 @@ export interface LegalMeshSearchOptions {
   // are retained until the investigator evaluates identity and factual evidence.
   firstUseful?: boolean;
   officialFormQuery?: boolean;
+  // Native-only callers retain every source lane without buying alternate
+  // query suggestions. Existing callers keep the conditional planner.
+  allowClaudePlanning?: boolean;
 }
 
 const clean = (v: unknown) => {
@@ -572,12 +575,14 @@ export async function discoverLegalMeshSupplemental(
   // Only after independent search + learned-pattern retries miss, let the
   // Claude-led redundant reasoning mesh suggest alternate queries. These
   // suggestions are never evidence; every result is still independently searched.
-  const planned=await planLexaraResearchQueries(query,{
-    subject:options.subject,
-    requestedFact:options.requestedFact,
-    jurisdiction:options.jurisdiction,
-    signal,
-  });
+  const planned=options.allowClaudePlanning === false
+    ? { queries: [], providers: [] }
+    : await planLexaraResearchQueries(query,{
+      subject:options.subject,
+      requestedFact:options.requestedFact,
+      jurisdiction:options.jurisdiction,
+      signal,
+    });
   if(planned.queries.length){
     const plannedFresh=await firstUsefulParallelSearch(
       planned.queries,
