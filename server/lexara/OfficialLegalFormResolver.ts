@@ -18,17 +18,19 @@ function typeOf(url: string): OfficialLegalForm['contentType'] {
   const clean=url.toLowerCase().split('?')[0]; if(clean.endsWith('.pdf')) return 'pdf';
   if(clean.endsWith('.docx')||clean.endsWith('.doc')) return 'docx'; if(clean.startsWith('http')) return 'html'; return 'unknown';
 }
-export function resolveOfficialLegalForm(research: LexaraAuthorityResearch | null, documentType: string, requestedFormNumber?: string): OfficialLegalForm {
+export function resolveOfficialLegalForm(research: LexaraAuthorityResearch | null, documentType: string, requestedFormNumber?: string, issuingDomains?: readonly string[]): OfficialLegalForm {
   if(!research?.sources?.length) return { requirement:'unverified', verifiedOfficial:false, localRules:[], companionDocuments:[], provenance:[] };
   const escapedNumber = requestedFormNumber?.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const numberPattern = escapedNumber ? new RegExp(`(?:^|[^a-z0-9.])${escapedNumber}(?:$|[^a-z0-9.])`, 'i') : null;
+  const numberPattern = escapedNumber ? new RegExp(`(?:^|[^a-z0-9.:-])${escapedNumber}(?![a-z0-9.-]|:[a-z0-9])`, 'i') : null;
   const relevant=research.sources.filter(source=>official(source.url) && FORM_HINT.test([source.title,source.excerpt].filter(Boolean).join(' '))
-    && (!numberPattern || numberPattern.test([source.title, source.excerpt].filter(Boolean).join(' '))));
+    && (!numberPattern || (numberPattern.test(source.title) && (!issuingDomains || issuingDomains.some(domain => {
+      try { const host=new URL(source.url).hostname.toLowerCase(); const expected=domain.toLowerCase().replace(/^www\./, ''); return host===expected || host.endsWith('.'+expected); } catch { return false; }
+    })))));
   const documentTokens=String(documentType||'').toLowerCase().split(/[^a-z0-9]+/).filter(token=>token.length>=4 && !['form','legal','document','official'].includes(token));
   const scored=relevant.filter(source => !requestedFormNumber || !/\b(?:instructions?|guide|guidance|checklist)\b/i.test(source.title)).map(source=>{
     const haystack=[source.title,source.excerpt].filter(Boolean).join(' ').toLowerCase();
     const tokenScore=documentTokens.reduce((total,token)=>total+(haystack.includes(token)?1:0),0);
-    const exactFormScore=numberPattern ? (numberPattern.test(source.title)?3:1) : 0;
+    const exactFormScore=numberPattern ? 3 : 0;
     const score=tokenScore+exactFormScore+(typeOf(source.url)!=='html'?1:0);
     return {source,score,tokenScore,haystack};
   }).filter(entry=>entry.tokenScore>0 || Boolean(requestedFormNumber)).sort((a,b)=>b.score-a.score);

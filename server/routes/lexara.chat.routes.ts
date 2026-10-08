@@ -771,7 +771,7 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
       ...effectivePreviousMessages,
       { role: 'user', content: prompt },
     ]);
-    if (documentIntent.requested && documentIntent.documentType === 'Custom Document' && reasoningDocumentIntent.documentType !== 'Custom Document') {
+    if (documentIntent.requested && documentIntent.documentType === 'Custom Document' && reasoningDocumentIntent.requested && reasoningDocumentIntent.documentType !== 'Custom Document') {
       documentIntent.documentType = reasoningDocumentIntent.documentType;
     }
     if (!savedArtifact && !documentIntent.requested && !isLexaraDocumentIntakeQuestion(prompt) && !/\b(?:do not|don't|dont|never)\s+(?:draft|prepare|create|generate|write)\b/i.test(prompt) && reasoningDocumentIntent.requested && reasoningDocumentIntent.explicit && reasoningDocumentIntent.documentType !== 'Custom Document') {
@@ -1002,7 +1002,7 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
       ...effectivePreviousMessages,
       { role: 'user', content: prompt },
     ]);
-    if (documentIntent.requested && documentIntent.documentType === 'Custom Document' && reasoningDocumentIntent.documentType !== 'Custom Document') {
+    if (documentIntent.requested && documentIntent.documentType === 'Custom Document' && reasoningDocumentIntent.requested && reasoningDocumentIntent.documentType !== 'Custom Document') {
       documentIntent.documentType = reasoningDocumentIntent.documentType;
     }
     if (!savedArtifact && !documentIntent.requested && !isLexaraDocumentIntakeQuestion(prompt) && !/\b(?:do not|don't|dont|never)\s+(?:draft|prepare|create|generate|write)\b/i.test(prompt) && reasoningDocumentIntent.requested && reasoningDocumentIntent.explicit && reasoningDocumentIntent.documentType !== 'Custom Document') {
