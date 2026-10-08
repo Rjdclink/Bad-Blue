@@ -67,6 +67,8 @@ export interface LexaraBackgroundInvestigationContext {
   researchDecision?: LexaraResearchDecision;
   resolvedSubject?: LexaraBackgroundSubject;
   claudeResearchModel?: string;
+  claudeResearchMaxTokens?: number;
+  claudeRetryTruncatedOutput?: boolean;
 }
 
 interface AssessedEvidence {
@@ -571,6 +573,8 @@ export async function investigateLexaraBackgroundQuestion(
           decision,
           jurisdiction: subject.location || context.jurisdiction,
           model: context.claudeResearchModel,
+          maxTokens: context.claudeResearchMaxTokens,
+          retryTruncatedOutput: context.claudeRetryTruncatedOutput,
           signal: laneSignal,
         }).then(result => {
           claudeParallel = result;

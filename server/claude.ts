@@ -222,6 +222,7 @@ export interface ClaudeWebSearchOptions {
   allowFetch?: boolean;
   maxFetchUses?: number;
   maxFetchContentTokens?: number;
+  retryTruncatedOutput?: boolean;
 }
 
 /**
@@ -331,7 +332,7 @@ export async function callClaudeWebSearch(
         continue;
       }
 
-      if (response?.stop_reason === 'max_tokens' && !maxTokenRetryUsed && sourceMap.size === 0) {
+      if (response?.stop_reason === 'max_tokens' && options.retryTruncatedOutput !== false && !maxTokenRetryUsed && sourceMap.size === 0) {
         maxTokenRetryUsed = true;
         requestMaxTokens = Math.min(4096, Math.max(2048, requestMaxTokens * 2));
         console.info('[Claude Web Search] max_tokens reached before usable source evidence; retrying once with a larger bounded output budget', {
