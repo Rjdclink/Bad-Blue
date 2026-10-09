@@ -2,7 +2,15 @@ import type { GPSPoint } from './types';
 
 export interface LocationQualityIssue {
   index: number;
-  code: 'invalid_timestamp' | 'missing_accuracy' | 'low_accuracy' | 'duplicate_point' | 'implausible_transition';
+  code:
+    | 'invalid_timestamp'
+    | 'invalid_coordinate'
+    | 'invalid_confidence'
+    | 'invalid_accuracy'
+    | 'missing_accuracy'
+    | 'low_accuracy'
+    | 'duplicate_point'
+    | 'implausible_transition';
   severity: 'info' | 'warning' | 'error';
   message: string;
 }
@@ -34,21 +42,48 @@ export function assessLocationQuality(inputs: GPSPoint[]): LocationQualityResult
   const accepted: Array<{ point: GPSPoint; index: number }> = [];
 
   inputs.forEach((point, index) => {
-    if (!Number.isFinite(point.timestamp.getTime())) {
+    // Reject an unusable fix rather than constructing a path or precision
+    // claim from invalid values. Accept ISO dates but normalize them to Date.
+    const timestampValue: unknown = point?.timestamp;
+    const timestamp = timestampValue instanceof Date
+      ? timestampValue
+      : typeof timestampValue === 'string' || typeof timestampValue === 'number'
+        ? new Date(timestampValue)
+        : null;
+    if (!timestamp || !Number.isFinite(timestamp.getTime())) {
       issues.push({ index, code: 'invalid_timestamp', severity: 'error', message: 'Point was excluded because its timestamp is invalid.' });
       return;
     }
 
+    if (
+      !Number.isFinite(point.latitude) || Math.abs(point.latitude) > 90 ||
+      !Number.isFinite(point.longitude) || Math.abs(point.longitude) > 180
+    ) {
+      issues.push({ index, code: 'invalid_coordinate', severity: 'error', message: 'Point was excluded because its coordinates are invalid.' });
+      return;
+    }
+    if (!Number.isFinite(point.confidence) || point.confidence < 0 || point.confidence > 1) {
+      issues.push({ index, code: 'invalid_confidence', severity: 'error', message: 'Point was excluded because its confidence is invalid.' });
+      return;
+    }
+
     let confidence = point.confidence;
-    if (point.accuracy === undefined) {
+    const reportedAccuracy: unknown = point.accuracy;
+    const validAccuracy = typeof reportedAccuracy === 'number' &&
+      Number.isFinite(reportedAccuracy) && reportedAccuracy > 0;
+    const accuracy = validAccuracy ? point.accuracy : undefined;
+    if (reportedAccuracy === undefined || reportedAccuracy === null) {
       confidence *= 0.85;
       issues.push({ index, code: 'missing_accuracy', severity: 'info', message: 'Point has no reported accuracy; its confidence was reduced.' });
-    } else if (point.accuracy > 1_000) {
+    } else if (!validAccuracy) {
+      confidence *= 0.85;
+      issues.push({ index, code: 'invalid_accuracy', severity: 'warning', message: 'Invalid reported accuracy was discarded; its confidence was reduced.' });
+    } else if (accuracy! > 1_000) {
       confidence *= 0.5;
       issues.push({ index, code: 'low_accuracy', severity: 'warning', message: 'Point accuracy exceeds one kilometer; its confidence was reduced.' });
     }
 
-    accepted.push({ point: { ...point, confidence }, index });
+    accepted.push({ point: { ...point, timestamp, accuracy, confidence }, index });
   });
 
   accepted.sort((first, second) => first.point.timestamp.getTime() - second.point.timestamp.getTime());
