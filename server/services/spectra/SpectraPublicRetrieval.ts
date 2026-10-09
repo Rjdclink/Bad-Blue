@@ -148,12 +148,13 @@ export function htmlEvidence(raw: string, sourceUrl: string): {
 
   // Publication time describes the evidence's age; retrieval time only
   // describes when we fetched the page. Do not substitute og:updated_time.
-  let publishedAt = timestamp(
-    meta.get('article:published_time')
-    || meta.get('datepublished')
-    || meta.get('citation_publication_date')
-    || meta.get('dc.date.issued')
-  );
+  // Invalid metadata in one tag must not hide a valid alternate date.
+  let publishedAt = [
+    meta.get('article:published_time'),
+    meta.get('datepublished'),
+    meta.get('citation_publication_date'),
+    meta.get('dc.date.issued'),
+  ].map(value => timestamp(value)).find(Boolean);
 
   const metaLatitude = numeric(
     meta.get('place:location:latitude')
