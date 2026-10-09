@@ -327,8 +327,12 @@ export default function SpectraPage() {
       });
     }
 
+    // A regional preview is advisory. Once canonical acquisition settles,
+    // its slower response must never replace the final map candidates.
+    let previewOpen = true;
     const previewRegionPromise = (async () => {
       for (const locationText of [detailsValue, targetValue]) {
+        if (!previewOpen || requestId !== requestRef.current) return;
         if (!locationText.trim()) continue;
         try {
           const previewResponse = await fetch('/api/geoconsole/geocode-city-state', {
@@ -339,6 +343,7 @@ export default function SpectraPage() {
           });
           const previewPayload = await previewResponse.json().catch(() => ({}));
           if (
+            !previewOpen ||
             requestId !== requestRef.current ||
             !previewResponse.ok ||
             previewPayload?.success !== true
@@ -368,7 +373,7 @@ export default function SpectraPage() {
           // Regional preview is advisory and must never block deeper discovery.
         }
       }
-      if (requestId === requestRef.current) {
+      if (previewOpen && requestId === requestRef.current) {
         setAcquisitionStage('Broadening identity and source discovery…');
       }
     })();
@@ -403,6 +408,7 @@ export default function SpectraPage() {
       });
 
       const payload = await response.json() as AcquisitionResponse;
+      previewOpen = false;
       if (requestId !== requestRef.current) return;
 
       if (!response.ok || !payload.success) {
@@ -463,6 +469,7 @@ export default function SpectraPage() {
       addMessage('spectra', responseText);
       speakIfEnabled(responseText);
     } catch (error) {
+      previewOpen = false;
       if (requestId !== requestRef.current) return;
       const message = error instanceof Error ? error.message : 'Target acquisition failed.';
       setLastError(message);
