@@ -110,7 +110,12 @@ export function extractCityStateHint(input: string): { city: string; state: stri
   const commaSeparated = text.match(/^(.{2,100}?),\s*([A-Za-z]{2})$/);
   if (commaSeparated) {
     const state = normalizeState(commaSeparated[2]);
-    const city = cleanCity(commaSeparated[1]);
+    // A location clause embedded in a longer identity sentence is not part
+    // of the city name: "Example Person resides in Cedar Rapids, IA".
+    const context = commaSeparated[1].match(
+      /\b(?:located\s+in|lives?\s+in|resides?\s+in|based\s+in|last\s+known\s+in|in|near|from|at)\s+([A-Za-z][A-Za-z.'\-]*(?:\s+[A-Za-z][A-Za-z.'\-]*){0,3})\s*$/i,
+    );
+    const city = cleanCity(context?.[1] || commaSeparated[1]);
     if (state && city.length >= 2) return { city, state, query: `${city}, ${state}` };
   }
 
