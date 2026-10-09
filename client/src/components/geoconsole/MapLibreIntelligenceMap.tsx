@@ -833,6 +833,13 @@ export const MapLibreIntelligenceMap: React.FC<IntelligenceMapProps> = ({
     }), 'bottom-right');
     map.addControl(new maplibregl.ScaleControl({ unit: 'imperial', maxWidth: 140 }), 'bottom-left');
 
+    // The map is inside a responsive split-panel/fullscreen layout. Resize
+    // the WebGL viewport when the container changes without a window resize.
+    const resizeObserver = typeof ResizeObserver !== 'undefined'
+      ? new ResizeObserver(() => map.resize())
+      : null;
+    if (resizeObserver && containerRef.current) resizeObserver.observe(containerRef.current);
+
     const canvas = map.getCanvas();
     const handleContextLost = (event: Event) => {
       event.preventDefault();
@@ -905,10 +912,9 @@ export const MapLibreIntelligenceMap: React.FC<IntelligenceMapProps> = ({
 
     map.on('error', handleMapError);
     map.on('load', () => initializeRuntimeLayers(map));
-    map.on('style.load', () => {
-      if (!map.isStyleLoaded()) return;
-      initializeRuntimeLayers(map);
-    });
+    // style.load fires when a replacement style is available for custom
+    // layers; waiting for every tile via isStyleLoaded can skip restoration.
+    map.on('style.load', () => initializeRuntimeLayers(map));
 
     const popup = new maplibregl.Popup({ closeButton: true, closeOnClick: true });
     map.on('click', 'spectra-candidate-points', (event: MapLayerMouseEvent) => {
@@ -962,6 +968,7 @@ export const MapLibreIntelligenceMap: React.FC<IntelligenceMapProps> = ({
     mapRef.current = map;
 
     return () => {
+      resizeObserver?.disconnect();
       canvas.removeEventListener('webglcontextlost', handleContextLost, false);
       canvas.removeEventListener('webglcontextrestored', handleContextRestored, false);
       map.off('error', handleMapError);
@@ -983,7 +990,7 @@ export const MapLibreIntelligenceMap: React.FC<IntelligenceMapProps> = ({
     setReady(false);
     activeStyleRef.current = desired;
     map.setStyle(desired);
-    map.once('style.load', () => initializeRuntimeLayers(map));
+    // The permanent style.load handler above restores runtime overlays.
   }, [mapMode, initializeRuntimeLayers]);
 
   useEffect(() => {
@@ -1002,9 +1009,10 @@ export const MapLibreIntelligenceMap: React.FC<IntelligenceMapProps> = ({
     });
     safeSetData(map, 'spectra-futurecast', {
       type: 'FeatureCollection',
-      features: futurecast.length
+      // A LineString needs two coordinates. Keep a lone forecast as a point.
+      features: futurecast.length > 1
         ? [lineFeature(futurecast), ...futurecast.map(pointFeature)]
-        : [],
+        : futurecast.map(pointFeature),
     });
     safeSetData(map, 'spectra-futurecast-uncertainty', {
       type: 'FeatureCollection',
