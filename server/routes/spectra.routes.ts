@@ -447,6 +447,7 @@ async function runDiscoveryPass(
               ...(existing.metadata || {}),
               sourceUrl: evidence.url,
               retrievedAt: evidence.retrievedAt,
+              publishedAt: evidence.publishedAt,
               fetchedTitle: evidence.title,
               fetchedExcerpt: evidence.textExcerpt,
               retrievedLocationEvidence: locationEvidence,
@@ -462,6 +463,7 @@ async function runDiscoveryPass(
               metadata: {
                 sourceUrl: evidence.url,
                 retrievedAt: evidence.retrievedAt,
+                publishedAt: evidence.publishedAt,
                 fetchedExcerpt: evidence.textExcerpt,
                 retrievedLocationEvidence: locationEvidence,
               },
