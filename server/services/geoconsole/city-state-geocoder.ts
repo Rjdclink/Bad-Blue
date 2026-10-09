@@ -238,6 +238,28 @@ function haversineMeters(lat1: number, lon1: number, lat2: number, lon2: number)
   return radius * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+// Provider data is untrusted. Number(null) and Number('') both produce zero,
+// which would invent a coordinate even when the response contains no fix.
+function parseGeocoderCoordinates(
+  rawLatitude: unknown,
+  rawLongitude: unknown,
+): { latitude: number; longitude: number } | null {
+  const coordinate = (value: unknown): number | null => {
+    if (typeof value !== 'string' && typeof value !== 'number') return null;
+    if (typeof value === 'string' && !value.trim()) return null;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+
+  const latitude = coordinate(rawLatitude);
+  const longitude = coordinate(rawLongitude);
+  if (
+    latitude === null || Math.abs(latitude) > 90 ||
+    longitude === null || Math.abs(longitude) > 180
+  ) return null;
+  return { latitude, longitude };
+}
+
 function geocoderAccuracyMeters(
   latitude: number,
   longitude: number,
@@ -248,7 +270,12 @@ function geocoderAccuracyMeters(
   const north = Number(boundingbox[1]);
   const west = Number(boundingbox[2]);
   const east = Number(boundingbox[3]);
-  if (![south, north, west, east].every(Number.isFinite)) return 25_000;
+  if (
+    ![south, north, west, east].every(Number.isFinite) ||
+    Math.abs(south) > 90 || Math.abs(north) > 90 ||
+    Math.abs(west) > 180 || Math.abs(east) > 180 ||
+    south > north
+  ) return 25_000;
 
   const corners = [
     [south, west],
@@ -327,9 +354,9 @@ export async function geocodeFreeformLocation(input: string): Promise<CityStateL
 
   const results = await queryGeocoder(url, 'freeform');
   const result = results[0];
-  const latitude = Number(result?.lat);
-  const longitude = Number(result?.lon);
-  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+  const coordinates = parseGeocoderCoordinates(result?.lat, result?.lon);
+  if (!coordinates) return null;
+  const { latitude, longitude } = coordinates;
 
   return {
     latitude,
@@ -356,9 +383,9 @@ export async function geocodeCityState(input: string): Promise<CityStateLocation
 
   const results = await queryGeocoder(url, 'city_state');
   const result = results[0];
-  const latitude = Number(result?.lat);
-  const longitude = Number(result?.lon);
-  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+  const coordinates = parseGeocoderCoordinates(result?.lat, result?.lon);
+  if (!coordinates) return null;
+  const { latitude, longitude } = coordinates;
 
   return {
     latitude,
@@ -397,9 +424,12 @@ async function queryCensusAddressGeocoder(address: AddressHint): Promise<CitySta
     if (!response.ok) return null;
     const payload: any = await response.json();
     const match = payload?.result?.addressMatches?.[0];
-    const latitude = Number(match?.coordinates?.y);
-    const longitude = Number(match?.coordinates?.x);
-    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+    const coordinates = parseGeocoderCoordinates(
+      match?.coordinates?.y,
+      match?.coordinates?.x,
+    );
+    if (!coordinates) return null;
+    const { latitude, longitude } = coordinates;
 
     return {
       latitude,
@@ -436,9 +466,9 @@ export async function geocodeBestLocation(input: string): Promise<CityStateLocat
     try {
       const results = await queryGeocoder(structured, 'structured_address');
       const result = results[0];
-      const latitude = Number(result?.lat);
-      const longitude = Number(result?.lon);
-      if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
+      const coordinates = parseGeocoderCoordinates(result?.lat, result?.lon);
+      if (coordinates) {
+        const { latitude, longitude } = coordinates;
         return {
           latitude,
           longitude,
@@ -473,9 +503,9 @@ export async function geocodeBestLocation(input: string): Promise<CityStateLocat
       direct.searchParams.set('q', clue);
       const results = await queryGeocoder(direct, 'normalized_freeform');
       const result = results[0];
-      const latitude = Number(result?.lat);
-      const longitude = Number(result?.lon);
-      if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
+      const coordinates = parseGeocoderCoordinates(result?.lat, result?.lon);
+      if (coordinates) {
+        const { latitude, longitude } = coordinates;
         return {
           latitude,
           longitude,
