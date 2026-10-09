@@ -44,6 +44,30 @@ assert(spectraPage.includes('Math.abs(latitude) <= 90') &&
   spectraPage.includes('Math.abs(longitude) <= 180'),
   'regional previews must reject out-of-bounds coordinates');
 
+// Test the production session-binding predicate directly. Partial string
+// containment must not mix different subjects into one investigation.
+const persistence = read('server/services/spectra/SpectraAcquisitionPersistence.ts');
+const subjectRegex = persistence.match(/const GENERIC_SPECTRA_SUBJECT_RE = .*?;/)?.[0];
+const wholeTokenRefinement = persistence.match(
+  /function isOrderedWholeTokenRefinement\(shorter: string, longer: string\): boolean \{[\s\S]*?\n\}/,
+)?.[0];
+const compatibility = persistence.match(
+  /function subjectsCompatible\(existing: string, incoming: string\): boolean \{[\s\S]*?\n\}/,
+)?.[0];
+assert.ok(subjectRegex && wholeTokenRefinement && compatibility, 'subject binding logic unavailable');
+const matchSubject = execute(
+  [subjectRegex, wholeTokenRefinement, compatibility,
+    'globalThis.matchSubject = subjectsCompatible;'].join('\n'),
+).matchSubject;
+assert.equal(matchSubject('ann', 'anna'), false);
+assert.equal(matchSubject('lee', 'leeland'), false);
+assert.equal(matchSubject('ann smith', 'joann smith'), false);
+assert.equal(matchSubject('jane doe', 'john doe'), false);
+assert.equal(matchSubject('jane doe', 'jane mary doe'), true);
+assert.equal(matchSubject('jane mary doe', 'jane doe'), true);
+assert.equal(matchSubject('person', 'jane doe'), true);
+assert.equal(matchSubject('jane doe', 'jane doe'), true);
+
 // Execute the actual client parser, including its exclusions, without mounting
 // unrelated legal/voice services or issuing a paid model request.
 const conversation = read('client/src/components/LexaraConversation.tsx');
