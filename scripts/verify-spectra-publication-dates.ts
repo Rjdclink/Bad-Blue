@@ -28,4 +28,22 @@ const invalidDate = `<html><head>
 </head><body>Fictional corrupted metadata</body></html>`;
 assert.equal(htmlEvidence(invalidDate, url).publishedAt, undefined);
 
+const datedJsonLd = `<html><head>
+  <script type="application/ld+json">{"@context":"https://schema.org","@type":"ProfilePage","datePublished":"2015-07-12T10:00:00Z"}</script>
+</head><body>A dated fictional profile.</body></html>`;
+assert.equal(htmlEvidence(datedJsonLd, url).publishedAt, '2015-07-12T10:00:00.000Z',
+  'old JSON-LD ProfilePage publication dates cannot be treated as fresh');
+
+const graphJsonLd = `<html><head>
+  <script type="application/ld+json">{"@graph":[{"@type":"Person","birthDate":"1980-03-20"},{"@type":"NewsArticle","datePublished":"2026-08-02"}]}</script>
+</head><body>Fictional news excerpt.</body></html>`;
+assert.equal(htmlEvidence(graphJsonLd, url).publishedAt, '2026-08-02T00:00:00.000Z',
+  'top-level article node of JSON-LD @graph should supply the page date');
+
+const unrelatedJsonLd = `<html><head>
+  <script type="application/ld+json">{"@type":"Person","birthDate":"1980-03-20","datePublished":"2018-03-20"}</script>
+</head><body>Fictional person detail.</body></html>`;
+assert.equal(htmlEvidence(unrelatedJsonLd, url).publishedAt, undefined,
+  'person attributes are not proof of a webpage publication date');
+
 console.log('SPECTRA public webpage publication-date extraction tests passed.');
