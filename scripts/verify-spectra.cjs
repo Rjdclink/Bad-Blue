@@ -33,6 +33,7 @@ const exifTool = read('server/services/locationIntelligence/ExifToolExtractor.ts
 const spectraSources = read('server/services/spectra/SpectraSourceRegistry.ts');
 const pantheonSources = read('server/services/pantheon/PantheonSovereignSourceRegistry.ts');
 const geocoder = read('server/services/geoconsole/city-state-geocoder.ts');
+const regionalInference = read('server/services/spectra/SpectraRegionalInference.ts');
 const locationQuality = read('server/services/geoconsole/location-quality.ts');
 const geoconsoleRoutes = read('server/routes/geoconsole.routes.ts');
 const adapterRegistry = read('server/services/spectra/SpectraAdapterRegistry.ts');
@@ -160,6 +161,15 @@ test('Regional candidates remain separate from timed observations',
   routes.includes('candidateLocations') &&
   routes.includes("basis: 'regional_context'") &&
   routes.includes('accuracyMeters: region.accuracyMeters'));
+test('SPECTRA can use corroborated public city context without claiming a live position',
+  routes.includes('inferCorroboratedRegionalCity(') &&
+  routes.includes('discoveryResults,') &&
+  routes.includes('if (!region && corroboratedCity)') &&
+  regionalInference.includes('winner.domains.size < 2') &&
+  regionalInference.includes('currentPositionVerified: false') &&
+  regionalInference.includes('HISTORICAL_LANGUAGE_RE') &&
+  geocoder.includes('const context = commaSeparated[1].match('));
+
 test('One-hour previous/future timeline remains available',
   dashboard.includes('min={-60}') && dashboard.includes('max={60}'));
 
