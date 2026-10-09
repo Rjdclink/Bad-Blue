@@ -82,4 +82,44 @@ assert.equal(inferCorroboratedRegionalCity(person, [
 assert.equal(inferCorroboratedRegionalCity('Taylor', [first, second]), null,
   'single-word identity hints cannot resolve a subject');
 
+// City-level accuracy should prefer abstaining over reporting weak,
+ // contradictory, copied or stale geographic associations.
+const testAsOf = new Date('2026-10-09T00:00:00.000Z');
+assert.equal(inferCorroboratedRegionalCity(person, [
+  first,
+  { url: 'https://copies.example.net/taylor', snippet: first.snippet },
+], testAsOf), null, 'an exact copied claim across different publishers is not independent');
+
+assert.equal(inferCorroboratedRegionalCity(person, [
+  { ...first, metadata: { publishedAt: '2016-04-02', retrievedAt: '2026-10-09' } },
+  second,
+], testAsOf), null, 'a newly fetched old biography must not establish a present-day city');
+
+assert.equal(inferCorroboratedRegionalCity(person, [
+  { ...first, metadata: { publishedAt: 'not a date' } },
+  second,
+], testAsOf), null, 'badly formed publication dates cannot strengthen location claims');
+
+assert.equal(inferCorroboratedRegionalCity(person, [
+  { ...first, metadata: { publishedAt: '2030-01-01' } },
+  second,
+], testAsOf), null, 'future-dated claims cannot strengthen city evidence');
+
+const freshDated = inferCorroboratedRegionalCity(person, [
+  { ...first, metadata: { datePublished: '2026-09-24' } },
+  { ...second, metadata: { publicationDate: '2026-09-25' } },
+], testAsOf);
+assert.equal(freshDated?.city, 'Cedar Rapids', 'dated fresh independent claims remain usable');
+assert.equal(freshDated?.independentSourceCount, 2);
+
+assert.equal(inferCorroboratedRegionalCity(person, [
+  first,
+  second,
+  { url: 'https://conflict.example.com/', snippet: 'Taylor Morgan lives in Helena, Montana.' },
+], testAsOf), null, 'an explicit contradictory current-city claim must lead to abstention');
+assert.equal(inferCorroboratedRegionalCity(person, [
+  first,
+  second,
+], new Date('invalid')), null, 'invalid evaluation timestamps must not generate predictions');
+
 console.log('SPECTRA broad-city public-source corroboration tests passed.');
