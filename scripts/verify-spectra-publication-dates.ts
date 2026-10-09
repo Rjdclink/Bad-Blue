@@ -28,6 +28,13 @@ const invalidDate = `<html><head>
 </head><body>Fictional corrupted metadata</body></html>`;
 assert.equal(htmlEvidence(invalidDate, url).publishedAt, undefined);
 
+const malformedPriorityTag = `<html><head>
+  <meta property="article:published_time" content="invalid">
+  <meta itemprop="datePublished" content="2026-09-03">
+</head><body>Fictional dated record.</body></html>`;
+assert.equal(htmlEvidence(malformedPriorityTag, url).publishedAt, '2026-09-03T00:00:00.000Z',
+  'an invalid publication tag must not suppress the valid alternate date');
+
 const datedJsonLd = `<html><head>
   <script type="application/ld+json">{"@context":"https://schema.org","@type":"ProfilePage","datePublished":"2015-07-12T10:00:00Z"}</script>
 </head><body>A dated fictional profile.</body></html>`;
