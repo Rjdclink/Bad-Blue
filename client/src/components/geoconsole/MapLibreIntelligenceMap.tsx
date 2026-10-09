@@ -822,6 +822,14 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
     }), 'top-left');
     map.addControl(new maplibregl.ScaleControl({ unit: 'imperial', maxWidth: 140 }), 'bottom-left');
 
+    // MapLibre tracks viewport changes, but the SPECTRA dashboard also
+    // changes its container size without a window resize (mobile panels,
+    // responsive split view and fullscreen). Keep the canvas in sync.
+    const resizeObserver = typeof ResizeObserver !== 'undefined'
+      ? new ResizeObserver(() => map.resize())
+      : null;
+    if (resizeObserver && containerRef.current) resizeObserver.observe(containerRef.current);
+
     const canvas = map.getCanvas();
     const handleContextLost = (event: Event) => {
       event.preventDefault();
@@ -894,10 +902,10 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
 
     map.on('error', handleMapError);
     map.on('load', () => initializeRuntimeLayers(map));
-    map.on('style.load', () => {
-      if (!map.isStyleLoaded()) return;
-      initializeRuntimeLayers(map);
-    });
+    // style.load is the lifecycle boundary for adding application-owned
+    // sources after setStyle. isStyleLoaded() may still be false while tiles
+    // load, so checking it here can permanently skip SPECTRA's overlays.
+    map.on('style.load', () => initializeRuntimeLayers(map));
 
     const popup = new maplibregl.Popup({ closeButton: true, closeOnClick: true });
     map.on('click', 'spectra-candidate-points', (event: MapLayerMouseEvent) => {
@@ -951,6 +959,7 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
     mapRef.current = map;
 
     return () => {
+      resizeObserver?.disconnect();
       canvas.removeEventListener('webglcontextlost', handleContextLost, false);
       canvas.removeEventListener('webglcontextrestored', handleContextRestored, false);
       map.off('error', handleMapError);
@@ -972,7 +981,7 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
     setReady(false);
     activeStyleRef.current = desired;
     map.setStyle(desired);
-    map.once('style.load', () => initializeRuntimeLayers(map));
+    // The permanent style.load listener restores layers for every style swap.
   }, [mapMode, initializeRuntimeLayers]);
 
   useEffect(() => {
@@ -991,9 +1000,11 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
     });
     safeSetData(map, 'spectra-futurecast', {
       type: 'FeatureCollection',
-      features: futurecast.length
+      // A GeoJSON LineString must contain at least two coordinates. A single
+      // forecast fix is a point, not a line (and never a null feature).
+      features: futurecast.length > 1
         ? [lineFeature(futurecast), ...futurecast.map(pointFeature)]
-        : [],
+        : futurecast.map(pointFeature),
     });
     safeSetData(map, 'spectra-futurecast-uncertainty', {
       type: 'FeatureCollection',
