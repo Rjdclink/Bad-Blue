@@ -41,6 +41,13 @@ function normalizeSpaces(value: string): string {
   return value.replace(/\s+/g, ' ').trim();
 }
 
+function normalizeLocationLanguage(value: string): string {
+  return normalizeSpaces(value).replace(
+    /\b(?:(?:my|his|her|their|our|the)\s+)?(?:(?:last(?:\s+known)?|previous|current)\s+location|last\s+seen)\s*(?:(?:was|is|in|at)\s+|[:=]\s*)/gi,
+    'located in ',
+  );
+}
+
 function normalizeState(value: string): string | null {
   const cleaned = normalizeSpaces(value).replace(/\.$/, '');
   const upper = cleaned.toUpperCase();
@@ -92,7 +99,7 @@ export function extractLocationClues(input: string): string[] {
 }
 
 export function extractCityStateHint(input: string): { city: string; state: string; query: string } | null {
-  const text = normalizeSpaces(input);
+  const text = normalizeLocationLanguage(input);
   if (!text) return null;
 
   const commaSeparated = text.match(/^(.{2,100}?),\s*([A-Za-z]{2})$/);
@@ -118,6 +125,16 @@ export function extractCityStateHint(input: string): { city: string; state: stri
     const before = text.slice(0, stateMatch.index).trim();
     const after = text.slice(stateMatch.index + stateMatch[0].length).trim();
 
+    // Prefer an explicit place clause over treating preceding conversation
+    // text as part of the city, including when the state ends the message.
+    const explicitLocation = before.match(
+      /\b(?:located\s+in|last\s+known\s+(?:in|at)|in|at|from|near|around|city(?:\s+of)?)\s+([A-Za-z][A-Za-z.'\-]*(?:\s+[A-Za-z][A-Za-z.'\-]*){0,3})\s*,?\s*$/i,
+    );
+    if (explicitLocation) {
+      const city = cleanCity(explicitLocation[1]);
+      if (city.length >= 2 && city.length <= 100) return { city, state, query: `${city}, ${state}` };
+    }
+
     // "Sanborn Iowa" / "Sanborn, Iowa" as the whole supplied hint.
     if (!after) {
       const directCity = cleanCity(before.replace(/[,;]\s*$/, ''));
@@ -132,10 +149,7 @@ export function extractCityStateHint(input: string): { city: string; state: stri
 
     // Within a longer sentence, require explicit location language so a state
     // name used in an employer/person name is not mistaken for geography.
-    const explicitLocation = before.match(
-      /\b(?:located\s+in|last\s+known\s+(?:in|at)|in|at|from|near|around|city(?:\s+of)?)\s+([A-Za-z][A-Za-z.'\-]*(?:\s+[A-Za-z][A-Za-z.'\-]*){0,3})\s*,?\s*$/i,
-    );
-    const cityMatch = explicitLocation || before.match(
+    const cityMatch = before.match(
       /(?:^|[,;.])\s*([A-Za-z][A-Za-z.'\-]*(?:\s+[A-Za-z][A-Za-z.'\-]*){0,3})\s*$/i,
     );
     const city = cleanCity(cityMatch?.[1] || '');

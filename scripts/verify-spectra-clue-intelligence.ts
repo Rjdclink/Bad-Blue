@@ -33,6 +33,23 @@ for (const natural of [
 
 assert.equal(extractFreeformLocationHint('located in Spirit Lake, Iowa'), 'Spirit Lake, Iowa');
 
+// Mixed identity/contact clues must preserve an explicitly supplied place.
+// Use varied places and phrasing so this is not tied to one person's baseline.
+for (const [message, city, state] of [
+  ['My last known location was Salem, Oregon. My email is jane@example.test and phone is 555-010-0200.', 'Salem', 'OR'],
+  ['My name is Jane Mary Doe. My last location was Madison, Wisconsin.', 'Madison', 'WI'],
+  ['My previous location: Lincoln, Nebraska', 'Lincoln', 'NE'],
+  ['Last seen at Grand Rapids MI. Email: jane@example.test', 'Grand Rapids', 'MI'],
+  ['Current location is Kansas City, Missouri', 'Kansas City', 'MO'],
+  ['My last known location was Salem, OR', 'Salem', 'OR'],
+  ['Her previous location: Lincoln, NE', 'Lincoln', 'NE'],
+] as const) {
+  const hint = extractCityStateHint(message);
+  assert.equal(hint?.city, city, `mixed clue city: ${message}`);
+  assert.equal(hint?.state, state, `mixed clue state: ${message}`);
+  assert.ok(extractLocationClues(message).includes(`${city}, ${state}`));
+}
+
 // Conversational words such as "me" must not become state abbreviations.
 // A willing geocoder can return a real place for an unrelated query, so the
 // identity-only launch must be rejected before any geocoding request is made.

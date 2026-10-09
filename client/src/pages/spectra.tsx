@@ -457,8 +457,8 @@ export default function SpectraPage() {
       const responseText = points.length > 0
         ? `I acquired ${points.length} timestamped location observation${points.length === 1 ? '' : 's'} for ${resolvedTarget}. The map is updated${certainty !== null ? ` with ${certainty}% location-evidence confidence` : ''}.`
         : regionalCandidates.length > 0
-          ? `I found a regional location candidate for ${resolvedTarget} and placed it on the map. I do not yet have timestamped coordinate evidence for a movement track.`
-          : `I completed the current discovery pass for ${resolvedTarget} across ${payload.acquisition?.sourceCount ?? 0} distinct source group${(payload.acquisition?.sourceCount ?? 0) === 1 ? '' : 's'}, but I do not yet have timestamped coordinate evidence strong enough to place the target precisely on the map.`;
+          ? `My best available regional estimate for ${resolvedTarget} is ${regionalCandidates[0].label || 'the area shown on the map'}. This is an estimate; the current live position is unverified.`
+          : `I reviewed ${payload.acquisition?.sourceCount ?? 0} distinct source group${(payload.acquisition?.sourceCount ?? 0) === 1 ? '' : 's'} for ${resolvedTarget}. This pass did not produce a mappable location estimate.`;
 
       addMessage('spectra', responseText);
       speakIfEnabled(responseText);
