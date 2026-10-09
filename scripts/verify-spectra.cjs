@@ -763,6 +763,12 @@ test('Superseded forecast requests are invalidated before the minimum-frame chec
   runtime.includes('const requestId = ++futurecastRequestRef.current;\n    if (!cfg.predictiveEnabled || sourceFrames.length < 3)') &&
   runtime.includes('++futurecastRequestRef.current;\n    setStatus(\'loading\')'));
 
+test('Canonical acquisition candidates cannot be replaced by a late regional preview',
+  spectra.includes('let previewOpen = true;') &&
+  spectra.includes('if (!previewOpen || requestId !== requestRef.current) return;') &&
+  spectra.includes('previewOpen = false;') &&
+  spectra.includes('if (previewOpen && requestId === requestRef.current)'));
+
 test('SPECTRA API is mounted',
   serverRoutes.includes("app.use('/api/spectra', spectraRoutes.default)"));
 
