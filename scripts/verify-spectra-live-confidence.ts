@@ -42,7 +42,9 @@ function point(overrides: Partial<GPSPoint> & Pick<GPSPoint, 'source'>): GPSPoin
     }),
   ], now);
 
-  assert.equal(assessment.status, 'corroborated');
+  assert.equal(assessment.status, 'estimated');
+  assert.equal(assessment.independentDomainCount, 1);
+  assert.ok(assessment.reasons.some(reason => reason.includes('independent corroboration is not established')));
   assert.equal(assessment.independentFamilyCount, 2);
   assert.ok(assessment.effectiveSourceCount > 1);
   assert.ok((assessment.confidenceRadiusMeters99 ?? Infinity) < 10);
@@ -139,6 +141,7 @@ function point(overrides: Partial<GPSPoint> & Pick<GPSPoint, 'source'>): GPSPoin
 
   assert.equal(assessment.independentFamilyCount, 1);
   assert.equal(assessment.independentDomainCount, 2);
+  assert.equal(assessment.status, 'corroborated');
   assert.equal(assessment.sources.length, 2);
 }
 
@@ -182,6 +185,7 @@ function point(overrides: Partial<GPSPoint> & Pick<GPSPoint, 'source'>): GPSPoin
 
   assert.equal(assessment.independentFamilyCount, 2);
   assert.equal(assessment.independentDomainCount, 1);
+  assert.equal(assessment.status, 'estimated');
 }
 
 {

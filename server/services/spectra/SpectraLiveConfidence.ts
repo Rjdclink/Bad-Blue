@@ -859,8 +859,8 @@ export function assessSpectraLiveLocation(
   );
 
   const reasons: string[] = [];
-  if (prepared.length === 1) {
-    reasons.push('The estimate is supported by one independent source family.');
+  if (correlationCounts.size === 1) {
+    reasons.push('The estimate is supported by one correlation domain; independent corroboration is not established.');
   }
   if (consistencyScore < 0.05) {
     reasons.push('Independent source residuals are statistically inconsistent.');
@@ -898,7 +898,7 @@ export function assessSpectraLiveLocation(
   const status: SpectraLiveLocationAssessment['status'] =
     !isLive ? 'stale'
     : consistencyScore < 0.01 ? 'conflicted'
-    : prepared.length >= 2 ? 'corroborated'
+    : correlationCounts.size >= 2 ? 'corroborated'
     : 'estimated';
 
   return {
