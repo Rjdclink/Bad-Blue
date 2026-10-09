@@ -89,7 +89,7 @@ export function inferCorroboratedRegionalCity(
         const following = statement.slice(
           matchedSubject.index + matchedSubject[0].length,
         ).trimStart();
-        if (!/^(?:,\s*)?(?:(?:is|was)\s+)?(?:(?:currently|now)\s+)?(?:lives?|living|resides?|residing|based|located)\s+(?:currently\s+)?(?:in|at)\b/i.test(following)) {
+        if (!/^(?:,\s*)?(?:is\s+)?(?:(?:currently|now)\s+)?(?:lives?|living|resides?|residing|based|located)\s+(?:currently\s+)?(?:in|at)\b/i.test(following)) {
           continue;
         }
         const region = extractCityStateHint(statement);
