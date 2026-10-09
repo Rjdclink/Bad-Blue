@@ -5,7 +5,10 @@ import {
   extractStreetAddressHint,
   extractLocationClues,
   geocodeBestLocation,
+  geocodeCityState,
 } from '../server/services/geoconsole/city-state-geocoder';
+import { assessLocationQuality } from '../server/services/geoconsole/location-quality';
+import type { GPSPoint } from '../server/services/geoconsole/types';
 
 // Fictional parsing-only fixture; never geocoded or associated with a person.
 const conversational = 'Located in North Exampleton, Oregon, near a library, 123 Example Street.';
@@ -91,4 +94,70 @@ for (const geographic of ['Portland, ME', 'Portland me', 'Last known in Portland
   assert.equal(extractCityStateHint(geographic)?.city, 'Portland');
   assert.equal(extractCityStateHint(geographic)?.state, 'ME');
 }
+// A public geocoder can return a null, blank, or out-of-range coordinate.
+// No such payload may create a false (0,0) feature on the map.
+const coordinateFixtures: Array<{ location: string; payload: unknown }> = [
+  { location: 'Northvale, NM', payload: [{ lat: null, lon: '-106' }] },
+  { location: 'Eastvale, NM', payload: [{ lat: '', lon: '-106' }] },
+  { location: 'Westvale, NM', payload: [{ lat: '91', lon: '-106' }] },
+  { location: 'Southvale, NM', payload: [{ lat: '45', lon: '-181' }] },
+  { location: 'Midvale, NM', payload: [{ lat: undefined, lon: undefined }] },
+];
+try {
+  for (const fixture of coordinateFixtures) {
+    globalThis.fetch = async () => new Response(JSON.stringify(fixture.payload));
+    assert.equal(await geocodeCityState(fixture.location), null,
+      `Malformed geocoder result should not map: ${fixture.location}`);
+  }
+  globalThis.fetch = async () => new Response(JSON.stringify([
+    { lat: '0', lon: '0', display_name: 'Valid coordinate origin' },
+  ]));
+  const validZero = await geocodeCityState('Zerovale, NM');
+  assert.equal(validZero?.latitude, 0, 'actual zero latitude remains valid');
+  assert.equal(validZero?.longitude, 0, 'actual zero longitude remains valid');
+
+  globalThis.fetch = async () => new Response(JSON.stringify({ error: 'not a feature list' }));
+  await assert.rejects(geocodeCityState('Malformedvale, NM'), /invalid data/,
+    'provider response must be an array before caching');
+} finally {
+  globalThis.fetch = originalFetch;
+}
+
+// General fusion quality must reject invented/impossible fixes and preserve
+// real timestamps without silently constructing higher precision.
+const referencePoint: GPSPoint = {
+  latitude: 45,
+  longitude: -120,
+  timestamp: new Date('2026-01-01T12:00:00.000Z'),
+  source: 'public_record',
+  observationKind: 'historical',
+  confidence: 0.8,
+  accuracy: 250,
+};
+for (const [label, point, expectedCode] of [
+  ['missing latitude', { ...referencePoint, latitude: NaN }, 'invalid_coordinate'],
+  ['out-of-range latitude', { ...referencePoint, latitude: 91 }, 'invalid_coordinate'],
+  ['out-of-range longitude', { ...referencePoint, longitude: -181 }, 'invalid_coordinate'],
+  ['invalid timestamp', { ...referencePoint, timestamp: new Date('invalid') }, 'invalid_timestamp'],
+  ['invalid confidence', { ...referencePoint, confidence: Number.POSITIVE_INFINITY }, 'invalid_confidence'],
+] as const) {
+  const quality = assessLocationQuality([point]);
+  assert.equal(quality.acceptedCount, 0, label);
+  assert.equal(quality.issues[0]?.code, expectedCode, label);
+}
+
+const missingAccuracy = assessLocationQuality([{ ...referencePoint, accuracy: -1 }]);
+assert.equal(missingAccuracy.acceptedCount, 1,
+  'a bad accuracy value should not erase otherwise valid location evidence');
+assert.equal(missingAccuracy.points[0].accuracy, undefined,
+  'invalid accuracy must not enter fusion as a precision measurement');
+assert.equal(missingAccuracy.issues[0]?.code, 'invalid_accuracy');
+assert.ok(missingAccuracy.points[0].confidence < referencePoint.confidence);
+
+const isoDate = assessLocationQuality([
+  { ...referencePoint, timestamp: '2026-01-01T12:00:00.000Z' as unknown as Date },
+]);
+assert.ok(isoDate.points[0]?.timestamp instanceof Date);
+assert.equal(isoDate.points[0].timestamp.toISOString(), '2026-01-01T12:00:00.000Z');
+
 console.log('SPECTRA clue-intelligence verification passed.');
