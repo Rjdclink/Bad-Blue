@@ -54,6 +54,13 @@ assert.equal(inferCorroboratedRegionalCity(person, [
   second,
 ]), null);
 
+// A past-tense city mention does not establish a current residence even
+// when two sites repeat it using otherwise valid subject and city labels.
+assert.equal(inferCorroboratedRegionalCity(person, [
+  { url: 'https://one.example.org/', snippet: 'Taylor Morgan was based in Helena, MT.' },
+  { url: 'https://two.example.net/', snippet: 'Taylor Morgan was located in Helena, Montana.' },
+]), null);
+
 // Archived or contradictory city reports do not establish a current city.
 assert.equal(inferCorroboratedRegionalCity(person, [
   { url: 'https://one.example.org/', snippet: 'Taylor Morgan formerly lived in Helena, Montana.' },
