@@ -308,7 +308,10 @@ export async function persistSpectraAcquisition(input: {
       && (
         !existingSubject
         || GENERIC_SPECTRA_SUBJECT_RE.test(existingSubject)
-        || (incomingSubject.includes(existingSubject) && incomingSubject.length > existingSubject.length)
+        || (
+          isOrderedWholeTokenRefinement(existingSubject, incomingSubject)
+          && incomingSubject.split(/\s+/).length > existingSubject.split(/\s+/).length
+        )
       )
     ) {
       await client.query(
