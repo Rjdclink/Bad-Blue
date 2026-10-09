@@ -70,9 +70,14 @@ const STREET_ADDRESS_RE = new RegExp(
 
 export function extractStreetAddressHint(input: string): AddressHint | null {
   const text = normalizeSpaces(input);
-  const street = text.match(STREET_ADDRESS_RE)?.[1]?.trim();
-  if (!street) return null;
-  const regional = extractCityStateHint(text);
+  const streetMatch = STREET_ADDRESS_RE.exec(text);
+  const street = streetMatch?.[1]?.trim();
+  if (!streetMatch || !street) return null;
+  const streetStart = streetMatch.index;
+  const afterStreet = text.slice(streetStart + streetMatch[0].length)
+    .replace(/^[,;\s]+/, '')
+    .replace(/^(?:apt|apartment|unit|suite|ste|#)\s*[A-Za-z0-9-]+\s*[,;]\s*/i, '');
+  const regional = extractCityStateHint(afterStreet) || extractCityStateHint(text.slice(0, streetStart));
   const zip = text.match(/\b\d{5}(?:-\d{4})?\b/)?.[0];
   return {
     street,
