@@ -49,6 +49,7 @@ import {
 } from '../services/spectra/SpectraIdentityBinding';
 import { acquireSpectraPlaceContext } from '../services/spectra/SpectraPlaceContext';
 import { retrieveSpectraPublicEvidence } from '../services/spectra/SpectraPublicRetrieval';
+import { inferCorroboratedRegionalCity } from '../services/spectra/SpectraRegionalInference';
 import { assessSpectraLiveLocation } from '../services/spectra/SpectraLiveConfidence';
 import { solveSpectraConstraintLayer } from '../services/spectra/SpectraConstraintSolver';
 import { acquireConfiguredSpectraCameras } from '../services/spectra/SpectraCameraDirectoryAdapters';
@@ -1160,25 +1161,47 @@ router.post('/acquire', async (req: Request, res: Response) => {
           typeof value === 'string' && value.trim().length > 0
       );
 
-      try {
-        let region = null;
-        for (const locationInput of locationInputs) {
+      // Keep explicit geographic context as the first authority. If none
+      // exists, independently corroborated public references can support a
+      // broad city estimate, never a live position or individual street fix.
+      const corroboratedCity = inferCorroboratedRegionalCity(
+        resolvedSubjectName,
+        discoveryResults,
+      );
+      let region = null;
+      let cityCorroborationUsed = false;
+      for (const locationInput of locationInputs) {
+        try {
           region = await geocodeBestLocation(locationInput);
           if (region) break;
+        } catch {
+          // One provider or parsing failure must not cancel other clues.
         }
-
-        if (region) {
-          candidateLocations.push({
-            latitude: region.latitude,
-            longitude: region.longitude,
-            label: region.displayName,
-            confidence: 0.35,
-            basis: 'regional_context',
-            accuracyMeters: region.accuracyMeters,
-          });
+      }
+      if (!region && corroboratedCity) {
+        try {
+          region = await geocodeCityState(
+            `${corroboratedCity.city}, ${corroboratedCity.state}`,
+          );
+          cityCorroborationUsed = Boolean(region);
+        } catch {
+          // Failed regional geocoding never substitutes arbitrary coordinates.
         }
-      } catch {
-        // Geocoder failure is route-local. SPECTRA still returns all other evidence.
+      }
+      if (region) {
+        candidateLocations.push({
+          latitude: region.latitude,
+          longitude: region.longitude,
+          label: cityCorroborationUsed && corroboratedCity
+            ? `${corroboratedCity.city}, ${corroboratedCity.state} (unverified city estimate)`
+            : region.displayName,
+          confidence: 0.35,
+          basis: 'regional_context',
+          accuracyMeters: Math.max(
+            cityCorroborationUsed ? 1_000 : 0,
+            region.accuracyMeters,
+          ),
+        });
       }
     }
 
