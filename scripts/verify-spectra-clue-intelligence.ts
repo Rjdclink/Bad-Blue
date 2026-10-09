@@ -14,6 +14,18 @@ assert.equal(address?.street.toLowerCase(), '109 27th street');
 assert.equal(address?.city, 'Spirit Lake');
 assert.equal(address?.state, 'IA');
 
+for (const message of [
+  '123 Main Street, Salem, Oregon',
+  '123 Main Street, Salem, OR',
+  'The address is 123 Main Street, Salem, Oregon',
+  '123 Main Street, Suite 4, Salem, OR',
+]) {
+  const parsed = extractStreetAddressHint(message);
+  assert.equal(parsed?.street, '123 Main Street');
+  assert.equal(parsed?.city, 'Salem', `street must not contaminate city: ${message}`);
+  assert.equal(parsed?.state, 'OR');
+}
+
 const regional = extractCityStateHint(conversational);
 assert.equal(regional?.city, 'Spirit Lake');
 assert.equal(regional?.state, 'IA');
