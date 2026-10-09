@@ -386,6 +386,31 @@ function Router() {
             </>
           ) : null}
 
+          {/* Spectra's aliases are private, but a signed-out deep link should
+              reach the existing login flow instead of an unexplained 404.
+              Authentication and subscription gates remain unchanged. */}
+          {(!isAuthenticated || !hasPaidAccess) && [
+            "/spectra",
+            "/people-finder",
+            "/geo-console",
+            "/location-intel",
+            "/tshpe",
+            "/tshpe-locator",
+            "/positioning",
+            "/geoconsole",
+            "/geoconsole-command",
+            "/geoconsole-process",
+            "/geoconsole-report",
+          ].map(path => (
+            <Route key={path} path={path}>
+              {!isAuthenticated
+                ? <Redirect to="/login" />
+                : accessState === "trial_expired"
+                  ? <Redirect to="/trial-expired" />
+                  : <Redirect to="/subscription-required" />}
+            </Route>
+          ))}
+
           <Route>
             {isAuthenticated && accessState === "trial_expired"
               ? <Redirect to="/trial-expired" />
