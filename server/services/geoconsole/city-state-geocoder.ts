@@ -104,7 +104,9 @@ export function extractLocationClues(input: string): string[] {
 }
 
 export function extractCityStateHint(input: string): { city: string; state: string; query: string } | null {
-  const text = normalizeLocationLanguage(input);
+  // The last sentence punctuation is not part of a city or state code.
+  // Preserve internal periods (e.g. St. Louis) and commas in the clue.
+  const text = normalizeLocationLanguage(input).replace(/[.!?]+$/g, '').trim();
   if (!text) return null;
 
   const commaSeparated = text.match(/^(.{2,100}?),\s*([A-Za-z]{2})$/);
