@@ -34,6 +34,7 @@ const spectraSources = read('server/services/spectra/SpectraSourceRegistry.ts');
 const pantheonSources = read('server/services/pantheon/PantheonSovereignSourceRegistry.ts');
 const geocoder = read('server/services/geoconsole/city-state-geocoder.ts');
 const regionalInference = read('server/services/spectra/SpectraRegionalInference.ts');
+const cityAccuracyFixtures = read('scripts/verify-spectra-city-accuracy-benchmark.ts');
 const locationQuality = read('server/services/geoconsole/location-quality.ts');
 const geoconsoleRoutes = read('server/routes/geoconsole.routes.ts');
 const adapterRegistry = read('server/services/spectra/SpectraAdapterRegistry.ts');
@@ -171,6 +172,19 @@ test('SPECTRA can use corroborated public city context without claiming a live p
   regionalInference.includes('currentPositionVerified: false') &&
   regionalInference.includes('HISTORICAL_LANGUAGE_RE') &&
   geocoder.includes('const context = commaSeparated[1].match('));
+
+test('Broad-city corroboration filters stale, copied and contradictory evidence',
+  regionalInference.includes('MAX_DATED_SOURCE_AGE_MS') &&
+  regionalInference.includes('item.metadata?.publishedAt') &&
+  regionalInference.includes('hasUsablePublicationDate(item, asOf.getTime())') &&
+  regionalInference.includes('winner.domains.size < 2 || ranked.length !== 1') &&
+  regionalInference.includes('const uniqueClaims = new Set<string>()') &&
+  regionalInference.includes('if (independentDomains.length < 2) return null'));
+test('City accuracy regression suite records both correct matches and abstentions',
+  cityAccuracyFixtures.includes('correctCityPredictions') &&
+  cityAccuracyFixtures.includes('falseCityPredictions') &&
+  cityAccuracyFixtures.includes('correctlyAbstained') &&
+  cityAccuracyFixtures.includes('not real-world accuracy'));
 
 test('One-hour previous/future timeline remains available',
   dashboard.includes('min={-60}') && dashboard.includes('max={60}'));
