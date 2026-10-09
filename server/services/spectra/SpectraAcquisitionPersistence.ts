@@ -47,6 +47,9 @@ function evidenceClassForPoint(point: GPSPoint): string {
 }
 
 function optionalConfidence(value: unknown): number | null {
+  // Unknown provider confidence is not a measured zero-confidence result.
+  if (value === null || value === undefined ||
+    (typeof value === 'string' && !value.trim())) return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed >= 0 && parsed <= 1 ? parsed : null;
 }
