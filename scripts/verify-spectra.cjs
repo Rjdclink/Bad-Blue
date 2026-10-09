@@ -291,6 +291,14 @@ test('All supplied clues may seed discovery without a mandatory name-or-phone ga
   routes.includes('const identityAnchor = quotedName || quotedPhone ||') &&
   routes.includes("[identityAnchor, compactDetails, 'media geotag timestamp']") &&
   !routes.includes('const secondPass = strongIdentityAnchor ?'));
+test('External vector-style failures have an independent public raster map fallback',
+  intelligenceMap.includes('SPECTRA_FALLBACK_RASTER_STYLE') &&
+  intelligenceMap.includes("sourceId === 'spectra-basemap-backup'") &&
+  intelligenceMap.includes('map.setStyle(SPECTRA_FALLBACK_RASTER_STYLE, { diff: false })') &&
+  intelligenceMap.includes("providerFallbackAppliedRef.current.has('basemap')") &&
+  intelligenceMap.includes("markProviderState('basemap', 'fallback')") &&
+  intelligenceMap.includes('setRendererUnavailable(true)'));
+
 test('Failed map providers stay locally disabled across UI updates',
   intelligenceMap.includes("providerStatus.terrain !== 'unavailable'") &&
   intelligenceMap.includes("providerStatus.weather !== 'unavailable'") &&
