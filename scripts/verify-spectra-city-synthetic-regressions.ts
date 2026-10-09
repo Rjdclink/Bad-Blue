@@ -69,6 +69,12 @@ const fixtures: Fixture[] = [
     ],
   },
   {
+    id: 'no-evidence',
+    name: 'Morgan Vale',
+    expectedCity: null,
+    sources: [],
+  },
+  {
     id: 'one-publisher-only',
     name: 'Morgan Vale',
     expectedCity: null,
@@ -177,9 +183,9 @@ for (const fixture of fixtures) {
     ': expected ' + fixture.expectedCity + ', received ' + predictedCity,
   );
 }
-assert.equal(fixtures.length, 15);
+assert.equal(fixtures.length, 16);
 assert.equal(correctCities, 5);
-assert.equal(correctlyAbstained, 10);
+assert.equal(correctlyAbstained, 11);
 assert.equal(falseCityClaims, 0);
 assert.equal(missedCities, 0);
 console.log('SPECTRA synthetic city-level regression results:', JSON.stringify({
