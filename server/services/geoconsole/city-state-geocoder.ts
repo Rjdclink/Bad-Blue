@@ -330,12 +330,18 @@ async function queryGeocoder(url: URL, strategy = 'unknown'): Promise<Array<{
     console.warn('[SPECTRA_GEOCODER] http_error', { strategy, status: response.status });
     throw new Error('Location service is unavailable.');
   }
-  const results = await response.json() as Array<{
+  const payload: unknown = await response.json();
+  if (!Array.isArray(payload)) {
+    console.warn('[SPECTRA_GEOCODER] invalid_payload', { strategy });
+    throw new Error('Location service returned invalid data.');
+  }
+  const results = payload as Array<{
     lat?: string;
     lon?: string;
     display_name?: string;
     boundingbox?: string[];
   }>;
+  // Malformed provider payloads must never enter the response cache.
   geocoderCache.set(cacheKey, { expiresAt: Date.now() + 5 * 60_000, results });
   if (results.length === 0) console.info('[SPECTRA_GEOCODER] no_match', { strategy });
   else console.info('[SPECTRA_GEOCODER] matched', { strategy, resultCount: results.length });
