@@ -148,7 +148,7 @@ export function htmlEvidence(raw: string, sourceUrl: string): {
 
   // Publication time describes the evidence's age; retrieval time only
   // describes when we fetched the page. Do not substitute og:updated_time.
-  const publishedAt = timestamp(
+  let publishedAt = timestamp(
     meta.get('article:published_time')
     || meta.get('datepublished')
     || meta.get('citation_publication_date')
@@ -203,6 +203,31 @@ export function htmlEvidence(raw: string, sourceUrl: string): {
 
     try {
       const payload = JSON.parse(text);
+      // Some public pages publish a date only in their top-level Article /
+      // WebPage JSON-LD. Nested event and person dates are not page dates.
+      if (!publishedAt) {
+        const roots = Array.isArray(payload) ? payload : [payload];
+        for (const root of roots) {
+          if (!root || typeof root !== 'object') continue;
+          const graph = Array.isArray(root['@graph']) ? root['@graph'] : [];
+          for (const candidate of [root, ...graph]) {
+            if (!candidate || typeof candidate !== 'object') continue;
+            const types = Array.isArray(candidate['@type'])
+              ? candidate['@type'] : [candidate['@type']];
+            if (!types.some((type: unknown) =>
+              typeof type === 'string'
+              && /(?:^|[/:])(?:WebPage|ProfilePage|Article|NewsArticle|BlogPosting)$/.test(type)
+            )) continue;
+            const date = typeof candidate.datePublished === 'string'
+              ? timestamp(candidate.datePublished) : undefined;
+            if (date) {
+              publishedAt = date;
+              break;
+            }
+          }
+          if (publishedAt) break;
+        }
+      }
       const walk = (value: any, depth = 0) => {
         if (!value || depth > 8 || observations.length >= 100) return;
         if (Array.isArray(value)) {
