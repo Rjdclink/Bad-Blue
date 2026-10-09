@@ -270,6 +270,14 @@ function observationZoomForAccuracy(accuracyMeters?: number): number {
   return 16;
 }
 
+// A missing accuracy value must not become a misleading 0-meter reading.
+function finiteOptionalNumber(value: unknown): number | null {
+  if (value === null || value === undefined ||
+    (typeof value === 'string' && !value.trim())) return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
 function popupTextNode(lines: Array<{ label?: string; value: string }>): HTMLDivElement {
   const root = document.createElement('div');
   root.style.font = '12px system-ui';
@@ -923,8 +931,8 @@ export const MapLibreIntelligenceMap: React.FC<IntelligenceMapProps> = ({
       const coordinates = feature.geometry.coordinates.slice() as [number, number];
       const label = String(feature.properties?.label || 'Regional candidate');
       const confidence = Math.round(Number(feature.properties?.confidence || 0) * 100);
-      const accuracyMeters = Number(feature.properties?.accuracyMeters);
-      const areaText = Number.isFinite(accuracyMeters)
+      const accuracyMeters = finiteOptionalNumber(feature.properties?.accuracyMeters);
+      const areaText = accuracyMeters !== null
         ? accuracyMeters < 1000
           ? `±${Math.round(accuracyMeters)} m region`
           : `±${(accuracyMeters / 1000).toFixed(1)} km region`
@@ -947,7 +955,7 @@ export const MapLibreIntelligenceMap: React.FC<IntelligenceMapProps> = ({
       const confidence = Math.round(Number(feature.properties?.confidence || 0) * 100);
       const timestamp = String(feature.properties?.timestamp || '');
       const observationKind = String(feature.properties?.observationKind || 'observed');
-      const accuracy = Number(feature.properties?.accuracy);
+      const accuracy = finiteOptionalNumber(feature.properties?.accuracy);
       const provider = String(feature.properties?.provider || '');
       popup
         .setLngLat(coordinates)
@@ -955,7 +963,7 @@ export const MapLibreIntelligenceMap: React.FC<IntelligenceMapProps> = ({
           { label: 'Evidence:', value: source.replace(/_/g, ' ') },
           { label: 'Classification:', value: observationKind },
           ...(provider ? [{ label: 'Provider:', value: provider }] : []),
-          ...(Number.isFinite(accuracy) ? [{
+          ...(accuracy !== null ? [{
             label: 'Horizontal accuracy:',
             value: accuracy < 1000 ? `±${Math.round(accuracy)} m` : `±${(accuracy / 1000).toFixed(1)} km`,
           }] : []),
