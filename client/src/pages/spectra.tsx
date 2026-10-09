@@ -128,6 +128,15 @@ function makeMessage(role: Message['role'], content: string): Message {
   };
 }
 
+// Zero is a valid latitude/longitude, but null, blanks and invalid values are
+// not. Never turn a missing preview coordinate into a fictitious (0, 0) pin.
+function finitePreviewNumber(value: unknown): number | null {
+  if (value === null || value === undefined ||
+    (typeof value === 'string' && !value.trim())) return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
 export default function SpectraPage() {
   const lexaraLaunchRef = useRef<SpectraLaunchPayload | null>(readLexaraSpectraLaunch());
   const initialLexaraLaunch = lexaraLaunchRef.current;
@@ -351,18 +360,21 @@ export default function SpectraPage() {
           }
 
           const region = previewPayload.data;
+          const latitude = finitePreviewNumber(region?.latitude);
+          const longitude = finitePreviewNumber(region?.longitude);
+          const accuracyMeters = finitePreviewNumber(region?.accuracyMeters);
           if (
-            Number.isFinite(Number(region?.latitude)) &&
-            Number.isFinite(Number(region?.longitude))
+            latitude !== null && Math.abs(latitude) <= 90 &&
+            longitude !== null && Math.abs(longitude) <= 180
           ) {
             setCandidateLocations([{
-              latitude: Number(region.latitude),
-              longitude: Number(region.longitude),
+              latitude,
+              longitude,
               label: String(region.displayName || locationText),
               confidence: 0.25,
               basis: 'regional_context',
-              accuracyMeters: Number.isFinite(Number(region.accuracyMeters))
-                ? Number(region.accuracyMeters)
+              accuracyMeters: accuracyMeters !== null && accuracyMeters > 0
+                ? accuracyMeters
                 : 25_000,
             }]);
             setAcquisitionStage('Regional context mapped; broadening identity discovery…');
