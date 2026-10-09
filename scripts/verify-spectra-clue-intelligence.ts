@@ -79,6 +79,19 @@ for (const [text, city, state] of [
   assert.equal(found?.state, state);
 }
 
+// Sentence-final punctuation must not cause an otherwise valid city/state
+// clue to disappear, including when it is attached to a named subject.
+for (const [text, city, state] of [
+  ['Cedar Rapids, IA.', 'Cedar Rapids', 'IA'],
+  ['Taylor Morgan currently resides in Cedar Rapids, IA.', 'Cedar Rapids', 'IA'],
+  ['Taylor Morgan lives in Cedar Rapids, IA!', 'Cedar Rapids', 'IA'],
+  ['Taylor Morgan is based in St. Louis, MO.', 'St. Louis', 'MO'],
+] as const) {
+  const result = extractCityStateHint(text);
+  assert.equal(result?.city, city, `punctuated city clue was lost: ${text}`);
+  assert.equal(result?.state, state);
+}
+
 // Conversational words such as "me" must not become state abbreviations.
 // A willing geocoder can return a real place for an unrelated query, so the
 // identity-only launch must be rejected before any geocoding request is made.
