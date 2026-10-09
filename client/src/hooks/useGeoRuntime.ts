@@ -250,6 +250,9 @@ export function useGeoRuntime(
     });
   }, []);
 
+  // The most recently requested load owns the timeline. A delayed response
+  // from an earlier target/session must never repopulate a reset map.
+  const loadRequestRef = useRef(0);
   const futurecastRequestRef = useRef(0);
 
   const predictionPayloadToFrames = useCallback((predictions: any[]): GeoFrame[] => (
@@ -295,12 +298,13 @@ export function useGeoRuntime(
   ), []);
 
   const requestAuthoritativeFuturecast = useCallback(async (sourceFrames: GeoFrame[]) => {
+    // Invalidate a pending forecast even when the new dataset is too small
+    // to produce one; otherwise the previous target's response may appear.
+    const requestId = ++futurecastRequestRef.current;
     if (!cfg.predictiveEnabled || sourceFrames.length < 3) {
       setFuturecastFrames([]);
       return;
     }
-
-    const requestId = ++futurecastRequestRef.current;
     const recent = continuousTail(sourceFrames, 20);
 
     try {
@@ -350,6 +354,8 @@ export function useGeoRuntime(
 
   // Load data through the canonical server fusion pipeline automatically.
   const loadData = useCallback(async (points: GPSPoint[]) => {
+    const loadRequestId = ++loadRequestRef.current;
+    ++futurecastRequestRef.current;
     setStatus('loading');
     setError(null);
 
@@ -408,6 +414,7 @@ export function useGeoRuntime(
 
         if (response.ok) {
           const payload = await response.json();
+          if (loadRequestId !== loadRequestRef.current) return;
           const canonicalSessionId =
             typeof payload?.data?.sessionId === 'string' && payload.data.sessionId.trim()
               ? payload.data.sessionId
@@ -472,6 +479,7 @@ export function useGeoRuntime(
         // is temporarily unavailable. No synthetic positions are introduced.
       }
 
+      if (loadRequestId !== loadRequestRef.current) return;
       let newFrames = convertToFrames(canonicalPoints);
       if (newFrames.length === 0) {
         framesRef.current = [];
@@ -501,6 +509,9 @@ export function useGeoRuntime(
 
       if (canonicalFuturecast && canonicalFuturecast.length > 0) {
         setFuturecastFrames(canonicalFuturecast);
+      } else {
+        // Do not leave predictions from a prior dataset on the updated map.
+        setFuturecastFrames([]);
       }
       // When an investigation session exists, refresh through the dedicated
       // Futurecast route so recent camera/vehicle flow context can refine the
@@ -516,6 +527,7 @@ export function useGeoRuntime(
 
       setStatus('idle');
     } catch (err) {
+      if (loadRequestId !== loadRequestRef.current) return;
       setError(err instanceof Error ? err.message : 'Load failed');
       setStatus('error');
     }
