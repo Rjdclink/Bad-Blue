@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useLocation } from 'wouter';
-import { ArrowLeft, Loader2, Mic, MicOff, Paperclip, RotateCcw, Send, Target } from 'lucide-react';
+import { Loader2, Mic, MicOff, Paperclip, RotateCcw, Send, Target } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { BackButton } from '@/components/BackButton';
 import { SEOHead } from '@/components/SEOHead';
 import { GeoconsoleRadarDashboard } from '@/components/geoconsole';
 import { useVoiceMode } from '@/hooks/useVoiceMode';
@@ -129,7 +129,6 @@ function makeMessage(role: Message['role'], content: string): Message {
 }
 
 export default function SpectraPage() {
-  const [, setLocation] = useLocation();
   const lexaraLaunchRef = useRef<SpectraLaunchPayload | null>(readLexaraSpectraLaunch());
   const initialLexaraLaunch = lexaraLaunchRef.current;
   const launchedFromLexaraRef = useRef(Boolean(initialLexaraLaunch));
@@ -843,15 +842,7 @@ export default function SpectraPage() {
       />
 
       <header className="h-14 border-b border-slate-800 bg-slate-950/95 backdrop-blur flex items-center justify-between px-3 sm:px-5">
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => setLocation('/lexara-consent')}
-          className="text-slate-300 hover:text-white"
-        >
-          <ArrowLeft className="h-4 w-4 mr-1" />
-          Back
-        </Button>
+        <BackButton fallbackRoute="/lexara-consent" className="text-slate-300 hover:text-white" />
 
         <div className="flex items-center gap-2">
           <Target className="h-4 w-4 text-cyan-400" />
