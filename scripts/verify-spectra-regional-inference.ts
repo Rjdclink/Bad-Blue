@@ -66,11 +66,13 @@ assert.equal(inferCorroboratedRegionalCity(person, [
   { url: 'https://one.example.org/', snippet: 'Taylor Morgan formerly lived in Helena, Montana.' },
   { url: 'https://two.example.org/', snippet: 'Taylor Morgan previously resided in Helena, MT.' },
 ]), null);
+// These city claims need four independent publishers; subdomains sharing
+// example.org would count as one source, which is correct production behavior.
 assert.equal(inferCorroboratedRegionalCity(person, [
   first,
   second,
-  { url: 'https://three.example.org/', snippet: 'Taylor Morgan lives in Helena, Montana.' },
-  { url: 'https://four.example.org/', snippet: 'Taylor Morgan resides in Helena, MT.' },
+  { url: 'https://helena.example.com/', snippet: 'Taylor Morgan lives in Helena, Montana.' },
+  { url: 'https://helena.example.edu/', snippet: 'Taylor Morgan resides in Helena, MT.' },
 ]), null);
 
 assert.equal(inferCorroboratedRegionalCity(person, [
