@@ -292,12 +292,20 @@ function geocoderAccuracyMeters(
   return Math.max(1_000, Math.min(500_000, radius || 25_000));
 }
 
+// Reserve request slots sequentially. If several research tasks start together,
+// independently sleeping until the same second would produce a burst on the
+// public Nominatim service (which allows at most one request per second).
+let geocoderSlotQueue: Promise<void> = Promise.resolve();
 async function waitForGeocoderSlot(): Promise<void> {
-  const elapsed = Date.now() - lastRequestAt;
-  if (lastRequestAt && elapsed < 1000) {
-    await new Promise(resolve => setTimeout(resolve, 1000 - elapsed));
-  }
-  lastRequestAt = Date.now();
+  const slot = geocoderSlotQueue.then(async () => {
+    const elapsed = Date.now() - lastRequestAt;
+    if (lastRequestAt && elapsed < 1000) {
+      await new Promise(resolve => setTimeout(resolve, 1000 - elapsed));
+    }
+    lastRequestAt = Date.now();
+  });
+  geocoderSlotQueue = slot.catch(() => undefined);
+  await slot;
 }
 
 const geocoderCache = new Map<string, { expiresAt: number; results: Array<{ lat?: string; lon?: string; display_name?: string; boundingbox?: string[] }> }>();
