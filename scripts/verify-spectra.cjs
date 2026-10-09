@@ -787,6 +787,13 @@ test('SPECTRA Back follows browser history with the standard authorized fallback
   spectra.includes('<BackButton fallbackRoute="/lexara-consent"') &&
   !spectra.includes("onClick={() => setLocation('/lexara-consent')}"));
 
+test('Persisted SPECTRA sessions bind to full subject tokens, not name substrings',
+  acquisitionPersistence.includes('function isOrderedWholeTokenRefinement(') &&
+  acquisitionPersistence.includes('isOrderedWholeTokenRefinement(existing, incoming)') &&
+  acquisitionPersistence.includes('isOrderedWholeTokenRefinement(existingSubject, incomingSubject)') &&
+  !acquisitionPersistence.includes('return existing.includes(incoming) || incoming.includes(existing)') &&
+  !acquisitionPersistence.includes('incomingSubject.includes(existingSubject)'));
+
 test('SPECTRA API is mounted',
   serverRoutes.includes("app.use('/api/spectra', spectraRoutes.default)"));
 
