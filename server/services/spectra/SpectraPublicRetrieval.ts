@@ -16,6 +16,7 @@ export interface SpectraRetrievedEvidence {
   url: string;
   title?: string;
   retrievedAt: string;
+  publishedAt?: string;
   contentType?: string;
   textExcerpt?: string;
   observations: SpectraRetrievedObservation[];
@@ -121,9 +122,10 @@ function dedupeObservations(items: SpectraRetrievedObservation[]): SpectraRetrie
   }).slice(0, 100);
 }
 
-function htmlEvidence(raw: string, sourceUrl: string): {
+export function htmlEvidence(raw: string, sourceUrl: string): {
   title?: string;
   textExcerpt?: string;
+  publishedAt?: string;
   observations: SpectraRetrievedObservation[];
 } {
   const $ = load(raw.slice(0, MAX_TEXT));
@@ -143,6 +145,15 @@ function htmlEvidence(raw: string, sourceUrl: string): {
     const value = String($(element).attr('content') || '').trim();
     if (key && value && !meta.has(key)) meta.set(key, value);
   });
+
+  // Publication time describes the evidence's age; retrieval time only
+  // describes when we fetched the page. Do not substitute og:updated_time.
+  const publishedAt = timestamp(
+    meta.get('article:published_time')
+    || meta.get('datepublished')
+    || meta.get('citation_publication_date')
+    || meta.get('dc.date.issued')
+  );
 
   const metaLatitude = numeric(
     meta.get('place:location:latitude')
@@ -237,7 +248,7 @@ function htmlEvidence(raw: string, sourceUrl: string): {
     }
   });
 
-  return { title, textExcerpt, observations: dedupeObservations(observations) };
+  return { title, textExcerpt, publishedAt, observations: dedupeObservations(observations) };
 }
 
 function jsonEvidence(payload: any, sourceUrl: string): SpectraRetrievedObservation[] {
@@ -342,6 +353,7 @@ async function retrieveOne(rawUrl: string, parentSignal?: AbortSignal): Promise<
           contentType,
           title: extracted.title,
           textExcerpt: extracted.textExcerpt,
+          publishedAt: extracted.publishedAt,
           observations: extracted.observations,
         };
       }
