@@ -34,7 +34,7 @@ const spectraSources = read('server/services/spectra/SpectraSourceRegistry.ts');
 const pantheonSources = read('server/services/pantheon/PantheonSovereignSourceRegistry.ts');
 const geocoder = read('server/services/geoconsole/city-state-geocoder.ts');
 const regionalInference = read('server/services/spectra/SpectraRegionalInference.ts');
-const cityAccuracyFixtures = read('scripts/verify-spectra-city-accuracy-benchmark.ts');
+const cityAccuracyFixtures = read('scripts/verify-spectra-city-synthetic-regressions.ts');
 const locationQuality = read('server/services/geoconsole/location-quality.ts');
 const geoconsoleRoutes = read('server/routes/geoconsole.routes.ts');
 const adapterRegistry = read('server/services/spectra/SpectraAdapterRegistry.ts');
@@ -180,7 +180,7 @@ test('Broad-city corroboration filters stale, copied and contradictory evidence'
   regionalInference.includes('winner.domains.size < 2 || ranked.length !== 1') &&
   regionalInference.includes('const uniqueClaims = new Set<string>()') &&
   regionalInference.includes('if (independentDomains.length < 2) return null'));
-test('City accuracy regression suite records both correct matches and abstentions',
+test('Synthetic city regression suite records both correct matches and abstentions',
   cityAccuracyFixtures.includes('correctCityPredictions') &&
   cityAccuracyFixtures.includes('falseCityPredictions') &&
   cityAccuracyFixtures.includes('correctlyAbstained') &&
