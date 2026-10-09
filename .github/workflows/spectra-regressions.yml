@@ -1,0 +1,57 @@
+name: SPECTRA Regional Reliability Tests
+
+on:
+  push:
+    branches:
+      - release/lexara-background-production-20261006
+    paths:
+      - '.github/workflows/spectra-regressions.yml'
+      - 'server/services/geoconsole/**'
+      - 'server/services/spectra/**'
+      - 'server/routes/spectra.routes.ts'
+      - 'scripts/verify-spectra*'
+      - 'package.json'
+      - 'package-lock.json'
+  pull_request:
+    branches:
+      - release/lexara-background-production-20261006
+    paths:
+      - '.github/workflows/spectra-regressions.yml'
+      - 'server/services/geoconsole/**'
+      - 'server/services/spectra/**'
+      - 'server/routes/spectra.routes.ts'
+      - 'scripts/verify-spectra*'
+      - 'package.json'
+      - 'package-lock.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: spectra-regressions-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  regional:
+    name: SPECTRA city evidence and regression checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - name: Install locked dependencies without production secrets
+        run: npm ci --legacy-peer-deps --no-audit
+      - name: Verify SPECTRA structure, public-city source quality, and synthetic regressions
+        run: npm run verify:spectra
+      - name: Explain benchmark scope
+        if: always()
+        run: |
+          {
+            echo "## SPECTRA regional regression verification"
+            echo "Synthetic city/location fixtures test program behavior."
+            echo "These checks do not measure real-world current-location accuracy."
+          } >> "$GITHUB_STEP_SUMMARY"
