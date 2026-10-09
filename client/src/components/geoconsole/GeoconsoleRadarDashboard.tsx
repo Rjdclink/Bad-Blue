@@ -34,6 +34,8 @@ interface GeoconsoleProps {
    */
   navMode?: 'timeline' | 'map' | 'satellite';
   spectraShell?: boolean;
+  /** Display and permit this browser's GPS tracking control. */
+  allowDeviceLocation?: boolean;
   subject?: string;
   sessionId?: string | null;
   onSessionCreated?: (sessionId: string) => void;
@@ -94,6 +96,7 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({
   onProcess: _onProcess,
   navMode,
   spectraShell = false,
+  allowDeviceLocation = true,
   subject = 'SPECTRA target',
   sessionId = null,
   onSessionCreated,
@@ -104,6 +107,7 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({
     playbackSpeed: 1,
     interpolationEnabled: true,
     predictiveEnabled: true,
+    autoFetch: allowDeviceLocation,
     sessionId: sessionId || undefined,
     subjectLabel: subject,
     onSessionCreated,
@@ -611,19 +615,21 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({
           {spectraShell && (
             <>
               <div className="absolute right-3 top-3 z-20 flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setLockOnTarget(true);
-                    actions.toggleLive();
-                  }}
-                  className="flex h-11 w-11 items-center justify-center rounded-full border border-slate-600/60 bg-slate-950/85 text-cyan-300 shadow-xl backdrop-blur hover:bg-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
-                  title={state.isLive ? 'Stop sharing this device location' : 'Use this device location'}
-                  aria-label={state.isLive ? 'Stop sharing this device location' : 'Use this device location'}
-                  aria-pressed={state.isLive}
-                >
-                  <Crosshair className="h-4 w-4" />
-                </button>
+                {allowDeviceLocation && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLockOnTarget(true);
+                      actions.toggleLive();
+                    }}
+                    className="flex h-11 w-11 items-center justify-center rounded-full border border-slate-600/60 bg-slate-950/85 text-cyan-300 shadow-xl backdrop-blur hover:bg-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
+                    title={state.isLive ? 'Stop sharing this device location' : 'Use this device location'}
+                    aria-label={state.isLive ? 'Stop sharing this device location' : 'Use this device location'}
+                    aria-pressed={state.isLive}
+                  >
+                    <Crosshair className="h-4 w-4" />
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => setIsFullscreen(value => !value)}
@@ -671,7 +677,7 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({
                 )}
               </div>
 
-              {state.isLive && (
+              {allowDeviceLocation && state.isLive && (
                 <div role="status" className="pointer-events-none absolute bottom-12 left-3 z-20 max-w-[min(320px,calc(100%-1.5rem))] rounded-lg border border-slate-700 bg-slate-950/90 px-3 py-2 text-xs text-slate-200">
                   {state.error ? state.error : state.currentFrame?.source === 'browser_geolocation'
                     ? `This device · reported accuracy ${Number.isFinite(state.currentFrame.position.accuracy) ? `±${Math.ceil(state.currentFrame.position.accuracy! / 0.3048)} ft` : 'unavailable'}`
@@ -840,14 +846,16 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({
                 >
                   FIX
                 </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={actions.toggleLive}
-                  className={`min-h-10 text-xs ${isLive ? 'bg-green-500/20 text-green-400 border-green-500/40' : 'bg-slate-800/50 border-slate-700 text-slate-300'}`}
-                >
-                  {isLive ? 'LIVE' : 'GO LIVE'}
-                </Button>
+                {allowDeviceLocation && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={actions.toggleLive}
+                    className={`min-h-10 text-xs ${isLive ? 'bg-green-500/20 text-green-400 border-green-500/40' : 'bg-slate-800/50 border-slate-700 text-slate-300'}`}
+                  >
+                    {isLive ? 'LIVE' : 'GO LIVE'}
+                  </Button>
+                )}
               </div>
             </div>
             <div className="bg-slate-800/30 rounded-lg p-2 border border-slate-700/40">
