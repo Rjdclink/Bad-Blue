@@ -129,6 +129,7 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({
   const [reportLoading, setReportLoading] = useState(false);
   const [reportError, setReportError] = useState<string | null>(null);
   const [intelligenceReport, setIntelligenceReport] = useState<any>(null);
+  const candidateOnlyReport = candidateLocations.length > 0 && state.totalFrames === 0;
 
   useEffect(() => {
     setReportOpen(false);
@@ -138,6 +139,12 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({
   }, [state.sessionId]);
 
   const loadIntelligenceReport = useCallback(async () => {
+    if (candidateOnlyReport) {
+      setQuickLayersOpen(false);
+      setReportOpen(value => !value);
+      setReportError(null);
+      return;
+    }
     if (!state.sessionId) return;
     setQuickLayersOpen(false);
     if (reportOpen && intelligenceReport) {
@@ -172,7 +179,7 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({
     } finally {
       setReportLoading(false);
     }
-  }, [intelligenceReport, reportOpen, state.sessionId, subject]);
+  }, [candidateOnlyReport, intelligenceReport, reportOpen, state.sessionId, subject]);
 
   const exportIntelligenceReport = useCallback(() => {
     if (!intelligenceReport) return;
@@ -639,7 +646,7 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({
                 >
                   <Layers className="h-4 w-4" />
                 </button>
-                {state.sessionId && (
+                {(state.sessionId || candidateOnlyReport) && (
                   <button
                     type="button"
                     onClick={() => void loadIntelligenceReport()}
@@ -706,12 +713,12 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({
                 </div>
               )}
 
-              {reportOpen && state.sessionId && (
+              {reportOpen && (state.sessionId || candidateOnlyReport) && (
                 <div className="absolute right-3 top-16 z-30 w-[min(340px,calc(100%-1.5rem))] rounded-xl border border-slate-700/70 bg-slate-950/95 p-3 shadow-2xl backdrop-blur">
                   <div className="mb-3 flex items-center justify-between gap-2">
                     <div>
                       <p className="text-xs font-semibold text-slate-100">Location Intelligence</p>
-                      <p className="text-[10px] text-slate-500">Canonical evidence report</p>
+                      <p className="text-[10px] text-slate-500">{candidateOnlyReport ? 'Mapped location estimates' : 'Canonical evidence report'}</p>
                     </div>
                     <button
                       type="button"
@@ -723,7 +730,20 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({
                     </button>
                   </div>
 
-                  {reportLoading ? (
+                  {candidateOnlyReport ? (
+                    <div className="max-h-72 space-y-2 overflow-y-auto text-xs text-slate-300">
+                      <p>These estimates are shown on the map. No timestamped location observations are available for a movement report.</p>
+                      {candidateLocations.map((candidate, index) => (
+                        <div key={`${candidate.latitude}:${candidate.longitude}:${index}`} className="rounded-lg bg-slate-900 p-2">
+                          <p className="font-medium text-cyan-300">{candidate.label}</p>
+                          <p>{candidate.latitude.toFixed(6)}, {candidate.longitude.toFixed(6)}</p>
+                          <p>Basis: {candidate.basis.replaceAll('_', ' ')}</p>
+                          <p>Estimated uncertainty: {Number.isFinite(candidate.accuracyMeters) && Number(candidate.accuracyMeters) > 0 ? formatDistance(Number(candidate.accuracyMeters)) : 'Unknown'}</p>
+                          <p>Current live position unverified.</p>
+                        </div>
+                      ))}
+                    </div>
+                  ) : reportLoading ? (
                     <p className="py-5 text-center text-xs text-slate-400">Generating report…</p>
                   ) : reportError ? (
                     <p className="rounded-lg border border-rose-500/20 bg-rose-500/10 p-2 text-xs text-rose-300">
