@@ -16,6 +16,7 @@ const test = (name, condition) => {
 };
 
 const spectra = read('client/src/pages/spectra.tsx');
+const publicMap = read('client/src/pages/spectra-public.tsx');
 const dashboard = read('client/src/components/geoconsole/GeoconsoleRadarDashboard.tsx');
 const welcome = read('client/src/pages/welcome.tsx');
 const app = read('client/src/App.tsx');
@@ -769,18 +770,32 @@ test('Canonical acquisition candidates cannot be replaced by a late regional pre
   spectra.includes('previewOpen = false;') &&
   spectra.includes('if (previewOpen && requestId === requestRef.current)'));
 
-test('Signed-out Spectra deep links reach login without bypassing protected routes',
-  app.includes('(!isAuthenticated || !hasPaidAccess) && [') &&
-  app.includes('"/spectra",\n            "/people-finder",') &&
-  app.includes('"/geo-console",') &&
-  app.includes('"/location-intel",') &&
-  app.includes('"/geoconsole-report",') &&
-  app.includes('!isAuthenticated\n                ? <Redirect to="/login" replace />') &&
-  app.includes('accessState === "trial_expired"') &&
-  app.includes('<Redirect to="/trial-expired" replace />') &&
-  app.includes('<Redirect to="/subscription-required" replace />') &&
-  app.indexOf('(!isAuthenticated || !hasPaidAccess) && [') <
-    app.indexOf('<Route>\n            {isAuthenticated && accessState === "trial_expired"'));
+test('SPECTRA provides a general map without login, subscription, or device-location permission',
+  app.includes('const SpectraPublicPage = lazyWithRetry(') &&
+  app.includes('SPECTRA_PUBLIC_ROUTES.map(path => (') &&
+  app.includes('<Route key={path} path={path} component={SpectraPublicPage} />') &&
+  app.includes('if (isLoading && !isSpectraMapRoute)') &&
+  publicMap.includes('<MapLibreIntelligenceMap') &&
+  publicMap.includes('currentFrame={null}') &&
+  publicMap.includes('trail={NO_OBSERVATIONS}') &&
+  publicMap.includes('futurecast={NO_OBSERVATIONS}') &&
+  publicMap.includes('isLive={false}') &&
+  !publicMap.includes('navigator.geolocation') &&
+  !publicMap.includes('/api/spectra/acquire') &&
+  !publicMap.includes('/api/geoconsole/telemetry'));
+
+test('Private person-specific acquisition and saved records retain server authentication',
+  app.includes('isAuthenticated && hasPaidAccess') &&
+  routes.includes('router.use(isAuthenticated)') &&
+  geoconsoleRoutes.includes('router.use(isAuthenticated)'));
+
+test('SPECTRA removes the browser-device-location control and watcher for its own shell',
+  spectra.includes('allowDeviceLocation={false}') &&
+  dashboard.includes('allowDeviceLocation?: boolean') &&
+  dashboard.includes('autoFetch: allowDeviceLocation') &&
+  dashboard.includes('{allowDeviceLocation && (') &&
+  dashboard.includes('{allowDeviceLocation && state.isLive && ('));
+
 
 test('SPECTRA Back follows browser history with the standard authorized fallback',
   spectra.includes("import { BackButton } from '@/components/BackButton'") &&
