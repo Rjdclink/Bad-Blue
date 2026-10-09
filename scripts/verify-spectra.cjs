@@ -769,6 +769,18 @@ test('Canonical acquisition candidates cannot be replaced by a late regional pre
   spectra.includes('previewOpen = false;') &&
   spectra.includes('if (previewOpen && requestId === requestRef.current)'));
 
+test('Signed-out Spectra deep links reach login without bypassing protected routes',
+  app.includes('(!isAuthenticated || !hasPaidAccess) && [') &&
+  app.includes('"/spectra",\n            "/people-finder",') &&
+  app.includes('"/geo-console",') &&
+  app.includes('"/location-intel",') &&
+  app.includes('"/geoconsole-report",') &&
+  app.includes('!isAuthenticated\n                ? <Redirect to="/login" />') &&
+  app.includes('accessState === "trial_expired"') &&
+  app.includes('<Redirect to="/subscription-required" />') &&
+  app.indexOf('(!isAuthenticated || !hasPaidAccess) && [') <
+    app.indexOf('<Route>\n            {isAuthenticated && accessState === "trial_expired"'));
+
 test('SPECTRA API is mounted',
   serverRoutes.includes("app.use('/api/spectra', spectraRoutes.default)"));
 
