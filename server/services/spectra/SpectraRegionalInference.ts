@@ -31,7 +31,13 @@ function sourceDomain(value: unknown): string | null {
   try {
     const url = new URL(value);
     if (url.protocol !== 'https:' && url.protocol !== 'http:') return null;
-    return url.hostname.toLowerCase().replace(/^www\./, '') || null;
+    const labels = url.hostname.toLowerCase().replace(/^www\./, '').split('.');
+    if (labels.length < 2) return null;
+    // Treat sister subdomains as one publisher, not independent evidence.
+    // Be conservative for common country-code second-level domains.
+    const lastTwo = labels.slice(-2).join('.');
+    const multiPartSuffix = /^(?:co|com|net|org|ac|gov|edu)\.[a-z]{2}$/.test(lastTwo);
+    return labels.slice(multiPartSuffix ? -3 : -2).join('.');
   } catch {
     return null;
   }
@@ -72,11 +78,20 @@ export function inferCorroboratedRegionalCity(
       // on a general page containing other people or locations.
       const statements = excerpt.split(/[\n;!?]|\.(?=\s)/).slice(0, 60);
       for (const statement of statements) {
+        const matchedSubject = fullName.exec(statement);
         if (
-          !fullName.test(statement) ||
+          !matchedSubject ||
           !RESIDENCE_LANGUAGE_RE.test(statement) ||
           HISTORICAL_LANGUAGE_RE.test(statement)
         ) continue;
+        // The residence clause must describe the named subject, rather than
+        // someone else mentioned later in the same sentence.
+        const following = statement.slice(
+          matchedSubject.index + matchedSubject[0].length,
+        ).trimStart();
+        if (!/^(?:,\s*)?(?:(?:is|was)\s+)?(?:(?:currently|now)\s+)?(?:lives?|living|resides?|residing|based|located)\s+(?:currently\s+)?(?:in|at)\b/i.test(following)) {
+          continue;
+        }
         const region = extractCityStateHint(statement);
         if (!region) continue;
         const key = `${region.city.toLowerCase()}|${region.state}`;
