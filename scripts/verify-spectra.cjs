@@ -158,9 +158,11 @@ test('Direct media evidence is sent to the server and preserved immediately',
   routes.includes('directEvidence.map'));
 test('Regional candidates remain separate from timed observations',
   spectra.includes('candidateLocations={candidateLocations}') &&
-  routes.includes('candidateLocations') &&
+  routes.includes('const locationObservations = solvedLocationObservations') &&
+  routes.includes('if (locationObservations.length === 0)') &&
+  routes.includes('candidateLocations.push({') &&
   routes.includes("basis: 'regional_context'") &&
-  routes.includes('accuracyMeters: region.accuracyMeters'));
+  routes.includes('region.accuracyMeters,'));
 test('SPECTRA can use corroborated public city context without claiming a live position',
   routes.includes('inferCorroboratedRegionalCity(') &&
   routes.includes('discoveryResults,') &&
