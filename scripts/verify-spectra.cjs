@@ -137,6 +137,15 @@ test('General location quality rejects impossible fixes without inventing precis
   locationQuality.includes('Number.isFinite(point.latitude)') &&
   locationQuality.includes('Number.isFinite(point.longitude)'));
 
+test('Regional uncertainty rejects empty bounding-box edges instead of coercing them to zero',
+  geocoder.includes('const southWest = parseGeocoderCoordinates(boundingbox[0], boundingbox[2])') &&
+  geocoder.includes('const northEast = parseGeocoderCoordinates(boundingbox[1], boundingbox[3])') &&
+  !geocoder.includes('const south = Number(boundingbox[0])'));
+test('Parallel requests reserve sequential public geocoder slots',
+  geocoder.includes('let geocoderSlotQueue: Promise<void> = Promise.resolve()') &&
+  geocoder.includes('geocoderSlotQueue.then(async () => {') &&
+  geocoder.includes('geocoderSlotQueue = slot.catch(() => undefined)'));
+
 test('Geocoder failures are classified without logging raw clue text',
   geocoder.includes("'[SPECTRA_GEOCODER] request_failed'") &&
   geocoder.includes("'[SPECTRA_GEOCODER] no_match'") &&
