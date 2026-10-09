@@ -1165,7 +1165,7 @@ router.post('/acquire', async (req: Request, res: Response) => {
       // exists, independently corroborated public references can support a
       // broad city estimate, never a live position or individual street fix.
       const corroboratedCity = inferCorroboratedRegionalCity(
-        resolvedSubjectName,
+        resolvedName || resolvedSubjectName,
         discoveryResults,
       );
       let region = null;
