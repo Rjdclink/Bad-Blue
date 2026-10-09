@@ -47,6 +47,19 @@ assert(spectraPage.includes('Math.abs(latitude) <= 90') &&
 // Test the production session-binding predicate directly. Partial string
 // containment must not mix different subjects into one investigation.
 const persistence = read('server/services/spectra/SpectraAcquisitionPersistence.ts');
+const confidenceFunction = persistence.match(
+  /function optionalConfidence\(value: unknown\): number \| null \{[\s\S]*?\n\}/,
+)?.[0];
+assert.ok(confidenceFunction, 'persistence confidence parser is missing');
+const parsedConfidence = execute(
+  confidenceFunction + '\nglobalThis.parseConfidence = optionalConfidence;',
+).parseConfidence;
+assert.equal(parsedConfidence(null), null);
+assert.equal(parsedConfidence(undefined), null);
+assert.equal(parsedConfidence(''), null);
+assert.equal(parsedConfidence(0), 0);
+assert.equal(parsedConfidence(0.8), 0.8);
+assert.equal(parsedConfidence(2), null);
 const subjectRegex = persistence.match(/const GENERIC_SPECTRA_SUBJECT_RE = .*?;/)?.[0];
 const wholeTokenRefinement = persistence.match(
   /function isOrderedWholeTokenRefinement\(shorter: string, longer: string\): boolean \{[\s\S]*?\n\}/,
