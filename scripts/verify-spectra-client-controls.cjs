@@ -14,6 +14,36 @@ const execute = source => {
   return scope;
 };
 
+// Exercise the actual browser-side numeric parsers. Missing, blank, or
+// non-finite provider fields must not generate fictitious 0,0 map evidence.
+const spectraPage = read('client/src/pages/spectra.tsx');
+const previewNumberFunction = spectraPage.match(
+  /function finitePreviewNumber\(value: unknown\): number \| null \{[\s\S]*?\n\}/,
+)?.[0];
+assert.ok(previewNumberFunction, 'SPECTRA preview parser is missing');
+const preview = execute(previewNumberFunction + '\nglobalThis.parseNumber = finitePreviewNumber;').parseNumber;
+assert.equal(preview(null), null);
+assert.equal(preview(undefined), null);
+assert.equal(preview('  '), null);
+assert.equal(preview('bad'), null);
+assert.equal(preview('Infinity'), null);
+assert.equal(preview('0'), 0, 'zero remains a valid coordinate');
+assert.equal(preview('-90'), -90);
+
+const mapPage = read('client/src/components/geoconsole/MapLibreIntelligenceMap.tsx');
+const optionalNumberFunction = mapPage.match(
+  /function finiteOptionalNumber\(value: unknown\): number \| null \{[\s\S]*?\n\}/,
+)?.[0];
+assert.ok(optionalNumberFunction, 'SPECTRA accuracy parser is missing');
+const accuracy = execute(optionalNumberFunction + '\nglobalThis.parseNumber = finiteOptionalNumber;').parseNumber;
+assert.equal(accuracy(null), null, 'no reported accuracy is not zero meters');
+assert.equal(accuracy(''), null);
+assert.equal(accuracy('bad'), null);
+assert.equal(accuracy('40.5'), 40.5);
+assert(spectraPage.includes('Math.abs(latitude) <= 90') &&
+  spectraPage.includes('Math.abs(longitude) <= 180'),
+  'regional previews must reject out-of-bounds coordinates');
+
 // Execute the actual client parser, including its exclusions, without mounting
 // unrelated legal/voice services or issuing a paid model request.
 const conversation = read('client/src/components/LexaraConversation.tsx');
