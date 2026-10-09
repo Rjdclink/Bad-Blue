@@ -185,12 +185,9 @@ export function htmlEvidence(raw: string, sourceUrl: string): {
     observations.push({
       latitude,
       longitude,
-      timestamp: timestamp(
-        meta.get('article:published_time')
-        || meta.get('date')
-        || meta.get('datepublished')
-        || meta.get('og:updated_time')
-      ),
+      // A webpage's publication or modification time is not a timestamped
+      // measurement of a subject's location. Preserve its publishedAt
+      // separately for regional source freshness instead.
       sourceUrl,
       acquisitionMethod: 'html-geospatial-metadata',
       metadata: { metadataKind: 'html-meta' },
@@ -248,14 +245,10 @@ export function htmlEvidence(raw: string, sourceUrl: string): {
           observations.push({
             latitude: lat,
             longitude: lon,
-            timestamp: timestamp(
-              value.datePublished
-              ?? value.dateCreated
-              ?? value.uploadDate
-              ?? value.startDate
-              ?? value.endDate
-              ?? geo.timestamp
-            ),
+            // Article creation, publication and event dates describe
+            // documents/events, not a device or person's observed position.
+            // Only explicit geospatial measurement timestamps qualify.
+            timestamp: timestamp(geo.timestamp),
             sourceUrl,
             acquisitionMethod: 'json-ld-geospatial-metadata',
             metadata: {

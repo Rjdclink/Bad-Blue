@@ -186,6 +186,11 @@ test('Synthetic city regression suite records both correct matches and abstentio
   cityAccuracyFixtures.includes('correctlyAbstained') &&
   cityAccuracyFixtures.includes('not real-world accuracy'));
 
+test('Website publication and update times cannot masquerade as timed location fixes',
+  publicRetrieval.includes('timestamp: timestamp(geo.timestamp)') &&
+  publicRetrieval.includes('publication or modification time is not a timestamped') &&
+  !publicRetrieval.includes("meta.get('og:updated_time')"));
+
 test('Public evidence publication time reaches SPECTRA city corroboration',
   publicRetrieval.includes('publishedAt?: string') &&
   publicRetrieval.includes("meta.get('article:published_time')") &&
