@@ -53,4 +53,32 @@ const unrelatedJsonLd = `<html><head>
 assert.equal(htmlEvidence(unrelatedJsonLd, url).publishedAt, undefined,
   'person attributes are not proof of a webpage publication date');
 
+// Page timestamps are not observed-location timestamps, even if the page
+// publishes a geographic coordinate for a venue, publisher or organization.
+const pageWithCoordinates = `<html><head>
+  <meta property="place:location:latitude" content="41.2">
+  <meta property="place:location:longitude" content="-93.5">
+  <meta property="article:published_time" content="2017-04-15">
+  <meta property="og:updated_time" content="2026-10-09">
+</head><body>Fictional venue webpage.</body></html>`;
+const genericPlace = htmlEvidence(pageWithCoordinates, url);
+assert.equal(genericPlace.observations.length, 1);
+assert.equal(genericPlace.observations[0].timestamp, undefined,
+  'publication and update dates must not fabricate a location observation time');
+
+const placeJsonLd = `<html><head>
+  <script type="application/ld+json">{"@type":"Place","datePublished":"2026-09-15","geo":{"latitude":44.1,"longitude":-93.1}}</script>
+</head><body>Fictional place schema.</body></html>`;
+const placeData = htmlEvidence(placeJsonLd, url);
+assert.equal(placeData.observations.length, 1);
+assert.equal(placeData.observations[0].timestamp, undefined,
+  'JSON-LD datePublished is not a timestamped location measurement');
+
+const measuredJsonLd = `<html><head>
+  <script type="application/ld+json">{"@type":"Place","geo":{"latitude":44.1,"longitude":-93.1,"timestamp":"2026-08-02T12:30:00Z"}}</script>
+</head><body>Fictional timestamped geospatial record.</body></html>`;
+assert.equal(htmlEvidence(measuredJsonLd, url).observations[0]?.timestamp,
+  '2026-08-02T12:30:00.000Z',
+  'an explicit geospatial timestamp must survive separate from the page date');
+
 console.log('SPECTRA public webpage publication-date extraction tests passed.');
