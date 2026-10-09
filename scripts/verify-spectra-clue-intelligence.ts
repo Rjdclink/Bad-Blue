@@ -7,12 +7,13 @@ import {
   geocodeBestLocation,
 } from '../server/services/geoconsole/city-state-geocoder';
 
-const conversational = 'Located in Spirit Lake, Iowa, near Arbai, 109 27th Street.';
+// Fictional parsing-only fixture; never geocoded or associated with a person.
+const conversational = 'Located in North Exampleton, Oregon, near a library, 123 Example Street.';
 const address = extractStreetAddressHint(conversational);
 assert.ok(address, 'street address should be extracted from conversational clue');
-assert.equal(address?.street.toLowerCase(), '109 27th street');
-assert.equal(address?.city, 'Spirit Lake');
-assert.equal(address?.state, 'IA');
+assert.equal(address?.street.toLowerCase(), '123 example street');
+assert.equal(address?.city, 'North Exampleton');
+assert.equal(address?.state, 'OR');
 
 for (const message of [
   '123 Main Street, Salem, Oregon',
@@ -27,23 +28,23 @@ for (const message of [
 }
 
 const regional = extractCityStateHint(conversational);
-assert.equal(regional?.city, 'Spirit Lake');
-assert.equal(regional?.state, 'IA');
+assert.equal(regional?.city, 'North Exampleton');
+assert.equal(regional?.state, 'OR');
 
 const clues = extractLocationClues(conversational);
-assert.ok(clues.some(value => /109 27th street/i.test(value)), 'street clue must be preserved');
-assert.ok(clues.some(value => /Spirit Lake, IA/i.test(value)), 'regional clue must be preserved');
+assert.ok(clues.some(value => /123 example street/i.test(value)), 'street clue must be preserved');
+assert.ok(clues.some(value => /North Exampleton, OR/i.test(value)), 'regional clue must be preserved');
 
 for (const natural of [
-  'He is at 109 27th Street in Spirit Lake Iowa',
-  'Try 109 27th Street, Spirit Lake, IA',
-  'Last known at 109 27th Street near Spirit Lake, Iowa',
-  'The address is 109 27th Street; Spirit Lake Iowa',
+  'He is at 123 Example Street in North Exampleton Oregon',
+  'Try 123 Example Street, North Exampleton, OR',
+  'Last known at 123 Example Street near North Exampleton, Oregon',
+  'The address is 123 Example Street; North Exampleton Oregon',
 ]) {
   assert.ok(extractStreetAddressHint(natural), 'natural phrasing lost street clue: ' + natural);
 }
 
-assert.equal(extractFreeformLocationHint('located in Spirit Lake, Iowa'), 'Spirit Lake, Iowa');
+assert.equal(extractFreeformLocationHint('located in North Exampleton, Oregon'), 'North Exampleton, Oregon');
 
 // Mixed identity/contact clues must preserve an explicitly supplied place.
 // Use varied places and phrasing so this is not tied to one person's baseline.
