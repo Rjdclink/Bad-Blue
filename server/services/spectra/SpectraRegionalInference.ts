@@ -26,6 +26,34 @@ const RESIDENCE_LANGUAGE_RE =
 const HISTORICAL_LANGUAGE_RE =
   /\b(?:formerly|previously|historically|used\s+to|last\s+known|prior\s+to|moved\s+from)\b/i;
 
+// A webpage fetched today can contain a years-old residence claim. The
+// retrieval time is never a substitute for a publication date.
+const DAY_MS = 86_400_000;
+const MAX_DATED_SOURCE_AGE_MS = 730 * DAY_MS;
+
+function hasUsablePublicationDate(
+  item: RegionalSourceExcerpt,
+  asOfMs: number,
+): boolean {
+  const reported = item.metadata?.publishedAt
+    ?? item.metadata?.datePublished
+    ?? item.metadata?.publicationDate;
+  if (reported === undefined || reported === null) return true;
+  if (typeof reported !== 'string' || !reported.trim()) return false;
+  const publishedMs = Date.parse(reported);
+  if (!Number.isFinite(publishedMs)) return false;
+  const age = asOfMs - publishedMs;
+  return age >= -DAY_MS && age <= MAX_DATED_SOURCE_AGE_MS;
+}
+
+function normalizedClaim(statement: string): string {
+  return statement.toLowerCase()
+    .replace(/[’]/g, "'")
+    .replace(/\s+/g, ' ')
+    .replace(/[.!?,;:]+$/g, '')
+    .trim();
+}
+
 function sourceDomain(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   try {
@@ -50,7 +78,9 @@ function sourceText(value: unknown): string {
 export function inferCorroboratedRegionalCity(
   subject: string,
   sources: readonly RegionalSourceExcerpt[],
+  asOf: Date = new Date(),
 ): CorroboratedRegionalCity | null {
+  if (!Number.isFinite(asOf.getTime())) return null;
   const name = subject.replace(/\s+/g, ' ').trim();
   const nameTokens = name.split(' ').filter(Boolean);
   // General labels, one-word aliases and numbers are insufficient to
@@ -61,11 +91,16 @@ export function inferCorroboratedRegionalCity(
   ) return null;
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
   const fullName = new RegExp(`\\b${escaped}\\b`, 'i');
-  const evidence = new Map<string, { city: string; state: string; domains: Set<string> }>();
+  const evidence = new Map<string, {
+    city: string;
+    state: string;
+    domains: Set<string>;
+    claimsByDomain: Map<string, Set<string>>;
+  }>();
 
   for (const item of sources.slice(0, 200)) {
     const domain = sourceDomain(item.url);
-    if (!domain) continue;
+    if (!domain || !hasUsablePublicationDate(item, asOf.getTime())) continue;
     const excerpts = [
       sourceText(item.title),
       sourceText(item.snippet),
@@ -99,8 +134,12 @@ export function inferCorroboratedRegionalCity(
           city: region.city,
           state: region.state,
           domains: new Set<string>(),
+          claimsByDomain: new Map<string, Set<string>>(),
         };
         existing.domains.add(domain);
+        const claims = existing.claimsByDomain.get(domain) || new Set<string>();
+        claims.add(normalizedClaim(statement));
+        existing.claimsByDomain.set(domain, claims);
         evidence.set(key, existing);
       }
     }
@@ -109,16 +148,30 @@ export function inferCorroboratedRegionalCity(
   const ranked = [...evidence.values()]
     .sort((a, b) => b.domains.size - a.domains.size);
   const winner = ranked[0];
-  if (
-    !winner || winner.domains.size < 2 ||
-    (ranked[1] && ranked[1].domains.size >= winner.domains.size)
-  ) return null;
+  // Even one independently sourced contradictory city is a reason to
+  // abstain: choosing the plurality can turn a stale biography into a
+  // confident-looking but wrong present-day association.
+  if (!winner || winner.domains.size < 2 || ranked.length !== 1) return null;
+
+  // Copies of the same wording on separate domains are not independent
+  // evidence. Count only publishers contributing a distinct statement.
+  const uniqueClaims = new Set<string>();
+  const independentDomains: string[] = [];
+  for (const [domain, claims] of [...winner.claimsByDomain].sort(
+    ([first], [second]) => first.localeCompare(second),
+  )) {
+    const newClaim = [...claims].sort().find(claim => !uniqueClaims.has(claim));
+    if (!newClaim) continue;
+    uniqueClaims.add(newClaim);
+    independentDomains.push(domain);
+  }
+  if (independentDomains.length < 2) return null;
 
   return {
     city: winner.city,
     state: winner.state,
-    independentSourceCount: winner.domains.size,
-    sourceDomains: [...winner.domains].sort(),
+    independentSourceCount: independentDomains.length,
+    sourceDomains: independentDomains,
     currentPositionVerified: false,
   };
 }
