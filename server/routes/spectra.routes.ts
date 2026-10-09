@@ -58,6 +58,54 @@ import { acquireSpectraActiveTelemetry } from '../services/spectra/SpectraActive
 const router = Router();
 router.use(isAuthenticated);
 
+// Source access is deliberately not inferred from a person's identifiers.
+// An available upload path is not an active account connection, and
+// third-party accounts must never be treated as linked without OAuth consent.
+router.get('/source-access', (_req: Request, res: Response) => {
+  res.setHeader('Cache-Control', 'no-store');
+  return res.json({
+    success: true,
+    sources: [
+      {
+        id: 'media',
+        label: 'Photos and videos',
+        state: 'manual_import_available',
+        detail: 'Only media files explicitly selected and uploaded inside SPECTRA.',
+      },
+      {
+        id: 'telemetry_files',
+        label: 'Phone or device telemetry files',
+        state: 'manual_import_available',
+        detail: 'Supported location-data files can be selected and imported; no device feed is automatically connected.',
+      },
+      {
+        id: 'gmail',
+        label: 'Gmail account',
+        state: 'not_connected',
+        detail: 'No Gmail reading connection exists in SPECTRA. A separate, revocable account authorization would be required.',
+      },
+      {
+        id: 'social',
+        label: 'Social accounts',
+        state: 'not_connected',
+        detail: 'No authenticated social-account reading connection is active.',
+      },
+      {
+        id: 'browser_logins',
+        label: 'Browser passwords and sessions',
+        state: 'not_supported',
+        detail: 'Passwords, login cookies and private browser sessions are not collected.',
+      },
+      {
+        id: 'chat_attachments',
+        label: 'Files shared in ChatGPT',
+        state: 'not_connected',
+        detail: 'ChatGPT attachments are not automatically transferred to SPECTRA.',
+      },
+    ],
+  });
+});
+
 const directEvidenceSchema = z.object({
   latitude: z.number().min(-90).max(90),
   longitude: z.number().min(-180).max(180),
