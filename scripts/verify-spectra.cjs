@@ -33,6 +33,7 @@ const exifTool = read('server/services/locationIntelligence/ExifToolExtractor.ts
 const spectraSources = read('server/services/spectra/SpectraSourceRegistry.ts');
 const pantheonSources = read('server/services/pantheon/PantheonSovereignSourceRegistry.ts');
 const geocoder = read('server/services/geoconsole/city-state-geocoder.ts');
+const locationQuality = read('server/services/geoconsole/location-quality.ts');
 const geoconsoleRoutes = read('server/routes/geoconsole.routes.ts');
 const adapterRegistry = read('server/services/spectra/SpectraAdapterRegistry.ts');
 const activeAcquisition = read('server/services/spectra/SpectraActiveAcquisition.ts');
@@ -121,6 +122,21 @@ test('Natural-language clues are decomposed into address and regional candidates
   geocoder.includes("strategy, 'structured_address'") === false &&
   geocoder.includes("queryGeocoder(structured, 'structured_address')") &&
   geocoder.includes("queryGeocoder(direct, 'normalized_freeform')"));
+test('SPECTRA rejects missing or impossible provider coordinates before mapping',
+  geocoder.includes('function parseGeocoderCoordinates(') &&
+  geocoder.includes("typeof value !== 'string' && typeof value !== 'number'") &&
+  geocoder.includes('Math.abs(latitude) > 90') &&
+  geocoder.includes('Math.abs(longitude) > 180') &&
+  geocoder.includes("'[SPECTRA_GEOCODER] invalid_payload'") &&
+  (geocoder.match(/parseGeocoderCoordinates\(/g) || []).length >= 6);
+test('General location quality rejects impossible fixes without inventing precision',
+  locationQuality.includes("code: 'invalid_coordinate'") &&
+  locationQuality.includes("code: 'invalid_confidence'") &&
+  locationQuality.includes("code: 'invalid_accuracy'") &&
+  locationQuality.includes('timestampValue instanceof Date') &&
+  locationQuality.includes('Number.isFinite(point.latitude)') &&
+  locationQuality.includes('Number.isFinite(point.longitude)'));
+
 test('Geocoder failures are classified without logging raw clue text',
   geocoder.includes("'[SPECTRA_GEOCODER] request_failed'") &&
   geocoder.includes("'[SPECTRA_GEOCODER] no_match'") &&
