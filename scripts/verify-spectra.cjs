@@ -775,9 +775,10 @@ test('Signed-out Spectra deep links reach login without bypassing protected rout
   app.includes('"/geo-console",') &&
   app.includes('"/location-intel",') &&
   app.includes('"/geoconsole-report",') &&
-  app.includes('!isAuthenticated\n                ? <Redirect to="/login" />') &&
+  app.includes('!isAuthenticated\n                ? <Redirect to="/login" replace />') &&
   app.includes('accessState === "trial_expired"') &&
-  app.includes('<Redirect to="/subscription-required" />') &&
+  app.includes('<Redirect to="/trial-expired" replace />') &&
+  app.includes('<Redirect to="/subscription-required" replace />') &&
   app.indexOf('(!isAuthenticated || !hasPaidAccess) && [') <
     app.indexOf('<Route>\n            {isAuthenticated && accessState === "trial_expired"'));
 
