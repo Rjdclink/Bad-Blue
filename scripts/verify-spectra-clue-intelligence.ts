@@ -160,4 +160,32 @@ const isoDate = assessLocationQuality([
 assert.ok(isoDate.points[0]?.timestamp instanceof Date);
 assert.equal(isoDate.points[0].timestamp.toISOString(), '2026-01-01T12:00:00.000Z');
 
+// Malformed Nominatim bounding boxes must fall back to honest regional
+// uncertainty. Missing bounds must not be coerced into coordinates at zero.
+const invalidBounds: Array<{ city: string; bounds: unknown }> = [
+  { city: 'Blankbounds', bounds: ['', '', '', ''] },
+  { city: 'Nullbounds', bounds: [null, null, null, null] },
+  { city: 'Partiallynull', bounds: ['43.4', '43.6', null, '-96.4'] },
+  { city: 'Reversedbounds', bounds: ['44', '43', '-97', '-96'] },
+  { city: 'Invalidrange', bounds: ['95', '96', '-97', '-96'] },
+];
+try {
+  for (const { city, bounds } of invalidBounds) {
+    globalThis.fetch = async () => new Response(JSON.stringify([
+      { lat: '0', lon: '0', boundingbox: bounds },
+    ]));
+    const result = await geocodeCityState(`${city}, NM`);
+    assert.equal(result?.accuracyMeters, 25_000,
+      `Malformed bounding box must not imply region precision: ${city}`);
+  }
+
+  globalThis.fetch = async () => new Response(JSON.stringify([
+    { lat: '0', lon: '0', boundingbox: ['0', '0', '0', '0'] },
+  ]));
+  assert.equal((await geocodeCityState('Validbounds, NM'))?.accuracyMeters, 1_000,
+    'A valid zero-valued bounding box should retain the ordinary regional floor');
+} finally {
+  globalThis.fetch = originalFetch;
+}
+
 console.log('SPECTRA clue-intelligence verification passed.');
