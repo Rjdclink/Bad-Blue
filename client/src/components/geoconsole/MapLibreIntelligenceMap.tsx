@@ -77,6 +77,30 @@ const OPENFREEMAP_DARK =
   (import.meta.env?.VITE_MAP_DARK_STYLE_URL as string | undefined) ||
   'https://tiles.openfreemap.org/styles/dark';
 
+// OpenFreeMap is an external style service. If it is blocked or unreachable,
+// use a locally-defined raster style from an independent tile host rather
+// than presenting a blank map. A second provider failure uses Leaflet.
+const SPECTRA_RASTER_FALLBACK_ID = 'spectra-independent-raster-fallback';
+const SPECTRA_FALLBACK_RASTER_STYLE = {
+  version: 8 as const,
+  name: 'SPECTRA alternate regional basemap',
+  sources: {
+    'spectra-basemap-backup': {
+      type: 'raster' as const,
+      tiles: [
+        'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',
+      ],
+      tileSize: 256,
+      attribution: 'Map tiles © Esri and contributors',
+    },
+  },
+  layers: [{
+    id: 'spectra-basemap-backup-layer',
+    type: 'raster' as const,
+    source: 'spectra-basemap-backup',
+  }],
+};
+
 const CUSTOM_SATELLITE_TILES =
   import.meta.env?.VITE_SATELLITE_TILES_URL as string | undefined;
 const SATELLITE_TILES =
@@ -705,6 +729,7 @@ function setVisibility(map: MapLibreMap, id: string, visible: boolean) {
 
 const providerSourceKey = (sourceId: string | undefined): keyof MapProviderStatus | null => {
   if (!sourceId) return null;
+  if (sourceId === 'spectra-basemap-backup') return 'basemap';
   if (sourceId === 'spectra-satellite') return 'satellite';
   if (sourceId === 'spectra-earth-observation') return 'earthObservation';
   if (sourceId === 'spectra-terrain-dem') return 'terrain';
@@ -880,14 +905,16 @@ export const MapLibreIntelligenceMap: React.FC<IntelligenceMapProps> = ({
         const message = String(event?.error?.message || event?.error || '');
         if (
           message &&
-          activeStyleRef.current !== OPENFREEMAP_LIBERTY &&
-          !providerFallbackAppliedRef.current.has('basemap')
+          (activeStyleRef.current === OPENFREEMAP_LIBERTY ||
+            activeStyleRef.current === OPENFREEMAP_DARK) &&
+          !providerFallbackAppliedRef.current.has('basemap') &&
+          /fetch|network|style|tile|http/i.test(message)
         ) {
           providerFallbackAppliedRef.current.add('basemap');
-          activeStyleRef.current = OPENFREEMAP_LIBERTY;
+          activeStyleRef.current = SPECTRA_RASTER_FALLBACK_ID;
           markProviderState('basemap', 'fallback');
           setReady(false);
-          map.setStyle(OPENFREEMAP_LIBERTY);
+          map.setStyle(SPECTRA_FALLBACK_RASTER_STYLE, { diff: false });
         }
         return;
       }
@@ -902,6 +929,12 @@ export const MapLibreIntelligenceMap: React.FC<IntelligenceMapProps> = ({
       }
 
       markProviderState(key, 'unavailable');
+      if (sourceId === 'spectra-basemap-backup') {
+        // Independent raster host also unavailable: retain map controls,
+        // evidence and uncertainty via the separate Leaflet tile renderer.
+        setRendererUnavailable(true);
+        return;
+      }
       if (sourceId === 'spectra-terrain-dem') {
         try {
           map.setTerrain(null);
@@ -991,6 +1024,9 @@ export const MapLibreIntelligenceMap: React.FC<IntelligenceMapProps> = ({
     const map = mapRef.current;
     if (!map) return;
     const desired = mapMode === 'dark' ? OPENFREEMAP_DARK : OPENFREEMAP_LIBERTY;
+    // Do not retry a known-broken vector host every time a style button is
+    // pressed; the independent map renderer remains available.
+    if (providerFallbackAppliedRef.current.has('basemap')) return;
     if (activeStyleRef.current === desired) return;
 
     // Satellite/hybrid are instant raster overlays. Only the vector base style
