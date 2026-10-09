@@ -182,8 +182,8 @@ try {
   globalThis.fetch = async () => new Response(JSON.stringify([
     { lat: '0', lon: '0', boundingbox: ['0', '0', '0', '0'] },
   ]));
-  assert.equal((await geocodeCityState('Validbounds, NM'))?.accuracyMeters, 1_000,
-    'A valid zero-valued bounding box should retain the ordinary regional floor');
+  assert.equal((await geocodeCityState('Validbounds, NM'))?.accuracyMeters, 25_000,
+    'An area without measurable extent preserves the conservative uncertainty fallback');
 } finally {
   globalThis.fetch = originalFetch;
 }
