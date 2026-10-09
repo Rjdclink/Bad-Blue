@@ -745,6 +745,24 @@ test('Generic vehicle/camera feeds preserve track identity and velocity context'
   geoconsoleRoutes.includes("typeof inputMetadata.trackId === 'string'") &&
   geoconsoleRoutes.includes('velocity: (') &&
   geoconsoleRoutes.includes(': inputMetadata.velocity'));
+test('SPECTRA map restores layers on style changes without waiting for every tile',
+  intelligenceMap.includes("map.on('style.load', () => initializeRuntimeLayers(map))") &&
+  !intelligenceMap.includes("if (!map.isStyleLoaded()) return;") &&
+  !intelligenceMap.includes("map.once('style.load'"));
+test('SPECTRA map adjusts to split-panel and fullscreen size changes',
+  intelligenceMap.includes('new ResizeObserver(() => map.resize())') &&
+  intelligenceMap.includes('resizeObserver?.disconnect()'));
+test('One forecast observation renders as a point rather than invalid LineString',
+  intelligenceMap.includes('features: futurecast.length > 1') &&
+  intelligenceMap.includes(': futurecast.map(pointFeature),'));
+test('Superseded timeline loads cannot override newer investigations',
+  runtime.includes('const loadRequestRef = useRef(0);') &&
+  runtime.includes('const loadRequestId = ++loadRequestRef.current;') &&
+  (runtime.match(/loadRequestId !== loadRequestRef\.current/g) || []).length >= 3);
+test('Superseded forecast requests are invalidated before the minimum-frame check',
+  runtime.includes('const requestId = ++futurecastRequestRef.current;\n    if (!cfg.predictiveEnabled || sourceFrames.length < 3)') &&
+  runtime.includes('++futurecastRequestRef.current;\n    setStatus(\'loading\')'));
+
 test('SPECTRA API is mounted',
   serverRoutes.includes("app.use('/api/spectra', spectraRoutes.default)"));
 
