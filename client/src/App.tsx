@@ -106,6 +106,7 @@ const LegalToolsPage = lazyWithRetry(() => import("@/pages/legal-tools"), 'Legal
 const PantheonPage = lazyWithRetry(() => import("@/pages/pantheon"), 'Pantheon');
 const ConsultationPage = lazyWithRetry(() => import("@/pages/legal-consultation"), 'Consultation');
 const SpectraPage = lazyWithRetry(() => import("@/pages/spectra"), 'Spectra');
+const SpectraPublicPage = lazyWithRetry(() => import("@/pages/spectra-public"), 'SpectraPublicMap');
 const SubscriptionSuccess = lazyWithRetry(() => import("@/pages/subscription-success"), 'SubscriptionSuccess');
 const FAQPage = lazyWithRetry(() => import("@/pages/faq"), 'FAQ');
 const InmateLocatorPage = lazyWithRetry(() => import("@/pages/inmate-locator"), 'InmateLocator');
@@ -212,7 +213,23 @@ function GatedControlRoom() {
   return <FeatureGate feature="reactor"><ControlRoomPage /></FeatureGate>;
 }
 
+const SPECTRA_PUBLIC_ROUTES = [
+  "/spectra",
+  "/people-finder",
+  "/geo-console",
+  "/location-intel",
+  "/tshpe",
+  "/tshpe-locator",
+  "/positioning",
+  "/geoconsole",
+  "/geoconsole-command",
+  "/geoconsole-process",
+  "/geoconsole-report",
+] as const;
+
 function Router() {
+  const [currentPath] = useLocation();
+  const isSpectraMapRoute = SPECTRA_PUBLIC_ROUTES.some(path => path === currentPath);
   const { user, isAuthenticated, isLoading } = useAuth();
   const isMasterSession = Boolean((user as any)?.isMasterBypass);
   const accessState = String((user as any)?.accessState || "");
@@ -279,7 +296,8 @@ function Router() {
     refetchIntervalInBackground: true,
   });
 
-  if (isLoading) return <AuthLoadingSkeleton />;
+  // A public map must render even when the account check is unavailable.
+  if (isLoading && !isSpectraMapRoute) return <AuthLoadingSkeleton />;
   if (maintenanceStatus?.maintenanceMode) return <MaintenanceMode />;
 
   return (
@@ -386,30 +404,13 @@ function Router() {
             </>
           ) : null}
 
-          {/* Spectra's aliases are private, but a signed-out deep link should
-              reach the existing login flow instead of an unexplained 404.
-              Authentication and subscription gates remain unchanged. */}
-          {(!isAuthenticated || !hasPaidAccess) && [
-            "/spectra",
-            "/people-finder",
-            "/geo-console",
-            "/location-intel",
-            "/tshpe",
-            "/tshpe-locator",
-            "/positioning",
-            "/geoconsole",
-            "/geoconsole-command",
-            "/geoconsole-process",
-            "/geoconsole-report",
-          ].map(path => (
-            <Route key={path} path={path}>
-              {!isAuthenticated
-                ? <Redirect to="/login" replace />
-                : accessState === "trial_expired"
-                  ? <Redirect to="/trial-expired" replace />
-                  : <Redirect to="/subscription-required" replace />}
-            </Route>
-          ))}
+          {/* Anyone can explore the general map without an account.
+              The authenticated SPECTRA investigator is registered above;
+              its acquisition, telemetry and stored records remain private. */}
+          {(!isAuthenticated || !hasPaidAccess) &&
+            SPECTRA_PUBLIC_ROUTES.map(path => (
+              <Route key={path} path={path} component={SpectraPublicPage} />
+            ))}
 
           <Route>
             {isAuthenticated && accessState === "trial_expired"
