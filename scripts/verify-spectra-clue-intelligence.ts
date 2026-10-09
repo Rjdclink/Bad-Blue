@@ -188,4 +188,29 @@ try {
   globalThis.fetch = originalFetch;
 }
 
+// Concurrent callers must share one geocoder request lane instead of all
+// waking together and exceeding the public provider's request budget.
+const geocoderStarts: number[] = [];
+try {
+  globalThis.fetch = async () => {
+    geocoderStarts.push(Date.now());
+    return new Response(JSON.stringify([
+      { lat: '41', lon: '-100', boundingbox: ['40.9', '41.1', '-100.1', '-99.9'] },
+    ]));
+  };
+  const responses = await Promise.all([
+    geocodeCityState('Queuealpha, NM'),
+    geocodeCityState('Queuebeta, NM'),
+    geocodeCityState('Queuegamma, NM'),
+  ]);
+  assert.equal(responses.filter(Boolean).length, 3);
+  assert.equal(geocoderStarts.length, 3, 'each distinct uncached request should execute');
+  for (let index = 1; index < geocoderStarts.length; index += 1) {
+    assert.ok(geocoderStarts[index] - geocoderStarts[index - 1] >= 900,
+      'parallel geocoder calls should not burst within the same second');
+  }
+} finally {
+  globalThis.fetch = originalFetch;
+}
+
 console.log('SPECTRA clue-intelligence verification passed.');
