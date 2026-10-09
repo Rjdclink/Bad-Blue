@@ -62,10 +62,26 @@ function metadataString(point: GPSPoint, ...keys: string[]): string | null {
 
 const GENERIC_SPECTRA_SUBJECT_RE = /^(?:person|individual|target|device|vehicle|car|truck|business|company|organization|object|place|address|thing|property|phone|phone number)$/i;
 
+function isOrderedWholeTokenRefinement(shorter: string, longer: string): boolean {
+  // Subject labels can gain middle names or extra identifiers, but a partial
+  // word match (Ann vs Anna, Lee vs Leela) never establishes compatibility.
+  const required = shorter.split(/\s+/).filter(Boolean);
+  const available = longer.split(/\s+/).filter(Boolean);
+  if (!required.length || required.length > available.length) return false;
+
+  let matched = 0;
+  for (const token of available) {
+    if (token === required[matched]) matched += 1;
+    if (matched === required.length) return true;
+  }
+  return false;
+}
+
 function subjectsCompatible(existing: string, incoming: string): boolean {
   if (!existing || !incoming || existing === incoming) return true;
   if (GENERIC_SPECTRA_SUBJECT_RE.test(existing) || GENERIC_SPECTRA_SUBJECT_RE.test(incoming)) return true;
-  return existing.includes(incoming) || incoming.includes(existing);
+  return isOrderedWholeTokenRefinement(existing, incoming)
+    || isOrderedWholeTokenRefinement(incoming, existing);
 }
 
 function clueType(value: string): string {
