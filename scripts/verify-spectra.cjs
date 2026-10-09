@@ -781,6 +781,11 @@ test('Signed-out Spectra deep links reach login without bypassing protected rout
   app.indexOf('(!isAuthenticated || !hasPaidAccess) && [') <
     app.indexOf('<Route>\n            {isAuthenticated && accessState === "trial_expired"'));
 
+test('SPECTRA Back follows browser history with the standard authorized fallback',
+  spectra.includes("import { BackButton } from '@/components/BackButton'") &&
+  spectra.includes('<BackButton fallbackRoute="/lexara-consent"') &&
+  !spectra.includes("onClick={() => setLocation('/lexara-consent')}"));
+
 test('SPECTRA API is mounted',
   serverRoutes.includes("app.use('/api/spectra', spectraRoutes.default)"));
 
