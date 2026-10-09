@@ -404,10 +404,10 @@ function Router() {
           ].map(path => (
             <Route key={path} path={path}>
               {!isAuthenticated
-                ? <Redirect to="/login" />
+                ? <Redirect to="/login" replace />
                 : accessState === "trial_expired"
-                  ? <Redirect to="/trial-expired" />
-                  : <Redirect to="/subscription-required" />}
+                  ? <Redirect to="/trial-expired" replace />
+                  : <Redirect to="/subscription-required" replace />}
             </Route>
           ))}
 
