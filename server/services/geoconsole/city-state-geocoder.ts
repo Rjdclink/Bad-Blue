@@ -266,16 +266,16 @@ function geocoderAccuracyMeters(
   boundingbox?: string[],
 ): number {
   if (!Array.isArray(boundingbox) || boundingbox.length < 4) return 25_000;
-  const south = Number(boundingbox[0]);
-  const north = Number(boundingbox[1]);
-  const west = Number(boundingbox[2]);
-  const east = Number(boundingbox[3]);
-  if (
-    ![south, north, west, east].every(Number.isFinite) ||
-    Math.abs(south) > 90 || Math.abs(north) > 90 ||
-    Math.abs(west) > 180 || Math.abs(east) > 180 ||
-    south > north
-  ) return 25_000;
+  // Apply the same strict parsing as location points. Number(null) and
+  // Number('') would otherwise silently turn missing bounding-box edges into
+  // valid zeros, producing an invented map uncertainty envelope.
+  const southWest = parseGeocoderCoordinates(boundingbox[0], boundingbox[2]);
+  const northEast = parseGeocoderCoordinates(boundingbox[1], boundingbox[3]);
+  if (!southWest || !northEast || southWest.latitude > northEast.latitude) {
+    return 25_000;
+  }
+  const { latitude: south, longitude: west } = southWest;
+  const { latitude: north, longitude: east } = northEast;
 
   const corners = [
     [south, west],
