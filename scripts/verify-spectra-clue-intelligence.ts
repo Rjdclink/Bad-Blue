@@ -66,6 +66,19 @@ for (const [message, city, state] of [
   assert.ok(extractLocationClues(message).includes(`${city}, ${state}`));
 }
 
+// Distinguish an explicitly reported city from the person's name and
+// surrounding contact/identity wording. Do not use any real benchmark data.
+for (const [text, city, state] of [
+  ['Taylor Morgan lives in Cedar Rapids, IA', 'Cedar Rapids', 'IA'],
+  ['Taylor Morgan resides in Cedar Rapids, IA', 'Cedar Rapids', 'IA'],
+  ['Taylor Morgan is based in Cedar Rapids, IA', 'Cedar Rapids', 'IA'],
+  ['Cedar Rapids, IA', 'Cedar Rapids', 'IA'],
+] as const) {
+  const found = extractCityStateHint(text);
+  assert.equal(found?.city, city, `identity prefix was included in city: ${text}`);
+  assert.equal(found?.state, state);
+}
+
 // Conversational words such as "me" must not become state abbreviations.
 // A willing geocoder can return a real place for an unrelated query, so the
 // identity-only launch must be rejected before any geocoding request is made.
