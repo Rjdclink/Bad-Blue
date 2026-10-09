@@ -885,6 +885,7 @@ export default function SpectraPage() {
             subject={target || 'SPECTRA target'}
             sessionId={spectraSessionId}
             onSessionCreated={setSpectraSessionId}
+            allowDeviceLocation={false}
             spectraShell
           />
 
