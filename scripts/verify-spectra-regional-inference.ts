@@ -27,6 +27,23 @@ assert.equal(inferCorroboratedRegionalCity(person, [
   first, { ...first, url: 'https://profile.example.org/duplicate' },
 ]), null);
 
+// Different subdomains of one publisher are not independent sources.
+assert.equal(inferCorroboratedRegionalCity(person, [
+  { ...first, url: 'https://profiles.example.org/person/taylor' },
+  { ...second, url: 'https://news.example.org/taylor' },
+]), null);
+assert.equal(inferCorroboratedRegionalCity(person, [
+  { ...first, url: 'https://profiles.example.co.uk/person/taylor' },
+  { ...second, url: 'https://news.example.co.uk/taylor' },
+]), null);
+
+// A residence statement about someone else in the same sentence must not
+// be attributed to the searched name.
+assert.equal(inferCorroboratedRegionalCity(person, [
+  { url: 'https://one.example.org/', snippet: 'Taylor Morgan interviewed Jordan Lee, who lives in Cedar Rapids, IA.' },
+  { url: 'https://two.example.net/', snippet: 'Taylor Morgan visited Jordan Lee, who resides in Cedar Rapids, IA.' },
+]), null);
+
 // A broad mention of a city is not a residence or subject match.
 assert.equal(inferCorroboratedRegionalCity(person, [
   { url: 'https://one.example.org/', snippet: 'Taylor Morgan attended a conference in Omaha, Nebraska.' },
