@@ -186,6 +186,14 @@ test('Synthetic city regression suite records both correct matches and abstentio
   cityAccuracyFixtures.includes('correctlyAbstained') &&
   cityAccuracyFixtures.includes('not real-world accuracy'));
 
+test('Public evidence publication time reaches SPECTRA city corroboration',
+  publicRetrieval.includes('publishedAt?: string') &&
+  publicRetrieval.includes("meta.get('article:published_time')") &&
+  publicRetrieval.includes("meta.get('datepublished')") &&
+  publicRetrieval.includes("candidate['@type']") &&
+  publicRetrieval.includes('publishedAt: extracted.publishedAt') &&
+  (routes.match(/publishedAt: evidence\.publishedAt/g) || []).length === 2);
+
 test('One-hour previous/future timeline remains available',
   dashboard.includes('min={-60}') && dashboard.includes('max={60}'));
 
