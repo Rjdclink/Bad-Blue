@@ -98,6 +98,12 @@ function deepgramApiKey(): string {
 
 const LEXARA_FEMALE_VOICE = {
   deepgram: process.env.DEEPGRAM_TTS_MODEL?.trim() || 'flux-haley-en',
+  // Voice adapters remain disabled by the Deepgram-only routing policy.
+  // Keep their configured IDs valid without enabling paid fallback providers.
+  gemini: process.env.GEMINI_TTS_VOICE?.trim() || 'Kore',
+  xai: process.env.XAI_TTS_VOICE_ID?.trim() || 'eve',
+  groq: process.env.GROQ_TTS_VOICE?.trim() || 'hannah',
+  azure: process.env.AZURE_SPEECH_VOICE?.trim() || 'en-US-JennyNeural',
 } as const;
 
 export function getLexaraVoiceProfileBindings() {
