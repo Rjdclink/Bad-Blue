@@ -1,4 +1,5 @@
 import type { SpectraRetrievedEvidence } from './SpectraPublicRetrieval';
+import { createSpectraRetrievalDiagnostics, type SpectraRetrievalDiagnostic } from './SpectraRetrievalDiagnostics';
 
 const states = new Set('AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY'.split(' '));
 const tokens = (text: string) => text.toLowerCase().match(/[a-z0-9]+/g) || [];
@@ -32,7 +33,7 @@ export function assessPublicPlacePage(target: string, page: SpectraRetrievedEvid
 
 interface PlaceDependencies {
   discover: (query: string, signal: AbortSignal) => Promise<Array<{ url: string }>>;
-  retrieve: (urls: string[], signal: AbortSignal) => Promise<SpectraRetrievedEvidence[]>;
+  retrieve: (urls: string[], signal: AbortSignal, onDiagnostic?: (row: SpectraRetrievalDiagnostic) => void) => Promise<SpectraRetrievedEvidence[]>;
   geocode: (city: string) => Promise<{ latitude: number; longitude: number; accuracyMeters: number } | null>;
 }
 
@@ -54,12 +55,19 @@ export async function acquirePublicPlace(target: string, details: string, deps: 
   // source links are read first; they are evidence leads, not trusted facts.
   const discovered = await bounded(signal => deps.discover(`"${target}" visitor address location`, signal), 10_000, []);
   const urls = [...new Set([...suppliedUrls, ...discovered.map(item => item.url)])].slice(0, 8);
-  const pages = await bounded(signal => deps.retrieve(urls, signal), 5_000, []);
+  const retrievalDiagnostics = createSpectraRetrievalDiagnostics(urls.length);
+  const pages = await bounded(signal => deps.retrieve(urls, signal, retrievalDiagnostics.record), 5_000, []);
+  const retrieval = retrievalDiagnostics.finish();
   const sources = pages.map(page => ({
     url: page.url, title: page.title || page.url, retrievedAt: page.retrievedAt,
     publishedAt: page.publishedAt, ...assessPublicPlacePage(target, page),
   }));
   const supported = sources.filter(source => source.status === 'supported');
+  const rejectionReasons: Record<string, number> = {};
+  for (const source of sources) {
+    if (source.status !== 'supported') rejectionReasons[source.status] = (rejectionReasons[source.status] || 0) + 1;
+  }
+  const distinctRetrievedUrls = new Set(pages.map(page => page.url)).size;
   const cities = new Set(supported.map(source => `${source.city!.toLowerCase()}|${source.state}`));
   const conflict = cities.size > 1 || sources.some(source => source.status === 'conflicting-addresses');
   const first = !conflict && cities.size === 1 ? supported[0] : undefined;
@@ -77,5 +85,7 @@ export async function acquirePublicPlace(target: string, details: string, deps: 
     : !valid ? 'geocoding-unavailable' : 'public-place-city';
   return { candidates, sources, diagnostics: {
     selected: urls.length, retrieved: pages.length, supported: supported.length, outcome,
+    retrieval, rejectionReasons, distinctRetrievedUrls,
+    duplicateRetrievedUrls: pages.length - distinctRetrievedUrls,
   } };
 }

@@ -50,6 +50,7 @@ import {
 } from '../services/spectra/SpectraIdentityBinding';
 import { acquireSpectraPlaceContext } from '../services/spectra/SpectraPlaceContext';
 import { retrieveSpectraPublicEvidence } from '../services/spectra/SpectraPublicRetrieval';
+import { createSpectraRetrievalDiagnostics, mergeSpectraRetrievalDiagnostics } from '../services/spectra/SpectraRetrievalDiagnostics';
 import {
   mergePublicRetrievedMetadata,
   stripUnboundPublicGeoContext,
@@ -438,6 +439,7 @@ async function runDiscoveryPass(
     retrieval.selected = retrievalTargets.length;
 
     if (retrievalTargets.length) {
+      const retrievalDiagnostics = createSpectraRetrievalDiagnostics(retrievalTargets.length);
       const retrievalController = new AbortController();
       const retrievalTimer = setTimeout(() => {
         retrieval.deadlineExpiredPasses = 1;
@@ -446,7 +448,7 @@ async function runDiscoveryPass(
       let retrieved: Awaited<ReturnType<typeof retrieveSpectraPublicEvidence>> = [];
       try {
         const outcome = await settleWithin(
-          retrieveSpectraPublicEvidence(retrievalTargets, retrievalController.signal),
+          retrieveSpectraPublicEvidence(retrievalTargets, retrievalController.signal, retrievalDiagnostics.record),
           5_000,
           'SPECTRA page retrieval',
         );
@@ -456,6 +458,7 @@ async function runDiscoveryPass(
         // Also stop remaining work if an uncancellable upstream operation lost
         // the bounded wait. Late completions cannot mutate the returned result.
         retrievalController.abort();
+        retrieval.diagnostics = retrievalDiagnostics.finish();
       }
 
       retrieval.retrieved = retrieved.length;
@@ -1058,6 +1061,9 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       retrievalCounts.selected += nextPass.retrieval.selected;
       retrievalCounts.retrieved += nextPass.retrieval.retrieved;
       retrievalCounts.deadlineExpiredPasses += nextPass.retrieval.deadlineExpiredPasses;
+      retrievalCounts.diagnostics = mergeSpectraRetrievalDiagnostics([
+        retrievalCounts.diagnostics, nextPass.retrieval.diagnostics,
+      ]);
       discoveryPasses += nextPass.attempted > 0 ? 1 : 0;
       discoveryResults = dedupeDiscoveryResults([
         ...discoveryResults,

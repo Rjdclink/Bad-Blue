@@ -1,8 +1,11 @@
 /** Counts only. Never copy targets, records, coordinates, URLs or error text. */
+import { mergeSpectraRetrievalDiagnostics, type SpectraRetrievalSummary } from './SpectraRetrievalDiagnostics';
+
 export interface SpectraRetrievalCounts {
   selected: number;
   retrieved: number;
   deadlineExpiredPasses: number;
+  diagnostics?: SpectraRetrievalSummary;
 }
 
 interface PipelineInput {
@@ -49,6 +52,8 @@ export function buildSpectraPipelineDiagnostics(input: PipelineInput) {
       retrieved,
       notRetrieved: selected - retrieved,
       deadlineExpiredPasses: count(input.retrieval.deadlineExpiredPasses),
+      diagnostics: input.retrieval.diagnostics
+        ? mergeSpectraRetrievalDiagnostics([input.retrieval.diagnostics]) : undefined,
     },
     telemetry: {
       configuredCollectors: count(input.configuredCollectors),

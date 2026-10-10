@@ -12,10 +12,13 @@ const compile = source => ts.transpileModule(source, {
 }).outputText;
 function load(file) {
   const module = { exports: {} };
-  vm.runInNewContext(compile(read(file)), { module, exports: module.exports });
+  vm.runInNewContext(compile(read(file)), { module, exports: module.exports,
+    require: name => load(path.relative(root, path.resolve(root, path.dirname(file), name + '.ts'))),
+  });
   return module.exports;
 }
 const diagnostics = load('server/services/spectra/SpectraPipelineDiagnostics.ts');
+const retrievalDiagnostics = load('server/services/spectra/SpectraRetrievalDiagnostics.ts');
 const client = load('client/src/lib/spectraFeedStatus.ts');
 const route = read('server/routes/spectra.routes.ts');
 const settle = route.slice(route.indexOf('async function settleWithin'), route.indexOf('\nfunction extractPhoneNumber'));
@@ -31,6 +34,7 @@ function pass(overrides = {}) {
     chooseSpectraPublicRetrievalUrls: values => values.map(value => value.url),
     mergePublicRetrievedMetadata: (_prior, value) => ({ retrieved: true, publishedAt: value.publishedAt }),
     retrieveSpectraPublicEvidence: async () => [],
+    ...retrievalDiagnostics,
     ...overrides,
   };
   vm.runInNewContext(compile(settle + '\n' + discovery + '\nthis.run = runDiscoveryPass;'), scope);
@@ -90,6 +94,19 @@ const empty = {
     const result = await pass({ discoverLegalMeshTier3: () => { throw Error('must not dispatch'); } })([], { useClaude: false });
     assert.equal(result.attempted, 0); assert.equal(result.retrieval.selected, 0);
   });
+  await check('late retrieval diagnostics cannot mutate a returned pass', () => timed(async clock => {
+    let record;
+    const run = pass({ retrieveSpectraPublicEvidence: (_urls, _signal, observer) => {
+      record = observer; return new Promise(() => {});
+    } });
+    const pending = run(['public document'], { useClaude: false });
+    await clock.tickAsync(5_000);
+    const result = await pending;
+    assert.equal(result.retrieval.diagnostics.unreported, 1);
+    record({ targetIndex: 0, reason: 'retrieved', httpStatus: 200 });
+    assert.equal(result.retrieval.diagnostics.unreported, 1);
+    assert.equal(result.retrieval.diagnostics.completed, 0);
+  }));
   await check('normalization failures and quality rejections stay visible without raw records', () => {
     const marker = 'PRIVATE_FIXTURE_MUST_NOT_APPEAR';
     const report = diagnostics.buildSpectraPipelineDiagnostics({ ...empty,

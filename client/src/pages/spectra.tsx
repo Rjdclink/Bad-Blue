@@ -8,7 +8,7 @@ import { useVoiceMode } from '@/hooks/useVoiceMode';
 import { useVoiceSynthesis } from '@/hooks/useVoiceSynthesis';
 import { getLexaraLiveEnabled } from '@/components/LexaraLiveConsentModal';
 import type { GPSPoint, LocationCandidate } from '@shared/geoconsoleTypes';
-import { spectraFeedNotice, spectraPipelineNotices, type SpectraFeedDiagnostics, type SpectraPipelineDiagnostics } from '@/lib/spectraFeedStatus';
+import { spectraFeedNotice, spectraPipelineNotices, spectraRetrievalNotices, type SpectraFeedDiagnostics, type SpectraPipelineDiagnostics, type SpectraRetrievalSummary } from '@/lib/spectraFeedStatus';
 
 type Phase = 'awaiting_target' | 'awaiting_details' | 'acquiring' | 'active' | 'error';
 
@@ -127,7 +127,7 @@ interface AcquisitionResponse {
   };
   locationObservations?: GPSPoint[];
   candidateLocations?: LocationCandidate[];
-  publicPlace?: { sources: Array<{ url: string; title: string; status: string }>; diagnostics: { selected: number; retrieved: number; supported: number; outcome: string } };
+  publicPlace?: { sources: Array<{ url: string; title: string; status: string }>; diagnostics: { selected: number; retrieved: number; supported: number; outcome: string; retrieval?: SpectraRetrievalSummary; distinctRetrievedUrls?: number; duplicateRetrievedUrls?: number } };
 }
 
 const FIRST_PROMPT = 'What is it that you want to locate?';
@@ -486,7 +486,13 @@ export default function SpectraPage() {
       setSourceCount(payload.acquisition?.sourceCount ?? 0);
       setFeedNotice(spectraFeedNotice(payload.acquisition?.feedDiagnostics));
       setPipelineNotices(payload.publicPlace
-        ? [`${payload.publicPlace.diagnostics.retrieved} of ${payload.publicPlace.diagnostics.selected} pages retrieved; ${payload.publicPlace.diagnostics.supported} supported venue address pages.`, `Result: ${payload.publicPlace.diagnostics.outcome}. City-level context; no calibrated probability or live-position claim.`]
+        ? [
+          `${payload.publicPlace.diagnostics.retrieved} of ${payload.publicPlace.diagnostics.selected} pages retrieved; ${payload.publicPlace.diagnostics.supported} supported venue address pages.`,
+          ...spectraRetrievalNotices(payload.publicPlace.diagnostics.retrieval),
+          ...(payload.publicPlace.diagnostics.distinctRetrievedUrls !== undefined
+            ? [`${payload.publicPlace.diagnostics.distinctRetrievedUrls} distinct retrieved URLs; ${payload.publicPlace.diagnostics.duplicateRetrievedUrls ?? 0} duplicate URL records. Distinct URLs do not establish independent evidence.`] : []),
+          `Result: ${payload.publicPlace.diagnostics.outcome}. City-level context; no calibrated probability or live-position claim.`,
+        ]
         : spectraPipelineNotices(payload.acquisition?.pipelineDiagnostics));
       setPlaceSources(payload.publicPlace?.sources || []);
       if (typeof payload.sessionId === 'string' && payload.sessionId.trim()) {
