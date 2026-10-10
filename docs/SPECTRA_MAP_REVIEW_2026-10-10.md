@@ -57,7 +57,7 @@ The windows contained 673 and 690 runtime entries respectively, retrieved in two
 
 ## Validation completed
 
-- 14 component lifecycle tests using actual React components and mocked map drivers: no starting target, stalled startup, asynchronous style error, no WebGL, successful startup, unrecovered/recovered context loss, style-switch timeout, satellite fallback metadata, NASA with 3D terrain/buildings, NASA fallback for a 3D request, successful raster load, exhausted providers, and tile-error cleanup.
+- 15 component lifecycle tests using actual React components and mocked map drivers: no starting target, stalled startup, asynchronous style error, no WebGL, successful startup, unrecovered/recovered context loss, style-switch timeout and successful overlay restoration before all tiles load, satellite fallback metadata, NASA with 3D terrain/buildings, NASA fallback for a 3D request, successful raster load, exhausted providers, and tile-error cleanup.
 - Shared basemap/deadline test passed: tile coordinate order, native zoom, historical label, custom attribution, cancellation and rearming.
 - Isolated TypeScript check of both map components and the helper passed with installed React/Leaflet/MapLibre types and fixtures for the unchanged application frame types. This is not a full repository type check.
 - esbuild compilation of the changed map modules passed; MapLibre's style validator accepted the inline NASA style.
@@ -94,3 +94,23 @@ These tests exercise lifecycle and configuration behavior. They do not measure s
 Changes are based on `3d318975b023d2d23f522727d80f1167ffc86484`. This preserves the branch's existing SEO and four later fixes.
 
 During review, Railway already had patch `3e661274-e535-445a-b2b6-385980196ee5` staged to advance production from `8ab5ddc` to SEO commit `83f48d4`. It was not created, accepted, replaced or deployed by this map repair. Reconcile that pending release before promoting this branch.
+
+## Batched follow-up: feed diagnostics and build compatibility
+
+After explicit deployment approval, the reviewed branch replaced the pending source release while preserving its changes. Deployment `537ca147-fdc0-4b15-b2d7-2df20983b9e5` failed during the production invariant checks on October 10 at 18:07 UTC. The attribution check still expected the Esri credit inside the renderer; it now lives in the shared basemap helper. A second static check expected an inline style callback even though the permanent named callback restores the same overlays and handles cleanup. Both checks now follow the implemented structure; the existing requirements remain enforced. An additional lifecycle check verifies style restoration while tiles are still loading.
+
+The same follow-up batch adds request-scoped discovery diagnostics using Node AsyncLocalStorage:
+
+- Distinguishes successful requests with candidates, empty results, connection failures, timeouts, caller cancellation, skipped requests and pending work.
+- Uses a generated request ID to correlate the authenticated acquisition response with provider logs. Concurrent requests retain separate counters. Snapshots do not change after being returned.
+- Classifies DNS, connection, HTTP and malformed-response failures without logging raw queries, URLs, credentials or exception text in the new diagnostic payloads.
+- Labels Promise completion as Promise completion rather than provider health. Search return values, provider selection, retries, budgets, identity matching and location inference are unchanged.
+- Shows an incomplete-coverage notice when feed diagnostics report failures or unfinished checks. A search error no longer blames missing target information.
+
+This reporting covers the instrumented discovery HTTP lanes only. It is not a count of retrieved documents, verified facts, all adapters, or connected accounts. An empty response is not proof that no public evidence exists. A configured parser is not proof that a feed is connected.
+
+Read-only Railway inspection confirmed that `lexara-ddgs` and `lexara-openserp` have failed deployments; `lexara-searxng` has no deployment. The DDGS build completed, but all `/health` probes failed and its replica never became healthy. These backing services were not redeployed or reconfigured by this batch. It does not claim their data feeds have been restored, and it does not add private account/device collection or expand person-location acquisition.
+
+Validation: nine offline diagnostic checks exercise the actual request wrapper, error classification, return-value preservation, timeout versus cancellation, concurrent-request isolation, pending snapshots, redaction, and client notices. The 35 production invariants, 134 Spectra static checks, client-control checks, and 15 map lifecycle checks pass locally. The diagnostic and shared-basemap checks are included in `verify:spectra` for subsequent builds. Full production build and live browser verification are still required for the replacement release.
+
+Primary diagnostic references: https://nodejs.org/api/async_context.html and https://opentelemetry.io/docs/specs/semconv/general/recording-errors/ . The implementation uses bounded error categories and per-request context; it does not add an OpenTelemetry exporter or external log destination.

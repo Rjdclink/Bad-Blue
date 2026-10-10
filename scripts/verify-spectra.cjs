@@ -861,7 +861,9 @@ test('Generic vehicle/camera feeds preserve track identity and velocity context'
   geoconsoleRoutes.includes('velocity: (') &&
   geoconsoleRoutes.includes(': inputMetadata.velocity'));
 test('SPECTRA map restores layers on style changes without waiting for every tile',
-  intelligenceMap.includes("map.on('style.load', () => initializeRuntimeLayers(map))") &&
+  intelligenceMap.includes("map.on('style.load', handleStyleReady)") &&
+  intelligenceMap.includes('initializeRuntimeLayers(map);') &&
+  intelligenceMap.includes("map.off('style.load', handleStyleReady)") &&
   !intelligenceMap.includes("if (!map.isStyleLoaded()) return;") &&
   !intelligenceMap.includes("map.once('style.load'"));
 test('SPECTRA map adjusts to split-panel and fullscreen size changes',
@@ -928,3 +930,4 @@ test('SPECTRA API is mounted',
 
 console.log(`\nPassed: ${passed}  Failed: ${failed}\n`);
 process.exit(failed === 0 ? 0 : 1);
+

@@ -1,3 +1,4 @@
+import { beginDiscoveryAttempt, getDiscoveryDiagnostics } from './DiscoveryDiagnostics';
 import {
   buildLexaraSourceQueries,
   getLexaraPublicSources,
@@ -101,24 +102,35 @@ async function withTimeout<T>(
   signal: AbortSignal | undefined,
   work: (signal: AbortSignal) => Promise<T>,
 ): Promise<T | null> {
-  if (!engineAvailable(lane)) return null;
+  const finish = beginDiscoveryAttempt(lane);
+  if (!engineAvailable(lane)) { finish('skipped'); return null; }
   const controller = new AbortController();
   const relay = () => controller.abort(signal?.reason);
   if (signal?.aborted) controller.abort(signal.reason);
   else signal?.addEventListener('abort', relay, { once: true });
-  const timer = setTimeout(() => controller.abort(new Error('Lexara discovery timeout')), Math.max(250, timeoutMs));
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    if (!controller.signal.aborted) timedOut = true;
+    controller.abort(new Error('Lexara discovery timeout'));
+  }, Math.max(250, timeoutMs));
   let acquired = false;
   try {
     while ((laneInFlight.get(lane) || 0) >= 2 && !controller.signal.aborted && engineAvailable(lane)) {
       await new Promise(resolve => setTimeout(resolve, 25));
     }
-    if (controller.signal.aborted || !engineAvailable(lane)) return null;
+    if (controller.signal.aborted || !engineAvailable(lane)) {
+      finish(controller.signal.aborted ? (timedOut ? 'timeout' : 'cancelled') : 'skipped');
+      return null;
+    }
     laneInFlight.set(lane, (laneInFlight.get(lane) || 0) + 1);
     acquired = true;
-    return await work(controller.signal);
+    const result = await work(controller.signal);
+    finish(controller.signal.aborted ? (timedOut ? 'timeout' : 'cancelled')
+      : Array.isArray(result) && result.length === 0 ? 'empty' : 'ok');
+    return result;
   } catch (error) {
     recordEngineFailure(lane, error instanceof Error ? error.message : String(error));
-    console.warn('[LEXARA Discovery]', JSON.stringify({ lane, outcome: controller.signal.aborted ? 'cancelled-or-timeout' : 'failed', error: error instanceof Error ? error.message : String(error), causeCode: (error as any)?.cause?.code || undefined }));
+    finish(controller.signal.aborted ? (timedOut ? 'timeout' : 'cancelled') : 'failed', error);
     return null;
   } finally {
     if (acquired) laneInFlight.set(lane, Math.max(0, (laneInFlight.get(lane) || 1) - 1));
@@ -456,7 +468,7 @@ async function freeSearch(
     ]);
     if (signal?.aborted) throw signal.reason || new DOMException('Discovery cancelled', 'AbortError');
     const enabled = [Boolean(process.env.TAVILY_API_KEY?.trim()), true, Boolean(lexaraSearxngBase()), Boolean(lexaraDdgsBase()), Boolean(lexaraOpenserpBase())];
-    console.info('[LEXARA Discovery Lanes]', JSON.stringify({ results: outcomes.map((outcome, index) => ({ lane: ['tavily', 'duckduckgo-instant-answer', 'searxng', 'ddgs', 'openserp'][index], enabled: enabled[index], candidates: outcome.status === 'fulfilled' ? outcome.value.length : 0, settled: outcome.status })) }));
+    console.info('[LEXARA Discovery Lanes]', JSON.stringify({ requestId: getDiscoveryDiagnostics()?.requestId, statusScope: 'promise-completion-only', results: outcomes.map((outcome, index) => ({ lane: ['tavily', 'duckduckgo-instant-answer', 'searxng', 'ddgs', 'openserp'][index], enabled: enabled[index], candidates: outcome.status === 'fulfilled' ? outcome.value.length : 0, promiseStatus: outcome.status })) }));
     return fuseRankedCandidates(outcomes.flatMap(outcome =>
       outcome.status === 'fulfilled' ? [outcome.value] : []));
   } finally {
@@ -616,3 +628,4 @@ export function legalMeshSufficient(items: LegalMeshCandidate[]): boolean {
 export function getLexaraSearchMeshSourceRoots(categories: readonly LexaraSourceCategory[] = [], jurisdiction?: string): string[] {
   return getLexaraPublicSources(categories,jurisdiction).map(source=>source.root);
 }
+

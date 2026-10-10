@@ -1,4 +1,5 @@
 import { Router, type Request, type Response } from 'express';
+import { getDiscoveryDiagnostics, withDiscoveryDiagnostics } from '../lexara/DiscoveryDiagnostics';
 import { z } from 'zod';
 import { isAuthenticated } from '../auth';
 import {
@@ -785,7 +786,8 @@ async function collectSpectraContextEvidence(input: {
   };
 }
 
-router.post('/acquire', async (req: Request, res: Response) => {
+router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiagnostics(async () => {
+  res.setHeader('X-Spectra-Request-Id', getDiscoveryDiagnostics()!.requestId);
   const parsed = acquireSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({
@@ -1385,6 +1387,7 @@ router.post('/acquire', async (req: Request, res: Response) => {
         liveLocationFreshestAgeMs: liveLocationAssessment.freshestAgeMs,
         subjectLiveLocationConfidence,
         sourceCount: sourceKeys.size,
+        feedDiagnostics: getDiscoveryDiagnostics(),
         evidenceItemCount:
           activeLocationPoints.length +
           directEvidence.length +
@@ -1431,8 +1434,10 @@ router.post('/acquire', async (req: Request, res: Response) => {
     return res.status(500).json({
       success: false,
       error: 'SPECTRA could not complete target acquisition.',
+      feedDiagnostics: getDiscoveryDiagnostics(),
     });
   }
-});
+}));
 
 export default router;
+

@@ -8,6 +8,7 @@ import { useVoiceMode } from '@/hooks/useVoiceMode';
 import { useVoiceSynthesis } from '@/hooks/useVoiceSynthesis';
 import { getLexaraLiveEnabled } from '@/components/LexaraLiveConsentModal';
 import type { GPSPoint, LocationCandidate } from '@shared/geoconsoleTypes';
+import { spectraFeedNotice, type SpectraFeedDiagnostics } from '@/lib/spectraFeedStatus';
 
 type Phase = 'awaiting_target' | 'awaiting_details' | 'acquiring' | 'active' | 'error';
 
@@ -109,10 +110,12 @@ interface AcquisitionResponse {
   resolvedTargetLabel?: string;
   sessionId?: string;
   persistenceAvailable?: boolean;
+  feedDiagnostics?: SpectraFeedDiagnostics;
   acquisition?: {
     identityConfidence: number;
     locationConfidence: number;
     sourceCount: number;
+    feedDiagnostics?: SpectraFeedDiagnostics;
     evidenceItemCount?: number;
     observationCount: number;
     discoveryPasses?: number;
@@ -170,6 +173,7 @@ export default function SpectraPage() {
   const [directEvidence, setDirectEvidence] = useState<GPSPoint[]>([]);
   const [confidence, setConfidence] = useState<number | null>(null);
   const [sourceCount, setSourceCount] = useState(0);
+  const [feedNotice, setFeedNotice] = useState<string | null>(null);
   const [spectraSessionId, setSpectraSessionId] = useState<string | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
   const [acquisitionStage, setAcquisitionStage] = useState('Waiting for target');
@@ -298,6 +302,7 @@ export default function SpectraPage() {
     setDirectEvidence([]);
     setConfidence(null);
     setSourceCount(0);
+    setFeedNotice(null);
     setSpectraSessionId(null);
     setLastError(null);
     setAcquisitionStage('Waiting for target');
@@ -314,6 +319,7 @@ export default function SpectraPage() {
   ) => {
     const requestId = ++requestRef.current;
     setPhase('acquiring');
+    setFeedNotice(null);
     setLastError(null);
     setAcquisitionStage('Resolving supplied location context…');
 
@@ -431,6 +437,7 @@ export default function SpectraPage() {
       if (requestId !== requestRef.current) return;
 
       if (!response.ok || !payload.success) {
+        setFeedNotice(spectraFeedNotice(payload.feedDiagnostics));
         throw new Error(payload.error || 'Target acquisition failed.');
       }
 
@@ -466,6 +473,7 @@ export default function SpectraPage() {
           : null
       );
       setSourceCount(payload.acquisition?.sourceCount ?? 0);
+      setFeedNotice(spectraFeedNotice(payload.acquisition?.feedDiagnostics));
       if (typeof payload.sessionId === 'string' && payload.sessionId.trim()) {
         setSpectraSessionId(payload.sessionId.trim());
       }
@@ -492,9 +500,9 @@ export default function SpectraPage() {
       if (requestId !== requestRef.current) return;
       const message = error instanceof Error ? error.message : 'Target acquisition failed.';
       setLastError(message);
-      setAcquisitionStage('Acquisition needs additional information');
+      setAcquisitionStage('Acquisition could not finish');
       setPhase('error');
-      const responseText = 'I could not complete that acquisition. Give me corrected or additional target information and I will try again.';
+      const responseText = 'I could not complete that search. A request or service failed; please try again later.';
       addMessage('spectra', responseText);
       speakIfEnabled(responseText);
     }
@@ -956,6 +964,11 @@ export default function SpectraPage() {
                 <p className="text-[11px] text-slate-500">
                   {sourceCount > 0 ? `${sourceCount} source groups referenced` : 'Tell SPECTRA what you need located'}
                 </p>
+                {feedNotice && (
+                  <p role="status" className="mt-1 text-xs text-amber-300" data-testid="spectra-feed-status">
+                    {feedNotice}
+                  </p>
+                )}
               </div>
               <Button
                 variant="ghost"

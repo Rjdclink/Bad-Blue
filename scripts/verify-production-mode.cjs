@@ -23,6 +23,8 @@ const test = (name, condition) => {
 const spectra = read('client/src/pages/spectra.tsx');
 const dashboard = read('client/src/components/geoconsole/GeoconsoleRadarDashboard.tsx');
 const map = read('client/src/components/geoconsole/MapLibreIntelligenceMap.tsx');
+const basemap = read('client/src/components/geoconsole/mapBasemap.ts');
+const rasterMap = read('client/src/components/geoconsole/RasterIntelligenceMap.tsx');
 const runtime = read('client/src/hooks/useGeoRuntime.ts');
 const tshpe = read('client/src/hooks/useTSHPELocator.ts');
 const fusion = read('server/services/geoconsole/inputFusionEngine.ts');
@@ -75,8 +77,10 @@ test('Weather and earth-observation layers follow the selected timeline',
   map.includes('/cache/tile.py/1.0.0/{layer}') &&
   dashboard.includes('displayTime={timelineContextTime}'));
 test('Satellite attribution is explicit and configurable',
-  map.includes('VITE_SATELLITE_ATTRIBUTION') &&
-  map.includes('Esri, Maxar, Earthstar Geographics, and the GIS User Community'));
+  map.includes('VITE_SATELLITE_ATTRIBUTION') && rasterMap.includes('VITE_SATELLITE_ATTRIBUTION') &&
+  basemap.includes('NASA') && basemap.includes('Esri, Maxar, Earthstar Geographics, and the GIS User Community') &&
+  map.includes("from './mapBasemap'") && rasterMap.includes("from './mapBasemap'") &&
+  map.includes('attribution: SATELLITE_ATTRIBUTION') && rasterMap.includes('attribution: choice.attribution'));
 test('Street imagery ignores stale request completion',
   map.includes('streetRequestRef') &&
   map.includes('requestId === streetRequestRef.current'));
@@ -170,3 +174,4 @@ test('No production geospatial core depends on a hardcoded NYC fallback',
 
 console.log(`\nPassed: ${passed}  Failed: ${failed}\n`);
 process.exit(failed === 0 ? 0 : 1);
+
