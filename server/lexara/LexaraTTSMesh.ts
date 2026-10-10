@@ -579,7 +579,7 @@ async function synthesizeGemini(text: string, probe = false, signal?: AbortSigna
   const provider: LexaraTTSProviderId = 'gemini';
   const startedAt = Date.now();
   const key = process.env.GEMINI_API_KEY!.trim();
-  const model = process.env.GEMINI_TTS_MODEL?.trim() || 'gemini-3.1-flash-tts-preview';
+  const model = process.env.GEMINI_TTS_MODEL?.trim() || 'gemini-3.8-flash-lite-tts';
   const voiceId = LEXARA_FEMALE_VOICE.gemini;
   const response = await fetchWithTimeout(
     `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
@@ -610,14 +610,19 @@ async function synthesizeGemini(text: string, probe = false, signal?: AbortSigna
 
   const payload = await response.json() as any;
   const encoded = payload?.candidates?.[0]?.content?.parts?.find((part: any) => part?.inlineData?.data)?.inlineData?.data;
-  const pcm = Buffer.from(String(encoded || ''), 'base64');
-  if (!pcm.length) {
+  const returnedAudio = Buffer.from(String(encoded || ''), 'base64');
+  if (!returnedAudio.length) {
     const message = 'gemini TTS returned no inline audio';
     markFailure(provider, 'invalid_response', message);
     throw new Error(message);
   }
 
-  const audioData = pcm16MonoToWav(pcm, 24_000);
+  // Gemini 3.8 returns RIFF/WAV by default; raw PCM is still valid for overrides.
+  // Wrapping an existing WAV again would corrupt speech playback.
+  const alreadyWav = returnedAudio.length >= 12
+    && returnedAudio.toString('ascii', 0, 4) === 'RIFF'
+    && returnedAudio.toString('ascii', 8, 12) === 'WAVE';
+  const audioData = alreadyWav ? returnedAudio : pcm16MonoToWav(returnedAudio, 24_000);
   const latencyMs = Date.now() - startedAt;
   markSuccess(provider, latencyMs, model, voiceId);
   return { provider, audioData, mimeType: 'audio/wav', voiceId, model, latencyMs };

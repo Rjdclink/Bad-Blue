@@ -66,19 +66,7 @@ export interface HealthCheckResult {
 const DEFAULT_MODELS: ModelConfig[] = [
   {
     id: 'gemini-3.8-flash',
-    name: 'Gemini 3 Pro',
-    provider: 'gemini',
-    status: 'online',
-    priority: 1,
-    latencyMs: 500,
-    successRate: 95,
-    lastCheckedAt: new Date(),
-    budgetRemaining: 1000,
-    maxBudget: 1000
-  },
-  {
-    id: 'gemini-3.8-flash',
-    name: 'Gemini 3 Flash',
+    name: 'Gemini 3.8 Flash',
     provider: 'gemini',
     status: 'online',
     priority: 2,

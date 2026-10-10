@@ -1,5 +1,6 @@
 import type { HarmonyProviderPolicy } from '../../aiHarmonyModelRegistry';
 import { GoogleGenAI } from '@google/genai';
+import { CURRENT_AI_MODELS } from '../../aiHarmonyModelRegistry';
 import { getPantheonLearnedQueryPatterns, getPantheonLearnedSources, rankPantheonDiscoveryUrls } from './PantheonDiscoveryLearning';
 import { planPantheonResearchQueries } from './PantheonResearchAssist';
 
@@ -79,7 +80,7 @@ async function geminiGoogleSearch(query: string, limit: number, timeoutMs: numbe
   try {
     const client = new GoogleGenAI({ apiKey });
     const response = await withTimeout(timeoutMs, signal, requestSignal => client.models.generateContent({
-      model: process.env.GEMINI_MODEL?.trim() || 'gemini-3.8-flash',
+      model: CURRENT_AI_MODELS.gemini,
       contents: [{ role: 'user', parts: [{ text: query }] }],
       config: {
         temperature: 0,
