@@ -173,6 +173,15 @@ test('SPECTRA can use corroborated public city context without claiming a live p
   regionalInference.includes('HISTORICAL_LANGUAGE_RE') &&
   geocoder.includes('const context = commaSeparated[1].match('));
 
+test('Search clues cannot impersonate independently discovered current cities',
+  routes.indexOf('if (!region && corroboratedCity)') <
+    routes.indexOf('for (const locationInput of locationInputs)') &&
+  routes.includes('(supplied search clue; current city not verified)') &&
+  routes.includes('(corroborated public residence; not a live location)') &&
+  routes.includes('confidence: cityCorroborationUsed ? 0.35 : 0.05') &&
+  regionalInference.includes('const residenceClause = residence[1].split(') &&
+  regionalInference.includes('extractCityStateHint(residenceClause)'));
+
 test('Broad-city corroboration filters stale, copied and contradictory evidence',
   regionalInference.includes('MAX_DATED_SOURCE_AGE_MS') &&
   regionalInference.includes('item.metadata?.publishedAt') &&
