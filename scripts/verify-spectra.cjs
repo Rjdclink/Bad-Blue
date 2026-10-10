@@ -778,9 +778,14 @@ test('Radio positioning has independent Google, beaconDB and OpenCellID lanes',
   geoconsoleRoutes.includes('opencellid.org/cell/get') &&
   geoconsoleRoutes.includes('Promise.allSettled([') &&
   adapterRegistry.includes("id: 'beacondb-radio-geolocation'"));
+test('Public webpage text recovery prioritizes article content over long navigation menus',
+  publicRetrieval.includes("const semanticRoot = $('main, article, [role=\"main\"]')") &&
+  publicRetrieval.includes("const MAX_TEXT = 320_000") &&
+  publicRetrieval.includes("slice(0, 8_000)"));
+
 test('Public discovery retrieves source pages without promoting unbound venue GPS',
   routes.includes('retrieveSpectraPublicEvidence') &&
-  publicRetrieval.includes('MAX_TARGETS = 6') &&
+  publicRetrieval.includes('MAX_TARGETS = 8') &&
   publicRetrieval.includes('application/ld+json') &&
   publicRetrieval.includes('json-geospatial-field-extraction') &&
   routes.includes('mergePublicRetrievedMetadata(existing.metadata, evidence)') &&
