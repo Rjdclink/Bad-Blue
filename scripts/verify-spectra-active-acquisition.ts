@@ -171,7 +171,11 @@ try {
     return new Response(JSON.stringify({
       results: [{
         macAddress: '00:11:22:33:44:55',
-        coordinates: [43.55, -96.73],
+        // Cisco's coordinates are floor-relative X/Y, not lat/lon.
+        coordinates: [33.4, 101.8],
+        // A tenant collector must supply verified WGS84 coordinates.
+        latitude: 43.55,
+        longitude: -96.73,
         confidenceFactor: 18,
         computeType: 'RSSI',
         lastLocationAt: '2026-10-03T15:00:00Z',
@@ -195,6 +199,34 @@ try {
     (cisco.batches[0]?.measurements[0]?.metadata as any)?.providerKind,
     'cisco-spaces-location',
   );
+  assert.equal(cisco.batches[0]?.measurements[0]?.accuracy, 1000,
+    'Cisco confidenceFactor cannot masquerade as metre accuracy');
+  assert.equal(
+    (cisco.batches[0]?.measurements[0]?.metadata as any)?.xPos,
+    33.4,
+  );
+  assert.equal(
+    (cisco.batches[0]?.measurements[0]?.metadata as any)?.coordinateSystem,
+    'wgs84-explicit',
+  );
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    results: [{
+      macAddress: '00:11:22:33:44:55',
+      coordinates: [43.55, -96.73],
+      confidenceFactor: 18,
+      lastLocationAt: '2026-10-03T15:00:00Z',
+    }],
+  }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  const floorOnlyCisco = await acquireSpectraActiveTelemetry({
+    deviceRef: '00:11:22:33:44:55',
+    sessionId: 'fixture-session',
+    subjectLabel: 'managed device',
+  });
+  assert.equal(floorOnlyCisco.batches.length, 0,
+    'floor-plan X/Y is not an actual geographic position');
+  assert.equal(floorOnlyCisco.attempts[0]?.status, 'failed');
+  assert.match(floorOnlyCisco.attempts[0]?.reason || '', /no usable/i);
+
   globalThis.fetch = async () => new Response(JSON.stringify({
     results: [{
       macAddress: '00:11:22:33:44:66',
