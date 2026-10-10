@@ -8,6 +8,7 @@
  */
 
 import { GoogleGenAI } from "@google/genai";
+import { CURRENT_AI_MODELS } from "./aiHarmonyModelRegistry";
 
 export interface GeminiOptions {
   systemPrompt?: string;
@@ -118,8 +119,8 @@ export async function callGemini(
     throw new GeminiRateLimitError('Gemini is rate limited - use fallback provider');
   }
 
-  // Primary model: gemini-3.8-flash (current stable Flash)
-  const modelName = options.model || process.env.GEMINI_MODEL?.trim() || "gemini-3.8-flash";
+  // Use the canonical production Flash model unless this call specifies a model.
+  const modelName = options.model || CURRENT_AI_MODELS.gemini;
   console.log(`[Gemini] Using model: ${modelName}`);
   const client = getGeminiClient();
 
@@ -262,7 +263,7 @@ Respond with a JSON object containing:
       : `User: ${userMessage}`;
 
     const response = await client.models.generateContent({
-      model: process.env.GEMINI_MODEL?.trim() || "gemini-3.8-flash",
+      model: CURRENT_AI_MODELS.gemini,
       contents: [
         { role: "user", parts: [{ text: `${systemPrompt}\n\n${fullPrompt}` }] }
       ],

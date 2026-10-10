@@ -18,7 +18,7 @@ import {
   TaskComplexity,
   type AITaskMetadata 
 } from './aiTokenGovernor';
-import { getConfiguredHarmonyProviders, getCurrentModelForProvider, CURRENT_AI_MODELS, type HarmonyProviderPolicy } from './aiHarmonyModelRegistry';
+import { getConfiguredHarmonyProviders, getCurrentModelForProvider, CURRENT_AI_MODELS, LEGAL_AI_MODELS, type HarmonyProviderPolicy } from './aiHarmonyModelRegistry';
 import { 
   generateZeroApiResponse, 
   shouldUseZeroApiMode, 
@@ -374,9 +374,9 @@ function getProviderModel(provider: AIProvider, requestedModel?: string, complex
   }>> = {
     [AIProvider.GEMINI]: {
       prefixes: ['gemini'],
-      lite: 'gemini-3.8-flash',
-      default: 'gemini-3.8-flash',
-      pro: 'gemini-3.8-flash'
+      lite: CURRENT_AI_MODELS.gemini,
+      default: CURRENT_AI_MODELS.gemini,
+      pro: CURRENT_AI_MODELS.gemini
     },
     [AIProvider.GROQ]: {
       prefixes: ['llama-', 'meta-llama/', 'openai/', 'qwen/'],
@@ -389,7 +389,7 @@ function getProviderModel(provider: AIProvider, requestedModel?: string, complex
     },
     [AIProvider.CLAUDE]: {
       prefixes: ['claude'],
-      lite: 'claude-haiku-4-5-20251001',
+      lite: LEGAL_AI_MODELS.claudeFast,
       default: CURRENT_AI_MODELS.claudeBalanced,
       comprehensive: process.env.LEXARA_CLAUDE_MODEL?.trim() || CURRENT_AI_MODELS.claudeBalanced,
       pro: CURRENT_AI_MODELS.claudeDeep
@@ -511,7 +511,9 @@ export async function runProvider(
       const effectiveComplexity = (detailedVerbosity && !options.model) 
         ? TaskComplexity.COMPREHENSIVE 
         : task.complexity;
-      const model = getProviderModel(AIProvider.CLAUDE, options.model, effectiveComplexity);
+      const model = options.providerPolicy === 'legalwhat' && options.allowClaudeOpus !== true
+        ? LEGAL_AI_MODELS.claudeFast
+        : getProviderModel(AIProvider.CLAUDE, options.model, effectiveComplexity);
       const claudeResult = await callClaude(prompt, { ...options, model, maxTokens });
       content = claudeResult.content;
       tokensUsed = claudeResult.tokensUsed ?? Math.floor((prompt.length + content.length) / 4);

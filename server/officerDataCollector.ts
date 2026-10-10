@@ -3,6 +3,7 @@ import {
   TaskPriority
 } from './aiProvider';
 import { GoogleGenAI } from "@google/genai";
+import { CURRENT_AI_MODELS } from "./aiHarmonyModelRegistry";
 import { EventEmitter } from "events";
 import type { OfficerProfile, InsertOfficerProfile } from "@shared/schema";
 import { getEnv } from './config';
@@ -72,7 +73,7 @@ async function runGroundedOfficerSearch(
     try {
       const client = getGeminiClient();
       const response = await client.models.generateContent({
-        model: process.env.GEMINI_MODEL?.trim() || 'gemini-3.8-flash',
+        model: CURRENT_AI_MODELS.gemini,
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
         config: {
           temperature: 0,

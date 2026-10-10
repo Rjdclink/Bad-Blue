@@ -6,7 +6,7 @@ import { meterClaudeRequest } from './claudeUsage';
 
 import Anthropic from '@anthropic-ai/sdk';
 import type { MessageCreateParamsNonStreaming } from '@anthropic-ai/sdk/resources/messages';
-import { CURRENT_AI_MODELS } from './aiHarmonyModelRegistry';
+import { CURRENT_AI_MODELS, LEGAL_AI_MODELS } from './aiHarmonyModelRegistry';
 
 let claudeClient: Anthropic | null = null;
 
@@ -91,7 +91,9 @@ export async function callClaude(
     
     const model = options.model || CURRENT_AI_MODELS.claudeBalanced;
     const samplingControlsDeprecated = /claude-(?:opus|sonnet|haiku)-5|claude-opus-4-(?:7|8|9)/i.test(model);
-    const effectiveEffort = /^claude-haiku-/i.test(model) ? undefined : options.effort;
+    const effectiveEffort = /^claude-haiku-4-5/i.test(model)
+    ? undefined
+    : /^claude-haiku-5-5$/i.test(model) ? 'low' : options.effort;
     const systemText = systemPrompt + jsonInstruction;
     // Claude 5.5 can cache prompts at 512+ tokens. Restrict caching to large,
     // repeated LegalWhat system directives so one-off short prompts do not pay
@@ -165,11 +167,16 @@ export async function callClaude(
     const cacheCreationInputTokens = Number(usage.cache_creation_input_tokens || 0);
     const tokensUsed = inputTokens + outputTokens + cacheReadInputTokens + cacheCreationInputTokens;
 
-    const rates = /claude-opus-5-5/i.test(model)
-      ? { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 }
-      : /claude-sonnet-5-5/i.test(model)
-        ? { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 }
-        : null;
+    const totalInputTokens = inputTokens + cacheReadInputTokens + cacheCreationInputTokens;
+    const rates = /^claude-haiku-5-5$/i.test(model)
+      ? totalInputTokens > 100_000
+        ? { input: 0.5, output: 2.5, cacheRead: 0.05, cacheWrite: 0.625 }
+        : { input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite: 0.125 }
+      : /claude-opus-5-5/i.test(model)
+        ? { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 }
+        : /claude-sonnet-5-5/i.test(model)
+          ? { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 }
+          : null;
     if (rates) {
       const estimatedUsd = (
         inputTokens * rates.input
@@ -310,6 +317,7 @@ export async function callClaudeWebSearch(
       response = await meterClaudeRequest<any>(model, 'web-search', () => (client.messages as any).create({
         model,
         max_tokens: requestMaxTokens,
+        ...(/^claude-haiku-5-5$/i.test(model) ? { output_config: { effort: 'low' } } : {}),
         system: options.systemPrompt || 'Use web search only as needed. Prefer reliable, directly relevant sources and do not invent unsupported facts.',
         messages,
         tools,
@@ -412,7 +420,7 @@ export async function callClaudeMediaExtraction(input: {
   signal?: AbortSignal;
 }): Promise<{ content: string; tokensUsed: number }> {
   const client = getClaudeClient();
-  const model = process.env.LEXARA_MEDIA_CLAUDE_MODEL?.trim() || CURRENT_AI_MODELS.claudeFast;
+  const model = process.env.LEXARA_MEDIA_CLAUDE_MODEL?.trim() || LEGAL_AI_MODELS.claudeFast;
   const base64 = input.bytes.toString('base64');
   const mediaBlock = input.mimeType === 'application/pdf'
     ? {
@@ -430,6 +438,7 @@ export async function callClaudeMediaExtraction(input: {
     const response = await meterClaudeRequest<any>(model, 'media', () => (client.messages as any).create({
       model,
       max_tokens: 12_000,
+      ...(/^claude-haiku-5-5$/i.test(model) ? { output_config: { effort: 'low' } } : {}),
       messages: [{
         role: 'user',
         content: [
@@ -481,7 +490,9 @@ export async function callClaudeStreaming(
     : '';
   const model = options.model || CURRENT_AI_MODELS.claudeBalanced;
   const samplingControlsDeprecated = /claude-(?:opus|sonnet|haiku)-5|claude-opus-4-(?:7|8|9)/i.test(model);
-  const effectiveEffort = /^claude-haiku-/i.test(model) ? undefined : options.effort;
+  const effectiveEffort = /^claude-haiku-4-5/i.test(model)
+    ? undefined
+    : /^claude-haiku-5-5$/i.test(model) ? 'low' : options.effort;
   const systemText = systemPrompt + jsonInstruction;
   const cacheSystemPrompt = options.cacheSystemPrompt === true && systemText.length >= 2_048;
   let speechBuffer = '';

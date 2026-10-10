@@ -31,13 +31,13 @@ function load(relative, overrides = {}, globals = {}) {
     report = usage.createClaudeUsageReporter();
     await Promise.all([
       usage.meterClaudeRequest('claude-sonnet-5-5', 'web-search', async () => ({ usage: { input_tokens: 1000, output_tokens: 100, cache_read_input_tokens: 500, cache_creation_input_tokens: 200, server_tool_use: { web_search_requests: 2 } } })),
-      usage.meterClaudeRequest('claude-haiku-4-5', 'planner', async () => ({ usage: { input_tokens: 1000, output_tokens: 100 } })),
+      usage.meterClaudeRequest('claude-haiku-5-5', 'planner', async () => ({ usage: { input_tokens: 1000, output_tokens: 100 } })),
     ]);
   });
   report(); // HTTP finish callbacks may execute outside the async scope.
   const total = logs.find(entry => entry.event === '[Claude Turn Usage]').payload;
   assert.equal(total.calls, 2);
-  assert.equal(total.estimatedUsd, 0.0251);
+  assert.equal(total.estimatedUsd, 0.0237);
   assert.equal(total.complete, true);
   await usage.runClaudeUsageScope(async () => {
     await assert.rejects(usage.meterClaudeRequest('claude-sonnet-5-5', 'web-search', async () => { throw new Error('aborted'); }));

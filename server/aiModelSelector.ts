@@ -68,7 +68,7 @@ export interface TaskAttributes {
 export class AIModelSelector {
   /**
    * Select optimal Gemini model based on task attributes
-   * Updated December 2025: Prioritizes Gemini 2.5 models
+   * Gemini Flash uses the canonical current production model.
    */
   static selectGeminiModel(_attrs: TaskAttributes): string {
     return CURRENT_AI_MODELS.gemini;

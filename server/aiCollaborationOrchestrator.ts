@@ -1867,10 +1867,10 @@ export class AICollaborationOrchestrator {
     return providers.includes(AIProvider.CLAUDE) ? [AIProvider.CLAUDE] : [];
   }
 
-  private static getClaudeEffort(task: CollaborationTask): 'high' | 'max' | undefined {
-    // Haiku 4.5 does not support output_config.effort. Paid Sonnet stays at high
-    // effort; paid deep/document work may escalate to Opus at max effort.
-    if (task.model === LEGAL_AI_MODELS.claudeFast) return undefined;
+  private static getClaudeEffort(task: CollaborationTask): 'low' | 'high' | 'max' | undefined {
+    // Trial Haiku 5.5 uses the lowest supported effort; paid Sonnet and deep
+    // Opus retain their existing high/max routing and entitlement gates.
+    if (task.model === LEGAL_AI_MODELS.claudeFast) return 'low';
     return task.attributes.allowClaudeOpus === true
       && task.model === LEGAL_AI_MODELS.claudeDeep
       ? 'max'

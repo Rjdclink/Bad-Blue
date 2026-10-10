@@ -230,7 +230,7 @@ export async function prewarmHarmonyProviders(): Promise<HarmonyWarmStatus[]> {
           );
           // Recovery must use a live text-capable Flash model, never a guessed ID
           // or an image/audio/preview route. Try at most one alternate per task.
-          const supportedFreeFlash = ['gemini-3.8-flash', 'gemini-3.1-pro-preview'];
+          const supportedFreeFlash = ['gemini-3.8-flash', 'gemini-3.6-flash'];
           recoveryModels.set(provider, supportedFreeFlash.filter(candidate => catalog.has(candidate)));
           const resolved = chooseCatalogModel(catalog, model, [
             candidate => supportedFreeFlash.includes(candidate),

@@ -11,10 +11,12 @@ interface UsageScope {
   reportRequested?: boolean;
 }
 const scopes = new AsyncLocalStorage<UsageScope>();
-function rates(model: string) {
-  if (/claude-sonnet-5-5/i.test(model)) return { input: 2, output: 10, read: 0.2, write: 2.5 };
+function rates(model: string, totalInputTokens: number) {
+  if (/^claude-haiku-5-5$/i.test(model)) return totalInputTokens > 100_000
+    ? { input: 0.5, output: 2.5, read: 0.05, write: 0.625 }
+    : { input: 0.1, output: 0.5, read: 0.01, write: 0.125 };
+  if (/claude-sonnet-5-5/i.test(model)) return { input: 2, output: 10, read: 0.1, write: 2.5 };
   if (/claude-opus-5-5/i.test(model)) return { input: 4, output: 20, read: 0.2, write: 5 };
-  if (/claude-haiku-4-5/i.test(model)) return { input: 1, output: 5, read: 0.1, write: 1.25 };
   return null;
 }
 export function runClaudeUsageScope<T>(run: () => T): T {
@@ -44,11 +46,11 @@ export async function meterClaudeRequest<T extends { usage?: any }>(
   try {
     const response = await request();
     const usage = response.usage;
-    const price = rates(model);
     const inputTokens = Number(usage?.input_tokens || 0);
     const outputTokens = Number(usage?.output_tokens || 0);
     const cacheReadInputTokens = Number(usage?.cache_read_input_tokens || 0);
     const cacheCreationInputTokens = Number(usage?.cache_creation_input_tokens || 0);
+    const price = rates(model, inputTokens + cacheReadInputTokens + cacheCreationInputTokens);
     const searches = Number(usage?.server_tool_use?.web_search_requests || 0);
     const estimatedUsd = usage && price
       ? (inputTokens * price.input + outputTokens * price.output
