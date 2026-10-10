@@ -21,6 +21,8 @@ export interface SpectraRetrievedEvidence {
   publishedAt?: string;
   contentType?: string;
   textExcerpt?: string;
+  /** Visible address blocks, separate from prose and subject observations. */
+  addressBlocks?: string[];
   observations: SpectraRetrievedObservation[];
 }
 
@@ -133,6 +135,7 @@ export function htmlEvidence(raw: string, sourceUrl: string): {
   title?: string;
   textExcerpt?: string;
   publishedAt?: string;
+  addressBlocks?: string[];
   observations: SpectraRetrievedObservation[];
 } {
   const $ = load(raw.slice(0, MAX_TEXT));
@@ -150,6 +153,22 @@ export function htmlEvidence(raw: string, sourceUrl: string): {
   ).remove();
   const textExcerpt = excerptRoot.text().replace(/\s+/g, ' ').trim().slice(0, 8_000) || undefined;
   const observations: SpectraRetrievedObservation[] = [];
+
+  const addressBlocks: string[] = [];
+  const addAddress = (element: any) => {
+    const copy = $(element).clone();
+    copy.find('br').replaceWith('\n');
+    copy.find('p,div,li').append('\n');
+    const text = copy.text().split('\n').map(line => line.replace(/\s+/g, ' ').trim()).filter(Boolean).join('\n');
+    if (text.length >= 12 && text.length <= 600) addressBlocks.push(text);
+  };
+  excerptRoot.find('address, [itemprop="address"]').each((_i, element) => addAddress(element));
+  excerptRoot.find('h2,h3,h4,dt,div,span,strong').each((_i, element) => {
+    if (/^(?:location|address|visit us)$/i.test($(element).text().trim())) {
+      const next = $(element).next();
+      if (next.length) addAddress(next);
+    }
+  });
 
   const meta = new Map<string, string>();
   $('meta').each((_index, element) => {
@@ -291,7 +310,7 @@ export function htmlEvidence(raw: string, sourceUrl: string): {
     }
   });
 
-  return { title, textExcerpt, publishedAt, observations: dedupeObservations(observations) };
+  return { title, textExcerpt, publishedAt, addressBlocks: [...new Set(addressBlocks)].slice(0, 12), observations: dedupeObservations(observations) };
 }
 
 function jsonEvidence(payload: any, sourceUrl: string): SpectraRetrievedObservation[] {
@@ -400,6 +419,7 @@ async function retrieveOne(rawUrl: string, parentSignal?: AbortSignal): Promise<
           contentType,
           title: extracted.title,
           textExcerpt: extracted.textExcerpt,
+          addressBlocks: extracted.addressBlocks,
           publishedAt: extracted.publishedAt,
           observations: extracted.observations,
         };
