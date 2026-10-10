@@ -99,7 +99,13 @@ export function inferCorroboratedRegionalCity(
   }>();
 
   for (const item of sources.slice(0, 200)) {
-    const domain = sourceDomain(item.url);
+    // If a public retrieval followed a redirect, count the actual publisher,
+    // not multiple discovery URLs that all lead to the same final webpage.
+    // Only trust the retrieved final URL when it is bound to the original URL.
+    const urlForPublisher = item.metadata?.requestedUrl === item.url
+      && typeof item.metadata?.sourceUrl === 'string'
+      ? item.metadata.sourceUrl : item.url;
+    const domain = sourceDomain(urlForPublisher);
     if (!domain || !hasUsablePublicationDate(item, asOf.getTime())) continue;
     const excerpts = [
       sourceText(item.title),
