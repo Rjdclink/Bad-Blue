@@ -22,6 +22,14 @@ interface MediaExtractionResponse {
   point?: GPSPoint | null;
   hasGPS?: boolean;
   hasCaptureTimestamp?: boolean;
+  mediaAssessment?: {
+    status?: 'accepted' | 'missing_gps' | 'invalid_gps' | 'conflicting_gps'
+      | 'missing_capture_time' | 'future_capture_time';
+    capturedAt?: string;
+    ageBand?: 'within_24_hours' | 'within_7_days' | 'within_30_days' | 'older';
+    subjectPresenceVerified?: boolean;
+    currentPositionVerified?: boolean;
+  };
   metadata?: Record<string, any>;
   error?: string;
 }
@@ -548,21 +556,39 @@ export default function SpectraPage() {
 
       const device = payload.metadata?.device;
       const capture = payload.metadata?.capture;
+      const captureStatus = payload.mediaAssessment?.status;
+      const ageDescriptions: Record<string, string> = {
+        within_24_hours: 'within 24 hours of review',
+        within_7_days: 'within the preceding week',
+        within_30_days: 'within the preceding month',
+        older: 'older than one month',
+      };
+      const captureAge = payload.mediaAssessment?.ageBand
+        ? ageDescriptions[payload.mediaAssessment.ageBand] : '';
       const evidenceDescription = [
-        `Uploaded target media: ${file.name}`,
+        `Uploaded media file: ${file.name}`,
         device?.make || device?.model
-          ? `Device: ${[device?.make, device?.model].filter(Boolean).join(' ')}`
+          ? `File device metadata: ${[device?.make, device?.model].filter(Boolean).join(' ')}`
           : '',
-        capture?.dateTimeOriginal ? `Capture time metadata: ${capture.dateTimeOriginal}` : '',
-        extractedPoint ? 'Timestamped GPS metadata present.' : 'No timestamped GPS metadata present.',
+        payload.mediaAssessment?.capturedAt
+          ? `Recorded media capture time: ${payload.mediaAssessment.capturedAt}` : '',
+        capture?.dateTimeOriginal ? `Original capture-date field: ${capture.dateTimeOriginal}` : '',
+        captureAge ? `Capture age: ${captureAge}` : '',
+        extractedPoint
+          ? 'Media capture-site GPS is historical scene evidence; subject presence and live location remain unverified.'
+          : captureStatus === 'conflicting_gps'
+            ? 'Conflicting GPS metadata was excluded from geographic evidence.'
+            : 'No verified timestamped capture-site coordinates were admitted.',
       ].filter(Boolean).join('. ');
 
       const expandedDetails = [details, evidenceDescription].filter(Boolean).join('\n');
       setDetails(expandedDetails);
 
       const responseText = extractedPoint
-        ? 'I extracted timestamped location metadata from that media and added it to the target evidence.'
-        : 'I analyzed that media and added the available metadata to the target evidence. It did not contain timestamped GPS coordinates.';
+        ? 'I identified where and when the media was captured and preserved its age as historical scene evidence.'
+        : captureStatus === 'conflicting_gps'
+          ? 'The media contains conflicting GPS metadata; I kept the conflict visible without treating it as a location fix.'
+          : 'I reviewed the media metadata, including its capture dates. There was no reliable timestamped GPS scene fix.';
       addMessage('spectra', responseText);
       speakIfEnabled(responseText);
 
