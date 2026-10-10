@@ -50,6 +50,7 @@ import {
 import { acquireSpectraPlaceContext } from '../services/spectra/SpectraPlaceContext';
 import { retrieveSpectraPublicEvidence } from '../services/spectra/SpectraPublicRetrieval';
 import {
+  collectPublicVenueCoordinateEvidence,
   mergePublicRetrievedMetadata,
   stripUnboundPublicGeoContext,
 } from '../services/spectra/SpectraPublicEvidenceProvenance';
@@ -1021,6 +1022,9 @@ router.post('/acquire', async (req: Request, res: Response) => {
       throw new Error('All SPECTRA discovery paths failed');
     }
 
+    // Expose public venue geotags as cited context, never as live person/device GPS.
+    const publicVenueCoordinates = collectPublicVenueCoordinateEvidence(discoveryResults);
+
     const observations: any[] = [
       ...activeLocationPoints.map(point => ({
         ...point,
@@ -1405,10 +1409,12 @@ router.post('/acquire', async (req: Request, res: Response) => {
       },
       locationObservations,
       candidateLocations,
+      publicVenueCoordinates,
       contextEvidence,
       liveLocationAssessment,
       identityBindingAssessment,
       evidence: {
+        publicVenueCoordinates,
         contactInformation: report.contactInformation || [],
         locationHistory: report.locationHistory || [],
         publicRecords: report.publicRecords || [],
