@@ -303,6 +303,7 @@ test('SPECTRA broad discovery runs through independent native and Claude researc
   routes.includes('allowFetch: true'));
 test('SPECTRA recursively broadens until corroborated city evidence, budget or diminishing returns',
   routes.includes('SPECTRA_DISCOVERY_POLICY.maxPasses') &&
+  cityDiscoveryPolicy.includes('SPECTRA_DISCOVERY_POLICY.sufficientConfidence') &&
   routes.includes('assessSpectraCityDiscoveryReadiness({') &&
   routes.includes('if (readiness.sufficientToStop) break;') &&
   routes.includes('SPECTRA_DISCOVERY_POLICY.maxQueries') &&
