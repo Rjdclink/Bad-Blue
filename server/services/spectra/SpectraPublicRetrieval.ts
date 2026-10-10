@@ -360,12 +360,17 @@ function jsonEvidence(payload: any, sourceUrl: string): SpectraRetrievedObservat
   return dedupeObservations(observations);
 }
 
-async function retrieveOne(rawUrl: string, parentSignal?: AbortSignal): Promise<SpectraRetrievedEvidence | null> {
-  if (parentSignal?.aborted) return null;
-  let current = await assertPublicUrl(rawUrl);
+export type SpectraRetrievalFailure = (url: string, reason: string) => void;
+
+async function retrieveOne(rawUrl: string, parentSignal?: AbortSignal, onFailure?: SpectraRetrievalFailure): Promise<SpectraRetrievedEvidence | null> {
+  const fail = (reason: string): null => { onFailure?.(rawUrl, reason); return null; };
+  if (parentSignal?.aborted) return fail('cancelled');
+  let current: URL;
+  try { current = await assertPublicUrl(rawUrl); }
+  catch { return fail('url-or-dns-unavailable'); }
 
   for (let redirectCount = 0; redirectCount <= MAX_REDIRECTS; redirectCount += 1) {
-    if (parentSignal?.aborted) return null;
+    if (parentSignal?.aborted) return fail('cancelled');
     const controller = new AbortController();
     const relayAbort = () => controller.abort(parentSignal?.reason);
     if (parentSignal?.aborted) controller.abort(parentSignal.reason);
@@ -385,19 +390,19 @@ async function retrieveOne(rawUrl: string, parentSignal?: AbortSignal): Promise<
 
       if (response.status >= 300 && response.status < 400) {
         const location = response.headers.get('location');
-        if (!location || redirectCount === MAX_REDIRECTS) return null;
+        if (!location || redirectCount === MAX_REDIRECTS) return fail('redirect-limit');
         current = await assertPublicUrl(new URL(location, current).toString());
         continue;
       }
-      if (!response.ok) return null;
+      if (!response.ok) return fail(`http-${response.status}`);
 
       const contentLength = Number(response.headers.get('content-length') || 0);
-      if (Number.isFinite(contentLength) && contentLength > MAX_RESPONSE_BYTES) return null;
+      if (Number.isFinite(contentLength) && contentLength > MAX_RESPONSE_BYTES) return fail('response-too-large');
       const contentType = response.headers.get('content-type') || '';
 
       if (/json/i.test(contentType)) {
         const text = await response.text();
-        if (text.length > MAX_RESPONSE_BYTES) return null;
+        if (text.length > MAX_RESPONSE_BYTES) return fail('response-too-large');
         const payload = JSON.parse(text);
         return {
           url: current.toString(),
@@ -410,7 +415,7 @@ async function retrieveOne(rawUrl: string, parentSignal?: AbortSignal): Promise<
 
       if (/html|xhtml/i.test(contentType)) {
         const text = await response.text();
-        if (text.length > MAX_RESPONSE_BYTES) return null;
+        if (text.length > MAX_RESPONSE_BYTES) return fail('response-too-large');
         const extracted = htmlEvidence(text, current.toString());
         return {
           url: current.toString(),
@@ -425,9 +430,9 @@ async function retrieveOne(rawUrl: string, parentSignal?: AbortSignal): Promise<
         };
       }
 
-      return null;
+      return fail('unsupported-content-type');
     } catch {
-      return null;
+      return fail(controller.signal.aborted ? 'timeout-or-cancelled' : 'network-or-content-error');
     } finally {
       clearTimeout(timer);
       parentSignal?.removeEventListener('abort', relayAbort);
@@ -440,11 +445,12 @@ async function retrieveOne(rawUrl: string, parentSignal?: AbortSignal): Promise<
 export async function retrieveSpectraPublicEvidence(
   targets: string[],
   signal?: AbortSignal,
+  onFailure?: SpectraRetrievalFailure,
 ): Promise<SpectraRetrievedEvidence[]> {
   const uniqueTargets = [...new Set(targets.map(value => value.trim()).filter(Boolean))]
     .slice(0, MAX_TARGETS);
   const settled = await Promise.allSettled(
-    uniqueTargets.map(target => retrieveOne(target, signal))
+    uniqueTargets.map(target => retrieveOne(target, signal, onFailure))
   );
   return settled.flatMap(result =>
     result.status === 'fulfilled' && result.value ? [result.value] : []

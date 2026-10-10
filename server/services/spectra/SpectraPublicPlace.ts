@@ -1,4 +1,4 @@
-import type { SpectraRetrievedEvidence } from './SpectraPublicRetrieval';
+import type { SpectraRetrievedEvidence, SpectraRetrievalFailure } from './SpectraPublicRetrieval';
 
 const states = new Set('AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY'.split(' '));
 const tokens = (text: string) => text.toLowerCase().match(/[a-z0-9]+/g) || [];
@@ -32,7 +32,7 @@ export function assessPublicPlacePage(target: string, page: SpectraRetrievedEvid
 
 interface PlaceDependencies {
   discover: (query: string, signal: AbortSignal) => Promise<Array<{ url: string }>>;
-  retrieve: (urls: string[], signal: AbortSignal) => Promise<SpectraRetrievedEvidence[]>;
+  retrieve: (urls: string[], signal: AbortSignal, onFailure?: SpectraRetrievalFailure) => Promise<SpectraRetrievedEvidence[]>;
   geocode: (city: string) => Promise<{ latitude: number; longitude: number; accuracyMeters: number } | null>;
 }
 
@@ -53,8 +53,12 @@ export async function acquirePublicPlace(target: string, details: string, deps: 
   // One focused search, with an independent retrieval budget. Supplied public
   // source links are read first; they are evidence leads, not trusted facts.
   const discovered = await bounded(signal => deps.discover(`"${target}" visitor address location`, signal), 10_000, []);
-  const urls = [...new Set([...suppliedUrls, ...discovered.map(item => item.url)])].slice(0, 8);
-  const pages = await bounded(signal => deps.retrieve(urls, signal), 5_000, []);
+  const urls = [...new Set([...suppliedUrls, ...discovered.map(item => item.url)])].filter(raw => {
+    try { const u = new URL(raw); return ['https:', 'http:'].includes(u.protocol) && !u.username && !u.password; }
+    catch { return false; }
+  }).slice(0, 8);
+  const failures = new Map<string, string>();
+  const pages = await bounded(signal => deps.retrieve(urls, signal, (url, reason) => failures.set(url, reason)), 5_000, []);
   const sources = pages.map(page => ({
     url: page.url, title: page.title || page.url, retrievedAt: page.retrievedAt,
     publishedAt: page.publishedAt, ...assessPublicPlacePage(target, page),
@@ -75,7 +79,11 @@ export async function acquirePublicPlace(target: string, details: string, deps: 
   }] : [];
   const outcome = conflict ? 'conflicting-addresses' : !first ? 'no-supported-address'
     : !valid ? 'geocoding-unavailable' : 'public-place-city';
-  return { candidates, sources, diagnostics: {
+  const fetchedUrls = new Set(pages.map(page => page.requestedUrl));
+  const unavailable = urls.filter(url => !fetchedUrls.has(url)).map(url => ({
+    url, title: url, status: failures.get(url) || 'not-retrieved',
+  }));
+  return { candidates, sources: [...sources, ...unavailable], diagnostics: {
     selected: urls.length, retrieved: pages.length, supported: supported.length, outcome,
   } };
 }

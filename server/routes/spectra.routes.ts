@@ -1,4 +1,5 @@
 import { Router, type Request, type Response } from 'express';
+import { withoutSpectraTimestamps } from '../../shared/spectraTimestampClues';
 import { getDiscoveryDiagnostics, withDiscoveryDiagnostics } from '../lexara/DiscoveryDiagnostics';
 import { z } from 'zod';
 import { isAuthenticated } from '../auth';
@@ -138,7 +139,7 @@ async function settleWithin<T>(
 }
 
 function extractPhoneNumber(value: string): string | undefined {
-  const candidate = value.match(PHONE_CANDIDATE_RE)?.[0]?.trim();
+  const candidate = withoutSpectraTimestamps(value).match(PHONE_CANDIDATE_RE)?.[0]?.trim();
   if (!candidate) return undefined;
   const digits = candidate.replace(/\D/g, '');
   if (digits.length < 7 || digits.length > 15) return undefined;
