@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {
+  collectPublicVenueCoordinateEvidence,
   mergePublicRetrievedMetadata,
   stripUnboundPublicGeoContext,
   unboundPublicGeoContext,
@@ -54,4 +55,40 @@ const morePrecise = mergePublicRetrievedMetadata(prior, {
 });
 assert.equal(morePrecise.publishedAt, '2014-01-01T00:00:00.000Z',
   'a directly observed source publication date takes precedence');
+
+const publicVenueCoordinates = collectPublicVenueCoordinateEvidence([
+  { title: 'Public venue profile', url: original, metadata: merged },
+  { title: 'Duplicate discovery entry', url: original, metadata: merged },
+]);
+assert.equal(publicVenueCoordinates.length, 1,
+  'the same source geotag must not duplicate a displayed venue coordinate');
+assert.deepEqual(publicVenueCoordinates[0], {
+  kind: 'public_venue_coordinate',
+  latitude: 40.1234,
+  longitude: -71.2345,
+  venueLabel: 'Fictional public venue',
+  sourceUrl: resolved,
+  requestedUrl: original,
+  retrievedAt: '2026-10-10T02:00:00.000Z',
+  publishedAt: prior.publishedAt,
+  extractionMethod: 'json-ld-geospatial-metadata',
+  subjectPresenceVerified: false,
+});
+assert.deepEqual(collectPublicVenueCoordinateEvidence([
+  { title: 'No geotags', url: original, metadata: subjectSafe },
+]), [], 'person-safe GPS metadata is not the same as the separate public venue evidence');
+
+const invalid = {
+  ...merged,
+  retrievedLocationEvidence: [
+    { ...pageGeotags[0], latitude: 999 },
+    { ...pageGeotags[0], longitude: Number.NaN },
+    { ...pageGeotags[0], kind: 'location' },
+    { ...pageGeotags[0], sourceUrl: 'javascript:alert(1)' },
+  ],
+};
+assert.deepEqual(collectPublicVenueCoordinateEvidence([
+  { url: 'javascript:alert(1)', metadata: invalid },
+]), [], 'invalid, forged or non-HTTP(S) venue coordinates are rejected');
+console.log('SPECTRA fetched-page venue coordinate visibility / provenance tests passed.');
 console.log('SPECTRA fetched-page venue provenance / redirect safety tests passed.');
