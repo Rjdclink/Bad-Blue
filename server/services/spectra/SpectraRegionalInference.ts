@@ -124,10 +124,20 @@ export function inferCorroboratedRegionalCity(
         const following = statement.slice(
           matchedSubject.index + matchedSubject[0].length,
         ).trimStart();
-        if (!/^(?:,\s*)?(?:is\s+)?(?:(?:currently|now)\s+)?(?:lives?|living|resides?|residing|based|located)\s+(?:currently\s+)?(?:in|at)\b/i.test(following)) {
-          continue;
-        }
-        const region = extractCityStateHint(statement);
+        const residence = /^(?:,\s*)?(?:is\s+)?(?:(?:currently|now)\s+)?(?:lives?|living|resides?|residing|based|located)\s+(?:currently\s+)?(?:in|at)\s+(.+)$/i.exec(following);
+        if (!residence) continue;
+        // Only the immediate residence clause may establish a city. Parsing
+        // the full sentence can silently borrow a city from an employer,
+        // companion, interviewee, or even a location preceding the subject.
+        const residenceClause = residence[1].split(
+          /,\s*(?:who|whose|which|but|while|whereas)\b|\s+(?:and|but|while|whereas)\s+(?:(?:currently|now)\s+)?(?:works?|commutes?|studies|visits?|travels?|stays?|lives?|resides?|is\s+based)\b|\s+(?:with|alongside)\s+(?:(?:their|his|her|a|the)\s+)?(?:friend|colleague|partner|sibling|family|coworker|associate)\b/i,
+        )[0].trim();
+        // A nearby city or metropolitan area is not the named person's city.
+        if (
+          !residenceClause
+          || /^(?:the\s+)?(?:suburbs?\s+of|outskirts\s+of|greater\s+|metro(?:politan)?\s+|near\s+|outside\s+|around\s+|vicinity\s+of)/i.test(residenceClause)
+        ) continue;
+        const region = extractCityStateHint(residenceClause);
         if (!region) continue;
         const key = `${region.city.toLowerCase()}|${region.state}`;
         const existing = evidence.get(key) || {
