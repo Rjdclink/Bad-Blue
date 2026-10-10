@@ -962,6 +962,23 @@ function measurement(batch: ReturnType<typeof normalizeSpectraProviderPayload>, 
   const point = measurement(batch);
   assert.equal(point.source, 'wifi_fingerprint');
   assert.equal(point.metadata.providerKind, 'cisco-spaces-location');
+  assert.equal(point.latitude, 43.5446);
+  assert.equal(point.longitude, -96.7311);
+
+  // Official Cisco Spaces v1/v2 coordinates are floor-relative Cartesian
+  // X/Y. They must never be interpreted as a latitude/longitude pair.
+  assert.throws(() => normalizeSpectraProviderPayload(
+    'cisco-spaces-location',
+    'cisco-spaces',
+    {
+      results: [{
+        macAddress: '00:11:22:33:44:55',
+        coordinates: [43.5446, -96.7311],
+        confidenceFactor: 12,
+        lastLocationAt: '2026-10-02T20:59:55Z',
+      }],
+    },
+  ), /no usable/i);
 }
 
 {
