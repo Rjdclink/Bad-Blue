@@ -37,6 +37,10 @@ function evidenceClassForPoint(point: GPSPoint): string {
     point.observationKind === 'historical'
     || point.source === 'historical_location'
     || point.source === 'public_record'
+    || point.source === 'exif_photo'
+    || point.source === 'exif_video'
+    || point.source === 'xmp_sidecar'
+    || point.source === 'json_sidecar'
   ) return 'HISTORICAL';
   if (point.observationKind === 'inferred') return 'INFERRED';
 
