@@ -208,7 +208,7 @@ test('Claude is primary for fast legal conversation', async () => {
 });
 test('legal models use the scoped Claude, Gemini and xAI IDs', () => {
   const h = harness(keys);
-  for (const [provider, model] of [['claude','claude-haiku-4-5-20251001'], ['gemini','gemini-3.8-flash'], ['xai','grok-4.7']]) {
+  for (const [provider, model] of [['claude','claude-haiku-5-5'], ['gemini','gemini-3.8-flash'], ['xai','grok-4.7']]) {
     assert.equal(h.engine.getLegalTaskModel(provider, h.attributes), model);
     assert.equal(h.engine.getLegalTaskModel(provider, {...h.attributes, needsFastResponse:true}), model);
   }
@@ -514,7 +514,7 @@ for (const [name, env, expectedKey] of [
   });
 }
 
-test('Claude adapter strips unsupported effort from Haiku while preserving paid-model effort', async () => {
+test('Claude adapter uses low-effort Haiku 5.5 while preserving paid-model effort', async () => {
   const payloads = [];
   class FixtureAnthropic {
     constructor() {
@@ -561,11 +561,11 @@ test('Claude adapter strips unsupported effort from Haiku while preserving paid-
   })(requireFixture, module, module.exports);
 
   await module.exports.callClaude('Fixture', {
-    model: 'claude-haiku-4-5-20251001',
+    model: 'claude-haiku-5-5',
     effort: 'high',
   });
   await module.exports.callClaudeStreaming('Fixture', {
-    model: 'claude-haiku-4-5-20251001',
+    model: 'claude-haiku-5-5',
     effort: 'high',
   });
   await module.exports.callClaude('Fixture', {
@@ -578,8 +578,8 @@ test('Claude adapter strips unsupported effort from Haiku while preserving paid-
   });
 
   assert.equal(payloads.length, 4);
-  assert.equal(Object.hasOwn(payloads[0].body, 'output_config'), false);
-  assert.equal(Object.hasOwn(payloads[1].body, 'output_config'), false);
+  assert.equal(payloads[0].body.output_config?.effort, 'low');
+  assert.equal(payloads[1].body.output_config?.effort, 'low');
   assert.equal(payloads[2].body.output_config?.effort, 'high');
   assert.equal(payloads[3].body.output_config?.effort, 'max');
 });
@@ -621,7 +621,7 @@ test('trial or unentitled exceptional review stays on Haiku 4.5', async () => {
     h.attributes, ['claude'], { providerPolicy: 'legalwhat', legalReviewReason: 'difficult-review',
       maxParticipants: 1, maxFallbacks: 0 });
   assert(result.contributions.some(x => x.success));
-  assert.equal(h.calls[0].model, 'claude-haiku-4-5-20251001');
+  assert.equal(h.calls[0].model, 'claude-haiku-5-5');
   assert.equal(h.calls[0].effort, undefined);
 });
 test('paid complex legal review escalates to Opus 5.5 at max effort', async () => {
@@ -647,7 +647,7 @@ test('trial legal document drafting stays on Haiku and can never reach Sonnet or
   await h.engine.orchestrateCollaboration('document-drafting', 'Draft the supplied facts',
     h.attributes, ['claude'], { providerPolicy: 'legalwhat', claudeWorkload: 'document-drafting',
       maxParticipants: 1, maxFallbacks: 0 });
-  assert.equal(h.calls[0].model, 'claude-haiku-4-5-20251001');
+  assert.equal(h.calls[0].model, 'claude-haiku-5-5');
   assert.equal(h.calls[0].effort, undefined);
 });
 test('paid deep drafting spends Anthropic once and finishes through Opus', async () => {
@@ -834,7 +834,7 @@ test('Claude failure cannot escape through removed providers or gateway recovery
 
 test('Claude-only legal model selection enforces trial Haiku, paid Sonnet, and paid deep Opus', () => {
   const h = harness(['ANTHROPIC_API_KEY']);
-  assert.equal(h.engine.getLegalTaskModel('claude', h.attributes), 'claude-haiku-4-5-20251001');
+  assert.equal(h.engine.getLegalTaskModel('claude', h.attributes), 'claude-haiku-5-5');
   assert.equal(
     h.engine.getLegalTaskModel('claude', { ...h.attributes, allowClaudeOpus: true, claudeWorkload: 'standard' }),
     'claude-sonnet-5-5',

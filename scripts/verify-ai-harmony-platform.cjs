@@ -59,14 +59,14 @@ for (const model of [
 must(
   registry.includes("'claude-sonnet-5-5'") &&
     registry.includes("'claude-opus-5-5'") &&
-    packageJson.dependencies?.['@anthropic-ai/sdk'] === '^0.129.0' &&
-    packageLock.packages?.['node_modules/@anthropic-ai/sdk']?.version === '0.129.0',
+    packageJson.dependencies?.['@anthropic-ai/sdk'] === '^0.133.0' &&
+    packageLock.packages?.['node_modules/@anthropic-ai/sdk']?.version === '0.133.0',
   'Claude 5.5 model IDs and current Anthropic SDK are pinned together',
 );
 
 must(
   claude.includes('MessageCreateParamsNonStreaming') &&
-    claude.split("const effectiveEffort = /^claude-haiku-/i.test(model) ? undefined : options.effort;").length === 3 &&
+    claude.split("/^claude-haiku-5-5$/i.test(model) ? 'low' : options.effort;").length === 3 &&
     claude.split('output_config: { effort: effectiveEffort }').length === 2 &&
     claude.includes('output_config: { effort: retryEffort }') &&
     claude.includes("response = await createMessage(retryBudget, effectiveEffort ? 'low' : undefined)") &&
@@ -78,7 +78,7 @@ must(
     collaboration.includes("? 'max'") &&
     collaboration.includes(": 'high'") &&
     provider.includes('allowClaudeOpus: options.allowClaudeOpus === true'),
-  'Claude transport suppresses unsupported Haiku effort globally while preserving paid Sonnet/Opus effort and prompt-cache telemetry',
+  'Claude transport uses low-effort trial Haiku 5.5 while preserving paid Sonnet/Opus effort and prompt-cache telemetry',
 );
 
 must(

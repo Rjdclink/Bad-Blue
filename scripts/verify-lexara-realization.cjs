@@ -599,7 +599,7 @@ must(
   'Harmony uses robust Claude content parsing, permission-aware Groq recursive recovery, and provider-local cooldowns',
 );
 must(
-  harmonyRegistry.includes("'claude-haiku-4-5-20251001'") &&
+  harmonyRegistry.includes("'claude-haiku-5-5'") &&
     harmonyRegistry.includes("'claude-sonnet-5-5'") &&
     harmonyRegistry.includes("'claude-opus-5-5'") &&
     harmonyRegistry.includes('return provider === PROVIDER.CLAUDE') &&
