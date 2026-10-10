@@ -1,5 +1,5 @@
 import { callClaude, callClaudeStreaming } from '../claude';
-import { CURRENT_AI_MODELS } from '../aiHarmonyModelRegistry';
+import { CURRENT_AI_MODELS, LEGAL_AI_MODELS } from '../aiHarmonyModelRegistry';
 import type { LawType as ExpertLawType } from '../../shared/legalCounselTypes';
 import { LAW_TYPE_DATA } from '../../shared/lawTypes';
 import { mapProductLawTypeToExpert } from '../../shared/legalDomainMapping';
@@ -604,7 +604,7 @@ export async function generateLexaraConversationResponse(
   const claudeWorkload = deepClaudeNeeded ? 'deep-legal' as const : 'standard' as const;
   // Discovery is a source-finding task. Reserve Sonnet/Opus credits for the
   // final legal answer or document work after evidence has been retrieved.
-  const backgroundClaudeModel = CURRENT_AI_MODELS.claudeFast;
+  const backgroundClaudeModel = LEGAL_AI_MODELS.claudeFast;
   if (isLexaraRepeatRequest(cleanPrompt)) {
     const lastReply = [...(context.previousMessages || [])].reverse().find(message =>
       message.role === 'lexara' || message.role === 'assistant');
@@ -855,7 +855,7 @@ export async function generateLexaraConversationResponse(
           `Primary sources:\n${primaryDeadlineSources.map(source => `${source.title} | ${source.url} | ${source.excerpt || ''}`).join('\n')}`,
         ].join('\n\n'), {
           systemPrompt: 'You are a deterministic legal deadline verifier. Never infer a missing holiday, trigger, court, or exception. Return JSON only.',
-          model: CURRENT_AI_MODELS.claudeFast,
+          model: LEGAL_AI_MODELS.claudeFast,
           maxTokens: 500,
           useJSON: true,
           providerPolicy: 'legalwhat',
@@ -907,14 +907,14 @@ export async function generateLexaraConversationResponse(
       : '');
   const userPrompt = `${history ? `CONVERSATION SO FAR:\n${history}\n\n` : ''}CURRENT USER TURN:\n${cleanPrompt}`;
   const claudeModel = backgroundResearchRequested && !mixedLegalFactNeed
-    ? context.allowClaudeOpus === true ? CURRENT_AI_MODELS.claudeBalanced : CURRENT_AI_MODELS.claudeFast
+    ? context.allowClaudeOpus === true ? CURRENT_AI_MODELS.claudeBalanced : LEGAL_AI_MODELS.claudeFast
     : context.allowClaudeOpus !== true
-      ? CURRENT_AI_MODELS.claudeFast
+      ? LEGAL_AI_MODELS.claudeFast
       : deepClaudeNeeded
         ? CURRENT_AI_MODELS.claudeDeep
         : CURRENT_AI_MODELS.claudeBalanced;
   const claudeEffort = context.allowClaudeOpus !== true
-    ? undefined
+    ? 'low' as const
     : backgroundResearchRequested && !mixedLegalFactNeed
       ? 'low' as const
       : deepClaudeNeeded

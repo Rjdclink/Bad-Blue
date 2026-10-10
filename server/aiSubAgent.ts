@@ -30,7 +30,7 @@ import { callMistral, isMistralAvailable } from './mistral';
 import { callClaude, isClaudeAvailable } from './claude';
 import { isGroqAvailable, generateGroqStructuredResponse } from './groq';
 import { generateOpenRouterText, isOpenRouterAvailable } from './openRouterService';
-import { CURRENT_AI_MODELS } from './aiHarmonyModelRegistry';
+import { CURRENT_AI_MODELS, LEGAL_AI_MODELS } from './aiHarmonyModelRegistry';
 import selfImprovementEngine, { type AIProviderName, type OutcomeContext } from './selfImprovementEngine';
 
 const SUBAGENT_DATA_DIR = path.join(process.cwd(), 'data', 'subagent');
@@ -54,7 +54,6 @@ const DEFAULT_GEMINI_MODEL = 'gemini-3.8-flash';
 const GEMINI_MODEL_CANDIDATES = [
   () => process.env.GEMINI_MODEL?.trim(),
   () => DEFAULT_GEMINI_MODEL,
-  () => 'gemini-3.7-flash',
   () => 'gemini-3.6-flash',
 ].map(fn => fn()).filter(Boolean) as string[];
 
@@ -401,7 +400,7 @@ export async function callAIWithFallback(
           temperature: options.temperature,
           maxTokens: options.maxTokens,
           model: options.providerPolicy === 'legalwhat'
-            ? (options.allowClaudeOpus === true ? CURRENT_AI_MODELS.claudeBalanced : CURRENT_AI_MODELS.claudeFast)
+            ? (options.allowClaudeOpus === true ? CURRENT_AI_MODELS.claudeBalanced : LEGAL_AI_MODELS.claudeFast)
             : process.env.LEXARA_CLAUDE_MODEL?.trim() || process.env.CLAUDE_MODEL?.trim() || CURRENT_AI_MODELS.claudeBalanced,
           useJSON: options.useJSON,
         });

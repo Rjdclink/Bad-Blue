@@ -23,6 +23,7 @@
  */
 
 import { createLogger } from '../../logger';
+import { CURRENT_AI_MODELS } from '../../aiHarmonyModelRegistry';
 import { ForgeAI, Domain, DomainFirewall } from './index';
 import { LegalWhatOrchestrator } from './legalwhat-orchestrator';
 import { SelfRepairEngine } from './self-repair-engine';
@@ -396,7 +397,7 @@ export class MasterActivation {
 
     // Store conductor configuration in domain firewall for both domains
     const conductorConfig = {
-      model: 'claude-opus-4-1-20250805',
+      model: CURRENT_AI_MODELS.claudeDeep,
       role: 'master_conductor',
       capabilities: [
         'orchestration',
