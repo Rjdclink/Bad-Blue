@@ -15,6 +15,7 @@ import { createLogger } from '../logger';
 import { isAuthenticated } from '../auth';
 import { extractMediaMetadata } from '../services/locationIntelligence/MediaMetadataExtractor';
 import { signServerEvidence } from '../services/geoconsole/evidence-proof';
+import { assessSpectraMediaCapture } from '../services/spectra/SpectraMediaEvidence';
 
 const router = Router();
 const log = createLogger('GPSRoutes');
@@ -74,25 +75,33 @@ router.post('/extract-upload', mediaUpload.single('file'), async (req: Request, 
       sha256File(uploaded.path),
     ]);
     const gps = metadata.gps;
-
+    const mediaAssessment = assessSpectraMediaCapture(metadata);
     const source = uploaded.mimetype.startsWith('video/') ? 'exif_video' : 'exif_photo';
-    const captureTimestamp = gps?.timestamp && Number.isFinite(gps.timestamp.getTime())
-      ? gps.timestamp
-      : undefined;
+    const captureTimestamp = mediaAssessment.capturedAt
+      ? new Date(mediaAssessment.capturedAt) : undefined;
+    const reportedAccuracy = gps?.accuracy ?? metadata.positioning.horizontalErrorMeters;
+    const accuracy = typeof reportedAccuracy === 'number'
+      && Number.isFinite(reportedAccuracy) && reportedAccuracy > 0
+        ? Math.min(5_000_000, reportedAccuracy) : undefined;
 
-    const point = gps && captureTimestamp
+    // Publicly posted or uploaded scene GPS identifies a media capture site.
+    // A conflict, missing capture time or invalid fix stays descriptive metadata
+    // and does not become an authenticated live person observation.
+    const point = gps && captureTimestamp && mediaAssessment.status === 'accepted'
       ? signServerEvidence({
           latitude: gps.latitude,
           longitude: gps.longitude,
           altitude: gps.altitude,
-          accuracy: gps.accuracy || metadata.positioning.horizontalErrorMeters,
+          accuracy,
           timestamp: captureTimestamp.toISOString(),
           receivedAt: new Date().toISOString(),
           source,
-          confidence: metadata.positioning.horizontalErrorMeters
-            ? Math.max(0.45, Math.min(0.95, 1 - metadata.positioning.horizontalErrorMeters / 250))
-            : 0.78,
-          observationKind: 'observed',
+          // Spatial metadata certainty is not a probability that the named
+          // subject was present. Do not inflate it to a live position score.
+          confidence: accuracy !== undefined
+            ? Math.max(0.20, Math.min(0.55, 1 - accuracy / 500))
+            : 0.40,
+          observationKind: 'historical',
           correlationGroup: `media:sha256:${fileHash}`,
           provenance: {
             provider: 'uploaded_media',
@@ -101,6 +110,10 @@ router.post('/extract-upload', mediaUpload.single('file'), async (req: Request, 
             transformedBy: [metadata.extractor],
           },
           metadata: {
+            evidenceRole: 'media_capture_scene',
+            subjectPresenceVerified: false,
+            currentPositionVerified: false,
+            captureAgeBand: mediaAssessment.ageBand,
             fileName: uploaded.originalname,
             contentSha256: fileHash,
             device: metadata.device,
@@ -117,6 +130,7 @@ router.post('/extract-upload', mediaUpload.single('file'), async (req: Request, 
       success: true,
       hasGPS: !!gps,
       hasCaptureTimestamp: !!captureTimestamp,
+      mediaAssessment,
       point,
       metadata: {
         ...metadata,
