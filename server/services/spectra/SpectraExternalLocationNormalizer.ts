@@ -436,11 +436,13 @@ function normalizeAndroidManagedLostMode(
 
   for (const rawEvent of events.slice(0, 2000)) {
     const event = record(rawEvent);
-    const lostMode = record(
-      event.lostModeLocationEvent
-      || event.locationEvent
-      || event.location
-    );
+    // Google Android Management usage logs distinguish the LostMode
+    // location event from unrelated device and network observations. Only
+    // the official LostModeLocationEvent can establish this source type.
+    const eventType = String(event.eventType || '').trim().toUpperCase();
+    if (eventType && eventType !== 'LOST_MODE_LOCATION') continue;
+    const lostMode = record(event.lostModeLocationEvent);
+    if (!Object.keys(lostMode).length) continue;
     const location = record(lostMode.location || lostMode);
     const latitude = bounded(location.latitude ?? location.lat, -90, 90);
     const longitude = bounded(
@@ -497,6 +499,11 @@ function normalizeAppleManagedLostMode(
 
   for (const rawResponse of responses.slice(0, 1000)) {
     const response = record(rawResponse);
+    // The Apple DeviceLocation MDM response is authoritative only when the
+    // supervised device acknowledges the command. An error response cannot
+    // become a valid fix just because it includes old coordinate fields.
+    const status = text(response.Status ?? response.status, 80);
+    if (status && status.toLowerCase() !== 'acknowledged') continue;
     const latitude = bounded(
       response.Latitude ?? response.latitude,
       -90,
