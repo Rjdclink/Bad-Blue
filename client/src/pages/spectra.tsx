@@ -127,6 +127,7 @@ interface AcquisitionResponse {
   };
   locationObservations?: GPSPoint[];
   candidateLocations?: LocationCandidate[];
+  publicPlace?: { sources: Array<{ url: string; title: string; status: string }>; diagnostics: { selected: number; retrieved: number; supported: number; outcome: string } };
 }
 
 const FIRST_PROMPT = 'What is it that you want to locate?';
@@ -169,6 +170,8 @@ export default function SpectraPage() {
       : makeMessage('spectra', FIRST_PROMPT),
   ]);
   const [input, setInput] = useState('');
+  const [publicPlaceMode, setPublicPlaceMode] = useState(false);
+  const [placeSources, setPlaceSources] = useState<Array<{ url: string; title: string; status: string }>>([]);
   const [observations, setObservations] = useState<GPSPoint[]>([]);
   const [candidateLocations, setCandidateLocations] = useState<LocationCandidate[]>([]);
   const [directEvidence, setDirectEvidence] = useState<GPSPoint[]>([]);
@@ -306,6 +309,7 @@ export default function SpectraPage() {
     setSourceCount(0);
     setFeedNotice(null);
     setPipelineNotices([]);
+    setPlaceSources([]);
     setSpectraSessionId(null);
     setLastError(null);
     setAcquisitionStage('Waiting for target');
@@ -320,10 +324,12 @@ export default function SpectraPage() {
     extraEvidence: GPSPoint[] = directEvidence,
     sessionOverride?: string,
   ) => {
+    if (publicPlaceMode) extraEvidence = [];
     const requestId = ++requestRef.current;
     setPhase('acquiring');
     setFeedNotice(null);
     setPipelineNotices([]);
+    setPlaceSources([]);
     setLastError(null);
     setAcquisitionStage('Resolving supplied location context…');
 
@@ -357,6 +363,7 @@ export default function SpectraPage() {
     // its slower response must never replace the final map candidates.
     let previewOpen = true;
     const previewRegionPromise = (async () => {
+      if (publicPlaceMode) return;
       for (const locationText of [detailsValue, targetValue]) {
         if (!previewOpen || requestId !== requestRef.current) return;
         if (!locationText.trim()) continue;
@@ -409,7 +416,7 @@ export default function SpectraPage() {
 
     try {
       void previewRegionPromise;
-      const response = await fetch('/api/spectra/acquire', {
+      const response = await fetch(publicPlaceMode ? '/api/spectra/public-place' : '/api/spectra/acquire', {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
@@ -478,7 +485,10 @@ export default function SpectraPage() {
       );
       setSourceCount(payload.acquisition?.sourceCount ?? 0);
       setFeedNotice(spectraFeedNotice(payload.acquisition?.feedDiagnostics));
-      setPipelineNotices(spectraPipelineNotices(payload.acquisition?.pipelineDiagnostics));
+      setPipelineNotices(payload.publicPlace
+        ? [`${payload.publicPlace.diagnostics.retrieved} of ${payload.publicPlace.diagnostics.selected} pages retrieved; ${payload.publicPlace.diagnostics.supported} supported venue address pages.`, `Result: ${payload.publicPlace.diagnostics.outcome}. City-level context; no calibrated probability or live-position claim.`]
+        : spectraPipelineNotices(payload.acquisition?.pipelineDiagnostics));
+      setPlaceSources(payload.publicPlace?.sources || []);
       if (typeof payload.sessionId === 'string' && payload.sessionId.trim()) {
         setSpectraSessionId(payload.sessionId.trim());
       }
@@ -492,7 +502,11 @@ export default function SpectraPage() {
         ? payload.candidateLocations
         : [];
       const resolvedTarget = payload.resolvedTargetLabel?.trim() || targetValue;
-      const responseText = points.length > 0
+      const responseText = payload.publicPlace
+        ? regionalCandidates.length > 0
+          ? `The public venue's reported city is ${regionalCandidates[0].label}. Sources are listed above.`
+          : `No supported public-place map result: ${payload.publicPlace.diagnostics.outcome}. See the source assessments above.`
+        : points.length > 0
         ? `I acquired ${points.length} timestamped location observation${points.length === 1 ? '' : 's'} for ${resolvedTarget}. The map is updated${certainty !== null ? ` with ${certainty}% location-evidence confidence` : ''}.`
         : regionalCandidates.length > 0
           ? `My best available regional estimate for ${resolvedTarget} is ${regionalCandidates[0].label || 'the area shown on the map'}. This is an estimate; the current live position is unverified.`
@@ -511,7 +525,7 @@ export default function SpectraPage() {
       addMessage('spectra', responseText);
       speakIfEnabled(responseText);
     }
-  }, [addMessage, directEvidence, speakIfEnabled, spectraSessionId]);
+  }, [addMessage, directEvidence, speakIfEnabled, spectraSessionId, publicPlaceMode]);
 
   useEffect(() => {
     const launch = lexaraLaunchRef.current;
@@ -753,6 +767,10 @@ export default function SpectraPage() {
   ]);
 
   const handleTargetFile = useCallback((file: File) => {
+    if (publicPlaceMode) {
+      addMessage('spectra', 'Public-place mode reads public venue pages. Add a visitor-page link in the message box.');
+      return;
+    }
     if (isSpectraTelemetryFile(file)) {
       void handleTelemetryEvidence(file);
       return;
@@ -766,7 +784,7 @@ export default function SpectraPage() {
     addMessage('spectra', response);
     speakIfEnabled(response);
     if (mediaInputRef.current) mediaInputRef.current.value = '';
-  }, [addMessage, handleMediaEvidence, handleTelemetryEvidence, speakIfEnabled]);
+  }, [addMessage, handleMediaEvidence, handleTelemetryEvidence, speakIfEnabled, publicPlaceMode]);
 
   const handleUserMessage = useCallback(async (rawMessage: string) => {
     const message = rawMessage.trim();
@@ -969,6 +987,17 @@ export default function SpectraPage() {
                 <p className="text-[11px] text-slate-500">
                   {sourceCount > 0 ? `${sourceCount} source groups referenced` : 'Tell SPECTRA what you need located'}
                 </p>
+                {phase === 'awaiting_target' && <label className="mt-2 flex gap-2 text-xs text-slate-300">
+                  <input type="checkbox" checked={publicPlaceMode} onChange={event => setPublicPlaceMode(event.target.checked)} />
+                  Locate a public venue (city-level)
+                </label>}
+                {placeSources.length > 0 && <details className="mt-2 text-xs text-slate-300">
+                  <summary>Public-place sources</summary>
+                  {placeSources.map(source => <p key={source.url} className="mt-1">
+                    <a href={source.url} target="_blank" rel="noopener noreferrer" className="underline">{source.title}</a>
+                    {' — '}{source.status.replaceAll('-', ' ')}
+                  </p>)}
+                </details>}
                 {feedNotice && (
                   <p role="status" className="mt-1 text-xs text-amber-300" data-testid="spectra-feed-status">
                     {feedNotice}
@@ -1063,7 +1092,7 @@ export default function SpectraPage() {
                 type="button"
                 variant="ghost"
                 size="icon"
-                disabled={phase === 'awaiting_target' || phase === 'acquiring'}
+                disabled={publicPlaceMode || phase === 'awaiting_target' || phase === 'acquiring'}
                 onClick={() => mediaInputRef.current?.click()}
                 className="h-11 w-11 shrink-0 rounded-full text-slate-400 hover:text-cyan-300"
                 title="Add target media or telemetry"

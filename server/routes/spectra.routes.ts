@@ -65,6 +65,7 @@ import { solveSpectraConstraintLayer } from '../services/spectra/SpectraConstrai
 import { acquireConfiguredSpectraCameras } from '../services/spectra/SpectraCameraDirectoryAdapters';
 import { acquireSpectraActiveTelemetry, getSpectraActiveAcquisitionCapabilities } from '../services/spectra/SpectraActiveAcquisition';
 import { buildSpectraPipelineDiagnostics, type SpectraRetrievalCounts } from '../services/spectra/SpectraPipelineDiagnostics';
+import { acquirePublicPlace, isPublicPlaceTarget } from '../services/spectra/SpectraPublicPlace';
 
 const router = Router();
 router.use(isAuthenticated);
@@ -809,6 +810,35 @@ async function collectSpectraContextEvidence(input: {
     sourceFamilies,
   };
 }
+
+router.post('/public-place', async (req: Request, res: Response) => withDiscoveryDiagnostics(async () => {
+  const parsed = z.object({ target: z.string().trim().min(1).max(200), details: z.string().max(12_000) }).safeParse(req.body);
+  if (!parsed.success || !isPublicPlaceTarget(parsed.data.target)) {
+    return res.status(400).json({ success: false, error: 'Enter the name of a supported public venue, such as a museum or library.' });
+  }
+  try {
+    const { target, details } = parsed.data;
+    const result = await acquirePublicPlace(target, details, {
+      discover: (query, signal) => discoverLegalMeshTier3(query, signal, { subject: target, firstUseful: true }),
+      retrieve: retrieveSpectraPublicEvidence,
+      geocode: geocodeCityState,
+    });
+    console.info('[SPECTRA Public Place Summary]', JSON.stringify(result.diagnostics));
+    return res.json({
+      success: true, target, resolvedTargetLabel: target,
+      locationObservations: [], candidateLocations: result.candidates,
+      publicPlace: result,
+      acquisition: {
+        identityConfidence: 0, locationConfidence: 0,
+        sourceCount: new Set(result.sources.map(source => new URL(source.url).hostname)).size,
+        observationCount: 0, feedDiagnostics: getDiscoveryDiagnostics(),
+        summary: result.diagnostics.outcome, verificationStatus: 'Source-reported venue context',
+      },
+    });
+  } catch {
+    return res.status(502).json({ success: false, error: 'Public-place acquisition could not complete.' });
+  }
+}));
 
 router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiagnostics(async () => {
   res.setHeader('X-Spectra-Request-Id', getDiscoveryDiagnostics()!.requestId);
