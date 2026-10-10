@@ -45,14 +45,23 @@ class GpuMap extends Events {
 }
 class Popup { remove(){} }
 class RasterMap extends Events {
-  constructor(){super();this.layers=new Set();rasterMaps.push(this);}
+  constructor(){super();this.layers=new Set();this.attributions=new Map();rasterMaps.push(this);}
   invalidateSize(){}
-  removeLayer(l){this.layers.delete(l);}
-  remove(){this.removed=true;this.events.clear();}
+  removeLayer(l){if(this.layers.delete(l))l.emit('remove');}
+  remove(){for(const l of [...this.layers])this.removeLayer(l);this.removed=true;this.events.clear();}
 }
 class Tile extends Events {
   constructor(url,options){super();this.url=url;this.options=options;tiles.push(this);}
-  addTo(map){map.layers.add(this);return this;}
+  addTo(map){
+    map.layers.add(this);
+    const credit=this.options.attribution;
+    if(credit){
+      map.attributions.set(credit,(map.attributions.get(credit)||0)+1);
+      // Leaflet's attribution control listens to the layer's remove event.
+      this.on('remove',()=>{const count=map.attributions.get(credit)-1;if(count)map.attributions.set(credit,count);else map.attributions.delete(credit);});
+    }
+    return this;
+  }
 }
 global.__testGpu={Map:GpuMap,Popup,NavigationControl:class{},ScaleControl:class{}};
 global.__testLeaflet={map:()=>new RasterMap(),control:{zoom:()=>({addTo(){}}),scale:()=>({addTo(){}})},layerGroup:()=>({addTo(){return this;},clearLayers(){}}),tileLayer:(...args)=>new Tile(...args)};
@@ -86,6 +95,26 @@ test('Satellite fallback updates zoom and attribution',()=>{mount(Gpu);const m=g
 test('3D terrain and buildings survive the inline NASA style',()=>{const p={...base,layers:{...base.layers,terrain:true,buildings:true}};mount(Gpu,p);const m=gpuMaps[0];assert.equal(m.options.pitch,52);emit(m,'style.load');assert.equal(m.terrain.source,'spectra-terrain-dem');assert.equal(m.getLayer('spectra-buildings-3d').type,'fill-extrusion');assert.equal(m.getSource('spectra-buildings-source').url,'https://tiles.openfreemap.org/planet');emit(m,'error',{sourceId:'spectra-buildings-source'});assert.equal(m.getLayer('spectra-buildings-3d').layout.visibility,'none');assert.equal(m.getLayer('spectra-satellite').layout.visibility,'visible');unmount();});
 test('A 3D request still shows NASA on browsers without WebGL',()=>{throwGpu=true;mount(Gpu,{...base,layers:{...base.layers,terrain:true,buildings:true}});assert.match(tiles[0].url,/BlueMarble/);act(()=>tiles[0].emit('tileload'));assert.match(JSON.stringify(view.toJSON()),/3D unavailable in this browser/);unmount();});
 test('NASA raster success cancels its deadline',()=>{mount(Raster);assert.equal(tiles[0].options.maxNativeZoom,8);act(()=>tiles[0].emit('tileload'));tick(15000);assert.equal(tiles.length,1);assert.match(JSON.stringify(view.toJSON()),/August 2004/);unmount();});
+test('Raster style switching releases old provider credits',()=>{
+  mount(Raster,{...base,mapMode:'hybrid'});
+  const m=rasterMaps[0];
+  assert.equal(m.attributions.size,2);
+  act(()=>view.update(React.createElement(Raster,{...base,mapMode:'street',layers:{...base.layers,satellite:false}})));
+  assert.deepEqual([...m.attributions.keys()],['&copy; OpenStreetMap contributors']);
+  act(()=>view.update(React.createElement(Raster,base)));
+  assert.equal(m.attributions.size,1);
+  assert.match([...m.attributions.keys()][0],/NASA/);
+  unmount();
+  assert.equal(m.attributions.size,0);
+});
+test('Raster provider fallback releases the failed provider credit',()=>{
+  mount(Raster);
+  const m=rasterMaps[0];
+  tick(10000);
+  assert.deepEqual([...m.attributions.keys()],['Tiles © Esri, Maxar, Earthstar Geographics, and the GIS User Community']);
+  unmount();
+  assert.equal(m.attributions.size,0);
+});
 test('Raster outages terminate with honest unavailable state',()=>{mount(Raster);tick(10000);assert.match(tiles[1].url,/arcgisonline/);tick(10000);assert.match(tiles[2].url,/openstreetmap/);tick(10000);assert.match(JSON.stringify(view.toJSON()),/temporarily unavailable/);tick(10000);assert.equal(tiles.length,3);unmount();});
 test('Three raster errors advance provider and clear old listeners',()=>{mount(Raster);const old=tiles[0];act(()=>{old.emit('tileerror');old.emit('tileerror');old.emit('tileerror');});assert.equal(old.events.size,0);assert.match(tiles[1].options.attribution,/Esri/);assert.equal(tiles[1].options.zIndex,0);unmount();});
 console.log(`${pass} lifecycle tests passed`);

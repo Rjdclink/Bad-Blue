@@ -140,7 +140,9 @@ test('SPECTRA map is unconditional from initial load',
 test('Map is progressively populated from supplied clues',
   spectra.includes('/api/geoconsole/geocode-city-state') &&
   spectra.includes('Regional context mapped; broadening identity discovery') &&
-  spectra.includes('Acquired so far'));
+  spectra.includes('Search progress') &&
+  spectra.includes('Phone clue supplied') &&
+  !spectra.includes('Phone anchor'));
 test('Natural-language clues are decomposed into address and regional candidates',
   geocoder.includes('extractStreetAddressHint') &&
   geocoder.includes('extractLocationClues') &&

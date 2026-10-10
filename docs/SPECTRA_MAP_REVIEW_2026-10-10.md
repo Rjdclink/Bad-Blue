@@ -130,3 +130,30 @@ Railway listed `TAVILY_API_KEY`, `SERPAPI_KEY`, `SCRAPINGBEE_API_KEY`, `GEONAMES
 Eight new offline checks cover blank values, existing key aliases and precedence, multi-part configuration, Census key semantics, secret-value omission, real registry status semantics, and the actual authenticated capability handler. All pass. Nine feed-diagnostic checks, 15 map lifecycle checks, 35 production invariants, 134 Spectra static checks, and client-control checks also pass. Changed server TypeScript compiles with esbuild; this is a syntax check, not a full application type check. The configuration suite is included in `verify:spectra`.
 
 All tests use synthetic fixtures and mocked external I/O. No personal location test was run in this batch. Full Railway build and browser verification remain required before calling the release live. No GitHub Actions or Railway AI agent is used. Any commit for this batch includes `[skip ci]`.
+
+## Live verification after the successful b107ac99 release
+
+Railway deployment `02fa4944-f250-4938-95ec-81abf09b299a` reached SUCCESS for commit `b107ac99b451417c15c87ab9224f4474baeea69d`. Production readiness returned HTTP 200 at 19:09:08 UTC on October 10. The full production build passed the previously failing verification gates.
+
+The live authenticated Spectra page displayed NASA Blue Marble before any target was entered. Street/satellite switching and fullscreen/restore worked. All 24 visible raster tile images finished loading after the style transition. This browser used the explicitly labeled 2D fallback. Actual 3D GPU rendering and the affected mobile browser remain unverified. A direct browser navigation to the authenticated capability endpoint was blocked by the browser client, so its live JSON payload was not verified through that route.
+
+The user-authorized blind self-test used only the supplied name, phone, and email, with the expected location withheld. A first submission was not executed because automatic approval review hit a usage limit. After the user requested continuation, the same normal review path allowed submission. The completed acquisition returned HTTP 200 in 41,882 ms at 19:16:51 UTC, reported 28 source groups referenced, displayed the incomplete-coverage notice, and produced no mappable location estimate. No third-party-person test was run.
+
+Request-correlated diagnostics (`472220f5-50a0-48f6-bde8-768d2310e9c1`) recorded 837 discovery HTTP attempts: 8 with candidates, 135 empty, 531 failed, and 163 timed out. These are request outcomes, not counts of independent sources or verified evidence. No requests remained pending in the final snapshot.
+
+| Provider | Candidate-bearing responses | Empty | Failed | Timed out | Classified failure |
+| --- | ---: | ---: | ---: | ---: | --- |
+| Tavily | 7 | 0 | 0 | 157 | timeout |
+| DuckDuckGo Instant Answer | 0 | 134 | 30 | 0 | invalid response |
+| SearXNG | 0 | 0 | 164 | 0 | DNS |
+| DDGS | 0 | 0 | 164 | 0 | DNS |
+| OpenSERP | 0 | 0 | 164 | 0 | DNS |
+| Common Crawl | 0 | 1 | 4 | 1 | HTTP 503; timeout |
+| SerpAPI | 1 | 0 | 0 | 5 | timeout |
+| ScrapingBee | 0 | 0 | 5 | 0 | HTTP 400 |
+
+The result confirms severe feed failures and repeated requests to unavailable services. It does not demonstrate an inference-engine crash or validate any current location. The requested location-identification goal remains unmet.
+
+Live QA also reproduced stale provider credits after changing map styles. The raster cleanup removed every event listener before removing a layer, suppressing Leaflet's own `remove` listener that releases attribution. The follow-up removes the layer first, then clears callbacks. Two lifecycle regression cases cover both style changes and provider fallback; the style-change case failed before the fix with stale NASA/Esri credits, matching the browser observation. Map diagnostic events are serialized so browser console capture retains the fallback reason instead of only `Object`.
+
+The same follow-up changes the progress labels to `Search progress`, `Target description received`, and `Phone clue supplied`. A supplied phone number is input, not proof of an observed device or established location. Provider selection, source acquisition, inference, permissions, and device collection are unchanged.

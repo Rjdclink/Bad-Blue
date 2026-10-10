@@ -857,7 +857,7 @@ export const MapLibreIntelligenceMap: React.FC<IntelligenceMapProps> = ({
       maxPitch: 85,
       });
     } catch {
-      console.warn('[SPECTRA_MAP]', { event: 'renderer_fallback', reason: 'webgl_initialization' });
+      console.warn('[SPECTRA_MAP]', JSON.stringify({ event: 'renderer_fallback', reason: 'webgl_initialization' }));
       // Some browsers cannot create a WebGL context. Keep the investigation
       // and its evidence usable instead of triggering the app error boundary.
       containerRef.current.replaceChildren();
@@ -880,7 +880,7 @@ export const MapLibreIntelligenceMap: React.FC<IntelligenceMapProps> = ({
     if (resizeObserver && containerRef.current) resizeObserver.observe(containerRef.current);
 
     const useRaster = (reason: string) => {
-      console.warn('[SPECTRA_MAP]', { event: 'renderer_fallback', reason });
+      console.warn('[SPECTRA_MAP]', JSON.stringify({ event: 'renderer_fallback', reason }));
       setRendererRecovering(false);
       setRendererUnavailable(true);
     };
@@ -965,7 +965,7 @@ export const MapLibreIntelligenceMap: React.FC<IntelligenceMapProps> = ({
       try {
         initializeRuntimeLayers(map);
         startupDeadline.cancel();
-        console.info('[SPECTRA_MAP]', { event: 'style_ready' });
+        console.info('[SPECTRA_MAP]', JSON.stringify({ event: 'style_ready' }));
       } catch {
         useRaster('runtime_layer_initialization');
       }

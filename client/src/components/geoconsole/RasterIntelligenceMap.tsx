@@ -83,12 +83,14 @@ export default function RasterIntelligenceMap(props: IntelligenceMapProps) {
       deadline.cancel();
       if (index + 1 >= choices.length) {
         setTileError(true);
-        console.warn('[SPECTRA_MAP]', { event: 'raster_unavailable' });
+        console.warn('[SPECTRA_MAP]', JSON.stringify({ event: 'raster_unavailable' }));
         return;
       }
-      if (active) { active.off(); map.removeLayer(active); }
+      // Leaflet removes provider attribution through its layer remove listener.
+      // Keep that listener until removal has finished, then release callbacks.
+      if (active) { map.removeLayer(active); active.off(); }
       index += 1;
-      console.warn('[SPECTRA_MAP]', { event: 'raster_source_fallback', attempt: index });
+      console.warn('[SPECTRA_MAP]', JSON.stringify({ event: 'raster_source_fallback', attempt: index }));
       mountBase();
     };
     const mountBase = () => {
@@ -130,7 +132,7 @@ export default function RasterIntelligenceMap(props: IntelligenceMapProps) {
       }).addTo(map);
       tileLayers.push(earth);
     }
-    return () => { disposed = true; deadline.cancel(); tileLayers.forEach(layer => { layer.off(); map.removeLayer(layer); }); };
+    return () => { disposed = true; deadline.cancel(); tileLayers.forEach(layer => { map.removeLayer(layer); layer.off(); }); };
   }, [ready, props.mapMode, props.layers.satellite, props.layers.terrain, props.layers.weather, props.layers.earthObservation, props.displayTime?.getTime()]);
 
   useEffect(() => {
