@@ -41,7 +41,8 @@ must(index.includes('Affordable legal guidance and answers to legal questions.')
 must(index.includes('3-day free trial, then $19.99/month'), 'root schema must preserve canonical trial and subscription positioning');
 must(index.includes('"price": "19.99"') && index.includes('"priceCurrency": "USD"'), 'root application schema must expose the canonical monthly offer price');
 must(index.includes('id="initial-seo-content"') && index.includes('data-seo-shell-title') && index.includes('data-seo-shell-description'), 'root must expose crawlable initial SEO content before React');
-for (const publicHref of ['/affordable-legal-guidance/', '/areas/', '/services/', '/guides/', '/documents/', '/sources-accuracy/', '/faq', '/reviews', '/contact']) {
+mustNot(index, 'rel="preload" href="/src/main.tsx"', 'production HTML must not preload a development-only TSX module');
+for (const publicHref of ['/affordable-legal-guidance/', '/areas/', '/services/', '/live-legal-conversation/', '/legal-document-generator/', '/guides/', '/documents/', '/sources-accuracy/', '/faq', '/reviews', '/contact']) {
   must(index.includes(`href="${publicHref}"`), `root initial SEO shell must link public resource: ${publicHref}`);
 }
 for (const capability of ['Visible animated AI', 'DOCX and PDF', 'Uploaded document, evidence, image, and media analysis', 'Intuitive legal-document recognition and preparation']) {
@@ -52,6 +53,10 @@ for (const capability of ['animated conversational legal AI', '40+ areas of law'
   must(lexaraSeoPage.includes(capability), `Lexara crawlable page must expose capability: ${capability}`);
 }
 must((lexaraSeoPage.match(/How people search for this capability/g) || []).length === 1, 'Lexara crawlable service page must not duplicate its search-intent section');
+const servicesHub = read('public/services/index.html');
+for (const servicePath of ['/services/ai-legal-consultation/', '/services/legal-document-creator/', '/legal-research-assistant/', '/file-analysis/']) {
+  must(servicesHub.includes(`href="${servicePath}"`), `services hub must link a relevant active discovery page: ${servicePath}`);
+}
 const affordableGuidancePage = read('public/affordable-legal-guidance/index.html');
 const affordableAnswersPage = read('public/guides/affordable-answers-to-legal-questions/index.html');
 for (const phrase of ['<h1>Affordable Legal Guidance</h1>', '3 days', '$19.99/month', 'https://legalwhat.com/affordable-legal-guidance/']) {
@@ -108,8 +113,31 @@ mustNot(sitemap, 'Bad Blue', 'sitemap must not use legacy brand');
 mustNot(sitemap, '<lastmod>', 'static sitemap must not emit synthetic freshness dates');
 for (const inactiveUrl of ['https://legalwhat.com/services/background-report/', 'https://legalwhat.com/services/people-finder/', 'https://legalwhat.com/services/inmate-locator/']) {
   mustNot(sitemap, inactiveUrl, `static sitemap must not promote inactive service: ${inactiveUrl}`);
+  const inactivePath = `public${new URL(inactiveUrl).pathname}index.html`;
+  must(read(inactivePath).includes('<meta name="robots" content="noindex,follow">'), `inactive service must explicitly noindex: ${inactivePath}`);
 }
 const sitemapLocs = [...sitemap.matchAll(/<loc>([^<]+)<\/loc>/g)].map((match) => match[1]);
+const sitemapSet = new Set(sitemapLocs);
+const inactiveStaticPages = new Set([
+  'public/services/background-report/index.html',
+  'public/services/people-finder/index.html',
+  'public/services/inmate-locator/index.html',
+]);
+
+// Every active, public, crawlable static landing page must be discoverable in
+// the canonical sitemap; inactive service pages remain explicitly excluded.
+function verifyStaticSitemapCoverage(directory) {
+  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+    const fullPath = `${directory}/${entry.name}`;
+    if (entry.isDirectory()) {
+      verifyStaticSitemapCoverage(fullPath);
+    } else if (entry.isFile() && entry.name === 'index.html' && !inactiveStaticPages.has(fullPath)) {
+      const url = `https://legalwhat.com/${fullPath.slice('public/'.length).replace(/index\.html$/, '')}`;
+      must(sitemapSet.has(url), `public SEO page missing from sitemap: ${url}`);
+    }
+  }
+}
+verifyStaticSitemapCoverage('public');
 must(new Set(sitemapLocs).size === sitemapLocs.length, 'static sitemap must not contain duplicate URLs');
 const spaSitemapPaths = sitemapLocs
   .map((url) => new URL(url).pathname)
