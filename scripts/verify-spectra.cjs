@@ -301,9 +301,11 @@ test('SPECTRA broad discovery runs through independent native and Claude researc
   routes.includes('discoverLegalMeshTier3') &&
   routes.includes('callClaudeWebSearch') &&
   routes.includes('allowFetch: true'));
-test('SPECTRA recursively broadens until evidence sufficiency or diminishing returns',
+test('SPECTRA recursively broadens until corroborated city evidence, budget or diminishing returns',
   routes.includes('SPECTRA_DISCOVERY_POLICY.maxPasses') &&
-  routes.includes('SPECTRA_DISCOVERY_POLICY.sufficientConfidence') &&
+  routes.includes('assessSpectraCityDiscoveryReadiness({') &&
+  routes.includes('if (readiness.sufficientToStop) break;') &&
+  routes.includes('SPECTRA_DISCOVERY_POLICY.maxQueries') &&
   routes.includes('SPECTRA_DISCOVERY_POLICY.diminishingReturnFloor') &&
   routes.includes('buildSpectraAdaptiveQuery'));
 test('Generic target classes resolve identity without treating city/state as a person name',
