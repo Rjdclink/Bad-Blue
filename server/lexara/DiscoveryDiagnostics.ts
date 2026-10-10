@@ -2,14 +2,14 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 
 export type DiscoveryOutcome = 'ok' | 'empty' | 'failed' | 'timeout' | 'cancelled' | 'skipped';
-type Counts = Record<DiscoveryOutcome, number> & { pending: number };
+type Counts = Record<DiscoveryOutcome, number> & { pending: number; dispatched: number; partial: number };
 type ProviderCounts = Counts & { provider: string; errors: Record<string, number> };
 interface DiscoveryContext {
   requestId: string;
   providers: Map<string, ProviderCounts>;
 }
 const contexts = new AsyncLocalStorage<DiscoveryContext>();
-const counts = (): Counts => ({ ok: 0, empty: 0, failed: 0, timeout: 0, cancelled: 0, skipped: 0, pending: 0 });
+const counts = (): Counts => ({ ok: 0, empty: 0, failed: 0, timeout: 0, cancelled: 0, skipped: 0, pending: 0, dispatched: 0, partial: 0 });
 const providerNames: Record<string, string> = {
   tavily: 'tavily', duckDuckGoInstantAnswer: 'duckduckgo-instant-answer',
   searxng: 'searxng', ddgsBackend: 'ddgs', openserp: 'openserp',
@@ -24,6 +24,11 @@ export function discoveryErrorType(error: unknown): string {
   for (let depth = 0; current && depth < 5 && !seen.has(current); depth++) {
     seen.add(current);
     const code = String(current.code || '');
+    const local: Record<string, string> = {
+      DISCOVERY_QUEUE_FULL: 'queue-capacity', DISCOVERY_QUEUE_TIMEOUT: 'queue-timeout',
+      DISCOVERY_UNAVAILABLE: 'provider-unavailable', DISCOVERY_PROVIDER_ERROR: 'upstream-error',
+    };
+    if (local[code]) return local[code];
     if (code === 'ENOTFOUND' || code === 'EAI_AGAIN') return 'dns';
     if (['ECONNREFUSED', 'ECONNRESET', 'UND_ERR_SOCKET'].includes(code)) return 'connection';
     if (['ETIMEDOUT', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT'].includes(code)
@@ -48,21 +53,26 @@ export function beginDiscoveryAttempt(lane: string) {
   if (row) row.pending++;
   const started = performance.now();
   let completed = false;
-  return (outcome: DiscoveryOutcome, error?: unknown) => {
+  const finish = (outcome: DiscoveryOutcome, error?: unknown) => {
     if (completed) return;
     completed = true;
     const errorType = outcome === 'timeout' ? 'timeout'
-      : outcome === 'failed' ? discoveryErrorType(error) : undefined;
+      : outcome === 'failed' || (outcome === 'skipped' && error) ? discoveryErrorType(error) : undefined;
     if (row) {
       row.pending--;
       row[outcome]++;
       if (errorType) row.errors[errorType] = (row.errors[errorType] || 0) + 1;
     }
-    if (errorType) console.warn('[Discovery Feed]', JSON.stringify({
+    if (errorType && outcome !== 'skipped') console.warn('[Discovery Feed]', JSON.stringify({
       requestId: context?.requestId, provider, outcome, errorType,
       durationMs: Math.round(performance.now() - started),
     }));
   };
+  let dispatched = false;
+  finish.dispatch = () => {
+    if (!completed && !dispatched) { dispatched = true; if (row) row.dispatched++; }
+  };
+  return finish;
 }
 
 export function getDiscoveryDiagnostics() {
@@ -76,12 +86,18 @@ export function getDiscoveryDiagnostics() {
   return {
     requestId: context.requestId,
     scope: 'discovery-http' as const,
+    countingUnit: 'provider-attempt' as const,
     ...totals,
     // Request success is not evidence verification or complete source coverage.
     hasFailures: totals.failed + totals.timeout > 0,
-    incomplete: totals.pending + totals.skipped + totals.cancelled > 0,
+    incomplete: totals.pending + totals.skipped + totals.cancelled + totals.partial > 0,
     providers,
   };
+}
+
+export function markDiscoveryPartial(lane: string): void {
+  const row = contexts.getStore()?.providers.get(providerNames[lane] || 'other');
+  if (row) row.partial++;
 }
 
 export async function withDiscoveryDiagnostics<T>(work: () => Promise<T>): Promise<T> {

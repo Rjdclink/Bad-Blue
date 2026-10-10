@@ -1,4 +1,4 @@
-import { beginDiscoveryAttempt, getDiscoveryDiagnostics } from './DiscoveryDiagnostics';
+import { beginDiscoveryAttempt, discoveryErrorType, getDiscoveryDiagnostics, markDiscoveryPartial } from './DiscoveryDiagnostics';
 import {
   buildLexaraSourceQueries,
   getLexaraPublicSources,
@@ -68,6 +68,30 @@ function independentSearchBase(value: string | undefined): string {
 const captchaDisabledEngines = new Set(['duckduckgo']);
 const engineCooldownUntil = new Map<string, number>();
 const laneInFlight = new Map<string, number>();
+const laneQueued = new Map<string, number>();
+const laneFailures = new Map<string, number>();
+
+const discoveryError = (code: string) => Object.assign(new Error('Discovery request unavailable'), { code });
+
+function skippedProvider(lane: string): LegalMeshCandidate[] {
+  beginDiscoveryAttempt(lane)('skipped', discoveryError('DISCOVERY_UNAVAILABLE'));
+  return [];
+}
+
+function recordProviderFailure(lane: string, error: unknown): void {
+  const category = discoveryErrorType(error);
+  const failures = (laneFailures.get(lane) || 0) + 1;
+  laneFailures.set(lane, failures);
+  const unavailable = category === 'dns' || category === 'connection' || category === 'http-404';
+  const credentials = category === 'http-401' || category === 'http-403';
+  const transient = category === 'timeout' || category === 'invalid-response'
+    || category === 'upstream-error' || /^http-5\d\d$/.test(category);
+  if (unavailable || credentials || (transient && failures >= 3)) {
+    const retryAfterMs = credentials ? 300_000 : 30_000;
+    engineCooldownUntil.set(lane, Math.max(engineCooldownUntil.get(lane) || 0, Date.now() + retryAfterMs));
+    console.warn('[LEXARA Search Availability]', JSON.stringify({ lane, status: 'provider-cooldown', category, retryAfterMs }));
+  }
+}
 
 function engineAvailable(engine: string): boolean {
   return !captchaDisabledEngines.has(engine) && (engineCooldownUntil.get(engine) || 0) <= Date.now();
@@ -96,6 +120,24 @@ async function checkDiscoveryResponse(response: Response, engine: string | strin
   throw new Error(`Discovery HTTP ${response.status}`);
 }
 
+async function readDiscoveryJson(response: Response, engine: string | string[]): Promise<any> {
+  await checkDiscoveryResponse(response, engine);
+  // A challenge/error page served as HTTP 200 is not an empty search result.
+  if (/text\/html/i.test(response.headers?.get('content-type') || '')) {
+    const detail = (await response.text()).slice(0, 2000);
+    for (const name of Array.isArray(engine) ? engine : [engine]) recordEngineFailure(name, detail);
+    throw new SyntaxError('Discovery expected JSON');
+  }
+  const payload = await response.json();
+  if (!payload || typeof payload !== 'object') throw new SyntaxError('Discovery expected an object');
+  return payload;
+}
+
+function discoveryRows(payload: any, key = 'results'): any[] {
+  if (!Array.isArray(payload?.[key])) throw new SyntaxError('Discovery results missing');
+  return payload[key];
+}
+
 async function withTimeout<T>(
   lane: string,
   timeoutMs: number,
@@ -103,7 +145,29 @@ async function withTimeout<T>(
   work: (signal: AbortSignal) => Promise<T>,
 ): Promise<T | null> {
   const finish = beginDiscoveryAttempt(lane);
-  if (!engineAvailable(lane)) { finish('skipped'); return null; }
+  if (signal?.aborted) { finish('cancelled'); return null; }
+  if (!engineAvailable(lane)) { finish('skipped', discoveryError('DISCOVERY_UNAVAILABLE')); return null; }
+  // Bound waiting work separately from the HTTP deadline. Large query fan-outs
+  // must not spend their network budget in line or hammer an offline service.
+  if ((laneQueued.get(lane) || 0) >= 16) {
+    finish('skipped', discoveryError('DISCOVERY_QUEUE_FULL')); return null;
+  }
+  laneQueued.set(lane, (laneQueued.get(lane) || 0) + 1);
+  const queueDeadline = Date.now() + Math.max(250, Math.min(timeoutMs, 2_000));
+  try {
+    while ((laneInFlight.get(lane) || 0) >= 2) {
+      if (signal?.aborted) { finish('cancelled'); return null; }
+      if (!engineAvailable(lane)) { finish('skipped', discoveryError('DISCOVERY_UNAVAILABLE')); return null; }
+      if (Date.now() >= queueDeadline) { finish('skipped', discoveryError('DISCOVERY_QUEUE_TIMEOUT')); return null; }
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+  } finally {
+    laneQueued.set(lane, Math.max(0, (laneQueued.get(lane) || 1) - 1));
+  }
+  if (signal?.aborted) { finish('cancelled'); return null; }
+  if (!engineAvailable(lane)) { finish('skipped', discoveryError('DISCOVERY_UNAVAILABLE')); return null; }
+  laneInFlight.set(lane, (laneInFlight.get(lane) || 0) + 1);
+  finish.dispatch();
   const controller = new AbortController();
   const relay = () => controller.abort(signal?.reason);
   if (signal?.aborted) controller.abort(signal.reason);
@@ -113,27 +177,23 @@ async function withTimeout<T>(
     if (!controller.signal.aborted) timedOut = true;
     controller.abort(new Error('Lexara discovery timeout'));
   }, Math.max(250, timeoutMs));
-  let acquired = false;
   try {
-    while ((laneInFlight.get(lane) || 0) >= 2 && !controller.signal.aborted && engineAvailable(lane)) {
-      await new Promise(resolve => setTimeout(resolve, 25));
-    }
-    if (controller.signal.aborted || !engineAvailable(lane)) {
-      finish(controller.signal.aborted ? (timedOut ? 'timeout' : 'cancelled') : 'skipped');
-      return null;
-    }
-    laneInFlight.set(lane, (laneInFlight.get(lane) || 0) + 1);
-    acquired = true;
     const result = await work(controller.signal);
     finish(controller.signal.aborted ? (timedOut ? 'timeout' : 'cancelled')
       : Array.isArray(result) && result.length === 0 ? 'empty' : 'ok');
-    return result;
+    if (!controller.signal.aborted) laneFailures.delete(lane);
+    return controller.signal.aborted ? null : result;
   } catch (error) {
+    if (!controller.signal.aborted && discoveryErrorType(error) === 'provider-unavailable') {
+      finish('skipped', error); return null;
+    }
     recordEngineFailure(lane, error instanceof Error ? error.message : String(error));
+    if (!controller.signal.aborted || timedOut) recordProviderFailure(lane,
+      timedOut ? Object.assign(new Error('Discovery timeout'), { name: 'TimeoutError' }) : error);
     finish(controller.signal.aborted ? (timedOut ? 'timeout' : 'cancelled') : 'failed', error);
     return null;
   } finally {
-    if (acquired) laneInFlight.set(lane, Math.max(0, (laneInFlight.get(lane) || 1) - 1));
+    laneInFlight.set(lane, Math.max(0, (laneInFlight.get(lane) || 1) - 1));
     clearTimeout(timer);
     signal?.removeEventListener('abort', relay);
   }
@@ -239,11 +299,10 @@ async function tavily(query: string, signal?: AbortSignal, budgetMs = 2_000): Pr
       // Tavily accepts search queries under 400 characters, not full legal prompts.
       body: JSON.stringify({ query: searchQuery, search_depth: 'basic', max_results: 10, include_answer: false, include_raw_content: false }),
     });
-    await checkDiscoveryResponse(r, 'tavily');
-    const j:any = await r.json();
-    return (j.results || []).flatMap((x:any) => {
-      const url=clean(x.url);
-      return url ? [{url,title:String(x.title||'Tavily result'),excerpt:String(x.content||'').slice(0,1200),tier:3 as const,provider:'tavily'}] : [];
+    const j:any = await readDiscoveryJson(r, 'tavily');
+    return discoveryRows(j).flatMap((x:any) => {
+      const url=clean(x?.url);
+      return url ? [{url,title:String(x?.title||'Tavily result'),excerpt:String(x?.content||'').slice(0,1200),tier:3 as const,provider:'tavily'}] : [];
     });
   });
   return result || [];
@@ -257,8 +316,7 @@ async function duckDuckGoInstantAnswer(query: string, signal?: AbortSignal): Pro
     endpoint.searchParams.set('no_html','1');
     endpoint.searchParams.set('no_redirect','1');
     const response=await fetch(endpoint,{signal:requestSignal,headers:{accept:'application/json'}});
-    if(!response.ok) throw new Error(`Discovery HTTP ${response.status}`);
-    const payload:any=await response.json();
+    const payload:any=await readDiscoveryJson(response, 'duckDuckGoInstantAnswer');
     const candidates:LegalMeshCandidate[]=[];
     const abstractUrl=clean(payload?.AbstractURL);
     const abstract=String(payload?.AbstractText||payload?.Abstract||'').trim();
@@ -285,19 +343,24 @@ function lexaraSearxngBase(): string {
 async function searxng(query: string, signal?: AbortSignal): Promise<LegalMeshCandidate[]> {
   const base = lexaraSearxngBase();
   if (!base) return [];
+  const engines = ['google cse', 'brave', 'bing'].filter(engineAvailable);
+  if (!engines.length) return skippedProvider('searxng');
   const result = await withTimeout('searxng', 2_200, signal, async requestSignal => {
-    const engines = ['google cse', 'brave', 'bing'].filter(engineAvailable);
-    if (!engines.length) return [];
+    const activeEngines = engines.filter(engineAvailable);
+    if (!activeEngines.length) throw discoveryError('DISCOVERY_UNAVAILABLE');
     const endpoint = new URL('/search', base.endsWith('/') ? base : base + '/');
     endpoint.searchParams.set('q', query);
     endpoint.searchParams.set('format', 'json');
     endpoint.searchParams.set('safesearch', '0');
-    endpoint.searchParams.set('engines', engines.join(','));
+    endpoint.searchParams.set('engines', activeEngines.join(','));
     const response = await fetch(endpoint, { signal: requestSignal, headers: { accept: 'application/json' } });
-    await checkDiscoveryResponse(response, 'searxng');
-    const payload:any = await response.json();
-    for (const [engine, reason] of payload?.unresponsive_engines || []) recordEngineFailure(String(engine), String(reason));
-    return (Array.isArray(payload?.results) ? payload.results : []).slice(0, 12).flatMap((item:any) => {
+    const payload:any = await readDiscoveryJson(response, 'searxng');
+    const failures = Array.isArray(payload?.unresponsive_engines) ? payload.unresponsive_engines : [];
+    for (const failure of failures) if (Array.isArray(failure) && engines.includes(failure[0])) recordEngineFailure(String(failure[0]), String(failure[1]));
+    const rows = discoveryRows(payload);
+    if (!rows.length && failures.length) throw discoveryError('DISCOVERY_PROVIDER_ERROR');
+    if (failures.length) markDiscoveryPartial('searxng');
+    return rows.slice(0, 12).flatMap((item:any) => {
       const url=clean(item?.url || item?.link);
       return url ? [{url,title:String(item?.title||'SearXNG result'),excerpt:String(item?.content||item?.snippet||'').slice(0,1200),tier:3 as const,provider:'searxng'}] : [];
     });
@@ -317,17 +380,18 @@ async function ddgsBackend(query: string, backend: string, budgetMs: number, sig
   const base = lexaraDdgsBase();
   if (!base) return [];
   const result = await withTimeout('ddgsBackend', budgetMs, signal, async requestSignal => {
+    const activeBackend = backend.split(',').filter(engineAvailable).join(',');
+    if (!activeBackend) throw discoveryError('DISCOVERY_UNAVAILABLE');
     const endpoint = new URL('/search/text', base.endsWith('/') ? base : base + '/');
     const response = await fetch(endpoint, {
       method: 'POST', signal: requestSignal,
       headers: { 'content-type': 'application/json', accept: 'application/json' },
-      body: JSON.stringify({ query, max_results: 12, safesearch: 'off', backend }),
+      body: JSON.stringify({ query, max_results: 12, safesearch: 'off', backend: activeBackend }),
     });
-    await checkDiscoveryResponse(response, ['ddgsBackend', ...backend.split(',')]);
-    const payload:any = await response.json();
-    return (Array.isArray(payload?.results) ? payload.results : []).slice(0, 12).flatMap((item:any) => {
+    const payload:any = await readDiscoveryJson(response, ['ddgsBackend', ...activeBackend.split(',')]);
+    return discoveryRows(payload).slice(0, 12).flatMap((item:any) => {
       const url=clean(item?.href || item?.url || item?.link);
-      return url ? [{url,title:String(item?.title||'DDGS result'),excerpt:String(item?.body||item?.snippet||'').slice(0,1200),tier:3 as const,provider:`ddgs:${backend}`}] : [];
+      return url ? [{url,title:String(item?.title||'DDGS result'),excerpt:String(item?.body||item?.snippet||'').slice(0,1200),tier:3 as const,provider:`ddgs:${activeBackend}`}] : [];
     });
   });
   return result || [];
@@ -341,7 +405,7 @@ async function ddgs(query: string, signal?: AbortSignal): Promise<LegalMeshCandi
   const permittedBackends = (value: string) => [...new Set(value.split(',').map(x=>x.trim() === 'auto' ? 'yahoo' : x.trim()).filter(x=>supported.has(x) && engineAvailable(x)))].join(',');
   const primary = permittedBackends(process.env.LEXARA_DDGS_BACKEND?.trim() || 'yahoo');
   const fallback = permittedBackends(process.env.LEXARA_DDGS_FALLBACK_BACKENDS?.trim() || '');
-  if (!primary) return [];
+  if (!primary) return skippedProvider('ddgsBackend');
   const first = await ddgsBackend(query, primary, 2_200, signal);
   return first.length || !fallback ? first : ddgsBackend(query, fallback, 900, signal);
 }
@@ -355,25 +419,28 @@ function lexaraOpenserpBase(): string {
 async function openserp(query: string, signal?: AbortSignal): Promise<LegalMeshCandidate[]> {
   const base = lexaraOpenserpBase();
   if (!base) return [];
+  const engines = ['baidu'].filter(engineAvailable);
+  if (!engines.length) return skippedProvider('openserp');
   const result = await withTimeout('openserp', 3_000, signal, async requestSignal => {
-    const engines = ['baidu'].filter(engineAvailable);
-    if (!engines.length) return [];
+    const activeEngines = engines.filter(engineAvailable);
+    if (!activeEngines.length) throw discoveryError('DISCOVERY_UNAVAILABLE');
     const endpoint = new URL('/mega/search', base.endsWith('/') ? base : base + '/');
     endpoint.searchParams.set('text', query);
     endpoint.searchParams.set('limit', '12');
     endpoint.searchParams.set('mode', 'balanced');
-    endpoint.searchParams.set('engines', engines.join(','));
+    endpoint.searchParams.set('engines', activeEngines.join(','));
     const response = await fetch(endpoint, { signal: requestSignal, headers: { accept: 'application/json' } });
-    await checkDiscoveryResponse(response, 'openserp');
-    const payload:any = await response.json();
-    for (const failure of payload?.meta?.engine_errors || []) recordEngineFailure(String(failure.engine), String(failure.error));
-    const rows = Array.isArray(payload?.results) ? payload.results : Array.isArray(payload?.data?.results) ? payload.data.results : [];
+    const payload:any = await readDiscoveryJson(response, 'openserp');
+    const failures = Array.isArray(payload?.meta?.engine_errors) ? payload.meta.engine_errors : [];
+    for (const failure of failures) if (engines.includes(failure?.engine)) recordEngineFailure(String(failure.engine), String(failure.error));
+    const rows = discoveryRows(Array.isArray(payload?.results) ? payload : payload?.data);
     if (Array.isArray(payload?.meta?.engines_failed) && payload.meta.engines_failed.length) {
       console.info('[LEXARA OpenSERP Coverage]', JSON.stringify({
-        responded: payload.meta.engines_responded || [],
-        failed: payload.meta.engines_failed,
-        errors: (payload.meta.engine_errors || []).map((item:any) => ({ engine: item.engine, error: item.error })),
+        respondedCount: Array.isArray(payload.meta.engines_responded) ? payload.meta.engines_responded.length : 0,
+        failedCount: payload.meta.engines_failed.length,
       }));
+      if (!rows.length) throw discoveryError('DISCOVERY_PROVIDER_ERROR');
+      markDiscoveryPartial('openserp');
     }
     return rows.slice(0, 12).flatMap((item:any) => {
       const url=clean(item?.url || item?.link || item?.href);
@@ -391,9 +458,16 @@ async function serpApi(query: string, existingUrls: readonly string[], signal?: 
     const endpoint=new URL('https://serpapi.com/search.json');
     endpoint.searchParams.set('engine','google'); endpoint.searchParams.set('q',query);
     endpoint.searchParams.set('api_key',key); endpoint.searchParams.set('num','10');
-    const response=await fetch(endpoint,{signal:requestSignal}); if(!response.ok) throw new Error(`Discovery HTTP ${response.status}`);
-    const payload:any=await response.json();
-    return (payload.organic_results||[]).flatMap((item:any)=>{
+    const response=await fetch(endpoint,{signal:requestSignal});
+    const payload:any=await readDiscoveryJson(response, 'serpApi');
+    // SerpAPI's documented successful empty result also contains an error
+    // string. Use its structured status, never text-match a raw error message.
+    if (payload.search_metadata?.status === 'Success'
+      && payload.search_information?.organic_results_state === 'Fully empty'
+      && (!Array.isArray(payload.organic_results) || !payload.organic_results.length)) return [];
+    if (payload.error) throw discoveryError('DISCOVERY_PROVIDER_ERROR');
+    const rows = discoveryRows(payload, 'organic_results');
+    return rows.flatMap((item:any)=>{
       const url=clean(item?.link); return url && !seen.has(url)
         ? [{url,title:String(item?.title||'SerpAPI result'),excerpt:String(item?.snippet||'').slice(0,1200),tier:5 as const,provider:'serpapi'}] : [];
     }).slice(0,10);
@@ -405,21 +479,20 @@ async function scrapingBee(query: string, existingUrls: readonly string[], signa
   const key=process.env.SCRAPINGBEE_API_KEY?.trim(); if(!key) return [];
   const seen=new Set(existingUrls);
   const result=await withTimeout('scrapingBee', 2_500,signal,async requestSignal=>{
-    const google=`https://www.google.com/search?q=${encodeURIComponent(query)}&num=10`;
-    const endpoint=new URL('https://app.scrapingbee.com/api/v1/');
-    endpoint.searchParams.set('api_key',key); endpoint.searchParams.set('url',google); endpoint.searchParams.set('render_js','false');
-    const response=await fetch(endpoint,{signal:requestSignal}); if(!response.ok) throw new Error(`Discovery HTTP ${response.status}`);
-    const html=await response.text();
-    return [...html.matchAll(/href=["'](?:\/url\?q=)?(https?:\/\/[^"'& ]+)/gi)].flatMap(match=>{
-      const url=clean(match[1]); return url && !/google\.com/i.test(url) && !seen.has(url)
-        ? [{url,title:'ScrapingBee Google result',tier:5 as const,provider:'scrapingbee'}] : [];
+    const endpoint=new URL('https://app.scrapingbee.com/api/v1/google');
+    endpoint.searchParams.set('search',query);
+    const response=await fetch(endpoint,{signal:requestSignal,headers:{accept:'application/json',authorization:`Bearer ${key}`}});
+    const payload:any=await readDiscoveryJson(response, 'scrapingBee');
+    return discoveryRows(payload, 'organic_results').flatMap((item:any)=>{
+      const url=clean(item?.url); return url && !seen.has(url)
+        ? [{url,title:String(item?.title||'ScrapingBee result'),excerpt:String(item?.description||'').slice(0,1200),tier:5 as const,provider:'scrapingbee'}] : [];
     }).slice(0,10);
   });
   return result||[];
 }
 
 function commonCrawlUseful(query: string, categories: readonly LexaraSourceCategory[] = []): boolean {
-  return categories.includes('news-history') || /\b(?:histor|archive|archived|former|formerly|previous|old|past|prior)\b/i.test(query);
+  return categories.includes('news-history') || /\b(?:histor(?:y|ic|ical)?|archive|archived|former|formerly|previous|old|past|prior)\b/i.test(query);
 }
 
 async function commonCrawl(query: string, existingUrls: readonly string[], options: LegalMeshSearchOptions, signal?: AbortSignal): Promise<LegalMeshCandidate[]> {
@@ -428,20 +501,29 @@ async function commonCrawl(query: string, existingUrls: readonly string[], optio
   if(!hosts.length) return [];
   const result=await withTimeout('commonCrawl', 2_500,signal,async requestSignal=>{
     const collections=await fetch('https://index.commoncrawl.org/collinfo.json',{signal:requestSignal,headers:{accept:'application/json','user-agent':'LegalWhat-Lexara/1.0'}});
-    if(!collections.ok) return [];
-    const data:any[]=await collections.json(); const indexApi=String(data?.[0]?.['cdx-api']||'');
-    if(!/^https?:\/\//i.test(indexApi)) return [];
-    const groups=await Promise.all(hosts.map(async host=>{
+    const data:any[]=await readDiscoveryJson(collections, 'commonCrawl');
+    if (!Array.isArray(data)) throw new SyntaxError('Discovery collections missing');
+    const indexApi=String(data?.[0]?.['cdx-api']||'');
+    if(!/^https:\/\/index\.commoncrawl\.org\//i.test(indexApi)) throw new SyntaxError('Discovery collection endpoint invalid');
+    let malformedRows = false;
+    const groups=await Promise.allSettled(hosts.map(async host=>{
       const endpoint=new URL(indexApi); endpoint.searchParams.set('url',`${host}/*`);
       endpoint.searchParams.set('matchType','domain'); endpoint.searchParams.set('output','json');
       endpoint.searchParams.set('filter','status:200'); endpoint.searchParams.set('limit','8');
       const response=await fetch(endpoint,{signal:requestSignal,headers:{accept:'application/x-ndjson,text/plain','user-agent':'LegalWhat-Lexara/1.0'}});
-      if(!response.ok) throw new Error(`Discovery HTTP ${response.status}`);
+      await checkDiscoveryResponse(response, 'commonCrawl');
       return (await response.text()).split(/\r?\n/).flatMap(line=>{
-        if(!line.trim()) return []; try{const row=JSON.parse(line); const url=clean(row?.url); return url?[{url,title:'Common Crawl historical capture',tier:5 as const,provider:'commoncrawl'}]:[];}catch{return [];}
+        if(!line.trim()) return [];
+        try { const row=JSON.parse(line); const url=clean(row?.url); return url?[{url,title:'Common Crawl historical capture',tier:5 as const,provider:'commoncrawl'}]:[]; }
+        catch { malformedRows = true; return []; }
       });
     }));
-    return groups.flat();
+    const rows = groups.flatMap(group => group.status === 'fulfilled' ? group.value : []);
+    const failed = groups.find(group => group.status === 'rejected');
+    if (!rows.length && failed?.status === 'rejected') throw failed.reason;
+    if (!rows.length && malformedRows) throw new SyntaxError('Discovery index response invalid');
+    if (failed || malformedRows) markDiscoveryPartial('commonCrawl');
+    return rows;
   });
   return result||[];
 }
