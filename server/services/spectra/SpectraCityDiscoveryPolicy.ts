@@ -41,7 +41,9 @@ export function chooseSpectraPublicRetrievalUrls(
     ? Math.max(0, Math.min(16, Math.floor(limit))) : 0;
   if (capacity === 0) return [];
   const ranked = [...candidates]
-    .filter(candidate => publicPublisherDomain(candidate.url))
+    .filter((candidate): candidate is SpectraPublicDiscoverySource & { url: string } =>
+      typeof candidate.url === 'string' && publicPublisherDomain(candidate.url) !== null
+    )
     .sort((left, right) => {
       const priority = (value: SpectraPublicDiscoverySource) =>
         value.reliability === 'high' ? 2 : value.reliability === 'medium' ? 1 : 0;
