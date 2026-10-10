@@ -57,4 +57,22 @@ assert.equal(metadataPage.observations[0].acquisitionMethod, 'html-geospatial-me
 assert.equal(metadataPage.observations[0].latitude, 42.3);
 assert.equal(metadataPage.publishedAt, undefined);
 
+const malformedGeo = htmlEvidence(
+  '<html><head><script type="application/ld+json">'
+  + '{"@type":"Place","geo":{"latitude":false,"longitude":[]}}'
+  + '</script></head><body><main>Public venue listing.</main></body></html>',
+  source,
+);
+assert.equal(malformedGeo.observations.length, 0,
+  'boolean and array geotags must not produce invented zero coordinates');
+
+const validZeroGeo = htmlEvidence(
+  '<html><head><script type="application/ld+json">'
+  + '{"@type":"Place","geo":{"latitude":0,"longitude":"0"}}'
+  + '</script></head><body><main>Valid equatorial point.</main></body></html>',
+  source,
+);
+assert.equal(validZeroGeo.observations.length, 1,
+  'explicit numeric zero coordinates remain valid');
+
 console.log('SPECTRA public page content extraction passed: long navigation, semantic main/article, body fallback, independent publication date and unbound venue metadata.');
