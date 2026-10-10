@@ -54,6 +54,11 @@ import {
   stripUnboundPublicGeoContext,
 } from '../services/spectra/SpectraPublicEvidenceProvenance';
 import { inferCorroboratedRegionalCity } from '../services/spectra/SpectraRegionalInference';
+import {
+  assessSpectraCityDiscoveryReadiness,
+  chooseSpectraPublicRetrievalUrls,
+  publicPublisherDomain,
+} from '../services/spectra/SpectraCityDiscoveryPolicy';
 import { assessSpectraLiveLocation } from '../services/spectra/SpectraLiveConfidence';
 import { solveSpectraConstraintLayer } from '../services/spectra/SpectraConstraintSolver';
 import { acquireConfiguredSpectraCameras } from '../services/spectra/SpectraCameraDirectoryAdapters';
@@ -420,14 +425,9 @@ async function runDiscoveryPass(
     }
 
     let enrichedResults = dedupeDiscoveryResults(results);
-    const retrievalTargets = [...enrichedResults]
-      .sort((left, right) =>
-        (right.reliability === 'high' ? 2 : right.reliability === 'medium' ? 1 : 0)
-        - (left.reliability === 'high' ? 2 : left.reliability === 'medium' ? 1 : 0)
-        || right.relevanceScore - left.relevanceScore
-      )
-      .slice(0, 6)
-      .map(result => result.url);
+    // More independent public publishers are better evidence than repeated
+    // results from one popular website. Fetch those underlying pages first.
+    const retrievalTargets = chooseSpectraPublicRetrievalUrls(enrichedResults, 8);
 
     if (retrievalTargets.length) {
       const retrieved = await retrieveSpectraPublicEvidence(
@@ -947,21 +947,22 @@ router.post('/acquire', async (req: Request, res: Response) => {
     let stagnationPasses = 0;
 
     for (let pass = 1; pass < SPECTRA_DISCOVERY_POLICY.maxPasses; pass += 1) {
-      const independentSources = new Set(discoveryResults.map(discoverySourceKey).filter(Boolean));
-      const highReliability = discoveryResults.filter(result => result.reliability === 'high').length;
-      const evidenceConfidence = Math.min(
-        0.95,
-        backgroundConfidence
-          + Math.min(0.42, independentSources.size * 0.055)
-          + Math.min(0.18, highReliability * 0.03),
+      const readiness = assessSpectraCityDiscoveryReadiness({
+        subject: resolvedName || resolvedSubjectName,
+        sources: discoveryResults,
+        backgroundConfidence,
+      });
+      const independentSources = new Set(
+        discoveryResults.map(result => publicPublisherDomain(result.url)).filter(
+          (domain): domain is string => Boolean(domain)
+        )
       );
+      const highReliability = readiness.highReliabilityPublisherCount;
 
-      if (
-        independentSources.size >= SPECTRA_DISCOVERY_POLICY.minIndependentSources
-        && evidenceConfidence >= SPECTRA_DISCOVERY_POLICY.sufficientConfidence
-      ) {
-        break;
-      }
+      // A large pile of unrelated search results is not evidence of a city.
+      // Continue through independent public searches until the public city
+      // statement is corroborated or the normal search budget is exhausted.
+      if (readiness.sufficientToStop) break;
       if (
         discoveryQueriesAttempted >= SPECTRA_DISCOVERY_POLICY.maxQueries
         || discoveryResults.length >= SPECTRA_DISCOVERY_POLICY.maxCandidates
