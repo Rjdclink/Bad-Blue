@@ -34,6 +34,7 @@ const spectraSources = read('server/services/spectra/SpectraSourceRegistry.ts');
 const pantheonSources = read('server/services/pantheon/PantheonSovereignSourceRegistry.ts');
 const geocoder = read('server/services/geoconsole/city-state-geocoder.ts');
 const regionalInference = read('server/services/spectra/SpectraRegionalInference.ts');
+const cityDiscoveryPolicy = read('server/services/spectra/SpectraCityDiscoveryPolicy.ts');
 const cityAccuracyFixtures = read('scripts/verify-spectra-city-synthetic-regressions.ts');
 const locationQuality = read('server/services/geoconsole/location-quality.ts');
 const geoconsoleRoutes = read('server/routes/geoconsole.routes.ts');
@@ -109,6 +110,15 @@ test('Media intelligence is folded into the conversation',
   spectra.includes('/api/gps/extract-upload') &&
   spectra.includes('handleMediaEvidence') &&
   spectra.includes('Paperclip'));
+test('SPECTRA searches public profiles automatically and stops only on actual corroborated city claims',
+  spectraSources.includes("'public-profile-city'") &&
+  spectraSources.includes("'social-location'") &&
+  cityDiscoveryPolicy.includes('assessSpectraCityDiscoveryReadiness') &&
+  cityDiscoveryPolicy.includes('chooseSpectraPublicRetrievalUrls') &&
+  cityDiscoveryPolicy.includes('Boolean(city)') &&
+  routes.includes('chooseSpectraPublicRetrievalUrls(enrichedResults, 8)') &&
+  routes.includes('if (readiness.sufficientToStop) break;'));
+
 test('Media GPS remains dated scene context with explicit freshness and uncertainty',
   gpsRoutes.includes('assessSpectraMediaCapture(metadata)') &&
   gpsRoutes.includes("mediaAssessment.status === 'accepted'") &&
