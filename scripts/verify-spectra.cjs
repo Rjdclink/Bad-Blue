@@ -55,6 +55,8 @@ const acquisitionPersistence = read('server/services/spectra/SpectraAcquisitionP
 const placeContext = read('server/services/spectra/SpectraPlaceContext.ts');
 const publicRetrieval = read('server/services/spectra/SpectraPublicRetrieval.ts');
 const publicProvenance = read('server/services/spectra/SpectraPublicEvidenceProvenance.ts');
+const gpsRoutes = read('server/routes/gps.routes.ts');
+const mediaEvidence = read('server/services/spectra/SpectraMediaEvidence.ts');
 const cameraDirectories = read('server/services/spectra/SpectraCameraDirectoryAdapters.ts');
 const motionContext = read('server/services/spectra/SpectraMotionContext.ts');
 const monteCarlo = read('server/services/geoconsole/monteCarloPathEngine.ts');
@@ -107,6 +109,17 @@ test('Media intelligence is folded into the conversation',
   spectra.includes('/api/gps/extract-upload') &&
   spectra.includes('handleMediaEvidence') &&
   spectra.includes('Paperclip'));
+test('Media GPS remains dated scene context with explicit freshness and uncertainty',
+  gpsRoutes.includes('assessSpectraMediaCapture(metadata)') &&
+  gpsRoutes.includes("mediaAssessment.status === 'accepted'") &&
+  gpsRoutes.includes("observationKind: 'historical'") &&
+  gpsRoutes.includes("evidenceRole: 'media_capture_scene'") &&
+  gpsRoutes.includes("currentPositionVerified: false") &&
+  mediaEvidence.includes("status: 'conflicting_gps'") &&
+  mediaEvidence.includes("status: 'future_capture_time'") &&
+  spectra.includes('Capture age:') &&
+  spectra.includes('historical scene evidence') &&
+  spectra.includes('Conflicting GPS metadata was excluded'));
 test('SPECTRA map exposes simplified shell',
   dashboard.includes('spectraShell?: boolean') &&
   dashboard.includes('!spectraShell && inspectorOpen'));
