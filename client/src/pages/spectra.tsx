@@ -8,6 +8,7 @@ import { useVoiceMode } from '@/hooks/useVoiceMode';
 import { useVoiceSynthesis } from '@/hooks/useVoiceSynthesis';
 import { getLexaraLiveEnabled } from '@/components/LexaraLiveConsentModal';
 import type { GPSPoint, LocationCandidate } from '@shared/geoconsoleTypes';
+import { spectraFeedNotice, spectraPipelineNotices, type SpectraFeedDiagnostics, type SpectraPipelineDiagnostics } from '@/lib/spectraFeedStatus';
 
 type Phase = 'awaiting_target' | 'awaiting_details' | 'acquiring' | 'active' | 'error';
 
@@ -109,10 +110,13 @@ interface AcquisitionResponse {
   resolvedTargetLabel?: string;
   sessionId?: string;
   persistenceAvailable?: boolean;
+  feedDiagnostics?: SpectraFeedDiagnostics;
   acquisition?: {
     identityConfidence: number;
     locationConfidence: number;
     sourceCount: number;
+    feedDiagnostics?: SpectraFeedDiagnostics;
+    pipelineDiagnostics?: SpectraPipelineDiagnostics;
     evidenceItemCount?: number;
     observationCount: number;
     discoveryPasses?: number;
@@ -170,6 +174,8 @@ export default function SpectraPage() {
   const [directEvidence, setDirectEvidence] = useState<GPSPoint[]>([]);
   const [confidence, setConfidence] = useState<number | null>(null);
   const [sourceCount, setSourceCount] = useState(0);
+  const [feedNotice, setFeedNotice] = useState<string | null>(null);
+  const [pipelineNotices, setPipelineNotices] = useState<string[]>([]);
   const [spectraSessionId, setSpectraSessionId] = useState<string | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
   const [acquisitionStage, setAcquisitionStage] = useState('Waiting for target');
@@ -298,6 +304,8 @@ export default function SpectraPage() {
     setDirectEvidence([]);
     setConfidence(null);
     setSourceCount(0);
+    setFeedNotice(null);
+    setPipelineNotices([]);
     setSpectraSessionId(null);
     setLastError(null);
     setAcquisitionStage('Waiting for target');
@@ -314,6 +322,8 @@ export default function SpectraPage() {
   ) => {
     const requestId = ++requestRef.current;
     setPhase('acquiring');
+    setFeedNotice(null);
+    setPipelineNotices([]);
     setLastError(null);
     setAcquisitionStage('Resolving supplied location context…');
 
@@ -431,6 +441,7 @@ export default function SpectraPage() {
       if (requestId !== requestRef.current) return;
 
       if (!response.ok || !payload.success) {
+        setFeedNotice(spectraFeedNotice(payload.feedDiagnostics));
         throw new Error(payload.error || 'Target acquisition failed.');
       }
 
@@ -466,6 +477,8 @@ export default function SpectraPage() {
           : null
       );
       setSourceCount(payload.acquisition?.sourceCount ?? 0);
+      setFeedNotice(spectraFeedNotice(payload.acquisition?.feedDiagnostics));
+      setPipelineNotices(spectraPipelineNotices(payload.acquisition?.pipelineDiagnostics));
       if (typeof payload.sessionId === 'string' && payload.sessionId.trim()) {
         setSpectraSessionId(payload.sessionId.trim());
       }
@@ -483,7 +496,7 @@ export default function SpectraPage() {
         ? `I acquired ${points.length} timestamped location observation${points.length === 1 ? '' : 's'} for ${resolvedTarget}. The map is updated${certainty !== null ? ` with ${certainty}% location-evidence confidence` : ''}.`
         : regionalCandidates.length > 0
           ? `My best available regional estimate for ${resolvedTarget} is ${regionalCandidates[0].label || 'the area shown on the map'}. This is an estimate; the current live position is unverified.`
-          : `I reviewed ${payload.acquisition?.sourceCount ?? 0} distinct source group${(payload.acquisition?.sourceCount ?? 0) === 1 ? '' : 's'} for ${resolvedTarget}. This pass did not produce a mappable location estimate.`;
+          : `This pass referenced ${payload.acquisition?.sourceCount ?? 0} source group${(payload.acquisition?.sourceCount ?? 0) === 1 ? '' : 's'} for ${resolvedTarget}. This pass did not produce a mappable location estimate.`;
 
       addMessage('spectra', responseText);
       speakIfEnabled(responseText);
@@ -492,9 +505,9 @@ export default function SpectraPage() {
       if (requestId !== requestRef.current) return;
       const message = error instanceof Error ? error.message : 'Target acquisition failed.';
       setLastError(message);
-      setAcquisitionStage('Acquisition needs additional information');
+      setAcquisitionStage('Acquisition could not finish');
       setPhase('error');
-      const responseText = 'I could not complete that acquisition. Give me corrected or additional target information and I will try again.';
+      const responseText = 'I could not complete that search. A request or service failed; please try again later.';
       addMessage('spectra', responseText);
       speakIfEnabled(responseText);
     }
@@ -921,11 +934,11 @@ export default function SpectraPage() {
 
           {phase === 'acquiring' && (
             <div className="pointer-events-none absolute bottom-3 left-3 z-30 max-w-[min(88%,26rem)] rounded-xl border border-slate-700/70 bg-slate-950/88 px-3 py-2 text-[11px] text-slate-300 shadow-xl backdrop-blur">
-              <div className="font-medium text-cyan-200">Acquired so far</div>
+              <div className="font-medium text-cyan-200">Search progress</div>
               <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1">
-                <span>Target description ✓</span>
+                <span>Target description received ✓</span>
                 <span>Details received ✓</span>
-                <span>{/\d[\d\s().+-]{6,}\d/.test(details) ? 'Phone anchor ✓' : 'Phone anchor —'}</span>
+                <span>{/\d[\d\s().+-]{6,}\d/.test(details) ? 'Phone clue supplied ✓' : 'Phone clue not supplied'}</span>
                 <span>{candidateLocations.length > 0 ? 'Regional context ✓' : 'Regional context searching'}</span>
                 <span>{observations.length > 0 ? `${observations.length} timed observation${observations.length === 1 ? '' : 's'} ✓` : 'Timed evidence searching'}</span>
               </div>
@@ -954,8 +967,19 @@ export default function SpectraPage() {
               <div>
                 <h1 className="text-sm font-semibold text-slate-100">SPECTRA Console</h1>
                 <p className="text-[11px] text-slate-500">
-                  {sourceCount > 0 ? `${sourceCount} evidence sources reviewed` : 'Tell SPECTRA what you need located'}
+                  {sourceCount > 0 ? `${sourceCount} source groups referenced` : 'Tell SPECTRA what you need located'}
                 </p>
+                {feedNotice && (
+                  <p role="status" className="mt-1 text-xs text-amber-300" data-testid="spectra-feed-status">
+                    {feedNotice}
+                  </p>
+                )}
+                {pipelineNotices.length > 0 && (
+                  <details className="mt-2 text-xs text-slate-300" data-testid="spectra-pipeline-status">
+                    <summary className="cursor-pointer">Evidence and collection status</summary>
+                    {pipelineNotices.map(notice => <p key={notice} className="mt-1">{notice}</p>)}
+                  </details>
+                )}
               </div>
               <Button
                 variant="ghost"
@@ -1089,3 +1113,4 @@ export default function SpectraPage() {
     </div>
   );
 }
+

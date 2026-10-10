@@ -140,7 +140,9 @@ test('SPECTRA map is unconditional from initial load',
 test('Map is progressively populated from supplied clues',
   spectra.includes('/api/geoconsole/geocode-city-state') &&
   spectra.includes('Regional context mapped; broadening identity discovery') &&
-  spectra.includes('Acquired so far'));
+  spectra.includes('Search progress') &&
+  spectra.includes('Phone clue supplied') &&
+  !spectra.includes('Phone anchor'));
 test('Natural-language clues are decomposed into address and regional candidates',
   geocoder.includes('extractStreetAddressHint') &&
   geocoder.includes('extractLocationClues') &&
@@ -861,7 +863,9 @@ test('Generic vehicle/camera feeds preserve track identity and velocity context'
   geoconsoleRoutes.includes('velocity: (') &&
   geoconsoleRoutes.includes(': inputMetadata.velocity'));
 test('SPECTRA map restores layers on style changes without waiting for every tile',
-  intelligenceMap.includes("map.on('style.load', () => initializeRuntimeLayers(map))") &&
+  intelligenceMap.includes("map.on('style.load', handleStyleReady)") &&
+  intelligenceMap.includes('initializeRuntimeLayers(map);') &&
+  intelligenceMap.includes("map.off('style.load', handleStyleReady)") &&
   !intelligenceMap.includes("if (!map.isStyleLoaded()) return;") &&
   !intelligenceMap.includes("map.once('style.load'"));
 test('SPECTRA map adjusts to split-panel and fullscreen size changes',
@@ -928,3 +932,4 @@ test('SPECTRA API is mounted',
 
 console.log(`\nPassed: ${passed}  Failed: ${failed}\n`);
 process.exit(failed === 0 ? 0 : 1);
+

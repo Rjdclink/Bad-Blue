@@ -1,4 +1,5 @@
 import { Router, type Request, type Response } from 'express';
+import { getDiscoveryDiagnostics, withDiscoveryDiagnostics } from '../lexara/DiscoveryDiagnostics';
 import { z } from 'zod';
 import { isAuthenticated } from '../auth';
 import {
@@ -62,7 +63,8 @@ import {
 import { assessSpectraLiveLocation } from '../services/spectra/SpectraLiveConfidence';
 import { solveSpectraConstraintLayer } from '../services/spectra/SpectraConstraintSolver';
 import { acquireConfiguredSpectraCameras } from '../services/spectra/SpectraCameraDirectoryAdapters';
-import { acquireSpectraActiveTelemetry } from '../services/spectra/SpectraActiveAcquisition';
+import { acquireSpectraActiveTelemetry, getSpectraActiveAcquisitionCapabilities } from '../services/spectra/SpectraActiveAcquisition';
+import { buildSpectraPipelineDiagnostics, type SpectraRetrievalCounts } from '../services/spectra/SpectraPipelineDiagnostics';
 
 const router = Router();
 router.use(isAuthenticated);
@@ -313,15 +315,19 @@ async function runDiscoveryPass(
   attempted: number;
   failed: number;
   claudeNotes: string[];
+  retrieval: SpectraRetrievalCounts;
 }> {
+  const retrieval: SpectraRetrievalCounts = { selected: 0, retrieved: 0, deadlineExpiredPasses: 0 };
   const uniqueQueries = [...new Set(queries.map(query => query.replace(/\s+/g, ' ').trim()).filter(Boolean))]
     .slice(0, 6);
   if (!uniqueQueries.length) {
-    return { results: [], attempted: 0, failed: 0, claudeNotes: [] };
+    return { results: [], attempted: 0, failed: 0, claudeNotes: [], retrieval };
   }
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(new Error('SPECTRA discovery pass timeout')), 15_000);
+  // Reserve part of the existing 15-second pass budget for reading pages.
+  // A finished search deadline must not pre-cancel the evidence retrieval stage.
+  const timer = setTimeout(() => controller.abort(new Error('SPECTRA discovery pass timeout')), 10_000);
   try {
     const nativePromise = Promise.allSettled(uniqueQueries.map(query =>
       discoverLegalMeshTier3(query, controller.signal, {
@@ -428,12 +434,30 @@ async function runDiscoveryPass(
     // More independent public publishers are better evidence than repeated
     // results from one popular website. Fetch those underlying pages first.
     const retrievalTargets = chooseSpectraPublicRetrievalUrls(enrichedResults, 8);
+    retrieval.selected = retrievalTargets.length;
 
     if (retrievalTargets.length) {
-      const retrieved = await retrieveSpectraPublicEvidence(
-        retrievalTargets,
-        controller.signal,
-      ).catch(() => []);
+      const retrievalController = new AbortController();
+      const retrievalTimer = setTimeout(() => {
+        retrieval.deadlineExpiredPasses = 1;
+        retrievalController.abort(new Error('SPECTRA page retrieval timeout'));
+      }, 4_500);
+      let retrieved: Awaited<ReturnType<typeof retrieveSpectraPublicEvidence>> = [];
+      try {
+        const outcome = await settleWithin(
+          retrieveSpectraPublicEvidence(retrievalTargets, retrievalController.signal),
+          5_000,
+          'SPECTRA page retrieval',
+        );
+        if (outcome.status === 'fulfilled') retrieved = outcome.value;
+      } finally {
+        clearTimeout(retrievalTimer);
+        // Also stop remaining work if an uncancellable upstream operation lost
+        // the bounded wait. Late completions cannot mutate the returned result.
+        retrievalController.abort();
+      }
+
+      retrieval.retrieved = retrieved.length;
 
       if (retrieved.length) {
         const byUrl = new Map(enrichedResults.map(result => [result.url, result]));
@@ -466,6 +490,7 @@ async function runDiscoveryPass(
       attempted: uniqueQueries.length + (context.useClaude === false ? 0 : 1),
       failed,
       claudeNotes,
+      retrieval,
     };
   } finally {
     clearTimeout(timer);
@@ -785,7 +810,8 @@ async function collectSpectraContextEvidence(input: {
   };
 }
 
-router.post('/acquire', async (req: Request, res: Response) => {
+router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiagnostics(async () => {
+  res.setHeader('X-Spectra-Request-Id', getDiscoveryDiagnostics()!.requestId);
   const parsed = acquireSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({
@@ -941,6 +967,7 @@ router.post('/acquire', async (req: Request, res: Response) => {
     };
 
     let discoveryResults = firstPass.results;
+    const retrievalCounts = { ...firstPass.retrieval };
     let discoveryQueriesAttempted = firstPass.attempted;
     let discoveryQueriesFailed = firstPass.failed;
     let discoveryPasses = firstPass.attempted > 0 ? 1 : 0;
@@ -998,6 +1025,9 @@ router.post('/acquire', async (req: Request, res: Response) => {
       });
       discoveryQueriesAttempted += nextPass.attempted;
       discoveryQueriesFailed += nextPass.failed;
+      retrievalCounts.selected += nextPass.retrieval.selected;
+      retrievalCounts.retrieved += nextPass.retrieval.retrieved;
+      retrievalCounts.deadlineExpiredPasses += nextPass.retrieval.deadlineExpiredPasses;
       discoveryPasses += nextPass.attempted > 0 ? 1 : 0;
       discoveryResults = dedupeDiscoveryResults([
         ...discoveryResults,
@@ -1312,6 +1342,28 @@ router.post('/acquire', async (req: Request, res: Response) => {
       + contextEvidence.earthObservation.length
       + (contextEvidence.weather ? 1 : 0);
 
+    const pipelineDiagnostics = buildSpectraPipelineDiagnostics({
+      discoveryResults: discoveryResults.length,
+      retrieval: retrievalCounts,
+      configuredCollectors: getSpectraActiveAcquisitionCapabilities().length,
+      activeAttempts: activeAcquisition.attempts,
+      activeBatchOutcomes,
+      activeObservations: activeLocationPoints.length,
+      suppliedObservations: directEvidence.length,
+      savedObservations: persistedObservations.length,
+      normalizedObservations: normalizedLocationObservations.length,
+      acceptedObservations: locationQuality.acceptedCount,
+      rejectedObservations: locationQuality.rejectedCount,
+      qualityIssues: locationQuality.issues,
+      solvedObservations: solvedLocationObservations.length,
+      fusedCandidates: fusedLocationEvidence.length,
+      regionalCandidates: candidateLocations.length,
+    });
+    console.info('[SPECTRA Pipeline Summary]', JSON.stringify({
+      requestId: getDiscoveryDiagnostics()?.requestId,
+      ...pipelineDiagnostics,
+    }));
+
     const persistence = await persistSpectraAcquisition({
       userId,
       sessionId: requestedSessionId,
@@ -1319,6 +1371,7 @@ router.post('/acquire', async (req: Request, res: Response) => {
       clues: [target, details],
       observations: solvedLocationObservations,
       state: {
+        pipelineDiagnostics,
         constraintSolverDiagnostics: constraintSolution.diagnostics,
         identityConfidence,
         boundIdentityConfidence,
@@ -1385,6 +1438,8 @@ router.post('/acquire', async (req: Request, res: Response) => {
         liveLocationFreshestAgeMs: liveLocationAssessment.freshestAgeMs,
         subjectLiveLocationConfidence,
         sourceCount: sourceKeys.size,
+        feedDiagnostics: getDiscoveryDiagnostics(),
+        pipelineDiagnostics,
         evidenceItemCount:
           activeLocationPoints.length +
           directEvidence.length +
@@ -1431,8 +1486,10 @@ router.post('/acquire', async (req: Request, res: Response) => {
     return res.status(500).json({
       success: false,
       error: 'SPECTRA could not complete target acquisition.',
+      feedDiagnostics: getDiscoveryDiagnostics(),
     });
   }
-});
+}));
 
 export default router;
+
