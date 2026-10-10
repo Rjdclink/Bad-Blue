@@ -208,15 +208,25 @@ function normalizeProviderResponse(
   // or an Android EMM resource path, before admitting measurements.
   if (config.target === 'device' && input.deviceRef) {
     const identifiers: unknown[] = [];
-    for (const candidate of [outer, body, ...(
-      Array.isArray(body.results) ? body.results.slice(0, 200) : []
-    )]) {
+    const candidates = [outer, body, ...(
+      config.normalizerKind === 'cisco-spaces-location' && Array.isArray(body.results)
+        ? body.results.slice(0, 200)
+        : []
+    )];
+    for (const candidate of candidates) {
       const item = record(candidate);
-      identifiers.push(
-        item.deviceRef, item.deviceId, item.UDID, item.udid,
-        item.macAddress, item.MacAddress, item.clientMac,
-        typeof item.device === 'string' ? item.device : record(item.device).id,
-      );
+      identifiers.push(item.deviceRef, item.deviceId);
+      if (config.normalizerKind === 'android-managed-lost-mode') {
+        identifiers.push(
+          typeof item.device === 'string' ? item.device : record(item.device).id,
+        );
+      }
+      if (config.normalizerKind === 'apple-managed-lost-mode') {
+        identifiers.push(item.UDID, item.udid);
+      }
+      if (config.normalizerKind === 'cisco-spaces-location') {
+        identifiers.push(item.macAddress, item.MacAddress, item.clientMac);
+      }
     }
     const asserted = identifiers.filter((id): id is string =>
       typeof id === 'string' && id.trim().length > 0
