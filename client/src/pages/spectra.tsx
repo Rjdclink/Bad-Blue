@@ -101,6 +101,19 @@ function launchDetails(launch: SpectraLaunchPayload): string {
   ].filter(Boolean).join('\n\n').slice(-10_000);
 }
 
+interface PublicVenueCoordinateEvidence {
+  kind: 'public_venue_coordinate';
+  latitude: number;
+  longitude: number;
+  venueLabel: string;
+  sourceUrl: string;
+  requestedUrl?: string;
+  retrievedAt?: string;
+  publishedAt?: string;
+  extractionMethod: string;
+  subjectPresenceVerified: false;
+}
+
 interface AcquisitionResponse {
   success: boolean;
   error?: string;
@@ -123,6 +136,7 @@ interface AcquisitionResponse {
   };
   locationObservations?: GPSPoint[];
   candidateLocations?: LocationCandidate[];
+  publicVenueCoordinates?: PublicVenueCoordinateEvidence[];
 }
 
 const FIRST_PROMPT = 'What is it that you want to locate?';
@@ -167,6 +181,7 @@ export default function SpectraPage() {
   const [input, setInput] = useState('');
   const [observations, setObservations] = useState<GPSPoint[]>([]);
   const [candidateLocations, setCandidateLocations] = useState<LocationCandidate[]>([]);
+  const [publicVenueCoordinates, setPublicVenueCoordinates] = useState<PublicVenueCoordinateEvidence[]>([]);
   const [directEvidence, setDirectEvidence] = useState<GPSPoint[]>([]);
   const [confidence, setConfidence] = useState<number | null>(null);
   const [sourceCount, setSourceCount] = useState(0);
@@ -295,6 +310,7 @@ export default function SpectraPage() {
     setDetails('');
     setObservations([]);
     setCandidateLocations([]);
+    setPublicVenueCoordinates([]);
     setDirectEvidence([]);
     setConfidence(null);
     setSourceCount(0);
@@ -316,6 +332,7 @@ export default function SpectraPage() {
     setPhase('acquiring');
     setLastError(null);
     setAcquisitionStage('Resolving supplied location context…');
+    setPublicVenueCoordinates([]);
 
     // Put evidence already in hand on the map immediately. Deep discovery may
     // take substantially longer, but the viewer should never lose verified
@@ -460,6 +477,10 @@ export default function SpectraPage() {
       const canonicalLocationConfidence = payload.acquisition?.locationConfidence ?? 0;
       setObservations(points);
       setCandidateLocations(Array.isArray(payload.candidateLocations) ? payload.candidateLocations : []);
+      const venueEvidence = Array.isArray(payload.publicVenueCoordinates)
+        ? payload.publicVenueCoordinates
+        : [];
+      setPublicVenueCoordinates(venueEvidence);
       setConfidence(
         points.length > 0 || canonicalLocationConfidence > 0
           ? canonicalLocationConfidence
@@ -479,11 +500,14 @@ export default function SpectraPage() {
         ? payload.candidateLocations
         : [];
       const resolvedTarget = payload.resolvedTargetLabel?.trim() || targetValue;
-      const responseText = points.length > 0
+      const resultText = points.length > 0
         ? `I acquired ${points.length} timestamped location observation${points.length === 1 ? '' : 's'} for ${resolvedTarget}. The map is updated${certainty !== null ? ` with ${certainty}% location-evidence confidence` : ''}.`
         : regionalCandidates.length > 0
           ? `My best available regional estimate for ${resolvedTarget} is ${regionalCandidates[0].label || 'the area shown on the map'}. This is an estimate; the current live position is unverified.`
           : `I reviewed ${payload.acquisition?.sourceCount ?? 0} distinct source group${(payload.acquisition?.sourceCount ?? 0) === 1 ? '' : 's'} for ${resolvedTarget}. This pass did not produce a mappable location estimate.`;
+      const responseText = venueEvidence.length
+        ? `${resultText} I also retained ${venueEvidence.length} source-linked public venue coordinate${venueEvidence.length === 1 ? '' : 's'} as location context, not a verified position of ${resolvedTarget}.`
+        : resultText;
 
       addMessage('spectra', responseText);
       speakIfEnabled(responseText);
@@ -999,6 +1023,51 @@ export default function SpectraPage() {
 
             {lastError && (
               <div className="text-xs text-rose-300 px-1">{lastError}</div>
+            )}
+
+            {publicVenueCoordinates.length > 0 && (
+              <section
+                data-testid="spectra-public-venue-evidence"
+                className="rounded-xl border border-slate-700 bg-slate-900/70 p-3 text-xs text-slate-200"
+                aria-label="Public venue coordinate evidence"
+              >
+                <h2 className="font-semibold text-cyan-200">
+                  Public venue coordinates ({publicVenueCoordinates.length})
+                </h2>
+                <p className="mt-1 text-slate-400">
+                  Source-linked venue geotags found during this search. They describe
+                  public places, not an authenticated location of the searched person.
+                </p>
+                <ul className="mt-2 space-y-2">
+                  {publicVenueCoordinates.map((venue, index) => (
+                    <li
+                      key={`${venue.sourceUrl}:${venue.latitude}:${venue.longitude}:${index}`}
+                      className="rounded-md border border-slate-700/70 px-2 py-2"
+                    >
+                      <div className="font-medium break-words">{venue.venueLabel}</div>
+                      <div className="mt-1 font-mono tabular-nums text-slate-300">
+                        Venue: {venue.latitude.toFixed(5)}, {venue.longitude.toFixed(5)}
+                      </div>
+                      <div className="mt-1 text-slate-400">
+                        {venue.publishedAt
+                          ? `Published: ${venue.publishedAt.slice(0, 10)}`
+                          : 'Publication date not established'}
+                        {venue.retrievedAt
+                          ? ` · Retrieved: ${venue.retrievedAt.slice(0, 10)}`
+                          : ''}
+                      </div>
+                      <a
+                        href={venue.sourceUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="mt-1 inline-block break-all text-cyan-300 underline underline-offset-2"
+                      >
+                        Public coordinate source
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              </section>
             )}
 
             <div ref={scrollRef} />
