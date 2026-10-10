@@ -164,6 +164,11 @@ test('Regional candidates remain separate from timed observations',
   routes.includes('candidateLocations.push({') &&
   routes.includes("basis: 'regional_context'") &&
   routes.includes('region.accuracyMeters,'));
+test('Unbound public-page coordinates cannot enter the subject GPS pipeline',
+  routes.includes('stripUnboundPublicGeoContext(result?.metadata)') &&
+  routes.includes('mergePublicRetrievedMetadata(existing.metadata, evidence)') &&
+  routes.includes('byUrl.get(evidence.requestedUrl) || byUrl.get(evidence.url)'));
+
 test('SPECTRA can use corroborated public city context without claiming a live position',
   routes.includes('inferCorroboratedRegionalCity(') &&
   routes.includes('discoveryResults,') &&

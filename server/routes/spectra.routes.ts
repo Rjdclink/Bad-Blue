@@ -49,6 +49,10 @@ import {
 } from '../services/spectra/SpectraIdentityBinding';
 import { acquireSpectraPlaceContext } from '../services/spectra/SpectraPlaceContext';
 import { retrieveSpectraPublicEvidence } from '../services/spectra/SpectraPublicRetrieval';
+import {
+  mergePublicRetrievedMetadata,
+  stripUnboundPublicGeoContext,
+} from '../services/spectra/SpectraPublicEvidenceProvenance';
 import { inferCorroboratedRegionalCity } from '../services/spectra/SpectraRegionalInference';
 import { assessSpectraLiveLocation } from '../services/spectra/SpectraLiveConfidence';
 import { solveSpectraConstraintLayer } from '../services/spectra/SpectraConstraintSolver';
@@ -434,25 +438,14 @@ async function runDiscoveryPass(
       if (retrieved.length) {
         const byUrl = new Map(enrichedResults.map(result => [result.url, result]));
         for (const evidence of retrieved) {
-          const existing = byUrl.get(evidence.url);
-          const locationEvidence = evidence.observations.map(observation => ({
-            ...observation,
-            kind: 'location',
-            subjectMatchConfidence: 0.35,
-            timestampConfidence: observation.timestamp ? 0.75 : 0,
-          }));
+          // Redirects must retain the discovery result's identity and publication
+          // provenance. Coordinates embedded in a public venue webpage describe
+          // that venue, not the person being searched.
+          const existing = byUrl.get(evidence.requestedUrl) || byUrl.get(evidence.url);
 
           if (existing) {
-            existing.metadata = {
-              ...(existing.metadata || {}),
-              sourceUrl: evidence.url,
-              retrievedAt: evidence.retrievedAt,
-              publishedAt: evidence.publishedAt,
-              fetchedTitle: evidence.title,
-              fetchedExcerpt: evidence.textExcerpt,
-              retrievedLocationEvidence: locationEvidence,
-            };
-          } else if (locationEvidence.length) {
+            existing.metadata = mergePublicRetrievedMetadata(existing.metadata, evidence);
+          } else if (evidence.title || evidence.textExcerpt || evidence.observations.length) {
             enrichedResults.push({
               title: evidence.title || 'SPECTRA retrieved source',
               url: evidence.url,
@@ -460,13 +453,7 @@ async function runDiscoveryPass(
               provider: 'spectra-public-retrieval',
               reliability: reliabilityForUrl(evidence.url),
               relevanceScore: 76,
-              metadata: {
-                sourceUrl: evidence.url,
-                retrievedAt: evidence.retrievedAt,
-                publishedAt: evidence.publishedAt,
-                fetchedExcerpt: evidence.textExcerpt,
-                retrievedLocationEvidence: locationEvidence,
-              },
+              metadata: mergePublicRetrievedMetadata(undefined, evidence),
             });
           }
         }
@@ -1106,7 +1093,7 @@ router.post('/acquire', async (req: Request, res: Response) => {
 
     for (const result of discoveryResults) {
       collectCoordinateObservations(
-        result?.metadata,
+        stripUnboundPublicGeoContext(result?.metadata),
         String(result?.title || 'web_discovery'),
         normalizeConfidence((result?.relevanceScore ?? 0) / 100),
         observations,

@@ -14,6 +14,8 @@ export interface SpectraRetrievedObservation {
 
 export interface SpectraRetrievedEvidence {
   url: string;
+  /** Original discovery URL, retained even when an HTTP redirect changes the final URL. */
+  requestedUrl: string;
   title?: string;
   retrievedAt: string;
   publishedAt?: string;
@@ -363,6 +365,7 @@ async function retrieveOne(rawUrl: string, parentSignal?: AbortSignal): Promise<
         const payload = JSON.parse(text);
         return {
           url: current.toString(),
+          requestedUrl: rawUrl,
           retrievedAt: new Date().toISOString(),
           contentType,
           observations: jsonEvidence(payload, current.toString()),
@@ -375,6 +378,7 @@ async function retrieveOne(rawUrl: string, parentSignal?: AbortSignal): Promise<
         const extracted = htmlEvidence(text, current.toString());
         return {
           url: current.toString(),
+          requestedUrl: rawUrl,
           retrievedAt: new Date().toISOString(),
           contentType,
           title: extracted.title,
