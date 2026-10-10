@@ -64,10 +64,47 @@ function httpsUrl(value: string): URL | null {
   try {
     const url = new URL(value);
     if (url.protocol !== 'https:' || url.username || url.password) return null;
+    const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+    if (
+      host === 'localhost' ||
+      host.endsWith('.localhost') ||
+      host.endsWith('.local') ||
+      host.endsWith('.internal') ||
+      host.includes(':')
+    ) return null;
+    const octets = host.split('.').map(Number);
+    if (
+      octets.length === 4 &&
+      octets.every((part, index) =>
+        /^\d{1,3}$/.test(host.split('.')[index])
+        && Number.isInteger(part) && part >= 0 && part <= 255
+      )
+    ) {
+      const [first, second] = octets;
+      if (
+        first === 0 || first === 10 || first === 127 || first >= 224 ||
+        (first === 100 && second >= 64 && second <= 127) ||
+        (first === 169 && second === 254) ||
+        (first === 172 && second >= 16 && second <= 31) ||
+        (first === 192 && second === 168) ||
+        (first === 198 && (second === 18 || second === 19))
+      ) return null;
+    }
     return url;
   } catch {
     return null;
   }
+}
+
+function validProviderTemplate(raw: string): boolean {
+  // The requested device reference may appear in a path or query, never
+  // in a hostname/authority where it could redirect provider credentials.
+  const authority = /^https:\/\/([^/?#]+)/i.exec(raw)?.[1] || '';
+  if (!authority || authority.includes('{{') || authority.includes('}}')) return false;
+  const substituted = raw
+    .replace(/\{\{deviceRef\}\}/g, 'managed-device')
+    .replace(/\{\{sessionId\}\}/g, 'session');
+  return Boolean(httpsUrl(substituted));
 }
 
 function templateUrl(
@@ -132,23 +169,88 @@ function canonicalBatch(
   };
 }
 
+function requestedDeviceMatches(reported: string, requested: string): boolean {
+  const fromProvider = reported.trim().toLowerCase().split('/').pop() || '';
+  const supplied = requested.trim().toLowerCase();
+  if (fromProvider === supplied) return true;
+  const canonicalMac = (value: string) => value.replace(/[:-]/g, '');
+  return /^[a-f0-9]{2}(?:[:-]?[a-f0-9]{2}){5}$/i.test(fromProvider)
+    && /^[a-f0-9]{2}(?:[:-]?[a-f0-9]{2}){5}$/i.test(supplied)
+    && canonicalMac(fromProvider) === canonicalMac(supplied);
+}
+
 function normalizeProviderResponse(
   payload: unknown,
   config: ActiveProviderConfig,
   input: SpectraActiveAcquisitionInput,
 ): SpectraNormalizedProviderBatch {
-  if (config.normalizerKind === 'canonical-telemetry') {
-    return canonicalBatch(payload, config, input);
+  const outer = record(payload);
+  const data = record(outer.data);
+  const body = Object.keys(data).length ? data : outer;
+  const requestedSession = String(input.sessionId || '').trim();
+  const requestedSubject = String(input.subjectLabel || '').trim();
+
+  for (const candidate of [outer, body]) {
+    const suppliedSession = typeof candidate.sessionId === 'string'
+      ? candidate.sessionId.trim() : '';
+    const suppliedSubject = typeof candidate.subjectLabel === 'string'
+      ? candidate.subjectLabel.trim() : '';
+    if (requestedSession && suppliedSession && suppliedSession !== requestedSession) {
+      throw new Error('Active provider returned telemetry for a different session.');
+    }
+    if (requestedSubject && suppliedSubject && suppliedSubject !== requestedSubject) {
+      throw new Error('Active provider returned telemetry for a different subject.');
+    }
   }
-  return normalizeSpectraProviderPayload(
-    config.normalizerKind,
-    config.id,
-    {
-      sessionId: input.sessionId,
-      subjectLabel: input.subjectLabel,
-      ...record(payload),
+
+  // A device-specific provider may not substitute another device's fix.
+  // Match all identifiers present, including a Cisco results-array client
+  // or an Android EMM resource path, before admitting measurements.
+  if (config.target === 'device' && input.deviceRef) {
+    const identifiers: unknown[] = [];
+    for (const candidate of [outer, body, ...(
+      Array.isArray(body.results) ? body.results.slice(0, 200) : []
+    )]) {
+      const item = record(candidate);
+      identifiers.push(
+        item.deviceRef, item.deviceId, item.UDID, item.udid,
+        item.macAddress, item.MacAddress, item.clientMac,
+        typeof item.device === 'string' ? item.device : record(item.device).id,
+      );
+    }
+    const asserted = identifiers.filter((id): id is string =>
+      typeof id === 'string' && id.trim().length > 0
+    );
+    if (asserted.some(id => !requestedDeviceMatches(id, input.deviceRef!))) {
+      throw new Error('Active provider returned telemetry for a different device.');
+    }
+  }
+
+  const normalized = config.normalizerKind === 'canonical-telemetry'
+    ? canonicalBatch(payload, config, input)
+    : normalizeSpectraProviderPayload(config.normalizerKind, config.id, {
+      ...outer,
+      sessionId: requestedSession || undefined,
+      subjectLabel: requestedSubject || undefined,
+    });
+  if (
+    config.target === 'none' &&
+    normalized.measurements.some(measurement => measurement.kind === 'position')
+  ) {
+    throw new Error('Untargeted provider positions cannot establish a subject location.');
+  }
+
+  return {
+    ...normalized,
+    sessionId: requestedSession || undefined,
+    subjectLabel: requestedSubject || undefined,
+    sourceId: config.id,
+    metadata: {
+      ...normalized.metadata,
+      acquisition: 'active-provider-pull',
+      adapterId: config.id,
     },
-  );
+  };
 }
 
 function configuredAdapters(): ActiveProviderConfig[] {
@@ -173,14 +275,15 @@ function configuredAdapters(): ActiveProviderConfig[] {
       const normalizerKind = String(item?.normalizerKind || '').trim();
       const method = String(item?.method || 'POST').trim().toUpperCase();
       const target = String(item?.target || 'device').trim().toLowerCase();
-      const validationUrl = url
-        .replace(/\{\{deviceRef\}\}/g, 'managed-device')
-        .replace(/\{\{sessionId\}\}/g, 'session');
+      const hasBoundDevice = target !== 'device'
+        || method === 'POST'
+        || url.includes('{{deviceRef}}');
 
       if (
         !id
         || seen.has(id)
-        || !httpsUrl(validationUrl)
+        || !validProviderTemplate(url)
+        || !hasBoundDevice
         || !['GET', 'POST'].includes(method)
         || !['device', 'none'].includes(target)
         || disallowedActiveNormalizers.has(normalizerKind)
@@ -220,10 +323,7 @@ function configuredAdapters(): ActiveProviderConfig[] {
 function builtInAndroidMdmAdapter(): ActiveProviderConfig | null {
   const url = String(process.env.SPECTRA_ANDROID_MDM_LOCATION_URL_TEMPLATE || '').trim();
   const token = String(process.env.SPECTRA_ANDROID_MDM_LOCATION_TOKEN || '').trim();
-  const validationUrl = url
-    .replace(/\{\{deviceRef\}\}/g, 'managed-device')
-    .replace(/\{\{sessionId\}\}/g, 'session');
-  if (!httpsUrl(validationUrl) || !token) return null;
+  if (!url.includes('{{deviceRef}}') || !validProviderTemplate(url) || !token) return null;
 
   return {
     id: 'android-managed-location-active',
@@ -242,10 +342,7 @@ function builtInAndroidMdmAdapter(): ActiveProviderConfig | null {
 function builtInAppleMdmAdapter(): ActiveProviderConfig | null {
   const url = String(process.env.SPECTRA_APPLE_MDM_LOCATION_URL_TEMPLATE || '').trim();
   const token = String(process.env.SPECTRA_APPLE_MDM_LOCATION_TOKEN || '').trim();
-  const validationUrl = url
-    .replace(/\{\{deviceRef\}\}/g, 'managed-device')
-    .replace(/\{\{sessionId\}\}/g, 'session');
-  if (!httpsUrl(validationUrl) || !token) return null;
+  if (!url.includes('{{deviceRef}}') || !validProviderTemplate(url) || !token) return null;
 
   return {
     id: 'apple-managed-location-active',
@@ -264,11 +361,7 @@ function builtInAppleMdmAdapter(): ActiveProviderConfig | null {
 function builtInCiscoSpacesAdapter(): ActiveProviderConfig | null {
   const url = String(process.env.SPECTRA_CISCO_SPACES_DEVICE_URL_TEMPLATE || '').trim();
   const token = String(process.env.SPECTRA_CISCO_SPACES_TOKEN || '').trim();
-  const validationUrl = url
-    .replace(/\{\{deviceRef\}\}/g, 'managed-device')
-    .replace(/\{\{sessionId\}\}/g, 'session');
-
-  if (!httpsUrl(validationUrl) || !token) return null;
+  if (!url.includes('{{deviceRef}}') || !validProviderTemplate(url) || !token) return null;
 
   return {
     id: 'cisco-spaces-active-location',
@@ -363,7 +456,37 @@ export async function acquireSpectraActiveTelemetry(
     ...configuredAdapters(),
   ].filter((item): item is ActiveProviderConfig => Boolean(item));
 
-  if (!adapters.length) return { batches: [], attempts: [] };
+  if (!adapters.length) {
+    return {
+      batches: [],
+      attempts: [
+        {
+          id: 'android-managed-location-active',
+          label: 'Android managed-device latest location',
+          status: 'skipped',
+          normalizerKind: 'android-managed-lost-mode',
+          measurementCount: 0,
+          reason: 'Android managed-location provider is not configured.',
+        },
+        {
+          id: 'apple-managed-location-active',
+          label: 'Apple supervised-device latest location',
+          status: 'skipped',
+          normalizerKind: 'apple-managed-lost-mode',
+          measurementCount: 0,
+          reason: 'Apple supervised-device location provider is not configured.',
+        },
+        {
+          id: 'cisco-spaces-active-location',
+          label: 'Cisco Spaces active device location',
+          status: 'skipped',
+          normalizerKind: 'cisco-spaces-location',
+          measurementCount: 0,
+          reason: 'Cisco Spaces device-location provider is not configured.',
+        },
+      ],
+    };
+  }
 
   const outcomes = await Promise.all(
     adapters.map(async config => {
