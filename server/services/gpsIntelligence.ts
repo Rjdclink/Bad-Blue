@@ -1,4 +1,4 @@
-import * as ExifReader from 'exifreader';
+import ExifReader from 'exifreader';
 import { createLogger } from '../logger';
 
 const log = createLogger('GPSIntelligence');
@@ -93,7 +93,7 @@ export async function extractGPSFromFile(filePath: string): Promise<GPSCoordinat
     const latitudeDesc = tags.GPSLatitude.description;
     const longitudeDesc = tags.GPSLongitude.description;
     
-    if (typeof latitudeDesc !== 'string' || typeof longitudeDesc !== 'string') {
+    if (!['string', 'number'].includes(typeof latitudeDesc) || !['string', 'number'].includes(typeof longitudeDesc)) {
       return null;
     }
     
@@ -109,7 +109,7 @@ export async function extractGPSFromFile(filePath: string): Promise<GPSCoordinat
       typeof lonRefStr === 'string' ? lonRefStr : undefined
     );
     
-    if (latitude === null || longitude === null) return null;
+    if (latitude === null || longitude === null || Math.abs(latitude) > 90 || Math.abs(longitude) > 180) return null;
     
     return {
       latitude,
@@ -130,13 +130,15 @@ export async function extractGPSFromFile(filePath: string): Promise<GPSCoordinat
 /**
  * Parse GPS coordinate from EXIF format (degrees, minutes, seconds)
  */
-function parseGPSCoordinate(coordinate: string, ref?: string): number | null {
+function parseGPSCoordinate(coordinate: string | number, ref?: string): number | null {
   try {
-    const parts = coordinate.split(',').map(p => parseFloat(p.trim()));
-    if (parts.length !== 3) return null;
-    
-    let decimal = parts[0] + parts[1] / 60 + parts[2] / 3600;
-    if (ref === 'S' || ref === 'W') decimal *= -1;
+    const parts = typeof coordinate === 'number' ? [coordinate]
+      : coordinate.split(',').map(p => p.trim() ? Number(p.trim()) : NaN);
+    if (!parts.every(Number.isFinite) || ![1, 3].includes(parts.length)) return null;
+    if (parts.length === 3 && (parts[1] < 0 || parts[1] >= 60 || parts[2] < 0 || parts[2] >= 60)) return null;
+    let decimal = parts.length === 1 ? parts[0] : parts[0] + parts[1] / 60 + parts[2] / 3600;
+    if (ref === 'S' || ref === 'W') decimal = -Math.abs(decimal);
+    else if (ref === 'N' || ref === 'E') decimal = Math.abs(decimal);
     
     return decimal;
   } catch {
