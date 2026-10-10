@@ -118,9 +118,11 @@ export function collectPublicVenueCoordinateEvidence(
           || latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
         continue;
       }
-      const sourceUrl = publicHttpUrl(point.sourceUrl)
-        || publicHttpUrl(sourceMetadata.sourceUrl)
-        || publicHttpUrl(result.url);
+      // A coordinate with an explicit invalid source must not inherit an
+      // unrelated page's URL as though it were its own provenance.
+      const sourceUrl = point.sourceUrl
+        ? publicHttpUrl(point.sourceUrl)
+        : publicHttpUrl(sourceMetadata.sourceUrl) || publicHttpUrl(result.url);
       if (!sourceUrl) continue;
       const key = `${sourceUrl}|${latitude.toFixed(7)}|${longitude.toFixed(7)}`;
       if (seen.has(key)) continue;
