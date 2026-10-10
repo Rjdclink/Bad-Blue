@@ -8,7 +8,7 @@ import { useVoiceMode } from '@/hooks/useVoiceMode';
 import { useVoiceSynthesis } from '@/hooks/useVoiceSynthesis';
 import { getLexaraLiveEnabled } from '@/components/LexaraLiveConsentModal';
 import type { GPSPoint, LocationCandidate } from '@shared/geoconsoleTypes';
-import { spectraFeedNotice, type SpectraFeedDiagnostics } from '@/lib/spectraFeedStatus';
+import { spectraFeedNotice, spectraPipelineNotices, type SpectraFeedDiagnostics, type SpectraPipelineDiagnostics } from '@/lib/spectraFeedStatus';
 
 type Phase = 'awaiting_target' | 'awaiting_details' | 'acquiring' | 'active' | 'error';
 
@@ -116,6 +116,7 @@ interface AcquisitionResponse {
     locationConfidence: number;
     sourceCount: number;
     feedDiagnostics?: SpectraFeedDiagnostics;
+    pipelineDiagnostics?: SpectraPipelineDiagnostics;
     evidenceItemCount?: number;
     observationCount: number;
     discoveryPasses?: number;
@@ -174,6 +175,7 @@ export default function SpectraPage() {
   const [confidence, setConfidence] = useState<number | null>(null);
   const [sourceCount, setSourceCount] = useState(0);
   const [feedNotice, setFeedNotice] = useState<string | null>(null);
+  const [pipelineNotices, setPipelineNotices] = useState<string[]>([]);
   const [spectraSessionId, setSpectraSessionId] = useState<string | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
   const [acquisitionStage, setAcquisitionStage] = useState('Waiting for target');
@@ -303,6 +305,7 @@ export default function SpectraPage() {
     setConfidence(null);
     setSourceCount(0);
     setFeedNotice(null);
+    setPipelineNotices([]);
     setSpectraSessionId(null);
     setLastError(null);
     setAcquisitionStage('Waiting for target');
@@ -320,6 +323,7 @@ export default function SpectraPage() {
     const requestId = ++requestRef.current;
     setPhase('acquiring');
     setFeedNotice(null);
+    setPipelineNotices([]);
     setLastError(null);
     setAcquisitionStage('Resolving supplied location context…');
 
@@ -474,6 +478,7 @@ export default function SpectraPage() {
       );
       setSourceCount(payload.acquisition?.sourceCount ?? 0);
       setFeedNotice(spectraFeedNotice(payload.acquisition?.feedDiagnostics));
+      setPipelineNotices(spectraPipelineNotices(payload.acquisition?.pipelineDiagnostics));
       if (typeof payload.sessionId === 'string' && payload.sessionId.trim()) {
         setSpectraSessionId(payload.sessionId.trim());
       }
@@ -968,6 +973,12 @@ export default function SpectraPage() {
                   <p role="status" className="mt-1 text-xs text-amber-300" data-testid="spectra-feed-status">
                     {feedNotice}
                   </p>
+                )}
+                {pipelineNotices.length > 0 && (
+                  <details className="mt-2 text-xs text-slate-300" data-testid="spectra-pipeline-status">
+                    <summary className="cursor-pointer">Evidence and collection status</summary>
+                    {pipelineNotices.map(notice => <p key={notice} className="mt-1">{notice}</p>)}
+                  </details>
                 )}
               </div>
               <Button

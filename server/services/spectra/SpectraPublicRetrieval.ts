@@ -342,9 +342,11 @@ function jsonEvidence(payload: any, sourceUrl: string): SpectraRetrievedObservat
 }
 
 async function retrieveOne(rawUrl: string, parentSignal?: AbortSignal): Promise<SpectraRetrievedEvidence | null> {
+  if (parentSignal?.aborted) return null;
   let current = await assertPublicUrl(rawUrl);
 
   for (let redirectCount = 0; redirectCount <= MAX_REDIRECTS; redirectCount += 1) {
+    if (parentSignal?.aborted) return null;
     const controller = new AbortController();
     const relayAbort = () => controller.abort(parentSignal?.reason);
     if (parentSignal?.aborted) controller.abort(parentSignal.reason);
