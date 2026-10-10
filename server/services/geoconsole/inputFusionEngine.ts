@@ -254,10 +254,14 @@ export class InputFusionEngine {
       )
     ));
 
+    // A combined point is directly observed only when every contributing
+    // reading is observed. Mixing reconstructed, dated, or predicted records
+    // makes the combined estimate derived rather than a new sensor reading.
+    if (kinds.size > 1) return 'inferred';
     if (kinds.has('observed')) return 'observed';
-    if (kinds.size === 1 && kinds.has('historical')) return 'historical';
-    if (kinds.size === 1 && kinds.has('predicted')) return 'predicted';
-    if (kinds.size === 1 && kinds.has('interpolated')) return 'interpolated';
+    if (kinds.has('historical')) return 'historical';
+    if (kinds.has('predicted')) return 'predicted';
+    if (kinds.has('interpolated')) return 'interpolated';
     return 'inferred';
   }
 
