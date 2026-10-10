@@ -54,6 +54,7 @@ const telemetryImport = read('server/services/spectra/SpectraTelemetryImport.ts'
 const acquisitionPersistence = read('server/services/spectra/SpectraAcquisitionPersistence.ts');
 const placeContext = read('server/services/spectra/SpectraPlaceContext.ts');
 const publicRetrieval = read('server/services/spectra/SpectraPublicRetrieval.ts');
+const publicProvenance = read('server/services/spectra/SpectraPublicEvidenceProvenance.ts');
 const cameraDirectories = read('server/services/spectra/SpectraCameraDirectoryAdapters.ts');
 const motionContext = read('server/services/spectra/SpectraMotionContext.ts');
 const monteCarlo = read('server/services/geoconsole/monteCarloPathEngine.ts');
@@ -206,7 +207,9 @@ test('Public evidence publication time reaches SPECTRA city corroboration',
   publicRetrieval.includes("meta.get('datepublished')") &&
   publicRetrieval.includes("candidate['@type']") &&
   publicRetrieval.includes('publishedAt: extracted.publishedAt') &&
-  (routes.match(/publishedAt: evidence\.publishedAt/g) || []).length === 2);
+  routes.includes('mergePublicRetrievedMetadata(existing.metadata, evidence)') &&
+  publicProvenance.includes('publishedAt: evidence.publishedAt ?? previous?.publishedAt') &&
+  publicProvenance.includes('fetchedExcerpt: evidence.textExcerpt ?? previous?.fetchedExcerpt'));
 
 test('One-hour previous/future timeline remains available',
   dashboard.includes('min={-60}') && dashboard.includes('max={60}'));
@@ -432,6 +435,13 @@ test('SPECTRA adapter capability registry truthfully exposes optional and built-
   adapterRegistry.includes("id: 'trafficland'") &&
   adapterRegistry.includes("id: 'overpass-place-context'") &&
   adapterRegistry.includes("id: 'geonames-place-context'"));
+test('Cisco Spaces Cartesian coordinates cannot masquerade as latitude/longitude',
+  externalLocationNormalizer.includes('coordinateSystem: \'wgs84-explicit\'') &&
+  externalLocationNormalizer.includes('confidenceFactor: finite(event.confidenceFactor)') &&
+  externalLocationNormalizer.includes('location.longitude ?? location.lng ?? location.lon,') &&
+  !externalLocationNormalizer.includes('location.lat ?? coordinates[0]') &&
+  activeAcquisition.includes('Active provider returned telemetry for a different device.'));
+
 test('SPECTRA active acquisition uses managed-device identifiers and canonical telemetry processing',
   routes.includes('acquireSpectraActiveTelemetry') &&
   routes.includes('resolveSpectraNormalizedTelemetryBatch') &&
@@ -744,13 +754,15 @@ test('Radio positioning has independent Google, beaconDB and OpenCellID lanes',
   geoconsoleRoutes.includes('opencellid.org/cell/get') &&
   geoconsoleRoutes.includes('Promise.allSettled([') &&
   adapterRegistry.includes("id: 'beacondb-radio-geolocation'"));
-test('Public discovery retrieves underlying pages before admitting coordinate evidence',
+test('Public discovery retrieves source pages without promoting unbound venue GPS',
   routes.includes('retrieveSpectraPublicEvidence') &&
   publicRetrieval.includes('MAX_TARGETS = 6') &&
   publicRetrieval.includes('application/ld+json') &&
   publicRetrieval.includes('json-geospatial-field-extraction') &&
-  routes.includes('subjectMatchConfidence: 0.35') &&
-  routes.includes('timestampConfidence: observation.timestamp ? 0.75 : 0'));
+  routes.includes('mergePublicRetrievedMetadata(existing.metadata, evidence)') &&
+  routes.includes('stripUnboundPublicGeoContext(result?.metadata)') &&
+  publicProvenance.includes('subjectMatchConfidence: 0') &&
+  publicProvenance.includes('currentPositionVerified: false'));
 test('SPECTRA attachment flow accepts both media and structured telemetry files',
   spectra.includes('/api/gps/extract-upload') &&
   spectra.includes('/api/geoconsole/telemetry/import-file') &&
