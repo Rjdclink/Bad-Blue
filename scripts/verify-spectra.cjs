@@ -169,6 +169,14 @@ test('Unbound public-page coordinates cannot enter the subject GPS pipeline',
   routes.includes('stripUnboundPublicGeoContext(result?.metadata)') &&
   routes.includes('mergePublicRetrievedMetadata(existing.metadata, evidence)') &&
   routes.includes('byUrl.get(evidence.requestedUrl) || byUrl.get(evidence.url)'));
+test('Public venue coordinates remain visible as separate cited SPECTRA search evidence',
+  routes.includes('const publicVenueCoordinates = collectPublicVenueCoordinateEvidence(discoveryResults);') &&
+  routes.includes('      publicVenueCoordinates,') &&
+  routes.includes('        publicVenueCoordinates,') &&
+  spectra.includes('setPublicVenueCoordinates(venueEvidence)') &&
+  spectra.includes('data-testid="spectra-public-venue-evidence"') &&
+  spectra.includes('Public coordinate source') &&
+  spectra.includes('not an authenticated location of the searched person'));
 
 test('SPECTRA can use corroborated public city context without claiming a live position',
   routes.includes('inferCorroboratedRegionalCity(') &&
