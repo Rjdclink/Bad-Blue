@@ -22,6 +22,27 @@ assert.equal(winner?.independentSourceCount, 2);
 assert.equal(winner?.currentPositionVerified, false);
 assert.equal(winner?.sourceDomains.length, 2);
 
+// Distinct discovery URLs can redirect to the SAME publisher. They are
+// one source, even when the two original search result domains differ.
+assert.equal(inferCorroboratedRegionalCity(person, [
+  {
+    ...first,
+    metadata: {
+      requestedUrl: first.url,
+      sourceUrl: 'https://canonical.example.edu/profile/a',
+      fetchedExcerpt: first.snippet,
+    },
+  },
+  {
+    ...second,
+    metadata: {
+      requestedUrl: second.url,
+      sourceUrl: 'https://pages.canonical.example.edu/profile/b',
+      fetchedExcerpt: second.snippet,
+    },
+  },
+]), null, 'redirects to one publisher must not multiply independent city sources');
+
 // Multiple copies on one website are one source, not corroboration.
 assert.equal(inferCorroboratedRegionalCity(person, [
   first, { ...first, url: 'https://profile.example.org/duplicate' },
