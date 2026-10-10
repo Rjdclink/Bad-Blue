@@ -24,9 +24,9 @@ export interface SpectraRetrievedEvidence {
   observations: SpectraRetrievedObservation[];
 }
 
-const MAX_TARGETS = 6;
+const MAX_TARGETS = 8;
 const MAX_RESPONSE_BYTES = 2_000_000;
-const MAX_TEXT = 60_000;
+const MAX_TEXT = 320_000;
 const MAX_REDIRECTS = 3;
 const REQUEST_TIMEOUT_MS = 2_200;
 
@@ -133,7 +133,17 @@ export function htmlEvidence(raw: string, sourceUrl: string): {
   const $ = load(raw.slice(0, MAX_TEXT));
   $('script:not([type="application/ld+json"]),style,noscript,svg,canvas').remove();
   const title = $('title').first().text().trim().slice(0, 300) || undefined;
-  const textExcerpt = $('body').text().replace(/\s+/g, ' ').trim().slice(0, 4_000) || undefined;
+  // A venue or article may appear after many thousands of navigation
+  // characters. Prefer the actual page content, retaining body as fallback.
+  // Keep the original DOM for independent publication/JSON-LD inspection.
+  const semanticRoot = $('main, article, [role="main"]')
+    .filter((_i, element) => $(element).text().trim().length >= 40)
+    .first();
+  const excerptRoot = (semanticRoot.length ? semanticRoot : $('body').first()).clone();
+  excerptRoot.find(
+    'nav, header, footer, aside, form, button, [role="navigation"], [aria-hidden="true"]'
+  ).remove();
+  const textExcerpt = excerptRoot.text().replace(/\s+/g, ' ').trim().slice(0, 8_000) || undefined;
   const observations: SpectraRetrievedObservation[] = [];
 
   const meta = new Map<string, string>();
