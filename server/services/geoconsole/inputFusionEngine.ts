@@ -249,6 +249,8 @@ export class InputFusionEngine {
         point.source === 'predicted' ? 'predicted' :
         point.source === 'interpolated' ? 'interpolated' :
         point.source === 'historical_location' || point.source === 'public_record'
+          || point.source === 'exif_photo' || point.source === 'exif_video'
+          || point.source === 'xmp_sidecar' || point.source === 'json_sidecar'
           ? 'historical'
           : 'observed'
       )
