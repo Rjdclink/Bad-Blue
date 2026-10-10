@@ -483,7 +483,7 @@ export default function SpectraPage() {
         ? `I acquired ${points.length} timestamped location observation${points.length === 1 ? '' : 's'} for ${resolvedTarget}. The map is updated${certainty !== null ? ` with ${certainty}% location-evidence confidence` : ''}.`
         : regionalCandidates.length > 0
           ? `My best available regional estimate for ${resolvedTarget} is ${regionalCandidates[0].label || 'the area shown on the map'}. This is an estimate; the current live position is unverified.`
-          : `I reviewed ${payload.acquisition?.sourceCount ?? 0} distinct source group${(payload.acquisition?.sourceCount ?? 0) === 1 ? '' : 's'} for ${resolvedTarget}. This pass did not produce a mappable location estimate.`;
+          : `This pass referenced ${payload.acquisition?.sourceCount ?? 0} source group${(payload.acquisition?.sourceCount ?? 0) === 1 ? '' : 's'} for ${resolvedTarget}. This pass did not produce a mappable location estimate.`;
 
       addMessage('spectra', responseText);
       speakIfEnabled(responseText);
@@ -954,7 +954,7 @@ export default function SpectraPage() {
               <div>
                 <h1 className="text-sm font-semibold text-slate-100">SPECTRA Console</h1>
                 <p className="text-[11px] text-slate-500">
-                  {sourceCount > 0 ? `${sourceCount} evidence sources reviewed` : 'Tell SPECTRA what you need located'}
+                  {sourceCount > 0 ? `${sourceCount} source groups referenced` : 'Tell SPECTRA what you need located'}
                 </p>
               </div>
               <Button
@@ -1089,3 +1089,4 @@ export default function SpectraPage() {
     </div>
   );
 }
+

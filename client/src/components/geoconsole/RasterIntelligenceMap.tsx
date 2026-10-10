@@ -2,10 +2,10 @@ import { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import type { IntelligenceMapProps } from './MapLibreIntelligenceMap';
+import { mapDeadline, PLACE_LABELS, SATELLITE_FALLBACK, satelliteBasemap } from './mapBasemap';
 
 const STREET = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
-const SATELLITE = (import.meta.env.VITE_SATELLITE_TILES_URL as string | undefined)
-  || 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
+const SATELLITE = satelliteBasemap(import.meta.env.VITE_SATELLITE_TILES_URL, import.meta.env.VITE_SATELLITE_ATTRIBUTION);
 const DARK = 'https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png';
 const TERRAIN = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}';
 
@@ -18,6 +18,7 @@ export default function RasterIntelligenceMap(props: IntelligenceMapProps) {
   propsRef.current = props;
   const [ready, setReady] = useState(false);
   const [tileError, setTileError] = useState(false);
+  const [imageryLabel, setImageryLabel] = useState('Loading map imagery…');
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -42,11 +43,12 @@ export default function RasterIntelligenceMap(props: IntelligenceMapProps) {
     };
     containerRef.current.addEventListener('wheel', wheel, { passive: true });
     containerRef.current.addEventListener('pointerdown', pointer);
-    const resize = new ResizeObserver(() => map.invalidateSize({ pan: false }));
-    resize.observe(containerRef.current);
+    const resize = typeof ResizeObserver !== 'undefined'
+      ? new ResizeObserver(() => map.invalidateSize({ pan: false })) : null;
+    resize?.observe(containerRef.current);
     setReady(true);
     return () => {
-      resize.disconnect();
+      resize?.disconnect();
       containerRef.current?.removeEventListener('wheel', wheel);
       containerRef.current?.removeEventListener('pointerdown', pointer);
       // Remove evidence paths before their renderer is destroyed on navigation.
@@ -61,47 +63,74 @@ export default function RasterIntelligenceMap(props: IntelligenceMapProps) {
     const map = mapRef.current;
     if (!ready || !map) return;
     setTileError(false);
-    const satellite = props.layers.satellite || ['satellite', 'hybrid'].includes(props.mapMode);
-    const url = props.layers.terrain ? TERRAIN : satellite ? SATELLITE : props.mapMode === 'dark' ? DARK : STREET;
-    const attribution = url === STREET ? '&copy; OpenStreetMap contributors'
-      : url === DARK ? '&copy; OpenStreetMap contributors &copy; CARTO'
-        : (import.meta.env.VITE_SATELLITE_ATTRIBUTION as string | undefined) || 'Tiles &copy; Esri';
+    const satellite = props.layers.satellite && ['satellite', 'hybrid'].includes(props.mapMode);
+    const street = { tiles: STREET, maxNativeZoom: 19, attribution: '&copy; OpenStreetMap contributors', label: 'Street map' };
+    const primary = satellite ? SATELLITE : props.layers.terrain
+      ? { tiles: TERRAIN, maxNativeZoom: 19, attribution: 'Tiles &copy; Esri', label: 'Terrain map' }
+      : props.mapMode === 'dark'
+        ? { tiles: DARK, maxNativeZoom: 19, attribution: '&copy; OpenStreetMap contributors &copy; CARTO', label: 'Street map · dark' }
+        : street;
+    const choices = [primary, ...(satellite ? [SATELLITE_FALLBACK] : []), street]
+      .filter((item, index, all) => all.findIndex(other => other.tiles === item.tiles) === index);
     const tileLayers: L.TileLayer[] = [];
-    const base = L.tileLayer(url, { maxZoom: 20, maxNativeZoom: 19, attribution }).addTo(map);
-    tileLayers.push(base);
-    let failureCount = 0;
-    let fallback: L.TileLayer | null = null;
-    base.on('tileerror', () => {
-      failureCount += 1;
-      if (failureCount < 3 || fallback) return;
-      map.removeLayer(base);
-      fallback = L.tileLayer(STREET, {
-        maxZoom: 20, maxNativeZoom: 19, attribution: '&copy; OpenStreetMap contributors',
-      }).addTo(map);
-      tileLayers.push(fallback);
-      fallback.on('tileerror', () => setTileError(true));
-      fallback.on('tileload', () => setTileError(false));
-    });
-    if (props.mapMode === 'hybrid' && satellite && !props.layers.terrain) {
-      const labels = L.tileLayer('https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', {
-        maxZoom: 20, maxNativeZoom: 19, attribution: 'Labels &copy; Esri',
+    let disposed = false;
+    let index = 0;
+    let active: L.TileLayer | null = null;
+    let failures = 0;
+    const deadline = mapDeadline(() => advance(), 10_000);
+    const advance = () => {
+      if (disposed) return;
+      deadline.cancel();
+      if (index + 1 >= choices.length) {
+        setTileError(true);
+        console.warn('[SPECTRA_MAP]', { event: 'raster_unavailable' });
+        return;
+      }
+      if (active) { active.off(); map.removeLayer(active); }
+      index += 1;
+      console.warn('[SPECTRA_MAP]', { event: 'raster_source_fallback', attempt: index });
+      mountBase();
+    };
+    const mountBase = () => {
+      const choice = choices[index];
+      failures = 0;
+      setImageryLabel('Loading map imagery…');
+      active = L.tileLayer(choice.tiles, {
+        maxZoom: 20, maxNativeZoom: choice.maxNativeZoom,
+        attribution: choice.attribution, zIndex: 0,
+      });
+      active.on('tileerror', () => { if (++failures >= 3) advance(); });
+      active.on('tileload', () => {
+        if (disposed) return;
+        deadline.cancel();
+        setTileError(false);
+        setImageryLabel(choice.label);
+      });
+      tileLayers.push(active);
+      deadline.arm();
+      active.addTo(map);
+    };
+    mountBase();
+    if (props.mapMode === 'hybrid' && satellite) {
+      const labels = L.tileLayer(PLACE_LABELS, {
+        maxZoom: 20, maxNativeZoom: 19, attribution: 'Labels &copy; Esri', zIndex: 10,
       }).addTo(map);
       tileLayers.push(labels);
     }
     if (props.layers.weather) {
       const weather = L.tileLayer('https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/ridge::USCOMP-N0Q-0/{z}/{x}/{y}.png', {
-        opacity: 0.55, maxZoom: 20, maxNativeZoom: 12, attribution: 'NEXRAD via Iowa Environmental Mesonet',
+        zIndex: 30, opacity: 0.55, maxZoom: 20, maxNativeZoom: 12, attribution: 'NEXRAD via Iowa Environmental Mesonet',
       }).addTo(map);
       tileLayers.push(weather);
     }
     if (props.layers.earthObservation) {
       const date = new Date(Math.min(props.displayTime?.getTime() ?? Date.now(), Date.now())).toISOString().slice(0, 10);
       const earth = L.tileLayer(`https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/MODIS_Terra_CorrectedReflectance_TrueColor/default/${date}/GoogleMapsCompatible_Level9/{z}/{y}/{x}.jpg`, {
-        opacity: 0.72, maxZoom: 20, maxNativeZoom: 9, attribution: 'NASA GIBS / MODIS Terra',
+        zIndex: 20, opacity: 0.72, maxZoom: 20, maxNativeZoom: 9, attribution: 'NASA GIBS / MODIS Terra',
       }).addTo(map);
       tileLayers.push(earth);
     }
-    return () => { tileLayers.forEach(layer => map.removeLayer(layer)); };
+    return () => { disposed = true; deadline.cancel(); tileLayers.forEach(layer => { layer.off(); map.removeLayer(layer); }); };
   }, [ready, props.mapMode, props.layers.satellite, props.layers.terrain, props.layers.weather, props.layers.earthObservation, props.displayTime?.getTime()]);
 
   useEffect(() => {
@@ -179,7 +208,8 @@ export default function RasterIntelligenceMap(props: IntelligenceMapProps) {
   return <div className="absolute inset-0 isolate" data-testid="spectra-raster-map" data-gesture-navigation="ignore">
     <div ref={containerRef} className="absolute inset-0 z-0" aria-label="Interactive location map" />
     <div role="status" className="pointer-events-none absolute bottom-10 left-3 z-10 rounded bg-slate-950/90 px-2 py-1 text-xs text-slate-200">
-      {tileError ? 'Map images are temporarily unavailable. Location markers and controls remain available.' : props.layers.terrain ? 'Terrain map · 2D view' : props.layers.buildings ? '2D map · 3D buildings unavailable in this browser' : '2D map'}
+      {tileError ? 'Map images are temporarily unavailable. Location markers and controls remain available.' : `${imageryLabel} · 2D${props.layers.buildings || props.layers.terrain ? ' · 3D unavailable in this browser' : ''}`}
     </div>
   </div>;
 }
+

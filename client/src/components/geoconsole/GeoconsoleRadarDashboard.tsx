@@ -118,8 +118,8 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({
   }, [actions.loadData, initialData]);
 
   // UI state (not affecting frame data)
-  const [mapMode, setMapMode] = useState<MapMode>('satellite');
-  const [layerCfg, setLayerCfg] = useState<LayerState>({ satellite: true, earthObservation: false, trail: true, heatmap: true, markers: true, futurecast: true, reticle: true, weather: false, terrain: false, buildings: false, uncertainty: true, streetImagery: false });
+  const [mapMode, setMapMode] = useState<MapMode>(() => spectraShell ? 'hybrid' : 'satellite');
+  const [layerCfg, setLayerCfg] = useState<LayerState>({ satellite: true, earthObservation: false, trail: true, heatmap: true, markers: true, futurecast: true, reticle: true, weather: false, terrain: spectraShell, buildings: spectraShell, uncertainty: true, streetImagery: false });
   const [lockOnTarget, setLockOnTarget] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(() =>
@@ -1049,3 +1049,4 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({
 };
 
 export default GeoconsoleRadarDashboard;
+
