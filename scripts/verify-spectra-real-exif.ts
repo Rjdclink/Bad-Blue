@@ -5,10 +5,14 @@ import { join } from 'node:path';
 import { extractGPSFromFile } from '../server/services/gpsIntelligence';
 import { extractMediaMetadata } from '../server/services/locationIntelligence/MediaMetadataExtractor';
 import { assessSpectraMediaCapture } from '../server/services/spectra/SpectraMediaEvidence';
+import { withoutSpectraTimestamps } from '../shared/spectraTimestampClues';
 
 // Exercise the installed decoder, not mocked tag descriptions. This catches
 // ESM/CJS import compatibility and numeric GPS descriptions in actual JPEGs.
 const fixture = JSON.parse(await readFile(new URL('./fixtures/spectra-synthetic-exif.json', import.meta.url), 'utf8'));
+const phoneLike = /\d[\d\s().+-]{6,}\d/;
+assert(!phoneLike.test(withoutSpectraTimestamps('Captured 2020-01-01T12:00:00.000Z. Original 2020:01:01 12:00:00.')));
+assert(phoneLike.test(withoutSpectraTimestamps('Captured 2020-01-01. Contact +1 (202) 555-0123.')));
 const directory = await mkdtemp(join(tmpdir(), 'spectra-exif-test-'));
 try {
   const file = join(directory, 'synthetic.jpg');

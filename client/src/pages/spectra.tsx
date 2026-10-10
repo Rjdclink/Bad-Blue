@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { withoutSpectraTimestamps } from '@shared/spectraTimestampClues';
 import { Loader2, Mic, MicOff, Paperclip, RotateCcw, Send, Target } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { BackButton } from '@/components/BackButton';
@@ -956,7 +957,7 @@ export default function SpectraPage() {
               <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1">
                 <span>Target description received ✓</span>
                 <span>Details received ✓</span>
-                <span>{/\d[\d\s().+-]{6,}\d/.test(details) ? 'Phone clue supplied ✓' : 'Phone clue not supplied'}</span>
+                <span>{/\d[\d\s().+-]{6,}\d/.test(withoutSpectraTimestamps(details)) ? 'Phone clue supplied ✓' : 'Phone clue not supplied'}</span>
                 <span>{candidateLocations.length > 0 ? 'Regional context ✓' : 'Regional context searching'}</span>
                 <span>{observations.length > 0 ? `${observations.length} timed observation${observations.length === 1 ? '' : 's'} ✓` : 'Timed evidence searching'}</span>
               </div>
