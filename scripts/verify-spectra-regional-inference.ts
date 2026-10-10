@@ -122,4 +122,47 @@ assert.equal(inferCorroboratedRegionalCity(person, [
   second,
 ], new Date('invalid')), null, 'invalid evaluation timestamps must not generate predictions');
 
+// A city elsewhere in the sentence cannot be borrowed as the subject's
+// residence, even if the other person's city is independently reported.
+assert.equal(inferCorroboratedRegionalCity(person, [
+  {
+    url: 'https://one.example.org/',
+    snippet: 'Taylor Morgan lives in an undisclosed town with colleague Jordan Lee, who lives in Helena, MT.',
+  },
+  {
+    url: 'https://two.example.net/',
+    snippet: 'Taylor Morgan resides in an undisclosed community alongside friend Alex Kim, who resides in Helena, Montana.',
+  },
+], testAsOf), null, 'another individual\'s city is not evidence of the subject\'s residence');
+
+// A preceding location clause must not become the subject's city.
+assert.equal(inferCorroboratedRegionalCity(person, [
+  { url: 'https://one.example.org/', snippet: 'Chicago, Illinois is where Taylor Morgan lives in an undisclosed community.' },
+  { url: 'https://two.example.net/', snippet: 'Chicago, IL is mentioned before Taylor Morgan, who lives in an undisclosed town.' },
+], testAsOf), null, 'a city before the subject is not their residence');
+
+// Employment and residence cities are different kinds of evidence.
+const residentialCity = inferCorroboratedRegionalCity(person, [
+  {
+    url: 'https://one.example.org/',
+    snippet: 'Taylor Morgan lives in Boulder, Colorado and works in Denver, Colorado.',
+  },
+  {
+    url: 'https://two.example.net/',
+    snippet: 'Taylor Morgan currently resides in Boulder, CO and commutes to Denver, CO.',
+  },
+], testAsOf);
+assert.equal(residentialCity?.city, 'Boulder');
+assert.equal(residentialCity?.state, 'CO');
+
+assert.equal(inferCorroboratedRegionalCity(person, [
+  { url: 'https://one.example.org/', snippet: 'Taylor Morgan lives in a private town and works in Denver, Colorado.' },
+  { url: 'https://two.example.net/', snippet: 'Taylor Morgan resides in an undisclosed city and commutes to Denver, CO.' },
+], testAsOf), null, 'the workplace city cannot substitute for the unknown residence city');
+
+assert.equal(inferCorroboratedRegionalCity(person, [
+  { url: 'https://one.example.org/', snippet: 'Taylor Morgan lives in the suburbs of Boulder, Colorado.' },
+  { url: 'https://two.example.net/', snippet: 'Taylor Morgan resides in the outskirts of Boulder, CO.' },
+], testAsOf), null, 'metropolitan proximity does not establish a municipal city');
+
 console.log('SPECTRA broad-city public-source corroboration tests passed.');
