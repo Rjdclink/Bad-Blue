@@ -1172,14 +1172,8 @@ router.post('/acquire', async (req: Request, res: Response) => {
       );
       let region = null;
       let cityCorroborationUsed = false;
-      for (const locationInput of locationInputs) {
-        try {
-          region = await geocodeBestLocation(locationInput);
-          if (region) break;
-        } catch {
-          // One provider or parsing failure must not cancel other clues.
-        }
-      }
+      // An independently reported city must not be silently overridden by
+      // a search clue supplied by the user (often a historical location).
       if (!region && corroboratedCity) {
         try {
           region = await geocodeCityState(
@@ -1190,14 +1184,26 @@ router.post('/acquire', async (req: Request, res: Response) => {
           // Failed regional geocoding never substitutes arbitrary coordinates.
         }
       }
+      // Preserve a supplied location solely as labeled search context. A
+      // geocoder resolving an input clue is not an independent city discovery.
+      if (!region) {
+        for (const locationInput of locationInputs) {
+          try {
+            region = await geocodeBestLocation(locationInput);
+            if (region) break;
+          } catch {
+            // One provider or parsing failure must not cancel other clues.
+          }
+        }
+      }
       if (region) {
         candidateLocations.push({
           latitude: region.latitude,
           longitude: region.longitude,
           label: cityCorroborationUsed && corroboratedCity
-            ? `${corroboratedCity.city}, ${corroboratedCity.state} (unverified city estimate)`
-            : region.displayName,
-          confidence: 0.35,
+            ? `${corroboratedCity.city}, ${corroboratedCity.state} (corroborated public residence; not a live location)`
+            : `${region.displayName} (supplied search clue; current city not verified)`,
+          confidence: cityCorroborationUsed ? 0.35 : 0.05,
           basis: 'regional_context',
           accuracyMeters: Math.max(
             cityCorroborationUsed ? 1_000 : 0,
