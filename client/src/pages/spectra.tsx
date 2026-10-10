@@ -8,7 +8,7 @@ import { useVoiceMode } from '@/hooks/useVoiceMode';
 import { useVoiceSynthesis } from '@/hooks/useVoiceSynthesis';
 import { getLexaraLiveEnabled } from '@/components/LexaraLiveConsentModal';
 import type { GPSPoint, LocationCandidate } from '@shared/geoconsoleTypes';
-import { spectraFeedNotice, spectraPipelineNotices, spectraRetrievalNotices, type SpectraFeedDiagnostics, type SpectraPipelineDiagnostics, type SpectraRetrievalSummary } from '@/lib/spectraFeedStatus';
+import { spectraFeedNotice, spectraFeedNotices, spectraObservationNotices, spectraPipelineNotices, spectraRetrievalNotices, type SpectraFeedDiagnostics, type SpectraPipelineDiagnostics, type SpectraRetrievalSummary } from '@/lib/spectraFeedStatus';
 
 type Phase = 'awaiting_target' | 'awaiting_details' | 'acquiring' | 'active' | 'error';
 
@@ -114,6 +114,7 @@ interface AcquisitionResponse {
   acquisition?: {
     identityConfidence: number;
     locationConfidence: number;
+    liveLocationStatus?: string;
     sourceCount: number;
     feedDiagnostics?: SpectraFeedDiagnostics;
     pipelineDiagnostics?: SpectraPipelineDiagnostics;
@@ -449,6 +450,7 @@ export default function SpectraPage() {
 
       if (!response.ok || !payload.success) {
         setFeedNotice(spectraFeedNotice(payload.feedDiagnostics));
+        setPipelineNotices(spectraFeedNotices(payload.feedDiagnostics));
         throw new Error(payload.error || 'Target acquisition failed.');
       }
 
@@ -485,7 +487,9 @@ export default function SpectraPage() {
       );
       setSourceCount(payload.acquisition?.sourceCount ?? 0);
       setFeedNotice(spectraFeedNotice(payload.acquisition?.feedDiagnostics));
-      setPipelineNotices(payload.publicPlace
+      setPipelineNotices([
+        ...spectraFeedNotices(payload.acquisition?.feedDiagnostics),
+        ...(payload.publicPlace
         ? [
           `${payload.publicPlace.diagnostics.retrieved} of ${payload.publicPlace.diagnostics.selected} pages retrieved; ${payload.publicPlace.diagnostics.supported} supported venue address pages.`,
           ...spectraRetrievalNotices(payload.publicPlace.diagnostics.retrieval),
@@ -493,7 +497,9 @@ export default function SpectraPage() {
             ? [`${payload.publicPlace.diagnostics.distinctRetrievedUrls} distinct retrieved URLs; ${payload.publicPlace.diagnostics.duplicateRetrievedUrls ?? 0} duplicate URL records. Distinct URLs do not establish independent evidence.`] : []),
           `Result: ${payload.publicPlace.diagnostics.outcome}. City-level context; no calibrated probability or live-position claim.`,
         ]
-        : spectraPipelineNotices(payload.acquisition?.pipelineDiagnostics));
+        : spectraPipelineNotices(payload.acquisition?.pipelineDiagnostics)),
+        ...spectraObservationNotices(points, payload.acquisition?.liveLocationStatus),
+      ]);
       setPlaceSources(payload.publicPlace?.sources || []);
       if (typeof payload.sessionId === 'string' && payload.sessionId.trim()) {
         setSpectraSessionId(payload.sessionId.trim());
@@ -513,7 +519,7 @@ export default function SpectraPage() {
           ? `The public venue's reported city is ${regionalCandidates[0].label}. Sources are listed above.`
           : `No supported public-place map result: ${payload.publicPlace.diagnostics.outcome}. See the source assessments above.`
         : points.length > 0
-        ? `I acquired ${points.length} timestamped location observation${points.length === 1 ? '' : 's'} for ${resolvedTarget}. The map is updated${certainty !== null ? ` with ${certainty}% location-evidence confidence` : ''}.`
+        ? `The map contains ${points.length} timestamped location observation${points.length === 1 ? '' : 's'}${certainty !== null ? ` with ${certainty}% location-evidence confidence` : ''}. ${spectraObservationNotices(points, payload.acquisition?.liveLocationStatus).join(' ') || 'Current presence is not verified by a timestamp alone.'}`
         : regionalCandidates.length > 0
           ? `My best available regional estimate for ${resolvedTarget} is ${regionalCandidates[0].label || 'the area shown on the map'}. This is an estimate; the current live position is unverified.`
           : `This pass referenced ${payload.acquisition?.sourceCount ?? 0} source group${(payload.acquisition?.sourceCount ?? 0) === 1 ? '' : 's'} for ${resolvedTarget}. This pass did not produce a mappable location estimate.`;
