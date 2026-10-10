@@ -86,7 +86,7 @@ function escaped(value: string): string {
 
 function getCityNearPostalStreet(text: string, street: string): Array<{ city: string; state: string }> {
   const addresses: Array<{ city: string; state: string }> = [];
-  const streetExpression = new RegExp('\\b' + escaped(street).replace(/\\s+/g, '\\s+') + '\\b', 'gi');
+  const streetExpression = new RegExp('\\b' + escaped(street).replace(/\s+/g, '\\s+') + '\\b', 'gi');
   let streetMatch: RegExpExecArray | null;
   let scanned = 0;
   while ((streetMatch = streetExpression.exec(text)) && scanned++ < 12) {
@@ -111,7 +111,7 @@ export function evaluateInstitutionFieldSource(
   const base: InstitutionFieldSourceResult = {
     requestedUrl,
     finalUrl: evidence?.url,
-    publisher: publicPublisherDomain(evidence?.url),
+    publisher: publicPublisherDomain(evidence?.url) ?? undefined,
     retrievedAt: evidence?.retrievedAt,
     publishedAt: evidence?.publishedAt,
     publicationStatus: evidence?.publishedAt ? 'dated' : 'undated',
