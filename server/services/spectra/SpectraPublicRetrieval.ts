@@ -105,6 +105,11 @@ function timestamp(value: unknown): string | undefined {
 }
 
 function numeric(value: unknown): number | undefined {
+  // JSON/HTML providers sometimes encode missing data as false, null, [],
+  // or an empty string. Number() converts these to zero: only explicitly
+  // numeric fields may produce the real (0, 0) geographic coordinate.
+  if (typeof value !== 'number' && typeof value !== 'string') return undefined;
+  if (typeof value === 'string' && !value.trim()) return undefined;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : undefined;
 }
