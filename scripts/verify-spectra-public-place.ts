@@ -40,5 +40,15 @@ assert.equal(failed.candidates.length, 0);
 const empty = await acquirePublicPlace(target, '', { ...deps, retrieve: async () => [] });
 assert.equal(empty.diagnostics.outcome, 'no-supported-address');
 assert.equal(empty.diagnostics.retrieved, 0);
+const unavailable = await acquirePublicPlace(target, 'https://secret:credential@bad.example/private', {
+  ...deps,
+  retrieve: async (urls, _signal, onFailure) => {
+    assert(!urls.some(value => value.includes('credential')));
+    onFailure?.(url, 'http-403');
+    return [];
+  },
+});
+assert.equal(unavailable.sources[0].status, 'http-403');
+assert(!JSON.stringify(unavailable).includes('credential'));
 await assert.rejects(acquirePublicPlace('Example Person', '', deps));
 console.log('Public-place pipeline passed: visible addresses, footer exclusion, name binding, source links, conflicts, geocoder failure and abstention.');
