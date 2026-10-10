@@ -528,6 +528,10 @@ app.use(express.json({
   }
 }));
 app.use(express.urlencoded({ extended: false }));
+
+// Handle signed Resend incoming-email notifications before deferred route initialization.
+import { registerResendForwardingWebhook } from "./routes/resendForwardingWebhook";
+registerResendForwardingWebhook(app);
 app.use(cookieParser());
 
 // robots.txt must be available from the instant the HTTP listener opens.
