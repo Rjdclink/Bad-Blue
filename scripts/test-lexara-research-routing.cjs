@@ -115,6 +115,7 @@ function harness(options = {}) {
     vm.runInNewContext(`(function(require,module,exports){${compiled.outputText}\n})`, {
       process: { env }, console: { log() {}, warn() {}, error() {}, info() {} },
       fetch: fixtureFetch, URL, AbortController, DOMException, setTimeout, clearTimeout,
+      performance: require('node:perf_hooks').performance,
       Date: class extends Date { static now() { return options.now ? options.now() : Date.now(); } },
     }, { filename })(requireLocal, module, module.exports);
     return module.exports;
@@ -221,6 +222,8 @@ test('Spectra native discovery does not buy query planning and retains supplemen
     exports, AbortController, setTimeout, clearTimeout,
     discoverLegalMeshTier3: mesh.discoverLegalMeshTier3,
     discoverLegalMeshSupplemental: mesh.discoverLegalMeshSupplemental,
+    chooseSpectraPublicRetrievalUrls: h.load('server/services/spectra/SpectraCityDiscoveryPolicy.ts').chooseSpectraPublicRetrievalUrls,
+    mergePublicRetrievedMetadata: h.load('server/services/spectra/SpectraPublicEvidenceProvenance.ts').mergePublicRetrievedMetadata,
     discoveryResultFromCandidate: item => ({ ...item, reliability: 'medium', relevanceScore: 70 }),
     dedupeDiscoveryResults: items => items,
     callClaudeWebSearch: async () => { webSearchCalls++; return { content: '', sources: [] }; },
@@ -535,3 +538,4 @@ test('bounded live queries retain the requested fact without copying conversatio
   for (const { name, run } of testCases) { await run(); passed++; console.log('PASS', name); }
   console.log(`${passed}/${testCases.length} Lexara research routing checks passed (external I/O mocked).`);
 })().catch(error => { console.error(error); process.exitCode = 1; });
+

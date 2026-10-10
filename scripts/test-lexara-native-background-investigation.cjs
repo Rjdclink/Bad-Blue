@@ -27,6 +27,7 @@ function execute(relative, requireMap = {}) {
   };
   vm.runInNewContext(`(function(require,module,exports){${compiled}\n})`, {
     console, URL, process: { env: {} }, setTimeout, clearTimeout, AbortController,
+    performance: require('node:perf_hooks').performance,
   }, { filename: relative })(localRequire, module, module.exports);
   return module.exports;
 }
@@ -70,7 +71,13 @@ function candidate(url, provider = 'fixture-search') {
   return { url, title: 'Fixture result', excerpt: 'discovery only', tier: 3, provider };
 }
 
+// Use the real diagnostics module; keep the loader's dependency allowlist strict.
+const diagnostics = execute('server/lexara/DiscoveryDiagnostics.ts', {
+  'node:async_hooks': require('node:async_hooks'),
+  'node:crypto': require('node:crypto'),
+});
 const meshEvidence = execute('server/lexara/LegalProviderMesh.ts', {
+  './DiscoveryDiagnostics': diagnostics,
   './LexaraPublicSourceRegistry': {},
   './LexaraDiscoveryLearning': {},
   './LexaraResearchAssist': {},
@@ -565,3 +572,4 @@ function reset(mode) {
   console.error(error);
   process.exitCode = 1;
 });
+

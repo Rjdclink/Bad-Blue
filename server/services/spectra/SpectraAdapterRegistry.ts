@@ -1,4 +1,5 @@
 import { getSpectraActiveAcquisitionCapabilities } from './SpectraActiveAcquisition';
+import { describeSpectraAdapterConfiguration } from './SpectraConfigurationDiagnostics';
 
 export type SpectraAdapterMode =
   | 'live-telemetry'
@@ -661,14 +662,20 @@ export const SPECTRA_ADAPTER_CAPABILITIES: SpectraAdapterCapability[] = [
 ];
 
 export function getSpectraAdapterCapabilities() {
-  return SPECTRA_ADAPTER_CAPABILITIES.map(adapter => ({
-    id: adapter.id,
-    label: adapter.label,
-    mode: adapter.mode,
-    sourceTypes: adapter.sourceTypes,
-    configured: adapter.configured(),
-    priority: adapter.priority,
-    supportsRealtime: adapter.supportsRealtime,
-    notes: adapter.notes,
-  }));
+  return SPECTRA_ADAPTER_CAPABILITIES.map(adapter => {
+    const configured = adapter.configured();
+    return {
+      id: adapter.id,
+      label: adapter.label,
+      mode: adapter.mode,
+      sourceTypes: adapter.sourceTypes,
+      // Legacy field retained for existing clients; this is not connection health.
+      configured,
+      ...describeSpectraAdapterConfiguration(adapter.mode, configured),
+      priority: adapter.priority,
+      supportsRealtime: adapter.supportsRealtime,
+      notes: adapter.notes,
+    };
+  });
 }
+
