@@ -306,7 +306,7 @@ export const SEO_CONFIG: Record<string, PageSEO> = {
   },
   "/login": {
     title: "Login | Legal What?",
-    description: "Sign in to your Legal What? account to access your complaints, lawsuits, and legal documents.",
+    description: "Sign in to access Legal What? AI-assisted legal tools, document workflows, public-record research, and consultation services",
     canonicalPath: "/login",
     priority: 0.3,
     changefreq: "monthly",
