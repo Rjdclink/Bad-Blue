@@ -1092,7 +1092,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     userSpeechObservedRef.current = true;
     clearVoiceTurnBuffer();
 
-    // Person-location requests are navigation, so their launch control must
+    // Hidden location commands and ordinary person-location requests are navigation, so their launch control must
     // not wait for a paid legal answer or a failing research request.
     if (spectraTarget) {
       const queuedMessageId = currentPreRenderedTurnIdRef.current;
