@@ -153,7 +153,7 @@ export function SpectraEvidenceRecords({ sessionId, refreshKey }: { sessionId: s
     </label>}
     <p className="mt-2 text-[11px] text-slate-400">{scope === 'public'
       ? 'Automatic collection of public events and affected areas. These records do not establish a person’s location.'
-      : 'Retrieved documents and geographic context retained from this investigation. Open a record to inspect the saved content.'}</p>
+      : 'Retrieved search documents and geographic context. A name or surname match does not establish that a record concerns this target. Open a record to inspect its source and limitations.'}</p>
     {error && <p role="status" className="mt-2 text-amber-300">{error}</p>}
     {loading && <p className="mt-2">Loading saved records…</p>}
     <div className="mt-2 max-h-72 overflow-y-auto space-y-2">
@@ -170,6 +170,8 @@ export function SpectraEvidenceRecords({ sessionId, refreshKey }: { sessionId: s
         return <details key={record.id} className="rounded border border-slate-800 p-2">
           <summary className="cursor-pointer break-words">{title}</summary>
           <p className="mt-2">Source: {record.provider}</p>
+          {scope === 'session' && record.recordType === 'retrieved_document' &&
+            <p className="mt-1 text-amber-200">Identity match unverified. This document does not establish the target’s current location.</p>}
           <p>Downloaded: {displayTime(record.retrievedAt)}</p>
           {record.payload?.snapshotKind === 'extracted_document' && <p className="mt-1 text-slate-400">Saved text and metadata extracted from the document.</p>}
           {record.payload?.structuredRecordOmitted === true && <p className="mt-1 text-amber-200">The source JSON exceeded the archive size limit. Only this retrieval’s metadata or extracted content was retained.</p>}

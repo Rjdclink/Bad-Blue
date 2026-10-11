@@ -234,7 +234,7 @@ function extractLikelyName(value: string): string | null {
     const phone = extractPhoneNumber(text);
     return phone ? text.replace(phone, ' ') : text;
   })();
-  const firstSegment = withoutPhone.split(/[,;|\n]|\s+(?:(?:my|his|her|their)\s+)?(?:email|phone|mobile|cell)\b/i)[0]
+  const firstSegment = withoutPhone.split(/[,;|\n]|\s+(?:using|with)\s+(?:the\s+)?(?:name|phone|email)\b|\s+(?:(?:my|his|her|their)\s+)?(?:email|phone|mobile|cell)\b/i)[0]
     .replace(/\b(?:phone|number|cell|mobile)\b.*$/i, '')
     .replace(/\b(?:last\s+known|located|lives?|from|near|around)\b.*$/i, '')
     .replace(/^[^A-Za-z]+|[^A-Za-z'’.-]+$/g, '')
@@ -963,6 +963,12 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       [],
     );
     const resolvedSubjectName = semanticSubject?.name || resolvedName || resolvedTargetLabel;
+    // The discovery mesh treats jurisdiction as a place. Contact details are
+    // search clues, not a jurisdiction; passing them there polluted every
+    // generated query in the live name/phone/email test.
+    const discoveryJurisdiction = semanticSubject?.location
+      || extractCityStateHint([target, details].filter(Boolean).join(' '))?.query
+      || undefined;
     const discoveryQueries = buildDiscoveryQueries({
       resolvedName: resolvedSubjectName,
       normalizedTarget,
@@ -997,7 +1003,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
 
     const firstPassPromise = runDiscoveryPass(initialQueries, {
       subject: resolvedSubjectName,
-      location: semanticSubject?.location || details,
+      location: discoveryJurisdiction,
       // The native-first background lane owns the paid fallback. Avoid
       // duplicate Claude searches for this same subject in parallel.
       useClaude: false,
@@ -1220,7 +1226,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       const beforeCount = discoveryResults.length;
       const nextPass = await runDiscoveryPass(nextQueries, {
         subject: resolvedSubjectName,
-        location: semanticSubject?.location || details,
+        location: discoveryJurisdiction,
         useClaude: false,
       });
       discoveryQueriesAttempted += nextPass.attempted;

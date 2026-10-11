@@ -1056,7 +1056,7 @@ export default function SpectraPage() {
               <div>
                 <h1 className="text-sm font-semibold text-slate-100">SPECTRA Console</h1>
                 <p className="text-[11px] text-slate-500">
-                  {sourceCount > 0 ? `${sourceCount} source groups referenced` : 'Tell SPECTRA what you need located'}
+                  {sourceCount > 0 ? `${sourceCount} source groups searched; identity match unverified` : 'Tell SPECTRA what you need located'}
                 </p>
                 {phase === 'awaiting_target' && <label className="mt-2 flex gap-2 text-xs text-slate-300">
                   <input type="checkbox" checked={publicPlaceMode} onChange={event => setPublicPlaceMode(event.target.checked)} />
