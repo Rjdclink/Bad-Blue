@@ -1,4 +1,4 @@
-import { isSubscriptionEntryPath } from "@shared/subscriptionPolicy";
+import { isPublicMarketingAppPath, isSubscriptionEntryPath } from "@shared/subscriptionPolicy";
 import { useEffect } from "react";
 
 interface BreadcrumbItem {
@@ -124,7 +124,7 @@ export function SEOHead({
     const path = window.location.pathname || "/";
     const inferredCanonical = new URL(path, `${BASE_URL}/`).toString();
     const finalCanonical = canonicalUrl || inferredCanonical;
-    const effectiveNoIndex = noIndex || isPrivateRoute(path) || !isSubscriptionEntryPath(path);
+    const effectiveNoIndex = noIndex || isPrivateRoute(path) || (!isSubscriptionEntryPath(path) && !isPublicMarketingAppPath(path));
     const finalOgImage = ogImage || DEFAULT_SHARE_IMAGE;
     const finalOgImageAlt = ogImageAlt || "Legal What? legal technology platform logo";
 
