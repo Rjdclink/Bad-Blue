@@ -367,8 +367,11 @@ async function enrichAuthoritySourcesWithLexaraRetrieval(
     if (abortHandler) signal?.removeEventListener('abort', abortHandler);
     if (!enrichment?.evidence?.length) return sources;
 
+    const statuteTargets = new Set(sources.filter(source => source.provider === 'official-statute-directory').map(source => source.url));
     const byTarget = new Map(enrichment.evidence.filter(item => item.content?.trim())
-      .map(item => [item.target, recordRelief ? recordReliefEvidenceExcerpt(item.content.trim()) : formLookup ? officialFormEvidenceExcerpt(item.content.trim()) : item.content.trim().slice(0, courtLookup ? 3000 : 900)]));
+      .map(item => [item.target, recordRelief ? recordReliefEvidenceExcerpt(item.content.trim()) : formLookup ? officialFormEvidenceExcerpt(item.content.trim()) : statuteTargets.has(item.target)
+        ? item.content.trim().length <= 6500 ? item.content.trim() : `${item.content.trim().slice(0, 5000)}\n[Additional section text omitted]\n${item.content.trim().slice(-1000)}`
+        : item.content.trim().slice(0, courtLookup ? 3000 : 900)]));
     return sources.map(source => ({ ...source, evidenceLevel: byTarget.has(source.url) ? 'document' : source.evidenceLevel, excerpt: formLookup || recordRelief
       ? [source.excerpt, byTarget.get(source.url)].filter(Boolean).join('\n') || undefined
       : byTarget.get(source.url) || source.excerpt || undefined }));
