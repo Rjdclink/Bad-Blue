@@ -28,6 +28,8 @@ export async function searchLexaraBackgroundWithClaude(input: {
   jurisdiction?: string;
   model?: string;
   signal?: AbortSignal;
+  maxTokens?: number;
+  retryTruncatedOutput?: boolean;
 }): Promise<LexaraClaudeBackgroundSearchResult> {
   const subjectName = input.subject?.name || input.decision.subject || '';
   const subjectKind = input.subject?.kind || input.decision.subjectKind || '';
@@ -53,7 +55,8 @@ export async function searchLexaraBackgroundWithClaude(input: {
 
   try {
     const result = await callClaudeWebSearch(prompt, {
-      maxTokens: input.decision.requestedFact === 'general-public-record' ? 1024 : 384,
+      maxTokens: input.maxTokens ?? (input.decision.requestedFact === 'general-public-record' ? 1024 : 384),
+      retryTruncatedOutput: input.retryTruncatedOutput,
       maxUses: input.decision.requestedFact === 'general-public-record' ? 2 : 1,
       allowFetch: true,
       maxFetchUses: 1,

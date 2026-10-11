@@ -50,13 +50,18 @@ interface ConversationMessage {
   };
 }
 
-const NON_PERSON_SPECTRA_TARGET_RE = /^(?:(?:the|this|that|a|an|my|your)\s+)?(?:document|form|law|statute|case|website|page|button|map|file|letter|motion|complaint|petition|contract|calendar|deadline|answer|response|evidence|photo|video|address|property|vehicle|car|truck|business|company|organization|phone|device)(?:\b|$)/i;
+const NON_PERSON_SPECTRA_TARGET_RE = /^(?:(?:the|this|that|a|an|my|your)\s+)?(?:document|form|law|statute|case|court|hearing|website|page|button|map|file|letter|motion|complaint|petition|contract|calendar|(?:filing\s+)?deadline|answer|response|evidence|photo|video|address|property|vehicle|car|truck|business|company|organization|phone|device)(?:\b|$)/i;
 
 function spectraTargetFromPrompt(value: string): string | null {
   const normalized = value.replace(/\s+/g, ' ').trim();
   const match = normalized.match(/^(?:please\s+)?(?:show\s+me|where\s+is|where's)\s+(.+?)[?.!]*$/i);
-  const target = match?.[1]?.trim().replace(/[?.!]+$/g, '').trim() || '';
+  const target = match?.[1]?.trim()
+    .split(/[,;]|\s+(?:(?:my|his|her|their)\s+)?(?:email|phone|mobile|cell)\b/i)[0]
+    .replace(/[?.!]+$/g, '').trim() || '';
   if (target.length < 2 || target.length > 500) return null;
+  // A state/county prefix can precede the artifact name. These are legal
+  // requests even when they start with the hidden location-command wording.
+  if (/\b(?:official|court|local|required|prescribed|mandatory|blank|template|legal|small\s+claims|money\s+judgment)\b[\s\S]*\b(?:forms?|petition|motion|complaint|cover\s+sheet)\b|\b(?:form\s+(?=[A-Z0-9.:-]*\d)[A-Z0-9.:-]+|case[- ]assignment|foia)\b/i.test(target)) return null;
   if (NON_PERSON_SPECTRA_TARGET_RE.test(target)) return null;
   return target;
 }
@@ -470,6 +475,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   const isMasterSession = Boolean((user as any)?.isMasterBypass);
   const userId = (user as any)?.id || (user as any)?.claims?.sub;
   const sessionIdRef = useRef(makeSessionId());
+  const backgroundEvidenceRef = useRef<{ sessionId: string; facts: string[] }>({ sessionId: '', facts: [] });
 
   const [conversation, setConversation] = useState<ConversationMessage[]>([]);
   const [userInput, setUserInput] = useState('');
@@ -1079,6 +1085,28 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     userSpeechObservedRef.current = true;
     clearVoiceTurnBuffer();
 
+    // Hidden location commands are navigation, so their launch control must
+    // not wait for a paid legal answer or a failing research request.
+    if (spectraTarget) {
+      const queuedMessageId = currentPreRenderedTurnIdRef.current;
+      currentPreRenderedTurnIdRef.current = null;
+      const userMessageId = queuedMessageId || appendMessage('user', message);
+      setUserInput('');
+      setErrorMessage(null);
+      const response = `Open SPECTRA to locate ${spectraTarget}.`;
+      appendMessage('lexara', response, {
+        target: spectraTarget,
+        clues: [
+          ...conversationRef.current.filter(item => item.role === 'user' && item.id !== userMessageId)
+            .slice(-12).map(item => item.content),
+          message,
+        ].join('\n').slice(-8_000),
+        lexaraSessionId: sessionIdRef.current,
+      });
+      if (liveEnabled && voiceReady) void speakLexara(response, generationRef.current).catch(() => undefined);
+      return;
+    }
+
     const generation = generationRef.current + 1;
     generationRef.current = generation;
 
@@ -1376,6 +1404,16 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       if (typeof data?.matterSessionId === 'string' && data.matterSessionId.trim()) {
         sessionIdRef.current = data.matterSessionId.trim();
       }
+      // Verified direct-source facts follow only the current matter and never
+      // survive the privacy reset on new login or a changed law area.
+      if (backgroundEvidenceRef.current.sessionId !== sessionIdRef.current) {
+        backgroundEvidenceRef.current = { sessionId: sessionIdRef.current, facts: [] };
+      }
+      const verifiedBackground = typeof data?.backgroundDocumentContext === 'string'
+        ? data.backgroundDocumentContext.trim().slice(0, 9_000) : '';
+      if (verifiedBackground && !backgroundEvidenceRef.current.facts.includes(verifiedBackground)) {
+        backgroundEvidenceRef.current.facts = [...backgroundEvidenceRef.current.facts, verifiedBackground].slice(-3);
+      }
       const priorPendingDocument = pendingDocument;
       const documentIntentRequested = data?.documentIntent?.requested === true;
       const documentFollowup = /\b(?:document|draft|form|letter|complaint|petition|motion|affidavit|declaration|pdf|docx|edit|revise|change|paragraph|section|signature|download|export|file|filing)\b/i.test(message)
@@ -1390,15 +1428,13 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       if (documentIntentRequested) {
         const resolvedJurisdiction = String(data?.jurisdiction || jurisdiction || '').trim();
         if (resolvedJurisdiction) {
-          const backgroundDocumentContext = typeof data?.backgroundDocumentContext === 'string'
-            ? data.backgroundDocumentContext.trim().slice(0, 9_000)
-            : '';
+          const backgroundDocumentContext = backgroundEvidenceRef.current.facts.join('\n\n').slice(-9_000);
           const conversationFacts = [...previousMessages, { role: 'user', content: message }]
             .map(item => `${item.role === 'user' ? 'USER' : 'LEXARA'}: ${item.content}`)
             .join('\n\n')
             .slice(backgroundDocumentContext ? -20_000 : -30_000);
           const facts = backgroundDocumentContext
-            ? `${conversationFacts}\n\nAPPLICATION-SUPPLIED LEXARA BACKGROUND EVIDENCE:\n${backgroundDocumentContext}`
+            ? `${conversationFacts}\n\nAPPLICATION-SUPPLIED LEXARA BACKGROUND EVIDENCE (DIRECT-SOURCE, SAME PERSON/MATTER ONLY, NOT AUTOMATICALLY ADMITTED FACTS):\n${backgroundDocumentContext}`
             : conversationFacts;
           const pendingTitle = String(data.documentIntent.documentType || 'Legal Document');
           // A newly requested document replaces the prior document task UI.
@@ -1651,6 +1687,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     currentRequestRef.current = null;
     generationRef.current += 1;
     sessionIdRef.current = makeSessionId();
+    backgroundEvidenceRef.current = { sessionId: sessionIdRef.current, facts: [] };
     conversationRef.current = [];
     setConversation([]);
     setJurisdiction(undefined);
@@ -1686,6 +1723,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     currentRequestRef.current = null;
     generationRef.current += 1;
     sessionIdRef.current = makeSessionId();
+    backgroundEvidenceRef.current = { sessionId: sessionIdRef.current, facts: [] };
     conversationRef.current = [];
     setConversation([]);
     setJurisdiction(undefined);
@@ -1733,6 +1771,12 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
             ? saved.sessionId : makeSessionId();
           conversationRef.current = messages;
           setConversation(messages);
+          backgroundEvidenceRef.current = {
+            sessionId: sessionIdRef.current,
+            facts: saved.turns.map((turn: any) =>
+              typeof turn?.context?.backgroundDocumentContext === 'string'
+                ? turn.context.backgroundDocumentContext.trim().slice(0, 9_000) : '').filter(Boolean).slice(-3),
+          };
           const latestContext = saved.turns[saved.turns.length - 1]?.context;
           setJurisdiction(typeof latestContext?.jurisdiction === 'string'
             ? latestContext.jurisdiction : undefined);
@@ -1792,6 +1836,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
 
   const generateAndDownloadPendingDocument = async (format?: 'docx' | 'pdf') => {
     if (!pendingDocument || documentBusy) return;
+    setErrorMessage(null);
     setDocumentBusy(true);
     try {
       const generated = await fetch('/api/lexara/documents/generate', {
@@ -1810,11 +1855,20 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         }),
       });
       const data = await generated.json().catch(() => ({}));
+      if (generated.status === 422 && data?.needsCourtJurisdiction === true) {
+        const missing = Array.isArray(data?.missingFields) ? data.missingFields : ['courtOrCounty'];
+        setPendingDocument(previous => previous ? { ...previous, missingFields: missing } : previous);
+        const question = String(data?.question || 'Which court, agency, or county will receive this filing?');
+        appendMessage('lexara', question);
+        void speakLexara(question, generationRef.current).catch(() => undefined);
+        return;
+      }
       if (generated.status === 409 && data?.officialFormRequired && data?.officialForm) {
         const official = await fetch('/api/lexara/documents/official-form', {
           method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             officialForm: data.officialForm,
+            templateMode: pendingDocument.templateMode,
             facts: pendingDocument.facts,
             sessionId: sessionIdRef.current,
             lawType: lawTypeId,

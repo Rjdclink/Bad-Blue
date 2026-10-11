@@ -11,7 +11,7 @@ import {
   formatLexaraDomainSpecialization,
   getLexaraLegalDomainProfile,
 } from './LexaraLegalDomainProfiles';
-import { decideLexaraResearchNeed, isLexaraGenericLegalIntake, isLexaraRepeatRequest } from './LexaraResearchIntentRouter';
+import { decideLexaraResearchNeed, isLexaraGenericLegalIntake, isLexaraRepeatRequest, isLexaraDocumentIntakeQuestion, isLexaraOfficialFormQuestion } from './LexaraResearchIntentRouter';
 import { planLexaraSequence } from './LexaraSequenceRouter';
 import { resolveLexaraResearchDecisionSemantic } from './LexaraSemanticIntentInterpreter';
 import { mergeCompatibleLexaraBackgroundSubjects, resolveLexaraBackgroundSubject } from './LexaraBackgroundSubject';
@@ -340,7 +340,7 @@ function buildLegalSystemPrompt(
 \n- When grounded retrieval is supplied, answer the user's factual question from that evidence. Do not tell the user to go look up, examine, search, check, or research information that the application has already retrieved or can answer from the supplied evidence.\n- For requests about judges, courts, sentencing patterns, statistics, comparative outcomes, current rules, or other externally verifiable legal facts, use application-supplied research when present and report the actual findings, relevant scope/date, and source attribution. If the evidence is insufficient, say exactly what could not be verified rather than delegating the research to the user.\n\nLEGAL REASONING REQUIREMENTS\n- Separate known facts, user allegations, reasonable inferences, and legal conclusions.\n- Analyze and stress-test the user's position. Identify weaknesses, defenses, missing elements, contradictory facts, procedural problems, evidentiary gaps, and stronger alternative theories when relevant.\n- Do not tunnel on the selected law-book category. Identify adjacent legal domains, federal/state overlap, procedural doctrines, remedies, defenses, and collateral consequences whenever the facts reasonably trigger them.\n- If a missing fact materially changes the legal analysis, ask the single highest-value follow-up question rather than dumping a questionnaire.\n- If an external factual detail cannot be independently verified, state that limitation briefly when material and continue answering every legal issue that can still be resolved without that fact.\n- If jurisdiction is unknown and jurisdiction materially affects the answer, say so and ask for the state or jurisdiction. Do not invent one.
 - If the user corrects or supplies their location/jurisdiction, silently treat that user statement as controlling. Do not explain competing location signals.
 - When a turn only corrects jurisdiction/location for an ongoing matter, adopt it and continue with the single next necessary question. Do not volunteer jurisdictional background unless the user asks or it is necessary to prevent a materially wrong answer.
-- Never name or infer a county from a city, state, model recollection, or nearby geography. A county may be stated only when the user explicitly supplied it or application-supplied evidence verifies it. If county-level jurisdiction matters and is unverified, say the county has not been established.\n- Never invent a statute, case, quotation, holding, deadline, court rule, or citation. If current authority has not been grounded or otherwise verified, say that verification is needed before relying on a specific citation.\n- Do not treat agreement among language models as legal verification. Prefer primary legal authority when verification is available.\n- When discussing deadlines, statutes of limitation, emergency filings, criminal exposure, immigration status, custody, or other high-consequence issues, explicitly identify assumptions and uncertainty.\n- Do not claim to have reviewed documents, recordings, dockets, or evidence that were not actually provided.\n- Never let persona, emotion detection, or presentation logic override legal accuracy.\n\nCONVERSATIONAL PERFORMANCE\n- Respond directly to the specific question, statement, or new fact the user just provided.\n- Put the useful answer in the first sentence. Do not bury it under background or repeat facts the user already gave you.\n- Default to 1-3 concise sentences. Give more detail only when the user explicitly asks for detail or an additional sentence is necessary to prevent a materially misleading answer.
+- Never name or infer a county from a city, state, model recollection, or nearby geography. A county may be stated only when the user explicitly supplied it or application-supplied evidence verifies it. If county-level jurisdiction matters and is unverified, say the county has not been established.\n- Never invent a statute, case, quotation, holding, deadline, court rule, or citation. If current authority has not been grounded or otherwise verified, say that verification is needed before relying on a specific citation.\n- Do not treat agreement among language models as legal verification. Prefer primary legal authority when verification is available.\n- When discussing deadlines, statutes of limitation, emergency filings, criminal exposure, immigration status, custody, or other high-consequence issues, explicitly identify assumptions and uncertainty.\n- Do not claim to have reviewed documents, recordings, dockets, or evidence that were not actually provided.\n- Never let persona, emotion detection, or presentation logic override legal accuracy.\n\nCONVERSATIONAL PERFORMANCE\n- Respond directly to the specific question, statement, or new fact the user just provided.\n- Put the useful answer in the first sentence. Do not bury it under background or repeat facts the user already gave you.\n- Default to 1-3 concise sentences, normally under 60 words. Give more detail only when the user explicitly asks for detail or an additional sentence is necessary to prevent a materially misleading answer. Keep document bodies in the document workflow rather than expanding the conversational reply.
 - Do not ask the user to choose a category, record type, or terminology when the intended request can be inferred from context. If a missing detail truly prevents a reliable answer, ask one short clarification question without listing possible categories or examples.
 - Do not volunteer adjacent information, extra options, examples, background, next steps, or offers to do more work unless they are necessary to answer the user's actual request.
 - Never pad an answer with phrases such as "I can also," "if you'd like," "would you like me to," or process narration. Answer and stop.\n- Sound natural when spoken aloud. Avoid headings, tables, long lists, and memorandum-style exposition unless the user asks for structure.\n- Avoid repetitive disclaimers, canned introductions, filler, and unnecessary restatement.
@@ -367,7 +367,10 @@ function requiresDeepClaudeForTurn(
   mixedLegalFact: boolean,
   multiJurisdiction: boolean,
 ): boolean {
-  if (documentAction || mixedLegalFact || multiJurisdiction) return true;
+  if (mixedLegalFact || multiJurisdiction) return true;
+  // Document format selection is a separate verified workflow; preserve deeper
+  // reasoning for genuinely complex legal matters rather than every draft.
+  if (documentAction && /\b(?:appeal|habeas|post[- ]conviction|constitutional|injunction|summary judgment|suppression|sentencing)\b/i.test(prompt)) return true;
   const text = `${prompt}\n${history}`.toLowerCase();
   const explicitComplexity = /\b(?:complex|complicated|deep(?:ly)? analyze|thorough analysis|litigation strategy|legal strategy|appeal|appellate|post[- ]conviction|habeas|injunction|summary judgment|qualified immunity|constitutional claim|class action|multi[- ]jurisdiction|choice of law|preemption|statutory interpretation|evidentiary hearing|suppression motion|sentencing guideline|competing claims|alternative theories)\b/i.test(text);
   if (explicitComplexity) return true;
@@ -902,6 +905,15 @@ export async function generateLexaraConversationResponse(
     + researchStatusPrompt
     + formatLexaraBackgroundResearchForSystem(backgroundInvestigation)
     + backgroundPresentationPrompt
+    + (isLexaraDocumentIntakeQuestion(cleanPrompt)
+      ? '\nDOCUMENT INTAKE RESPONSE: In at most 50 words, ask for only the essential facts and evidence needed for the filing the user named. Ask for the claimed amount, but do not volunteer statutory dollar limits, filing fees, deadlines, or other legal requirements: this intake turn has not researched those facts. No numbered list, document offer, or closing paragraph. Do not claim that a document has been prepared.'
+      : '')
+    + (sequencePlan.documentAction
+      ? '\nDOCUMENT WORKFLOW REPLY: Use one concise sentence, at most 30 words, identifying the appropriate legal instrument and any indispensable missing fact. The document workflow handles supplied background evidence, placeholders, full drafting and download controls. Do not repeat addresses or other document-body facts, re-evaluate prior background verification, add a general verification warning, or give export instructions in this conversational acknowledgment.'
+      : '')
+    + (isLexaraOfficialFormQuestion(cleanPrompt) && !sequencePlan.documentAction
+      ? '\nOFFICIAL FORM ANSWER: In at most 60 words, name the verified form and any essential selection condition or companion form stated in the retrieved official instructions. Do not infer residency, party type, or case-type conditions from a form title or model memory. If the instructions do not establish a condition, leave it unresolved. State an unverified local requirement briefly rather than asserting it is absent. Omit unasked fees, deadlines, and procedural background. Correct a relevant earlier error within the same short answer, without recounting prior research failures.'
+      : '')
     + (backgroundResearchRequested && !mixedLegalFactNeed
       ? '\nBACKGROUND ANSWER LENGTH: Answer the exact factual question in one or two sentences, at most 60 words, unless the user explicitly asks for a detailed report. No URLs, source list, search mechanics, unrelated case facts, or offers of further work.'
       : '');
@@ -924,8 +936,9 @@ export async function generateLexaraConversationResponse(
   // correction. Research-backed turns remain final-answer-first so a preliminary
   // model sentence can never outrun source validation.
   const progressiveClaudeAllowed = !backgroundResearchRequested
-    && !researchDecision.needed
-    && !sequencePlan.documentAction;
+    && !researchDecision.needed;
+  // Document-routing answers may stream text immediately. The existing route
+  // still blocks document text from the real-time speech channel.
 
   const unverifiedBackgroundOnly = backgroundResearchRequested && !mixedLegalFactNeed
     && !backgroundInvestigation?.evidenceSummary;

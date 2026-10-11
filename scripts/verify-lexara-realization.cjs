@@ -462,7 +462,8 @@ must(
     orchestrator.includes('CURRENT_AI_MODELS.claudeBalanced') &&
     orchestrator.includes('CURRENT_AI_MODELS.claudeDeep') &&
     orchestrator.includes("progressiveClaudeAllowed = !backgroundResearchRequested") &&
-    orchestrator.includes('!sequencePlan.documentAction') &&
+    orchestrator.includes('&& !researchDecision.needed;') &&
+    !orchestrator.includes('&& !sequencePlan.documentAction;') &&
     orchestrator.includes('cacheSystemPrompt: true') &&
     orchestrator.includes("reasoningProvider: 'claude'") &&
     !orchestrator.includes('AICollaborationOrchestrator.orchestrateCollaboration') &&
@@ -992,7 +993,7 @@ must(
     claudeService.includes("allowed_callers: ['direct']") &&
     lexaraBackgroundInvestigation.includes('if (pass === 0) startClaudeSearch()') &&
     lexaraBackgroundInvestigation.includes('const pendingClaude = startClaudeSearch()') &&
-    lexaraConversationOrchestrator.includes('const backgroundClaudeModel = CURRENT_AI_MODELS.claudeFast;'),
+    lexaraConversationOrchestrator.includes('const backgroundClaudeModel = LEGAL_AI_MODELS.claudeFast;'),
   'Claude web search starts after native evidence needs it and feeds the same evidence gate',
 );
 must(
@@ -1071,7 +1072,7 @@ must(
     lexaraChatRoutes.includes('allowClaudeOpus: canUseClaudeOpus(req)') &&
     lexaraRoutes.includes("providerPolicy: 'legalwhat'") &&
     lexaraRoutes.includes('allowClaudeOpus: canUsePaidClaude(req)') &&
-    aiSubAgent.includes("options.allowClaudeOpus === true ? CURRENT_AI_MODELS.claudeBalanced : CURRENT_AI_MODELS.claudeFast") &&
+    aiSubAgent.includes("options.allowClaudeOpus === true ? CURRENT_AI_MODELS.claudeBalanced : LEGAL_AI_MODELS.claudeFast") &&
     lexaraConversationOrchestrator.includes('allowClaudeOpus?: boolean') &&
     lexaraConversationOrchestrator.includes('requiresDeepClaudeForTurn') &&
     lexaraConversationOrchestrator.includes("sequencePlan.sequence === 'combined-legal-background'") &&
@@ -1090,9 +1091,11 @@ must(
     consultationRoutes.includes("res.json({ types: LEGAL_DOCUMENT_TYPES })") &&
     consultationRoutes.includes('validated: true') &&
     consultationRoutes.includes('templateMode') &&
-    lexaraChatRoutes.includes("documentType: currentType || historyType || 'Custom Document'") &&
-    conversation.includes("data?.validated !== true || String(data?.documentType || '') !== pendingDocument.title") &&
-  'LEXARA uses one canonical legal-document registry, current-turn precedence, template mode, and validated same-type export handoff',
+    legalDocumentRegistry.includes('export function inferLegalDocumentNeed') &&
+    lexaraChatRoutes.includes('inferLegalDocumentNeed(prompt)') &&
+    lexaraChatRoutes.includes("documentType: inferredType || currentType || historyType || 'Custom Document'") &&
+    conversation.includes("data?.validated !== true || String(data?.documentType || '') !== pendingDocument.title"),
+  'LEXARA uses one canonical legal-document registry, inferred intent, current-turn precedence, and validated same-type export handoff',
 );
 must(
   lawTypesSource.includes("name: 'Post Conviction'") &&

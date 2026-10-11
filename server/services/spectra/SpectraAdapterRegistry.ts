@@ -1,3 +1,6 @@
+import { getSpectraActiveAcquisitionCapabilities } from './SpectraActiveAcquisition';
+import { describeSpectraAdapterConfiguration } from './SpectraConfigurationDiagnostics';
+
 export type SpectraAdapterMode =
   | 'live-telemetry'
   | 'provider-webhook'
@@ -29,6 +32,14 @@ export interface SpectraAdapterCapability {
 
 const anyEnv = (...names: string[]) =>
   names.some(name => Boolean(String(process.env[name] || '').trim()));
+const activeAdapterConfigured = (id: string) =>
+  getSpectraActiveAcquisitionCapabilities().some(item => item.id === id);
+
+const builtinActiveAdapterIds = new Set([
+  'android-managed-location-active',
+  'apple-managed-location-active',
+  'cisco-spaces-active-location',
+]);
 
 export const SPECTRA_ADAPTER_CAPABILITIES: SpectraAdapterCapability[] = [
   {
@@ -46,10 +57,7 @@ export const SPECTRA_ADAPTER_CAPABILITIES: SpectraAdapterCapability[] = [
     label: 'Android managed-device latest location',
     mode: 'provider-pull',
     sourceTypes: ['device_gps'],
-    configured: () => anyEnv(
-      'SPECTRA_ANDROID_MDM_LOCATION_URL_TEMPLATE',
-      'SPECTRA_ANDROID_MDM_LOCATION_TOKEN',
-    ),
+    configured: () => activeAdapterConfigured('android-managed-location-active'),
     priority: 'critical',
     supportsRealtime: true,
     notes: 'Pulls the latest location already available from a configured Android EMM backend for an enrolled company-managed device.',
@@ -59,10 +67,7 @@ export const SPECTRA_ADAPTER_CAPABILITIES: SpectraAdapterCapability[] = [
     label: 'Apple supervised-device latest location',
     mode: 'provider-pull',
     sourceTypes: ['device_gps'],
-    configured: () => anyEnv(
-      'SPECTRA_APPLE_MDM_LOCATION_URL_TEMPLATE',
-      'SPECTRA_APPLE_MDM_LOCATION_TOKEN',
-    ),
+    configured: () => activeAdapterConfigured('apple-managed-location-active'),
     priority: 'critical',
     supportsRealtime: true,
     notes: 'Pulls the latest DeviceLocation response already available from a configured MDM backend for a supervised Apple device.',
@@ -72,10 +77,7 @@ export const SPECTRA_ADAPTER_CAPABILITIES: SpectraAdapterCapability[] = [
     label: 'Cisco Spaces active device location',
     mode: 'provider-pull',
     sourceTypes: ['wifi_fingerprint'],
-    configured: () => anyEnv(
-      'SPECTRA_CISCO_SPACES_DEVICE_URL_TEMPLATE',
-      'SPECTRA_CISCO_SPACES_TOKEN',
-    ),
+    configured: () => activeAdapterConfigured('cisco-spaces-active-location'),
     priority: 'high',
     supportsRealtime: true,
     notes: 'Pulls a configured Cisco Spaces device-location endpoint for a supplied device identifier and normalizes it into SPECTRA.',
@@ -89,7 +91,8 @@ export const SPECTRA_ADAPTER_CAPABILITIES: SpectraAdapterCapability[] = [
       'cellular','nr_positioning','uwb_range','uwb_direction',
       'bluetooth_proximity','bluetooth_channel_sounding','ble_rssi','ble_aoa','ble_aod',
     ],
-    configured: () => anyEnv('SPECTRA_ACTIVE_PROVIDER_ADAPTERS'),
+    configured: () => getSpectraActiveAcquisitionCapabilities()
+      .some(item => !builtinActiveAdapterIds.has(item.id)),
     priority: 'critical',
     supportsRealtime: true,
     notes: 'Configured HTTPS provider/device collectors can be queried during acquisition and routed through an existing SPECTRA normalizer or the canonical telemetry schema.',
@@ -659,14 +662,20 @@ export const SPECTRA_ADAPTER_CAPABILITIES: SpectraAdapterCapability[] = [
 ];
 
 export function getSpectraAdapterCapabilities() {
-  return SPECTRA_ADAPTER_CAPABILITIES.map(adapter => ({
-    id: adapter.id,
-    label: adapter.label,
-    mode: adapter.mode,
-    sourceTypes: adapter.sourceTypes,
-    configured: adapter.configured(),
-    priority: adapter.priority,
-    supportsRealtime: adapter.supportsRealtime,
-    notes: adapter.notes,
-  }));
+  return SPECTRA_ADAPTER_CAPABILITIES.map(adapter => {
+    const configured = adapter.configured();
+    return {
+      id: adapter.id,
+      label: adapter.label,
+      mode: adapter.mode,
+      sourceTypes: adapter.sourceTypes,
+      // Legacy field retained for existing clients; this is not connection health.
+      configured,
+      ...describeSpectraAdapterConfiguration(adapter.mode, configured),
+      priority: adapter.priority,
+      supportsRealtime: adapter.supportsRealtime,
+      notes: adapter.notes,
+    };
+  });
 }
+

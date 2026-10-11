@@ -60,7 +60,10 @@ if (liveStreamStart < 0 || legacyChatStart < 0
   || !liveStreamRoute.includes('matterEnrichmentPending: durableEnrichmentNeeded')
   || !liveStreamRoute.includes("res.once('finish', scheduleMatterEnrichmentDrain)")
   || !liveStreamRoute.includes('!representationContext.persistent && !genericLegalIntake')
-  || !liveStreamRoute.includes('? await advanceRepresentationMatter({')
+  || !liveStreamRoute.includes('? await recoverEphemeralMatter({')
+  || !liveStreamRoute.includes("persistenceStatus: 'save-failed'")
+  || !routes.includes('async function recoverEphemeralMatter(')
+  || !routes.includes('skipPacketPlanning: true, signal: controller.signal')
   || !routes.includes('async function drainDurableMatterEnrichmentJobs()')
   || !routes.includes('claimNextLexaraMatterEnrichmentJob')
   || !storage.includes('FOR UPDATE SKIP LOCKED')
@@ -189,7 +192,7 @@ for (const claudeTransportToken of [
 ]) {
   if (!claudeTransport.includes(claudeTransportToken)) throw new Error('Claude web-search transport missing: '+claudeTransportToken);
 }
-if (!orchestrator.includes('const backgroundClaudeModel = CURRENT_AI_MODELS.claudeFast;')
+if (!orchestrator.includes('const backgroundClaudeModel = LEGAL_AI_MODELS.claudeFast;')
   || !orchestrator.includes('CURRENT_AI_MODELS.claudeBalanced')
   || !orchestrator.includes('claudeResearchModel: backgroundClaudeModel')) {
   throw new Error('Claude background web search must use Haiku while paid final reasoning retains Sonnet');

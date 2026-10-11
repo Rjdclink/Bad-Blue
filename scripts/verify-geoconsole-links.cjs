@@ -31,7 +31,7 @@ const fusion = read('server/services/geoconsole/inputFusionEngine.ts');
 console.log('\nSPECTRA / GEOCONSOLE CONNECTIONS\n');
 
 test('Conversation submits to SPECTRA acquisition API',
-  spectra.includes("fetch('/api/spectra/acquire'"));
+  spectra.includes("fetch(publicPlaceMode ? '/api/spectra/public-place' : '/api/spectra/acquire'"));
 test('Acquisition returns timestamped observations and regional candidates',
   spectraRoutes.includes('locationObservations') &&
   spectraRoutes.includes('candidateLocations'));

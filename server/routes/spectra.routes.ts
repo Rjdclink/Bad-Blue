@@ -1,4 +1,5 @@
 import { Router, type Request, type Response } from 'express';
+import { getDiscoveryDiagnostics, withDiscoveryDiagnostics } from '../lexara/DiscoveryDiagnostics';
 import { z } from 'zod';
 import { isAuthenticated } from '../auth';
 import {
@@ -42,20 +43,68 @@ import {
   loadSpectraSessionIdentityBindings,
   loadSpectraSessionObservations,
   persistSpectraAcquisition,
+  loadSpectraAcquisitionEvidenceRecords,
 } from '../services/spectra/SpectraAcquisitionPersistence';
+import { buildSpectraAcquisitionRecords } from '../services/spectra/SpectraAcquisitionRecords';
+import { readSpectraPublicFeedRecords } from '../services/spectra/SpectraPublicFeedStore';
 import {
   assessSpectraIdentityBinding,
   conservativeJointConfidence,
 } from '../services/spectra/SpectraIdentityBinding';
 import { acquireSpectraPlaceContext } from '../services/spectra/SpectraPlaceContext';
-import { retrieveSpectraPublicEvidence } from '../services/spectra/SpectraPublicRetrieval';
+import { retrieveSpectraPublicEvidence, type SpectraRetrievedEvidence } from '../services/spectra/SpectraPublicRetrieval';
+import { createSpectraRetrievalDiagnostics, mergeSpectraRetrievalDiagnostics } from '../services/spectra/SpectraRetrievalDiagnostics';
+import {
+  mergePublicRetrievedMetadata,
+  stripUnboundPublicGeoContext,
+} from '../services/spectra/SpectraPublicEvidenceProvenance';
+import { inferCorroboratedRegionalCity } from '../services/spectra/SpectraRegionalInference';
+import {
+  assessSpectraCityDiscoveryReadiness,
+  chooseSpectraPublicRetrievalUrls,
+  publicPublisherDomain,
+} from '../services/spectra/SpectraCityDiscoveryPolicy';
 import { assessSpectraLiveLocation } from '../services/spectra/SpectraLiveConfidence';
 import { solveSpectraConstraintLayer } from '../services/spectra/SpectraConstraintSolver';
 import { acquireConfiguredSpectraCameras } from '../services/spectra/SpectraCameraDirectoryAdapters';
-import { acquireSpectraActiveTelemetry } from '../services/spectra/SpectraActiveAcquisition';
+import { acquireSpectraActiveTelemetry, getSpectraActiveAcquisitionCapabilities } from '../services/spectra/SpectraActiveAcquisition';
+import { buildSpectraPipelineDiagnostics, type SpectraRetrievalCounts } from '../services/spectra/SpectraPipelineDiagnostics';
+import { acquirePublicPlace, isPublicPlaceTarget } from '../services/spectra/SpectraPublicPlace';
 
 const router = Router();
 router.use(isAuthenticated);
+
+// Collection is owned by the server scheduler. Reading records never initiates
+// external requests or accepts arbitrary source URLs from the browser.
+router.get('/public-records', async (req: Request, res: Response) => {
+  const parsed = z.object({
+    provider: z.string().trim().min(1).max(80).optional(),
+    limit: z.coerce.number().int().min(1).max(100).default(25),
+    after: z.string().datetime().optional(),
+  }).safeParse(req.query);
+  if (!parsed.success) return res.status(400).json({ success: false, error: 'Invalid record filters.' });
+  res.setHeader('Cache-Control', 'private, no-store');
+  try {
+    const result = await readSpectraPublicFeedRecords(parsed.data);
+    return res.status(result.persistenceAvailable ? 200 : 503).json({ success: result.persistenceAvailable, ...result });
+  } catch (error) {
+    return res.status(error instanceof RangeError ? 400 : 503).json({ success: false, error: 'Public records are unavailable.' });
+  }
+});
+
+router.get('/sessions/:sessionId/records', async (req: Request, res: Response) => {
+  const userId = getPlatformUserId(req.user as any);
+  const sessionId = String(req.params.sessionId || '').trim();
+  if (!userId) return res.status(401).json({ success: false, error: 'Authentication required.' });
+  if (!sessionId || sessionId.length > 200) return res.status(400).json({ success: false, error: 'Invalid session.' });
+  res.setHeader('Cache-Control', 'private, no-store');
+  try {
+    const result = await loadSpectraAcquisitionEvidenceRecords(userId, sessionId, 100);
+    return res.status(result.persistenceAvailable ? 200 : 503).json({ success: result.persistenceAvailable, ...result });
+  } catch {
+    return res.status(503).json({ success: false, error: 'Saved acquisition records are unavailable.' });
+  }
+});
 
 const directEvidenceSchema = z.object({
   latitude: z.number().min(-90).max(90),
@@ -175,11 +224,11 @@ function extractLikelyName(value: string): string | null {
     const phone = extractPhoneNumber(text);
     return phone ? text.replace(phone, ' ') : text;
   })();
-  const firstSegment = withoutPhone.split(/[,;|\n]/)[0]
+  const firstSegment = withoutPhone.split(/[,;|\n]|\s+(?:(?:my|his|her|their)\s+)?(?:email|phone|mobile|cell)\b/i)[0]
     .replace(/\b(?:phone|number|cell|mobile)\b.*$/i, '')
     .replace(/\b(?:last\s+known|located|lives?|from|near|around)\b.*$/i, '')
     .replace(/^[^A-Za-z]+|[^A-Za-z'’.-]+$/g, '')
-    .trim();
+    .trim().replace(/[.!?]+$/, '');
 
   const looksLikeLocation =
     Boolean(extractCityStateHint(firstSegment)) ||
@@ -228,11 +277,15 @@ function buildDiscoveryQueries(args: {
   const quotedPhone = phone ? `"${phone}"` : '';
   const phoneDigits = phone?.replace(/\D/g, '') || '';
   const compactDetails = details.replace(/\s+/g, ' ').trim();
+  const email = [normalizedTarget, details].join(' ').match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0];
   const genericTarget = GENERIC_TARGET_RE.test(normalizedTarget);
   const identityAnchor = quotedName || quotedPhone || (!genericTarget ? normalizedTarget : '');
 
   const firstPass = [
     [quotedName, quotedPhone].filter(Boolean).join(' '),
+    email ? `"${email}"` : '',
+    email && quotedName ? `${quotedName} "${email}"` : '',
+    phoneDigits.length >= 7 ? `"${phoneDigits}"` : '',
     [identityAnchor, compactDetails].filter(Boolean).join(' '),
     [normalizedTarget, compactDetails].filter(Boolean).join(' '),
     compactDetails,
@@ -293,21 +346,27 @@ function discoveryResultFromCandidate(candidate: LegalMeshCandidate): SpectraDis
 
 async function runDiscoveryPass(
   queries: string[],
-  context: { subject?: string; location?: string } = {},
+  context: { subject?: string; location?: string; useClaude?: boolean } = {},
 ): Promise<{
   results: SpectraDiscoveryResult[];
+  retrievedEvidence: SpectraRetrievedEvidence[];
   attempted: number;
   failed: number;
   claudeNotes: string[];
+  retrieval: SpectraRetrievalCounts;
 }> {
+  const retrieval: SpectraRetrievalCounts = { selected: 0, retrieved: 0, deadlineExpiredPasses: 0 };
+  const retrievedEvidence: SpectraRetrievedEvidence[] = [];
   const uniqueQueries = [...new Set(queries.map(query => query.replace(/\s+/g, ' ').trim()).filter(Boolean))]
     .slice(0, 6);
   if (!uniqueQueries.length) {
-    return { results: [], attempted: 0, failed: 0, claudeNotes: [] };
+    return { results: [], retrievedEvidence, attempted: 0, failed: 0, claudeNotes: [], retrieval };
   }
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(new Error('SPECTRA discovery pass timeout')), 15_000);
+  // Reserve part of the existing 15-second pass budget for reading pages.
+  // A finished search deadline must not pre-cancel the evidence retrieval stage.
+  const timer = setTimeout(() => controller.abort(new Error('SPECTRA discovery pass timeout')), 10_000);
   try {
     const nativePromise = Promise.allSettled(uniqueQueries.map(query =>
       discoverLegalMeshTier3(query, controller.signal, {
@@ -328,6 +387,7 @@ async function runDiscoveryPass(
         jurisdiction: context.location,
         subject: context.subject,
         requestedFact: 'contact-address',
+        allowClaudePlanning: context.useClaude !== false,
       })
     ));
 
@@ -341,7 +401,11 @@ async function runDiscoveryPass(
       ...uniqueQueries.map((query, index) => `${index + 1}. ${query}`),
     ].filter(Boolean).join('\n');
 
-    const claudePromise = callClaudeWebSearch(claudePrompt, {
+    // Recursive passes broaden native retrieval without purchasing the same
+    // model-assisted investigation on every pass.
+    const claudePromise = context.useClaude === false
+      ? Promise.resolve({ content: '', sources: [] })
+      : callClaudeWebSearch(claudePrompt, {
       maxTokens: 1_200,
       maxUses: 6,
       allowFetch: true,
@@ -377,6 +441,7 @@ async function runDiscoveryPass(
           jurisdiction: context.location,
           subject: context.subject,
           requestedFact: 'contact-address',
+          allowClaudePlanning: context.useClaude !== false,
         },
       ).catch(() => []);
       results.push(...supplemental.map(discoveryResultFromCandidate));
@@ -384,7 +449,7 @@ async function runDiscoveryPass(
 
     const claudeNotes: string[] = [];
     if (claudeSettled.status === 'fulfilled') {
-      claudeNotes.push(claudeSettled.value.content);
+      if (claudeSettled.value.content) claudeNotes.push(claudeSettled.value.content);
       for (const source of claudeSettled.value.sources) {
         const reliability = reliabilityForUrl(source.url);
         results.push({
@@ -405,42 +470,48 @@ async function runDiscoveryPass(
     }
 
     let enrichedResults = dedupeDiscoveryResults(results);
-    const retrievalTargets = [...enrichedResults]
-      .sort((left, right) =>
-        (right.reliability === 'high' ? 2 : right.reliability === 'medium' ? 1 : 0)
-        - (left.reliability === 'high' ? 2 : left.reliability === 'medium' ? 1 : 0)
-        || right.relevanceScore - left.relevanceScore
-      )
-      .slice(0, 6)
-      .map(result => result.url);
+    // More independent public publishers are better evidence than repeated
+    // results from one popular website. Fetch those underlying pages first.
+    const retrievalTargets = chooseSpectraPublicRetrievalUrls(enrichedResults, 8);
+    retrieval.selected = retrievalTargets.length;
 
     if (retrievalTargets.length) {
-      const retrieved = await retrieveSpectraPublicEvidence(
-        retrievalTargets,
-        controller.signal,
-      ).catch(() => []);
+      const retrievalDiagnostics = createSpectraRetrievalDiagnostics(retrievalTargets.length);
+      const retrievalController = new AbortController();
+      const retrievalTimer = setTimeout(() => {
+        retrieval.deadlineExpiredPasses = 1;
+        retrievalController.abort(new Error('SPECTRA page retrieval timeout'));
+      }, 4_500);
+      let retrieved: Awaited<ReturnType<typeof retrieveSpectraPublicEvidence>> = [];
+      try {
+        const outcome = await settleWithin(
+          retrieveSpectraPublicEvidence(retrievalTargets, retrievalController.signal, retrievalDiagnostics.record),
+          5_000,
+          'SPECTRA page retrieval',
+        );
+        if (outcome.status === 'fulfilled') retrieved = outcome.value;
+      } finally {
+        clearTimeout(retrievalTimer);
+        // Also stop remaining work if an uncancellable upstream operation lost
+        // the bounded wait. Late completions cannot mutate the returned result.
+        retrievalController.abort();
+        retrieval.diagnostics = retrievalDiagnostics.finish();
+      }
+
+      retrieval.retrieved = retrieved.length;
+      retrievedEvidence.push(...retrieved);
 
       if (retrieved.length) {
         const byUrl = new Map(enrichedResults.map(result => [result.url, result]));
         for (const evidence of retrieved) {
-          const existing = byUrl.get(evidence.url);
-          const locationEvidence = evidence.observations.map(observation => ({
-            ...observation,
-            kind: 'location',
-            subjectMatchConfidence: 0.35,
-            timestampConfidence: observation.timestamp ? 0.75 : 0,
-          }));
+          // Redirects must retain the discovery result's identity and publication
+          // provenance. Coordinates embedded in a public venue webpage describe
+          // that venue, not the person being searched.
+          const existing = byUrl.get(evidence.requestedUrl) || byUrl.get(evidence.url);
 
           if (existing) {
-            existing.metadata = {
-              ...(existing.metadata || {}),
-              sourceUrl: evidence.url,
-              retrievedAt: evidence.retrievedAt,
-              fetchedTitle: evidence.title,
-              fetchedExcerpt: evidence.textExcerpt,
-              retrievedLocationEvidence: locationEvidence,
-            };
-          } else if (locationEvidence.length) {
+            existing.metadata = mergePublicRetrievedMetadata(existing.metadata, evidence);
+          } else if (evidence.title || evidence.textExcerpt || evidence.observations.length) {
             enrichedResults.push({
               title: evidence.title || 'SPECTRA retrieved source',
               url: evidence.url,
@@ -448,12 +519,7 @@ async function runDiscoveryPass(
               provider: 'spectra-public-retrieval',
               reliability: reliabilityForUrl(evidence.url),
               relevanceScore: 76,
-              metadata: {
-                sourceUrl: evidence.url,
-                retrievedAt: evidence.retrievedAt,
-                fetchedExcerpt: evidence.textExcerpt,
-                retrievedLocationEvidence: locationEvidence,
-              },
+              metadata: mergePublicRetrievedMetadata(undefined, evidence),
             });
           }
         }
@@ -463,9 +529,11 @@ async function runDiscoveryPass(
 
     return {
       results: enrichedResults,
-      attempted: uniqueQueries.length + 1,
+      retrievedEvidence,
+      attempted: uniqueQueries.length + (context.useClaude === false ? 0 : 1),
       failed,
       claudeNotes,
+      retrieval,
     };
   } finally {
     clearTimeout(timer);
@@ -785,7 +853,57 @@ async function collectSpectraContextEvidence(input: {
   };
 }
 
-router.post('/acquire', async (req: Request, res: Response) => {
+router.post('/public-place', async (req: Request, res: Response) => withDiscoveryDiagnostics(async () => {
+  const parsed = z.object({ target: z.string().trim().min(1).max(200), details: z.string().max(12_000), sessionId: z.string().trim().min(1).max(200).optional() }).safeParse(req.body);
+  if (!parsed.success || !isPublicPlaceTarget(parsed.data.target)) {
+    return res.status(400).json({ success: false, error: 'Enter the name of a supported public venue, such as a museum or library.' });
+  }
+  const userId = getPlatformUserId(req.user as any);
+  if (!userId) return res.status(401).json({ success: false, error: 'Authentication required.' });
+  try {
+    const { target, details } = parsed.data;
+    const result = await acquirePublicPlace(target, details, {
+      discover: (query, signal) => discoverLegalMeshTier3(query, signal, { subject: target, firstUseful: true }),
+      retrieve: retrieveSpectraPublicEvidence,
+      geocode: geocodeCityState,
+    });
+    const persistence = await persistSpectraAcquisition({
+      userId,
+      sessionId: parsed.data.sessionId,
+      subjectLabel: target,
+      clues: [target, details],
+      observations: [],
+      evidenceRecords: result.records.map(record => ({
+        recordType: 'retrieved_document' as const,
+        provider: 'spectra-public-retrieval',
+        sourceUrl: record.sourceUrl,
+        retrievedAt: record.retrievedAt,
+        payload: { ...record },
+      })),
+      state: { publicPlaceDiagnostics: result.diagnostics, lastAcquiredAt: new Date().toISOString() },
+    }).catch(() => ({ available: false, sessionId: parsed.data.sessionId || '', evidenceRecordCount: 0, evidenceRecordsOmitted: result.records.length }));
+    console.info('[SPECTRA Public Place Summary]', JSON.stringify(result.diagnostics));
+    return res.json({
+      success: true, target, resolvedTargetLabel: target,
+      sessionId: persistence.sessionId || undefined,
+      persistenceAvailable: persistence.available,
+      evidenceArchive: { stored: persistence.evidenceRecordCount || 0, omitted: persistence.evidenceRecordsOmitted || 0 },
+      locationObservations: [], candidateLocations: result.candidates,
+      publicPlace: result,
+      acquisition: {
+        identityConfidence: 0, locationConfidence: 0,
+        sourceCount: new Set(result.sources.map(source => new URL(source.url).hostname)).size,
+        observationCount: 0, feedDiagnostics: getDiscoveryDiagnostics(),
+        summary: result.diagnostics.outcome, verificationStatus: 'Source-reported venue context',
+      },
+    });
+  } catch {
+    return res.status(502).json({ success: false, error: 'Public-place acquisition could not complete.' });
+  }
+}));
+
+router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiagnostics(async () => {
+  res.setHeader('X-Spectra-Request-Id', getDiscoveryDiagnostics()!.requestId);
   const parsed = acquireSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({
@@ -819,7 +937,7 @@ router.post('/acquire', async (req: Request, res: Response) => {
   const subject = targetSubject(normalizedTarget);
   const resolvedName = genericTarget || targetIsPhone
     ? suppliedName || ''
-    : subject;
+    : extractLikelyName(normalizedTarget) || subject;
   const resolvedTargetLabel = resolvedName || phone || normalizedTarget;
 
   try {
@@ -848,6 +966,7 @@ router.post('/acquire', async (req: Request, res: Response) => {
       ...waveQueries.slice(0, 4),
     ])];
 
+    const backgroundBudgetMs = Math.min(SPECTRA_OSINT_TIMEOUT_MS, 20_000);
     const backgroundPromise = settleWithin(
       investigateLexaraBackgroundQuestion(
         `Where is ${resolvedTargetLabel}? ${details}`,
@@ -855,15 +974,23 @@ router.post('/acquire', async (req: Request, res: Response) => {
           previousMessages: [{ role: 'user', content: details }],
           delegatedByLexara: true,
           resolvedSubject: semanticSubject || undefined,
+          // Start with the usable fallback budget instead of buying a short
+          // truncated request followed by the same search again.
+          claudeResearchMaxTokens: 2_048,
+          claudeRetryTruncatedOutput: false,
+          signal: AbortSignal.timeout(backgroundBudgetMs),
         },
       ),
-      Math.min(SPECTRA_OSINT_TIMEOUT_MS, 20_000),
+      backgroundBudgetMs,
       'SPECTRA background research',
     );
 
     const firstPassPromise = runDiscoveryPass(initialQueries, {
       subject: resolvedSubjectName,
       location: semanticSubject?.location || details,
+      // The native-first background lane owns the paid fallback. Avoid
+      // duplicate Claude searches for this same subject in parallel.
+      useClaude: false,
     });
     const activeAcquisitionPromise = acquireSpectraActiveTelemetry({
       deviceRef,
@@ -932,27 +1059,32 @@ router.post('/acquire', async (req: Request, res: Response) => {
     };
 
     let discoveryResults = firstPass.results;
+    // Preserve fetched records independently of search-result ranking/deduping.
+    // A later successful fetch of an existing search hit must reach the archive.
+    const retrievedEvidence = [...firstPass.retrievedEvidence];
+    const retrievalCounts = { ...firstPass.retrieval };
     let discoveryQueriesAttempted = firstPass.attempted;
     let discoveryQueriesFailed = firstPass.failed;
     let discoveryPasses = firstPass.attempted > 0 ? 1 : 0;
     let stagnationPasses = 0;
 
     for (let pass = 1; pass < SPECTRA_DISCOVERY_POLICY.maxPasses; pass += 1) {
-      const independentSources = new Set(discoveryResults.map(discoverySourceKey).filter(Boolean));
-      const highReliability = discoveryResults.filter(result => result.reliability === 'high').length;
-      const evidenceConfidence = Math.min(
-        0.95,
-        backgroundConfidence
-          + Math.min(0.42, independentSources.size * 0.055)
-          + Math.min(0.18, highReliability * 0.03),
+      const readiness = assessSpectraCityDiscoveryReadiness({
+        subject: resolvedName || resolvedSubjectName,
+        sources: discoveryResults,
+        backgroundConfidence,
+      });
+      const independentSources = new Set(
+        discoveryResults.map(result => publicPublisherDomain(result.url)).filter(
+          (domain): domain is string => Boolean(domain)
+        )
       );
+      const highReliability = readiness.highReliabilityPublisherCount;
 
-      if (
-        independentSources.size >= SPECTRA_DISCOVERY_POLICY.minIndependentSources
-        && evidenceConfidence >= SPECTRA_DISCOVERY_POLICY.sufficientConfidence
-      ) {
-        break;
-      }
+      // A large pile of unrelated search results is not evidence of a city.
+      // Continue through independent public searches until the public city
+      // statement is corroborated or the normal search budget is exhausted.
+      if (readiness.sufficientToStop) break;
       if (
         discoveryQueriesAttempted >= SPECTRA_DISCOVERY_POLICY.maxQueries
         || discoveryResults.length >= SPECTRA_DISCOVERY_POLICY.maxCandidates
@@ -984,9 +1116,17 @@ router.post('/acquire', async (req: Request, res: Response) => {
       const nextPass = await runDiscoveryPass(nextQueries, {
         subject: resolvedSubjectName,
         location: semanticSubject?.location || details,
+        useClaude: false,
       });
       discoveryQueriesAttempted += nextPass.attempted;
+      retrievedEvidence.push(...nextPass.retrievedEvidence);
       discoveryQueriesFailed += nextPass.failed;
+      retrievalCounts.selected += nextPass.retrieval.selected;
+      retrievalCounts.retrieved += nextPass.retrieval.retrieved;
+      retrievalCounts.deadlineExpiredPasses += nextPass.retrieval.deadlineExpiredPasses;
+      retrievalCounts.diagnostics = mergeSpectraRetrievalDiagnostics([
+        retrievalCounts.diagnostics, nextPass.retrieval.diagnostics,
+      ]);
       discoveryPasses += nextPass.attempted > 0 ? 1 : 0;
       discoveryResults = dedupeDiscoveryResults([
         ...discoveryResults,
@@ -1083,7 +1223,7 @@ router.post('/acquire', async (req: Request, res: Response) => {
 
     for (const result of discoveryResults) {
       collectCoordinateObservations(
-        result?.metadata,
+        stripUnboundPublicGeoContext(result?.metadata),
         String(result?.title || 'web_discovery'),
         normalizeConfidence((result?.relevanceScore ?? 0) / 100),
         observations,
@@ -1140,25 +1280,53 @@ router.post('/acquire', async (req: Request, res: Response) => {
           typeof value === 'string' && value.trim().length > 0
       );
 
-      try {
-        let region = null;
+      // Keep explicit geographic context as the first authority. If none
+      // exists, independently corroborated public references can support a
+      // broad city estimate, never a live position or individual street fix.
+      const corroboratedCity = inferCorroboratedRegionalCity(
+        resolvedName || resolvedSubjectName,
+        discoveryResults,
+      );
+      let region = null;
+      let cityCorroborationUsed = false;
+      // An independently reported city must not be silently overridden by
+      // a search clue supplied by the user (often a historical location).
+      if (!region && corroboratedCity) {
+        try {
+          region = await geocodeCityState(
+            `${corroboratedCity.city}, ${corroboratedCity.state}`,
+          );
+          cityCorroborationUsed = Boolean(region);
+        } catch {
+          // Failed regional geocoding never substitutes arbitrary coordinates.
+        }
+      }
+      // Preserve a supplied location solely as labeled search context. A
+      // geocoder resolving an input clue is not an independent city discovery.
+      if (!region) {
         for (const locationInput of locationInputs) {
-          region = await geocodeBestLocation(locationInput);
-          if (region) break;
+          try {
+            region = await geocodeBestLocation(locationInput);
+            if (region) break;
+          } catch {
+            // One provider or parsing failure must not cancel other clues.
+          }
         }
-
-        if (region) {
-          candidateLocations.push({
-            latitude: region.latitude,
-            longitude: region.longitude,
-            label: region.displayName,
-            confidence: 0.35,
-            basis: 'regional_context',
-            accuracyMeters: region.accuracyMeters,
-          });
-        }
-      } catch {
-        // Geocoder failure is route-local. SPECTRA still returns all other evidence.
+      }
+      if (region) {
+        candidateLocations.push({
+          latitude: region.latitude,
+          longitude: region.longitude,
+          label: cityCorroborationUsed && corroboratedCity
+            ? `${corroboratedCity.city}, ${corroboratedCity.state} (corroborated public residence; not a live location)`
+            : `${region.displayName} (supplied search clue; current city not verified)`,
+          confidence: cityCorroborationUsed ? 0.35 : 0.05,
+          basis: 'regional_context',
+          accuracyMeters: Math.max(
+            cityCorroborationUsed ? 1_000 : 0,
+            region.accuracyMeters,
+          ),
+        });
       }
     }
 
@@ -1273,13 +1441,42 @@ router.post('/acquire', async (req: Request, res: Response) => {
       + contextEvidence.earthObservation.length
       + (contextEvidence.weather ? 1 : 0);
 
+    const pipelineDiagnostics = buildSpectraPipelineDiagnostics({
+      discoveryResults: discoveryResults.length,
+      retrieval: retrievalCounts,
+      configuredCollectors: getSpectraActiveAcquisitionCapabilities().length,
+      activeAttempts: activeAcquisition.attempts,
+      activeBatchOutcomes,
+      activeObservations: activeLocationPoints.length,
+      suppliedObservations: directEvidence.length,
+      savedObservations: persistedObservations.length,
+      normalizedObservations: normalizedLocationObservations.length,
+      acceptedObservations: locationQuality.acceptedCount,
+      rejectedObservations: locationQuality.rejectedCount,
+      qualityIssues: locationQuality.issues,
+      solvedObservations: solvedLocationObservations.length,
+      fusedCandidates: fusedLocationEvidence.length,
+      regionalCandidates: candidateLocations.length,
+    });
+    console.info('[SPECTRA Pipeline Summary]', JSON.stringify({
+      requestId: getDiscoveryDiagnostics()?.requestId,
+      ...pipelineDiagnostics,
+    }));
+
+    const evidenceRecords = buildSpectraAcquisitionRecords(retrievedEvidence.map(evidence => ({
+      url: evidence.url,
+      provider: 'spectra-public-retrieval',
+      metadata: mergePublicRetrievedMetadata(undefined, evidence),
+    })), contextEvidence);
     const persistence = await persistSpectraAcquisition({
       userId,
       sessionId: requestedSessionId,
       subjectLabel: resolvedTargetLabel,
       clues: [target, details],
       observations: solvedLocationObservations,
+      evidenceRecords,
       state: {
+        pipelineDiagnostics,
         constraintSolverDiagnostics: constraintSolution.diagnostics,
         identityConfidence,
         boundIdentityConfidence,
@@ -1313,11 +1510,13 @@ router.post('/acquire', async (req: Request, res: Response) => {
       },
     }).catch(error => {
       console.warn('[SPECTRA] Persistence unavailable', {
-        error: error instanceof Error ? error.message : String(error),
+        code: typeof error?.code === 'string' ? error.code : 'PERSISTENCE_UNAVAILABLE',
       });
       return {
         available: false,
         sessionId: requestedSessionId || '',
+        evidenceRecordCount: 0,
+        evidenceRecordsOmitted: evidenceRecords.length,
       };
     });
 
@@ -1328,6 +1527,7 @@ router.post('/acquire', async (req: Request, res: Response) => {
       resolvedTargetLabel,
       sessionId: persistence.sessionId || requestedSessionId,
       persistenceAvailable: persistence.available,
+      evidenceArchive: { stored: persistence.evidenceRecordCount || 0, omitted: persistence.evidenceRecordsOmitted || 0 },
       acquisition: {
         identityConfidence,
         boundIdentityConfidence,
@@ -1346,6 +1546,8 @@ router.post('/acquire', async (req: Request, res: Response) => {
         liveLocationFreshestAgeMs: liveLocationAssessment.freshestAgeMs,
         subjectLiveLocationConfidence,
         sourceCount: sourceKeys.size,
+        feedDiagnostics: getDiscoveryDiagnostics(),
+        pipelineDiagnostics,
         evidenceItemCount:
           activeLocationPoints.length +
           directEvidence.length +
@@ -1392,8 +1594,10 @@ router.post('/acquire', async (req: Request, res: Response) => {
     return res.status(500).json({
       success: false,
       error: 'SPECTRA could not complete target acquisition.',
+      feedDiagnostics: getDiscoveryDiagnostics(),
     });
   }
-});
+}));
 
 export default router;
+

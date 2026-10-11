@@ -67,6 +67,8 @@ export interface LexaraBackgroundInvestigationContext {
   researchDecision?: LexaraResearchDecision;
   resolvedSubject?: LexaraBackgroundSubject;
   claudeResearchModel?: string;
+  claudeResearchMaxTokens?: number;
+  claudeRetryTruncatedOutput?: boolean;
 }
 
 interface AssessedEvidence {
@@ -237,6 +239,13 @@ function subjectRelevantWindow(content: string, subject: LexaraBackgroundSubject
 }
 
 function factPattern(decision: LexaraResearchDecision, prompt: string): RegExp {
+  if (decision.requestedFact === 'contact-address') {
+    if (/\b(?:street|mailing|postal|official)\s+address|\bwhere\s+(?:is|are|does)\b|\baddress\b/i.test(prompt)) {
+      return /\b\d{1,6}\s+[\w .'-]{2,80}\s(?:street|st\.?|avenue|ave\.?|road|rd\.?|boulevard|blvd\.?|drive|dr\.?|lane|ln\.?|way|place|pl\.?)\b|\bP\.?\s*O\.?\s+Box\s+\d+\b/i;
+    }
+    if (/\b(?:phone|telephone)\b/i.test(prompt)) return /(?:\+?\d[\d ().-]{7,}\d)/;
+    if (/\bemail\b/i.test(prompt)) return /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i;
+  }
   const direct = FACT_EVIDENCE_PATTERNS[decision.requestedFact];
   if (direct) return direct;
   for (const [pattern] of PROMPT_CATEGORY_RULES) if (pattern.test(prompt)) return pattern;
@@ -282,16 +291,42 @@ function sourceAuthorityBonus(rawUrl: string): number {
 
 function excerptAround(content: string, pattern: RegExp, subject: LexaraBackgroundSubject): string {
   const fact = pattern.exec(content);
-  const subjectIndex = normalize(content).indexOf(normalize(subject.name));
+  const subjectIndex = content.toLocaleLowerCase().indexOf(subject.name.toLocaleLowerCase());
   const center = fact?.index ?? (subjectIndex >= 0 ? subjectIndex : 0);
   const start = Math.max(0, center - 280);
-  return content.slice(start, Math.min(content.length, center + 520)).replace(/\s+/g, ' ').trim();
+  const end = Math.min(content.length, center + 520);
+  const factExcerpt = content.slice(start, end);
+  // Keep the identity evidence used for scoring when a title/date appears far
+  // from the full name. Otherwise synthesis sees only the shortened title and
+  // invents an identity caveat even though the source supplied the full name.
+  const identityExcerpt = subjectIndex >= 0 && (subjectIndex < start || subjectIndex + subject.name.length > end)
+    ? content.slice(Math.max(0, subjectIndex - 80), Math.min(content.length, subjectIndex + subject.name.length + 160))
+    : '';
+  const publisherIndex = content.indexOf('Source publisher/contact information:');
+  const publisherExcerpt = subject.kind !== 'person' && publisherIndex >= 0
+    ? content.slice(publisherIndex, publisherIndex + 1000) : '';
+  return [factExcerpt, identityExcerpt, publisherExcerpt].filter(Boolean).join(' … ').replace(/\s+/g, ' ').trim();
 }
 
 function businessRelationshipEvidence(content: string, subject: LexaraBackgroundSubject): boolean {
   // A directory's navigation or corporate footer is not this person's business.
   // Require a role/operation claim in the same sentence or record as the name.
   const tokens = normalize(subject.name).split(' ').filter(Boolean);
+  if (subject.kind === 'organization' || subject.kind === 'entity') {
+    if (!tokens.length) return false;
+    const name = tokens.join(' ');
+    // Organization descriptions are not person-to-business ownership claims.
+    // Require the exact subject as the grammatical subject of a business fact;
+    // directory navigation and another company's description do not qualify.
+    return content.split(/[.!?\n]+/).some(record => {
+      const text = normalize(record);
+      const index = (` ${text} `).indexOf(` ${name} `);
+      if (index < 0) return false;
+      const claim = text.slice(index + name.length).trim();
+      if (/^(?:is|was|does|has)\s+(?:not|no)\b/.test(claim)) return false;
+      return /^(?:(?:inc|llc|ltd|corp|corporation)\s+)?(?:(?:is|was)\s+(?:(?:a|an|the)\s+)?[a-z0-9 ]{0,100}\b(?:company|business|corporation|exchange|marketplace|platform|bank|insurer|retailer|manufacturer|provider|firm)\b|(?:operates?|provides?|offers?|sells?|manufactures?|develops?)\s+(?!no\b|not\b)[a-z0-9 ]{2,120})/.test(claim);
+    });
+  }
   if (tokens.length < 2) return false;
   return content.split(/[.!?\n]+/).some(record => {
     const text = normalize(record);
@@ -314,7 +349,8 @@ function assessEvidence(
   const identity = subjectConfidence(content, subject);
   if (identity < MIN_IDENTITY_CONFIDENCE) return null;
   const pattern = factPattern(decision, prompt);
-  const relevantWindow = subjectRelevantWindow(content, subject);
+  const relevantWindow = decision.requestedFact === 'contact-address' && subject.kind !== 'person'
+    ? content : subjectRelevantWindow(content, subject);
   const directlyAnswers = decision.requestedFact === 'business'
     ? businessRelationshipEvidence(relevantWindow, subject)
     : pattern.test(relevantWindow)
@@ -484,6 +520,7 @@ export async function investigateLexaraBackgroundQuestion(
     const retrieval = targets.length
       ? await lexaraRetrievalAdapter.retrieve({
           purpose: 'lexara_legal_research',
+          includePublisherMetadata: true,
           targets: targets.map(item => item.url),
           signal: context.signal,
         }).catch(() => ({ evidence: [] }))
@@ -556,6 +593,8 @@ export async function investigateLexaraBackgroundQuestion(
           decision,
           jurisdiction: subject.location || context.jurisdiction,
           model: context.claudeResearchModel,
+          maxTokens: context.claudeResearchMaxTokens,
+          retryTruncatedOutput: context.claudeRetryTruncatedOutput,
           signal: laneSignal,
         }).then(result => {
           claudeParallel = result;
@@ -598,6 +637,7 @@ export async function investigateLexaraBackgroundQuestion(
       if (targets.length && !laneSignal.aborted) {
         const retrieval = await lexaraRetrievalAdapter.retrieve({
           purpose: 'lexara_legal_research',
+          includePublisherMetadata: true,
           targets: targets.map(item => item.url),
           signal: laneSignal,
         }).catch(() => ({ evidence: [] }));
@@ -628,7 +668,7 @@ export async function investigateLexaraBackgroundQuestion(
 
     for (const evidence of authoritativeEvidence) {
       discoveryLanes.add(evidence.provider);
-      const evaluation = evidence.directlyAnswers === true
+      const evaluation = decision.requestedFact !== 'contact-address' && evidence.directlyAnswers === true
         && Number.isFinite(evidence.confidence)
         && Number.isFinite(evidence.identityConfidence)
         ? {
@@ -754,6 +794,7 @@ export async function investigateLexaraBackgroundQuestion(
         fresh.forEach(item => seenUrls.add(item.url));
         const retrieval = await lexaraRetrievalAdapter.retrieve({
           purpose: 'lexara_legal_research',
+          includePublisherMetadata: true,
           targets: fresh.map(item => item.url),
           signal: laneSignal,
         }).catch(error => {
@@ -956,6 +997,7 @@ export async function investigateLexaraBackgroundQuestion(
           try {
             const retrieval = await lexaraRetrievalAdapter.retrieve({
               purpose: 'lexara_legal_research',
+              includePublisherMetadata: true,
               targets: claudeTargets.map(item => item.url),
               signal: retrievalController.signal,
             }).catch(() => ({ evidence: [] }));

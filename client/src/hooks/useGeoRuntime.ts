@@ -43,6 +43,8 @@ export interface GeoRuntimeConfig {
   interpolationEnabled: boolean;
   predictiveEnabled: boolean;
   sessionId?: string;
+  subjectLabel?: string;
+  onSessionCreated?: (sessionId: string) => void;
 }
 
 export interface GeoRuntimeState {
@@ -97,6 +99,18 @@ const DEFAULT_CONFIG: GeoRuntimeConfig = {
 
 const generateId = (): string => `f_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
 
+// Futurecast may use only the latest uninterrupted observation segment.
+const continuousTail = (frames: GeoFrame[], limit: number): GeoFrame[] => {
+  let start = Math.max(0, frames.length - limit);
+  for (let index = frames.length - 1; index > start; index -= 1) {
+    if (Number(frames[index].metadata?.gapBeforeSeconds || 0) > 0) {
+      start = index;
+      break;
+    }
+  }
+  return frames.slice(start);
+};
+
 const haversineDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
   const R = 6371000;
   const φ1 = (lat1 * Math.PI) / 180;
@@ -147,9 +161,16 @@ export function useGeoRuntime(
   // Control state
   const [isPlaying, setIsPlaying] = useState(false);
   const [isLive, setIsLive] = useState(false);
+  const isLiveRef = useRef(isLive);
+  isLiveRef.current = isLive;
+  const onSessionCreatedRef = useRef(cfg.onSessionCreated);
+  onSessionCreatedRef.current = cfg.onSessionCreated;
+  const subjectLabelRef = useRef(cfg.subjectLabel);
+  subjectLabelRef.current = cfg.subjectLabel?.trim().slice(0, 500) || undefined;
   const [playbackSpeed, setPlaybackSpeed] = useState(cfg.playbackSpeed);
   const [status, setStatus] = useState<GeoRuntimeState['status']>('idle');
   const [error, setError] = useState<string | null>(null);
+  const [telemetryError, setTelemetryError] = useState<string | null>(null);
   
   // Version counter - increments on any meaningful state change to force downstream updates
   const [version, setVersion] = useState(0);
@@ -229,6 +250,9 @@ export function useGeoRuntime(
     });
   }, []);
 
+  // The most recently requested load owns the timeline. A delayed response
+  // from an earlier target/session must never repopulate a reset map.
+  const loadRequestRef = useRef(0);
   const futurecastRequestRef = useRef(0);
 
   const predictionPayloadToFrames = useCallback((predictions: any[]): GeoFrame[] => (
@@ -274,12 +298,13 @@ export function useGeoRuntime(
   ), []);
 
   const requestAuthoritativeFuturecast = useCallback(async (sourceFrames: GeoFrame[]) => {
+    // Invalidate a pending forecast even when the new dataset is too small
+    // to produce one; otherwise the previous target's response may appear.
+    const requestId = ++futurecastRequestRef.current;
     if (!cfg.predictiveEnabled || sourceFrames.length < 3) {
       setFuturecastFrames([]);
       return;
     }
-
-    const requestId = ++futurecastRequestRef.current;
     const recent = continuousTail(sourceFrames, 20);
 
     try {
@@ -329,11 +354,20 @@ export function useGeoRuntime(
 
   // Load data through the canonical server fusion pipeline automatically.
   const loadData = useCallback(async (points: GPSPoint[]) => {
+    const loadRequestId = ++loadRequestRef.current;
+    ++futurecastRequestRef.current;
     setStatus('loading');
     setError(null);
 
     try {
       if (points.length === 0) {
+        // A newly persisted device session can reach the parent before its
+        // observations are loaded. Keep its live fixes during that handoff.
+        if (isLiveRef.current && configuredSessionId
+          && configuredSessionId === sessionIdRef.current && framesRef.current.length > 0) {
+          setStatus('playing');
+          return;
+        }
         framesRef.current = [];
         setFrames([]);
         setFuturecastFrames([]);
@@ -342,6 +376,7 @@ export function useGeoRuntime(
         setCurrentIndex(0);
         setIsPlaying(false);
         setIsLive(false);
+        setTelemetryError(null);
         setVersion(v => v + 1);
         setStatus('idle');
         return;
@@ -379,6 +414,7 @@ export function useGeoRuntime(
 
         if (response.ok) {
           const payload = await response.json();
+          if (loadRequestId !== loadRequestRef.current) return;
           const canonicalSessionId =
             typeof payload?.data?.sessionId === 'string' && payload.data.sessionId.trim()
               ? payload.data.sessionId
@@ -443,6 +479,7 @@ export function useGeoRuntime(
         // is temporarily unavailable. No synthetic positions are introduced.
       }
 
+      if (loadRequestId !== loadRequestRef.current) return;
       let newFrames = convertToFrames(canonicalPoints);
       if (newFrames.length === 0) {
         framesRef.current = [];
@@ -472,6 +509,9 @@ export function useGeoRuntime(
 
       if (canonicalFuturecast && canonicalFuturecast.length > 0) {
         setFuturecastFrames(canonicalFuturecast);
+      } else {
+        // Do not leave predictions from a prior dataset on the updated map.
+        setFuturecastFrames([]);
       }
       // When an investigation session exists, refresh through the dedicated
       // Futurecast route so recent camera/vehicle flow context can refine the
@@ -487,6 +527,7 @@ export function useGeoRuntime(
 
       setStatus('idle');
     } catch (err) {
+      if (loadRequestId !== loadRequestRef.current) return;
       setError(err instanceof Error ? err.message : 'Load failed');
       setStatus('error');
     }
@@ -547,6 +588,9 @@ export function useGeoRuntime(
     };
   }, [isPlaying, frames.length, tick, cfg.tickInterval, playbackSpeed, status]);
 
+  const liveFuturecastRequestRef = useRef(requestAuthoritativeFuturecast);
+  liveFuturecastRequestRef.current = requestAuthoritativeFuturecast;
+
   // LIVE mode - add new frames
   useEffect(() => {
     if (!isLive || !cfg.autoFetch) return;
@@ -560,8 +604,12 @@ export function useGeoRuntime(
 
     const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
 
+    let cancelled = false;
+    let publication = Promise.resolve();
+    let publishingController: AbortController | null = null;
     const watchId = navigator.geolocation.watchPosition(
       (pos) => {
+        if (cancelled) return;
         const now = new Date(pos.timestamp || Date.now());
         const coords = pos.coords;
 
@@ -623,45 +671,73 @@ export function useGeoRuntime(
           },
         };
 
-        void fetch('/api/geoconsole/telemetry-ingest', {
-          method: 'POST',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            sessionId: sessionId || undefined,
-            sourceId: 'browser-geolocation',
-            measurements: [{
-              kind: 'position',
-              source: 'browser_geolocation',
-              timestamp: now.toISOString(),
-              latitude,
-              longitude,
-              altitude,
-              accuracy,
-              verticalAccuracy: Number.isFinite(coords.altitudeAccuracy)
-                ? coords.altitudeAccuracy ?? undefined
-                : undefined,
-              speed,
-              heading,
-              confidence,
-              provider: 'navigator.geolocation',
-              correlationGroup: 'browser:navigator.geolocation',
-              metadata: {
-                live: true,
-                providerSpeedMps: Number.isFinite(coords.speed) ? coords.speed : undefined,
-                providerHeadingDegrees: Number.isFinite(coords.heading) ? coords.heading : undefined,
-              },
-            }],
-          }),
-        })
-          .then(async response => response.ok ? response.json() : null)
-          .then(payload => {
+        const subjectLabel = subjectLabelRef.current;
+        // Serialize fixes so the first response establishes one session before
+        // later fixes are published. Keep rendering immediately while saving.
+        publication = publication.then(async () => {
+          if (cancelled) return;
+          const controller = new AbortController();
+          publishingController = controller;
+          const timeout = setTimeout(() => controller.abort(), 15_000);
+          try {
+            const response = await fetch('/api/geoconsole/telemetry-ingest', {
+              method: 'POST',
+              credentials: 'include',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                sessionId: sessionIdRef.current || undefined,
+                subjectLabel,
+                sourceId: 'browser-geolocation',
+                measurements: [{
+                  kind: 'position',
+                  source: 'browser_geolocation',
+                  timestamp: now.toISOString(),
+                  latitude,
+                  longitude,
+                  altitude,
+                  accuracy,
+                  verticalAccuracy: Number.isFinite(coords.altitudeAccuracy)
+                    ? coords.altitudeAccuracy ?? undefined
+                    : undefined,
+                  speed,
+                  heading,
+                  confidence,
+                  provider: 'navigator.geolocation',
+                  correlationGroup: 'browser:navigator.geolocation',
+                  metadata: {
+                    live: true,
+                    providerSpeedMps: Number.isFinite(coords.speed) ? coords.speed : undefined,
+                    providerHeadingDegrees: Number.isFinite(coords.heading) ? coords.heading : undefined,
+                  },
+                }],
+              }),
+              signal: controller.signal,
+            });
+            const payload = await response.json();
+            if (cancelled) return;
+            if (!response.ok || payload?.success !== true) {
+              throw new Error('Device location could not be saved.');
+            }
             const telemetrySessionId = typeof payload?.data?.sessionId === 'string'
               ? payload.data.sessionId.trim()
               : '';
-            if (telemetrySessionId && !sessionId) setSessionId(telemetrySessionId);
-          })
-          .catch(() => undefined);
+            if (telemetrySessionId && !sessionIdRef.current) {
+              sessionIdRef.current = telemetrySessionId;
+              setSessionId(telemetrySessionId);
+              onSessionCreatedRef.current?.(telemetrySessionId);
+            }
+            setTelemetryError(payload?.data?.persistence?.available === true
+              ? null
+              : 'Device location is visible, but saving is unavailable.');
+          } catch {
+            if (!cancelled) {
+              setTelemetryError('Device location is visible, but it could not be saved.');
+            }
+          } finally {
+            clearTimeout(timeout);
+            publishingController = null;
+          }
+        });
 
         const cutoff = newFrame.timestamp.getTime() - ONE_HOUR_MS;
         const updated = [...framesRef.current, newFrame]
@@ -677,7 +753,7 @@ export function useGeoRuntime(
           nowMs - liveFuturecastLastRequestRef.current >= 30_000
         ) {
           liveFuturecastLastRequestRef.current = nowMs;
-          void requestAuthoritativeFuturecast(trimmed);
+          void liveFuturecastRequestRef.current(trimmed);
         }
 
         setStatus('playing');
@@ -685,6 +761,7 @@ export function useGeoRuntime(
         setVersion((v) => v + 1);
       },
       (err) => {
+        if (cancelled) return;
         setError(err?.message || 'Geolocation watch failed');
         setStatus('error');
       },
@@ -696,13 +773,15 @@ export function useGeoRuntime(
     );
 
     return () => {
+      cancelled = true;
+      publishingController?.abort();
       try {
         navigator.geolocation.clearWatch(watchId);
       } catch {
         // ignore
       }
     };
-  }, [isLive, cfg.autoFetch, cfg.maxFrameBuffer, requestAuthoritativeFuturecast, sessionId]);
+  }, [isLive, cfg.autoFetch, cfg.maxFrameBuffer]);
 
   // Server push channel for telemetry arriving from any configured adapter.
   // Browser-originated points are de-duplicated against the local live frame,
@@ -953,7 +1032,7 @@ export function useGeoRuntime(
     futurecast: futurecastFrames,
     stats,
     status,
-    error,
+    error: error || telemetryError,
     _version: version,
   };
 

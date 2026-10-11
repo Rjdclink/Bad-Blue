@@ -40,7 +40,7 @@ const TYPE_ALIASES: ReadonlyArray<readonly [LegalDocumentType, readonly string[]
   ['Trial Brief', ['trial brief']],
   ['Habeas Petition', ['habeas petition', 'habeas corpus petition']],
   ['Notice of Appeal', ['notice of appeal', 'appeal notice']],
-  ['FOIA or Public Records Request', ['foia request', 'public records request', 'open records request']],
+  ['FOIA or Public Records Request', ['foia request', 'freedom of information act request', 'freedom of information request', 'public records request', 'open records request']],
   ['Lease Agreement', ['lease', 'lease agreement']],
   ['Release Agreement', ['release agreement']],
   ['Waiver', ['waiver']],
@@ -90,11 +90,30 @@ export function resolveLegalDocumentType(text: string): LegalDocumentType | null
 
   for (const type of canonicalByLength) {
     const canonical = normalize(type);
-    if (canonical && normalized.includes(canonical)) return type;
+    if (type === 'Complaint' && /\banswer\s+to\s+(?:the\s+|a\s+)?complaint\b/.test(normalized)) continue;
+    // "Answer briefly" describes conversation style, not an answer pleading.
+    // Keep bare pleading requests and explicit drafting language recognizable.
+    if (type === 'Answer' && !/^(?:an? )?answer$|\b(?:draft|prepare|create|generate|write|file|filing|submit|serve|need|want)\s+(?:(?:me|my|an?|the)\s+)*answer\b|\banswer\s+(?:pleading|to\s+(?:the\s+|a\s+)?(?:complaint|lawsuit|summons))\b/.test(normalized)) continue;
+    if (canonical && new RegExp(`(?:^| )${canonical}(?: |$)`).test(normalized)) return type;
   }
   for (const [type, aliases] of TYPE_ALIASES) {
     if (aliases.some(alias => normalized.includes(normalize(alias)))) return type;
   }
+  return null;
+}
+
+
+/** Route high-confidence legal objectives to appropriate documents, not filing advice. */
+export function inferLegalDocumentNeed(text: string): LegalDocumentType | null {
+  const value = normalize(String(text || ''));
+  if (!value || /\b(?:do not|don t|dont|never|no longer|not trying to)\s+(?:want|need|plan|intend|file|prepare|draft|create)\b/.test(value)) return null;
+  if (/^(?:what is|what are|explain|define|tell me about|what does|why do|how does)\b/.test(value)) return null;
+  if (!/\b(?:i need|i want|i have to|i must|i was|ive been|i got|i received|help me|how do i|what should i|trying to|need to|want to|we need|we want)\b/.test(value)) return null;
+
+  if (/\b(?:i was|ive been|i got|i received)\s+(?:just\s+)?served\s+(?:with\s+)?(?:a\s+)?(?:complaint|lawsuit|summons)\b|\b(?:respond|reply|defend)\s+(?:to\s+)?(?:the\s+|a\s+)?(?:complaint|lawsuit|summons)\b/.test(value)) return 'Answer';
+  if (/\b(?:appeal|challenge)\s+(?:the\s+|a\s+)?(?:court\s+)?(?:judgment|final order|court ruling)\b|\b(?:court\s+)?(?:judgment|final order)\b.{0,65}\bappeal\b/.test(value)) return 'Notice of Appeal';
+  if (/\b(?:landlord|property manager)\b.{0,110}\b(?:kept|withheld|wont return|hasnt returned|refuses to return)\b.{0,80}\b(?:security deposit|deposit)\b|\b(?:get|recover)\s+(?:my\s+)?(?:security\s+)?deposit\s+back\b/.test(value)) return 'Demand Letter';
+  if (/\b(?:discovery|interrogatories|documents requested|request for production)\b.{0,100}\b(?:refused|withheld|ignored|not provided|wont provide|failed to provide)\b|\b(?:compel|force)\b.{0,70}\b(?:discovery|documents|interrogatories)\b/.test(value)) return 'Motion to Compel';
   return null;
 }
 
@@ -119,6 +138,10 @@ export function validateLegalDocumentDraft(
   }
 
   if (requestedType !== 'Custom Document') {
+    if (requestedType === 'FOIA or Public Records Request'
+      && !/\b(?:foia|freedom of information|public records?|open records?)\b/i.test(trimmed)) {
+      return { valid: false, reason: 'draft is not a public-records request' };
+    }
     const normalizedHead = normalize(trimmed.slice(0, 2200));
     const canonicalTokens = normalize(requestedType)
       .split(' ')

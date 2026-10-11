@@ -76,6 +76,19 @@ export function isLexaraGenericLegalIntake(text: string): boolean {
   return /^(?:(?:hi|hello|hey)[, ]+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?help\s+me(?:\s+out)?\s+with\s+(?:a|an|my)?\s*(?:(?:[a-z][a-z -]{0,48}\s+law)|law|legal)\s+(?:issue|matter|question|problem|case)|(?:i\s+(?:need|want|would\s+like)\s+(?:some\s+)?help\s+with|i\s+have)\s+(?:a|an|my)?\s*(?:(?:[a-z][a-z -]{0,48}\s+law)|law|legal)\s+(?:issue|matter|question|problem|case))[?.! ]*$/i.test(value);
 }
 
+/** Asking which facts to supply does not require investigating the named venue. */
+export function isLexaraDocumentIntakeQuestion(text: string): boolean {
+  return /\bwhat\s+(?:information|facts|details|documents)\s+(?:do|would|will)\s+you\s+need\b/i.test(text)
+    && /\b(?:filing|file|claim|claims|complaint|motion|petition|draft|prepare|document|lawsuit)\b/i.test(text)
+    && !/\b(?:background|investigate|verify|look\s+up|search|check\s+(?:whether|if))\b/i.test(text);
+}
+
+export function isLexaraOfficialFormQuestion(text: string): boolean {
+  return /\b(?:forms?|cover\s+sheet|case[- ]assignment)\b/i.test(text)
+    && /\b(?:official|prescribed|required|mandatory|local|court|filing)\b/i.test(text)
+    && !/\b(?:background|criminal\s+history|marital\s+status|employment\s+history|investigate)\b/i.test(text);
+}
+
 export function isLexaraConversationControl(text: string): boolean {
   return isLexaraRepeatRequest(text)
     || isLexaraGenericLegalIntake(text)
@@ -90,6 +103,7 @@ const PERSONAL_LEGAL_PROCEDURE_PATTERN = /\b(?:how\s+(?:do|can|should|would)\s+(
 export function isLexaraLegalAuthorityIntent(text: string): boolean {
   const value = String(text || '').trim();
   return CASE_CAPTION_PATTERN.test(value) || LEGAL_AUTHORITY_INTENT_PATTERN.test(value)
+    || (/\bforms?\b/i.test(value) && /\b(?:official|court|claims?|filing|local|required|petition)\b/i.test(value))
     || PERSONAL_LEGAL_PROCEDURE_PATTERN.test(value) || LOCAL_REGULATORY_LEGAL_PATTERN.test(value);
 }
 
@@ -215,6 +229,12 @@ export function decideLexaraResearchNeed(
   const text = String(prompt || '').trim();
   if (!text) return baseDecision('');
   if (isLexaraConversationControl(text)) return baseDecision(text);
+  if (isLexaraDocumentIntakeQuestion(text)) return baseDecision(text);
+  if (isLexaraOfficialFormQuestion(text)) return {
+    ...baseDecision(text), needed: true, reason: 'legal-authority',
+    objectiveKind: 'legal-authority', intent: 'legal', requestedFact: 'none',
+    sourceCategories: ['courts'], standaloneQuery: text,
+  };
 
   const legal = isLexaraLegalAuthorityIntent(text);
   const fact = requestedFact(text);

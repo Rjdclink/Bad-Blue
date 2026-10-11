@@ -336,6 +336,9 @@ export async function generateLegalAnalysis(
     TaskComplexity.COMPREHENSIVE
   );
   const response = await generateText(task, prompt, { ...options, providerPolicy: 'legalwhat' });
+  if (analysisType === 'document-drafting' && response.provider === AIProvider.LMAI) {
+    throw new Error('The legal drafting provider did not complete the requested document. Please retry; no substitute template was generated.');
+  }
   return response.content;
 }
 

@@ -27,6 +27,7 @@ function execute(relative, requireMap = {}) {
   };
   vm.runInNewContext(`(function(require,module,exports){${compiled}\n})`, {
     console, URL, process: { env: {} }, setTimeout, clearTimeout, AbortController,
+    performance: require('node:perf_hooks').performance,
   }, { filename: relative })(localRequire, module, module.exports);
   return module.exports;
 }
@@ -70,7 +71,13 @@ function candidate(url, provider = 'fixture-search') {
   return { url, title: 'Fixture result', excerpt: 'discovery only', tier: 3, provider };
 }
 
+// Use the real diagnostics module; keep the loader's dependency allowlist strict.
+const diagnostics = execute('server/lexara/DiscoveryDiagnostics.ts', {
+  'node:async_hooks': require('node:async_hooks'),
+  'node:crypto': require('node:crypto'),
+});
 const meshEvidence = execute('server/lexara/LegalProviderMesh.ts', {
+  './DiscoveryDiagnostics': diagnostics,
   './LexaraPublicSourceRegistry': {},
   './LexaraDiscoveryLearning': {},
   './LexaraResearchAssist': {},
@@ -80,8 +87,9 @@ const mesh = {
   mergeLegalMeshCandidateEvidence: meshEvidence.mergeLegalMeshCandidateEvidence,
   async discoverLegalMeshTier3(query, _signal, options) {
     state.tierCalls.push({ query, options });
+    if (state.mode.startsWith('business-org-')) return [candidate('https://records.example.gov/' + state.mode)];
     if (state.mode.startsWith('business-')) return [candidate('https://records.example.test/' + state.mode)];
-    if (state.mode === 'reported-death') return [{ ...candidate('https://records.example.test/obituary'), excerpt: 'Avery Morgan Example passed away February 6, 2020.' }];
+    if (state.mode === 'reported-death') return [{ ...candidate('https://records.example.test/obituary'), excerpt: 'Avery Example obituary. February 6, 2020. ' + 'Memorial information. '.repeat(45) + 'Avery Morgan Example passed away February 6, 2020.' }];
     if (state.mode === 'native-failure') throw new Error('fixture native discovery outage');
     if (state.mode === 'empty') return [candidate('https://records.example.test/empty')];
     if (state.mode === 'employment') return [candidate('https://records.example.test/employer')];
@@ -121,7 +129,12 @@ const retrieval = {
       state.retrievalCalls.push([...request.targets]);
       const evidence = request.targets.flatMap(target => {
         if (target.includes('/business-')) return [{ target,
-          content: state.mode === 'business-owner'
+          content: state.mode === 'business-org-single' ? 'Acme is a software company.'
+            : state.mode === 'business-org-multi' ? 'Acme Corporation operates a marketplace.'
+            : state.mode === 'business-org-directory' ? 'Acme appears in this directory. Another Company operates a marketplace.'
+            : state.mode === 'business-org-negative' ? 'Acme is not a software company.'
+            : state.mode === 'business-org-substring' ? 'Superacme is a software company.'
+            : state.mode === 'business-owner'
             ? 'Avery Example of Iowa owns Cedar Example LLC.'
             : 'Avery Example of Iowa appears in this directory. Business search. Company records. Copyright Directory LLC.',
           retrievedAt: '2026-10-05T12:00:00.000Z', contentType: 'text/html' }];
@@ -289,13 +302,27 @@ function reset(mode) {
     } },
     './LexaraPublicSourceRegistry': registry,
   });
-  for (const requestedFact of ['business', 'general-public-record']) {
+  const budgetModels = ['claude-haiku-4-5-20251001', 'claude-sonnet-5-5', 'claude-opus-fixture'];
+  for (const model of budgetModels) for (const requestedFact of ['business', 'general-public-record']) {
     await paidLane.searchLexaraBackgroundWithClaude({ prompt: 'Fixture inquiry',
-      decision: { requestedFact, sourceCategories: [] }, model: 'fixture-model' });
+      decision: { requestedFact, sourceCategories: [] }, model });
   }
-  assert.deepEqual(paidOptions.map(x => x.maxUses), [1, 2], 'targeted fallback spends one search; broad research retains two');
-  assert.deepEqual(paidOptions.map(x => x.maxTokens), [384, 1024]);
-  assert(paidOptions.every(x => x.model === 'fixture-model' && x.maxFetchUses === 1), 'budget applies across selected Claude models');
+  assert.deepEqual(paidOptions.map(x => x.maxUses), [1, 2, 1, 2, 1, 2], 'targeted fallback spends one search; broad research retains two');
+  assert.deepEqual(paidOptions.map(x => x.maxTokens), [384, 1024, 384, 1024, 384, 1024]);
+  assert(paidOptions.every((x, i) => x.model === budgetModels[Math.floor(i / 2)] && x.maxFetchUses === 1), 'budget applies across Haiku, Sonnet and Opus without live provider calls');
+  await paidLane.searchLexaraBackgroundWithClaude({ prompt: 'Fixture Spectra inquiry',
+    decision: { requestedFact: 'contact-address', sourceCategories: [] },
+    maxTokens: 2048, retryTruncatedOutput: false });
+  assert.equal(paidOptions.at(-1).maxTokens, 2048);
+  assert.equal(paidOptions.at(-1).retryTruncatedOutput, false);
+  assert.equal(paidOptions.at(-1).maxUses, 1, 'Spectra keeps the bounded research fallback');
+  reset('empty');
+  await investigator.investigateLexaraBackgroundQuestion('Fixture unresolved fact about Avery Example', {
+    resolvedSubject: { name: 'Avery Example', kind: 'person', identifiable: true },
+    claudeResearchMaxTokens: 2048, claudeRetryTruncatedOutput: false,
+  });
+  assert.equal(state.claudeCalls[0].maxTokens, 2048, 'Spectra budget reaches the conditional paid lane');
+  assert.equal(state.claudeCalls[0].retryTruncatedOutput, false);
   for (const mode of ['business-directory', 'business-owner']) {
     reset(mode);
     const result = await investigator.investigateLexaraBackgroundQuestion('What business does Avery Example operate?', {
@@ -311,6 +338,25 @@ function reset(mode) {
       assert.match(investigator.formatLexaraBackgroundResearchForSystem(result), /one short sentence/);
     }
   }
+  for (const [mode, name, succeeds] of [
+    ['business-org-single', 'Acme', true],
+    ['business-org-multi', 'Acme Corporation', true],
+    ['business-org-directory', 'Acme', false],
+    ['business-org-negative', 'Acme', false],
+    ['business-org-substring', 'Acme', false],
+  ]) {
+    reset(mode);
+    const result = await investigator.investigateLexaraBackgroundQuestion(`What business is ${name}?`, {
+      resolvedSubject: { name, kind: 'organization', identifiable: true },
+      researchDecision: { needed: true, reason: 'external-fact-question', objective: `Identify ${name}'s business`, objectiveKind: 'external-fact', intent: 'factual', requestedFact: 'business', sourceCategories: ['business'], subject: name, standaloneQuery: `${name} business`, inferred: true },
+    });
+    assert.equal(result.endpoint === 'evidence-sufficient', succeeds, mode);
+    assert.equal(Boolean(result.evidenceSummary), succeeds, mode);
+    if (succeeds) {
+      assert.equal(result.recursionPasses, 1, `${mode}: stop after sufficient retrieved evidence`);
+      assert.equal(state.claudeCalls.length, 0, `${mode}: no unnecessary paid fallback`);
+    }
+  }
   reset('reported-death');
   const reportedDeath = await investigator.investigateLexaraBackgroundQuestion(
     'When did Avery Morgan Example pass away?',
@@ -320,6 +366,7 @@ function reset(mode) {
   assert.equal(reportedDeath.endpoint, 'best-available-evidence');
   assert.match(reportedDeath.evidenceSummary, /REPORTED IN SEARCH EXCERPT/);
   assert.match(reportedDeath.evidenceSummary, /February 6, 2020/);
+  assert.match(reportedDeath.evidenceSummary, /Avery Morgan Example/, 'synthesis retains the full name even when an earlier title/date controls the excerpt');
   assert.equal(state.claudeCalls.length, 0, 'an explicit subject-matched obituary excerpt avoids redundant Claude research');
   assert.equal(reportedDeath.coverageLimited, true, 'a search excerpt is not upgraded to independent page verification');
 
@@ -550,3 +597,4 @@ function reset(mode) {
   console.error(error);
   process.exitCode = 1;
 });
+

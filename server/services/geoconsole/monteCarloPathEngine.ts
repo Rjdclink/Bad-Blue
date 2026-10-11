@@ -1027,6 +1027,16 @@ export class MonteCarloPathEngine {
     return futurePoints;
   }
 
+  private haversineDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
+    const latitudeDelta = (lat2 - lat1) * DEG_TO_RAD;
+    const longitudeDelta = (lon2 - lon1) * DEG_TO_RAD;
+    const a = Math.sin(latitudeDelta / 2) ** 2
+      + Math.cos(lat1 * DEG_TO_RAD) * Math.cos(lat2 * DEG_TO_RAD)
+        * Math.sin(longitudeDelta / 2) ** 2;
+    const bounded = Math.max(0, Math.min(1, a));
+    return EARTH_RADIUS * 2 * Math.atan2(Math.sqrt(bounded), Math.sqrt(1 - bounded));
+  }
+
   private calculateBearing(lat1: number, lon1: number, lat2: number, lon2: number): number {
     const φ1 = (lat1 * Math.PI) / 180;
     const φ2 = (lat2 * Math.PI) / 180;

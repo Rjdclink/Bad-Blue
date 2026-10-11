@@ -189,11 +189,14 @@ async function main() {
 
     state.fail = true;
     const failed = await post('/chat');
-    assert.equal(failed.status, 503);
-    assert.equal((await failed.json()).persistenceStatus, 'failed');
+    assert.equal(failed.status, 200, 'storage failure must not erase a completed answer');
+    const recovered = await failed.json();
+    assert.equal(recovered.persistenceStatus, 'save-failed');
+    assert.ok(recovered.response, 'the completed legal answer must be delivered');
     const failedStream = await (await post('/chat/stream')).text();
-    assert.match(failedStream, /event: error/);
-    assert.doesNotMatch(failedStream, /event: complete/);
+    assert.match(failedStream, /event: complete/);
+    assert.match(failedStream, /"persistenceStatus":"save-failed"/);
+    assert.doesNotMatch(failedStream, /event: error/);
     assert.equal(state.records.length, 2);
     console.log('Lexara per-reply autosave, owner-scoped restore, master isolation, and save-failure checks passed (offline).');
   } finally {

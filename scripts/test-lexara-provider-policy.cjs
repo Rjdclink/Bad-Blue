@@ -615,14 +615,14 @@ test('Claude alone remains a working legal primary', async () => {
   assert.equal(result.finalAnswer,'Supported fixture answer');
   assert.equal(h.calls[0].transport,'claude');
 });
-test('trial or unentitled exceptional review stays on Haiku 4.5', async () => {
+test('trial or unentitled exceptional review stays on low-effort Haiku 5.5', async () => {
   const h = harness(['ANTHROPIC_API_KEY']);
   const result = await h.engine.orchestrateCollaboration('exception-review', 'Review disputed reasoning',
     h.attributes, ['claude'], { providerPolicy: 'legalwhat', legalReviewReason: 'difficult-review',
       maxParticipants: 1, maxFallbacks: 0 });
   assert(result.contributions.some(x => x.success));
   assert.equal(h.calls[0].model, 'claude-haiku-5-5');
-  assert.equal(h.calls[0].effort, undefined);
+  assert.equal(h.calls[0].effort, 'low');
 });
 test('paid complex legal review escalates to Opus 5.5 at max effort', async () => {
   const h = harness(['ANTHROPIC_API_KEY']);
@@ -648,7 +648,7 @@ test('trial legal document drafting stays on Haiku and can never reach Sonnet or
     h.attributes, ['claude'], { providerPolicy: 'legalwhat', claudeWorkload: 'document-drafting',
       maxParticipants: 1, maxFallbacks: 0 });
   assert.equal(h.calls[0].model, 'claude-haiku-5-5');
-  assert.equal(h.calls[0].effort, undefined);
+  assert.equal(h.calls[0].effort, 'low');
 });
 test('paid deep drafting spends Anthropic once and finishes through Opus', async () => {
   const h = harness(['ANTHROPIC_API_KEY','GEMINI_API_KEY','XAI_API_KEY'], {

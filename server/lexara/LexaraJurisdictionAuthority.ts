@@ -65,7 +65,7 @@ const CIRCUIT_BY_CODE: Record<string, { name: string; number: string }> = {
 
 const DIRECTORY_CACHE = new Map<string, { expiresAt: number; resources: JurisdictionOfficialResource[] }>();
 const DIRECTORY_TTL_MS = 24 * 60 * 60 * 1000;
-const DIRECTORY_TIMEOUT_MS = 900;
+const DIRECTORY_TIMEOUT_MS = 1800;
 
 function normalizeState(value?: string): { name?: string; code?: string } {
   let raw = String(value || '').trim();
@@ -172,7 +172,11 @@ async function fetchStateDirectory(
     const $ = cheerio.load(html);
     const resources: JurisdictionOfficialResource[] = [];
     const seen = new Set<string>();
-    $('a[href]').each((_index, element) => {
+    // Navigation links on the directory host must not exhaust the resource
+    // budget before the state's actual court links are reached.
+    const contentLinks = $('main a[href], article a[href]');
+    const links = contentLinks.length ? contentLinks : $('a[href]');
+    links.each((_index, element) => {
       const title = $(element).text().replace(/\s+/g, ' ').trim();
       const href = String($(element).attr('href') || '').trim();
       if (!title || !href) return;
@@ -184,7 +188,7 @@ async function fetchStateDirectory(
       }
       if (!officialish(url, title)) return;
       const host = safeHost(url);
-      if (!host || seen.has(url)) return;
+      if (!host || host === safeHost(directoryUrl) || seen.has(url)) return;
       seen.add(url);
       resources.push({
         title: title.slice(0, 200),

@@ -130,6 +130,7 @@ import {
   autosaveRateLimit,
 } from "./rateLimit";
 import { setupAuth, isAuthenticated, adminAuthMiddleware, resolvePaidAccess } from "./auth";
+import { createSubscriptionGate } from "./subscriptionGate";
 import { asyncHandler, notFoundHandler, errorHandler, ErrorTypes } from "./errorHandler";
 import { generateComplaintDocument, generateFOIALetter as generateFOIALetterDoc } from "./documentGenerators";
 import { getBaseUrl as getBaseURL } from "./config";
@@ -853,6 +854,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     );
   }
 
+  // Default-deny subscription boundary, before blog, APIs, static HTML and SPA.
+  await setupAuth(app);
+  app.use(createSubscriptionGate(resolvePaidAccess, process.env.NODE_ENV !== "production"));
+
   const { startPantheonRecoveryWorker } = await import('./services/pantheon/PantheonBackgroundReportJob');
   startPantheonRecoveryWorker();
   
@@ -892,9 +897,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const article = JSON.parse(fs.readFileSync(file, "utf8"));
     return res.type("html").send('<!doctype html><html lang="en"><head><title>' + article.title + ' | LegalWhat</title><meta name="description" content="' + article.description + '"><meta name="robots" content="index,follow"><link rel="canonical" href="https://legalwhat.com/blog/' + article.slug + '"></head><body><main><article><h1>' + article.title + '</h1>' + article.content + '</article></main></body></html>');
   });
-
-  // Auth middleware setup
-  await setupAuth(app);
 
   // Packetized “laser pulse” channel (signature-only, no sessions).
   setupPulseRoutes(app);
@@ -5800,3 +5802,4 @@ Contact: ${foiaRequest.userEmail || userEmail}
   
   return httpServer;
 }
+
