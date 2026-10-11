@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { createSubscriptionGate } from '../server/subscriptionGate.ts';
+import { createSubscriptionGate, isPublicSeoPage } from '../server/subscriptionGate.ts';
 import { getLegalWhatAccessState } from '../server/trialAccess.ts';
-import { isSubscriptionEntryPath, isPaidAccessState } from '../shared/subscriptionPolicy.ts';
+import { isSubscriptionEntryPath, isPaidAccessState, isPublicMarketingAppPath } from '../shared/subscriptionPolicy.ts';
 
 const root = resolve(new URL('..', import.meta.url).pathname);
 const read = path => readFileSync(resolve(root, path), 'utf8');
@@ -23,7 +23,9 @@ const app = read('client/src/App.tsx');
 const appPaths = [...app.matchAll(/<Route\s+path="([^"]+)"/g)].map(match => match[1].replace(/:[^/]+/g, 'example'));
 const sitemapPaths = [...read('public/sitemap.xml').matchAll(/<loc>([^<]+)<\/loc>/g)].map(match => new URL(match[1]).pathname);
 const protectedPaths = [...new Set([...staticPaths, ...appPaths, ...sitemapPaths, '/blog', '/blog/example', '/new-page'])]
-  .filter(path => !isSubscriptionEntryPath(path));
+  .filter(path => !isSubscriptionEntryPath(path) && !isPublicSeoPage(path));
+const publicSeoPaths = [...new Set([...sitemapPaths, '/landing'])].filter(isPublicSeoPage);
+assert.ok(publicSeoPaths.length >= 250, `Expected 250+ public SEO URLs; found ${publicSeoPaths.length}`);
 const states = {
   anonymous: { authenticated: false, authorized: false, accessState: 'no_access', reason: 'unauthenticated' },
   unpaid: { authenticated: true, authorized: false, accessState: 'no_access', reason: 'subscription_required' },
@@ -63,6 +65,25 @@ for (const path of protectedPaths) {
     }
   }
 }
+// Every advertised SEO page must be readable without a subscription, including
+// when account verification is down. Search engines get ordinary public HTML.
+for (const path of publicSeoPaths) {
+  for (const state of Object.values(states)) {
+    for (const method of ['GET', 'HEAD']) {
+      const result = await request(path, state, method);
+      assert.equal(result.allowed, true, `public SEO ${method} ${path}`);
+      assert.equal(result.headers['X-Robots-Tag'], undefined, `noindex on public ${path}`);
+      decisions++;
+    }
+  }
+}
+for (const path of ['/legal-consultation', '/spectra', '/people-finder', '/api/lexara/chat', '/services/inmate-locator/', '/services/people-finder/', '/blog', '/blog/example', '/new-page']) {
+  assert.equal(isPublicSeoPage(path), false, `private or inactive URL exposed: ${path}`);
+}
+assert.equal(isPublicMarketingAppPath('/'), true);
+assert.equal(isPublicMarketingAppPath('/about'), true);
+assert.equal(isPublicMarketingAppPath('/legal-consultation'), false);
+
 for (const path of ['/api/lexara/chat', '/api/documents/generate', '/api/new-service', '/api/pulse/status/example']) {
   assert.equal((await request(path, states.anonymous, 'POST')).status, 401);
   assert.equal((await request(path, states.unpaid, 'POST')).status, 402);
@@ -94,11 +115,12 @@ assert.ok(gateIndex < routes.indexOf('app.get("/blog"'));
 assert.ok(gateIndex < routes.indexOf('setupConsultationRoutes(app)'));
 const index = read('server/index.ts');
 assert.ok(index.indexOf('await registerRoutes(app)') < index.indexOf('app.use(express.static("public"))'));
-assert.ok(index.includes('.filter((url) => isSubscriptionEntryPath(new URL(url).pathname))'));
+assert.ok(index.includes('parsed.origin === BASE_URL && isPublicSeoPage(parsed.pathname)'));
 const auth = read('server/auth.ts');
 assert.ok(auth.includes('const authorized = isPaidAccessState(accessState)'));
 assert.ok(!auth.includes('await activateLocalTrialHttp('));
 assert.ok(app.indexOf('if (!isSubscriptionEntryPath(currentPath)') < app.indexOf('<Switch>'));
+assert.ok(app.includes('!isPublicMarketingAppPath(currentPath)'));
 assert.ok(!app.includes('accessState === "trial_active" ||'));
 assert.ok(app.includes('if (isLoading) return <AuthLoadingSkeleton />'));
-console.log(JSON.stringify({ staticHtmlFiles: htmlFiles.length, protectedUrlVariants: protectedPaths.length, accessDecisions: decisions, result: 'PASS' }));
+console.log(JSON.stringify({ staticHtmlFiles: htmlFiles.length, publicSeoUrls: publicSeoPaths.length, protectedUrlVariants: protectedPaths.length, accessDecisions: decisions, result: 'PASS' }));

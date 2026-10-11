@@ -1,5 +1,7 @@
 import type { RequestHandler, Request, Response } from "express";
-import { isPaidAccessState, isSubscriptionEntryPath, normalizeSubscriptionPath } from "../shared/subscriptionPolicy.ts";
+import { existsSync, readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { isPaidAccessState, isPublicMarketingAppPath, isSubscriptionEntryPath, normalizeSubscriptionPath } from "../shared/subscriptionPolicy.ts";
 
 type AccessDecision = {
   authenticated: boolean;
@@ -9,6 +11,45 @@ type AccessDecision = {
 };
 
 type ResolveAccess = (req: Request, res: Response) => Promise<AccessDecision>;
+
+/**
+ * Expose only published SEO HTML, never a guessed URL or an application route.
+ * The sitemap is the editorial allowlist; an actual static index.html must
+ * exist as well. Search engines and anonymous visitors get identical pages.
+ */
+const PUBLIC_HTML_ROOTS = [
+  resolve(process.cwd(), "public"),
+  resolve(process.cwd(), "dist", "public"),
+];
+
+function publishedStaticSeoPaths(): Set<string> {
+  const pages = new Set<string>();
+  const sitemapRoot = PUBLIC_HTML_ROOTS.find((root) => existsSync(join(root, "sitemap.xml")));
+  if (!sitemapRoot) return pages; // Fail closed when publishing inventory is unavailable.
+  try {
+    const sitemap = readFileSync(join(sitemapRoot, "sitemap.xml"), "utf8");
+    for (const match of sitemap.matchAll(new RegExp('<loc>([^<]+)</loc>', 'g'))) {
+      const url = new URL(match[1]);
+      if (url.origin !== "https://legalwhat.com" || url.search || url.hash) continue;
+      const normalized = normalizeSubscriptionPath(url.pathname);
+      if (!normalized || normalized === "/") continue;
+      const relative = normalized.slice(1);
+      if (PUBLIC_HTML_ROOTS.some((root) => existsSync(join(root, relative, "index.html")))) {
+        pages.add(normalized);
+      }
+    }
+  } catch (error) {
+    console.error("[SEO] Cannot load static public landing-page inventory:", error);
+  }
+  return pages;
+}
+
+const PUBLISHED_STATIC_SEO_PATHS = publishedStaticSeoPaths();
+
+export function isPublicSeoPage(pathname: string): boolean {
+  const path = normalizeSubscriptionPath(pathname);
+  return path !== null && (isPublicMarketingAppPath(path) || PUBLISHED_STATIC_SEO_PATHS.has(path));
+}
 
 // These handlers retain their existing identity, rate-limit, or signature checks.
 // Do not exempt an entire /api prefix or accept browser-provided payment state.
@@ -28,7 +69,7 @@ const PUBLIC_FILES = new Set([
 
 function isPublicResource(method: string, path: string, development: boolean): boolean {
   const read = method === "GET" || method === "HEAD";
-  if (read && (isSubscriptionEntryPath(path) || PUBLIC_GET_APIS.has(path) || PUBLIC_FILES.has(path))) return true;
+  if (read && (isPublicSeoPage(path) || isSubscriptionEntryPath(path) || PUBLIC_GET_APIS.has(path) || PUBLIC_FILES.has(path))) return true;
   if (method === "POST" && PUBLIC_POST_APIS.has(path)) return true;
   // Only frontend code, styles, fonts, and images needed to render account pages.
   // HTML, JSON exports, downloads, uploads and unknown extensions stay protected.

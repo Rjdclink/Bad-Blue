@@ -10,7 +10,7 @@ import { MaintenanceMode } from "@/components/MaintenanceMode";
 import { lazy, Suspense, useEffect, useState, Component, ErrorInfo, ReactNode } from "react";
 import { AuthLoadingSkeleton, PageSkeleton } from "@/components/ui/page-skeleton";
 import { useGlobalGestureNavigation } from "@/hooks/useGlobalGestureNavigation";
-import { isPaidAccessState, isSubscriptionEntryPath } from "@shared/subscriptionPolicy";
+import { isPaidAccessState, isPublicMarketingAppPath, isSubscriptionEntryPath } from "@shared/subscriptionPolicy";
 import TrialAccessPage from "@/pages/trial-access";
 
 if (typeof window !== 'undefined') {
@@ -297,7 +297,7 @@ function Router() {
   if (maintenanceStatus?.maintenanceMode) return <MaintenanceMode />;
 
   // This also covers client-side navigation that never makes an HTML request.
-  if (!isSubscriptionEntryPath(currentPath) && !(isAuthenticated && hasPaidAccess)) {
+  if (!isSubscriptionEntryPath(currentPath) && !isPublicMarketingAppPath(currentPath) && !(isAuthenticated && hasPaidAccess)) {
     return <Redirect to={isAuthenticated ? "/subscription-required" : "/login"} replace />;
   }
 
