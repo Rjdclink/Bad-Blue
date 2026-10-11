@@ -557,14 +557,19 @@ async function freeSearch(
       openserp(query, controller.signal),
     ];
     if (_firstUseful && !officialFormQuery) {
+      const completed: LegalMeshCandidate[][] = [];
       const first = await Promise.any(providers.map(async provider => {
         const candidates = await provider;
         if (!candidates.length) throw new Error('LEXARA_NO_SEARCH_LEADS');
+        completed.push(candidates);
         return candidates;
       })).catch(() => [] as LegalMeshCandidate[]);
       if (signal?.aborted) throw signal.reason || new DOMException('Discovery cancelled', 'AbortError');
+      // Keep complementary evidence already returned by sibling providers.
+      // One event-loop turn drains their ready completions, never slow requests.
+      if (first.length) await new Promise<void>(resolve => setTimeout(resolve, 0));
       if (first.length) controller.abort(new Error('lexara_first_useful_provider'));
-      return first;
+      return completed.length ? fuseRankedCandidates(completed) : first;
     }
     const outcomes = await Promise.allSettled(providers);
     if (signal?.aborted) throw signal.reason || new DOMException('Discovery cancelled', 'AbortError');
@@ -586,13 +591,16 @@ async function firstUsefulSearchVariants(
   if (signal?.aborted) controller.abort(signal.reason);
   else signal?.addEventListener('abort', relayAbort, { once: true });
   try {
+    const completed: LegalMeshCandidate[][] = [];
     const first = await Promise.any(queries.map(async query => {
       const candidates = await freeSearch(query, controller.signal, true);
       if (!candidates.length) throw new Error('LEXARA_NO_QUERY_LEADS');
+      completed.push(candidates);
       return candidates;
     })).catch(() => [] as LegalMeshCandidate[]);
     if (signal?.aborted) throw signal.reason || new DOMException('Discovery cancelled', 'AbortError');
-    return first;
+    if (first.length) await new Promise<void>(resolve => setTimeout(resolve, 0));
+    return completed.length ? fuseRankedCandidates(completed) : first;
   } finally {
     controller.abort(new Error('lexara_first_useful_query'));
     signal?.removeEventListener('abort', relayAbort);

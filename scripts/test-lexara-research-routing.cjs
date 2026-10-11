@@ -81,7 +81,12 @@ function harness(options = {}) {
       calls.crawlers.push(request);
       return { evidence: request.targets.map(target => ({ target, content: 'Extracted fixture source evidence' })) };
     } } },
-    'server/lexara/LexaraResearchIntentRouter.ts': { decideLexaraResearchNeed: () => ({ needed: true }) },
+    'server/lexara/LexaraResearchIntentRouter.ts': {
+      decideLexaraResearchNeed: () => ({ needed: true }),
+      isLexaraConversationControl: () => false,
+      isLexaraOfficialFormQuestion: () => false,
+      isLexaraDocumentIntakeQuestion: () => false,
+    },
   };
   const forbidden = /openrouter|firecrawl/i;
   async function fixtureFetch(raw, init) {
@@ -89,7 +94,7 @@ function harness(options = {}) {
     assert(!forbidden.test(url), 'removed transport received an HTTP request: ' + url);
     if (options.fetchResponse) return options.fetchResponse(url, init);
     const payload = options.fetchPayload?.(url, init, calls.http.length) ?? { results: [] };
-    return { ok: true, json: async () => payload };
+    return { ok: true, status: 200, json: async () => payload, text: async () => JSON.stringify(payload) };
   }
   function load(relative) {
     if (stubs[relative]) return stubs[relative];
@@ -114,7 +119,7 @@ function harness(options = {}) {
     };
     vm.runInNewContext(`(function(require,module,exports){${compiled.outputText}\n})`, {
       process: { env }, console: { log() {}, warn() {}, error() {}, info() {} },
-      fetch: fixtureFetch, URL, AbortController, DOMException, setTimeout, clearTimeout,
+      fetch: fixtureFetch, URL, URLSearchParams, Buffer, AbortController, DOMException, setTimeout, clearTimeout,
       performance: require('node:perf_hooks').performance,
       Date: class extends Date { static now() { return options.now ? options.now() : Date.now(); } },
     }, { filename })(requireLocal, module, module.exports);
@@ -538,8 +543,8 @@ test('Lexara delegated discovery excludes the gateway on initial, recovery and r
 test('direct official-authority results retain their evidence and avoid unnecessary discovery', async () => {
   const h = harness({ env: { COURTLISTENER_API_TOKEN: 'fixture' }, fetchPayload: () => ({ results: [{ caseName: 'Fixture Case', absolute_url: '/opinion/1/fixture/', snippet: 'Relevant source excerpt' }] }) });
   const result = await h.load('server/lexara/LexaraAuthorityResearch.ts').researchLegalAuthority('Find case law', { jurisdiction: 'Iowa' });
-  assert.equal(result.sources[0].excerpt, 'Relevant source excerpt');
-  assert.equal(h.calls.http.length, 1); assert.equal(h.calls.crawlers.length, 0); assert.equal(h.calls.gateway.length, 0);
+  assert.equal(result.sources[0].excerpt, 'Extracted fixture source evidence');
+  assert.equal(h.calls.http.length, 1); assert.equal(h.calls.crawlers.length, 1); assert.equal(h.calls.gateway.length, 0);
 });
 test('discovered legal URLs still reach crawler enrichment and return to Lexara', async () => {
   const h = harness({ env: { DDGS_URL: 'https://ddgs.fixture.test' }, fetchPayload: () => ({ results: [{ href: 'https://fixture.gov/opinion', title: 'Fixture authority' }] }) });
