@@ -15,6 +15,16 @@ const STATE_ABBREVIATIONS: Record<string, string> = {
 
 const STATE_CODES = new Set(Object.values(STATE_ABBREVIATIONS));
 const STATE_NAMES = Object.keys(STATE_ABBREVIATIONS).sort((a, b) => b.length - a.length);
+
+/** State named by a publisher's own hostname, useful for disambiguating a
+ * city in a dated local-news dateline without borrowing a user's location. */
+export function stateCodeInPublisherHostname(hostname: string): string | null {
+  const labels = hostname.toLowerCase().replace(/^www\./, '').split('.');
+  const publisher = labels.slice(0, -1).join('').replace(/[^a-z]/g, '');
+  if (!publisher) return null;
+  const matched = STATE_NAMES.filter(name => publisher.includes(name.replace(/\s/g, '')));
+  return matched.length === 1 ? STATE_ABBREVIATIONS[matched[0]] : null;
+}
 let lastRequestAt = 0;
 const GEOCODER_BASE_URL =
   process.env.SPECTRA_GEOCODER_BASE_URL ||
