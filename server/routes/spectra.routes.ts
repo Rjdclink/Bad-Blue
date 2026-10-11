@@ -59,6 +59,8 @@ import {
   stripUnboundPublicGeoContext,
 } from '../services/spectra/SpectraPublicEvidenceProvenance';
 import { inferCorroboratedRegionalCity, inferProvisionalRegionalCities, inferPublicContactProfileCities } from '../services/spectra/SpectraRegionalInference';
+import { inferPublicDirectoryCities } from '../services/spectra/SpectraPublicDirectoryCities';
+import { collectSpectraPhoneOrigin } from '../services/spectra/SpectraPhoneOrigin';
 import {
   assessSpectraCityDiscoveryReadiness,
   chooseSpectraPublicRetrievalUrls,
@@ -292,6 +294,8 @@ function buildDiscoveryQueries(args: {
   const quotedName = resolvedName ? `"${resolvedName}"` : '';
   const quotedPhone = phone ? `"${phone}"` : '';
   const phoneDigits = phone?.replace(/\D/g, '') || '';
+  const nationalPhone = phoneDigits.length === 11 && phoneDigits.startsWith('1')
+    ? phoneDigits.slice(1) : phoneDigits;
   const compactDetails = details.replace(/\s+/g, ' ').trim();
   const email = [normalizedTarget, details].join(' ').match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0];
   const genericTarget = GENERIC_TARGET_RE.test(normalizedTarget);
@@ -302,6 +306,8 @@ function buildDiscoveryQueries(args: {
     email ? `"${email}"` : '',
     email && quotedName ? `${quotedName} "${email}"` : '',
     phoneDigits.length >= 7 ? `"${phoneDigits}"` : '',
+    nationalPhone.length === 10 ? `"${phone}" reverse phone lookup city` : '',
+    nationalPhone.length === 10 ? `"${nationalPhone}" (address OR city OR residence)` : '',
     [identityAnchor, compactDetails].filter(Boolean).join(' '),
     quotedName ? `${quotedName} (Facebook OR Instagram OR X OR Bluesky OR Mastodon) profile` : '',
     [normalizedTarget, compactDetails].filter(Boolean).join(' '),
@@ -311,6 +317,10 @@ function buildDiscoveryQueries(args: {
 
   const secondPass = [
     quotedName ? `${quotedName} (site:whitepages.com OR site:yellowbook.com) address` : '',
+    quotedName ? `${quotedName} (site:peoplelooker.com OR site:spokeo.com OR site:idcrawl.com) "lived in"` : '',
+    nationalPhone.length === 10 ? `"${nationalPhone}" (site:whitepages.com OR site:yellowpages.com OR site:spokeo.com)` : '',
+    nationalPhone.length === 10 ? `${nationalPhone.slice(0, 3)} area code NANPA geographic assignment` : '',
+    nationalPhone.length === 10 ? `${nationalPhone.slice(0, 3)} ${nationalPhone.slice(3, 6)} NPA NXX original carrier rate center` : '',
     quotedName ? `${quotedName} (site:facebook.com OR site:instagram.com OR site:x.com)` : '',
     [identityAnchor, compactDetails, 'public court docket record'].filter(Boolean).join(' '),
     [identityAnchor, compactDetails, 'employment property profile'].filter(Boolean).join(' '),
@@ -1035,6 +1045,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
     const publicWikimediaPromise = collectSpectraPublicWikimediaRecords(combinedTargetText);
     const publicNewsPromise = collectSpectraPublicNewsRecords(resolvedName || resolvedSubjectName);
     const publicCourtPromise = collectSpectraPublicCourtRecords(resolvedName || resolvedSubjectName);
+    const phoneOriginPromise = collectSpectraPhoneOrigin(phone);
 
     const [
       backgroundOutcome,
@@ -1049,6 +1060,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       publicWikimedia,
       publicNews,
       publicCourt,
+      phoneOrigin,
     ] = await Promise.all([
       backgroundPromise,
       firstPassPromise,
@@ -1062,6 +1074,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       publicWikimediaPromise,
       publicNewsPromise,
       publicCourtPromise,
+      phoneOriginPromise,
     ]);
 
     // Exact public contact matches rank candidates ahead of name-only matches.
@@ -1336,6 +1349,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       ...publicMastodonCandidates.records, ...mastodonCandidatePosts,
       ...publicMastodon.records, ...publicWikimedia.records, ...publicNews.records,
       ...publicCourt.records,
+      ...phoneOrigin.records,
     ];
     // Person-city guesses must rest on the retrieved publisher text. A search
     // title or snippet can describe someone else even when the URL resolves.
@@ -1580,6 +1594,11 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
         resolvedName || resolvedSubjectName,
         fetchedCitySources(),
       );
+      const directoryCities = inferPublicDirectoryCities(
+        resolvedName || resolvedSubjectName,
+        fetchedCitySources(),
+        { phone, email },
+      );
       const profileCities = inferPublicContactProfileCities(
         resolvedName,
         [...publicProfileCandidates.records, ...publicMastodonCandidates.records,
@@ -1613,7 +1632,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       // Keep competing source-backed cities visible even if one has already
       // reached the independent-publisher rule. A conflicting claim should
       // never disappear merely because another was ranked first.
-      for (const provisional of provisionalCities) {
+      for (const provisional of [...directoryCities, ...provisionalCities]) {
         if (candidateLocations.length >= 3) break;
         if (corroboratedCity && provisional.city.toLowerCase() === corroboratedCity.city.toLowerCase()
           && provisional.state === corroboratedCity.state) continue;
@@ -1656,6 +1675,26 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
           });
         } catch {
           // The profile remains archived even if the city cannot be mapped.
+        }
+      }
+      // The assignment block is useful context when no person-specific city
+      // has been retrieved. It must never outrank a residence claim.
+      if (!region && phoneOrigin.origin) {
+        try {
+          const origin = phoneOrigin.origin;
+          const assignment = await geocodeCityState(`${origin.city}, ${origin.state}`);
+          if (assignment) {
+            region = assignment;
+            candidateLocations.push({
+              latitude: assignment.latitude, longitude: assignment.longitude,
+              label: `${origin.city}, ${origin.state} (phone number assignment area; residence unknown)`,
+              confidence: 0.03, basis: 'regional_context',
+              accuracyMeters: Math.max(50_000, assignment.accuracyMeters),
+              sourceUrls: [origin.sourceUrl],
+            });
+          }
+        } catch {
+          // A failed rate-center geocode never cancels other sources.
         }
       }
       // Preserve a supplied location solely as labeled search context. A
@@ -1833,9 +1872,11 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
     const publicWikimediaUrls = new Set(publicWikimedia.records.map(record => record.url));
     const publicNewsUrls = new Set(publicNews.records.map(record => record.url));
     const publicCourtUrls = new Set(publicCourt.records.map(record => record.url));
+    const phoneOriginUrls = new Set(phoneOrigin.records.map(record => record.url));
     const evidenceRecords = buildSpectraAcquisitionRecords(retrievedEvidence.map(evidence => ({
       url: evidence.url,
       provider: publicImageUrls.has(evidence.url) ? 'bluesky-image-binary'
+        : phoneOriginUrls.has(evidence.url) ? 'public-phone-prefix-assignment'
         : publicAccountUrls.has(evidence.url) || publicCandidateUrls.has(evidence.url) ? 'bluesky-public-api'
         : publicMastodonUrls.has(evidence.url) || publicMastodonCandidateUrls.has(evidence.url) ? 'mastodon-public-api'
         : publicWikimediaUrls.has(evidence.url) ? 'wikimedia-commons-api'
@@ -1843,6 +1884,9 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
         : publicCourtUrls.has(evidence.url) ? 'courtlistener-public-recap' : 'spectra-public-retrieval',
       metadata: {
         ...mergePublicRetrievedMetadata(undefined, evidence),
+        ...(phoneOriginUrls.has(evidence.url)
+          ? { retrievalProvider: 'public-phone-prefix-assignment', subjectAssociation: 'number_origin_not_person_location' }
+          : {}),
         ...(publicImageUrls.has(evidence.url)
           ? { retrievalProvider: 'bluesky-image-binary', subjectAssociation: 'public_media_scene_unverified' }
           : {}),

@@ -78,7 +78,7 @@
     "verify:pantheon-evidence-lifecycle": "node scripts/verify-pantheon-evidence-lifecycle.cjs && node --import tsx scripts/verify-pantheon-report-e2e.ts",
     "verify:pantheon-source-contract": "node scripts/verify-pantheon-source-contract.cjs",
     "verify:pantheon-blueprint-66": "node --import tsx scripts/verify-pantheon-blueprint-through-66.ts",
-    "verify:spectra:records": "node scripts/verify-spectra-public-feed-store.cjs && node --import tsx scripts/verify-spectra-public-feeds.ts && node --import tsx scripts/verify-spectra-acquisition-records.ts && node --import tsx scripts/verify-spectra-direct-public-records.ts && node --import tsx scripts/verify-spectra-claude-budget.ts && node --import tsx scripts/verify-spectra-public-court-records.ts",
+    "verify:spectra:records": "node scripts/verify-spectra-public-feed-store.cjs && node --import tsx scripts/verify-spectra-public-feeds.ts && node --import tsx scripts/verify-spectra-acquisition-records.ts && node --import tsx scripts/verify-spectra-direct-public-records.ts && node --import tsx scripts/verify-spectra-claude-budget.ts && node --import tsx scripts/verify-spectra-public-court-records.ts && node --import tsx scripts/verify-spectra-public-directory-cities.ts && node --import tsx scripts/verify-spectra-phone-origin.ts",
     "verify:subscription-gate": "node --import tsx scripts/verify-subscription-gate.mjs"
   },
   "dependencies": {

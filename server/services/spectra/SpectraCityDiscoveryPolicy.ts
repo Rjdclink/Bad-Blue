@@ -58,7 +58,7 @@ export function chooseSpectraPublicRetrievalUrls(
   // Search snippets alone never become address or account evidence.
   if (capacity >= 4) {
     for (const hosts of [
-      /(?:^|\.)(?:whitepages\.com|yellowbook\.com|yellowpages\.com)$/,
+      /(?:^|\.)(?:whitepages\.com|yellowbook\.com|yellowpages\.com|spokeo\.com|idcrawl\.com)$/,
       /(?:^|\.)(?:facebook\.com|instagram\.com|x\.com|twitter\.com)$/,
     ]) {
       const candidate = ranked.find(item => {
