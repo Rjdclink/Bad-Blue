@@ -47,7 +47,9 @@ export function planLexaraCourtRecords(
     || question.match(/\b(?:case|docket)\s*(?:no\.?|number|#)?\s*[:#]?\s*([a-z]{2,5}\d{4,12}|\d{2}-\d{3,7})\b/i)?.[1];
   const caption = question.match(/\b([A-Z][\w.'’]*(?:\s+(?:[A-Z][\w.'’]*|of|the|&)){0,8}\s+[vV]\.?\s+[A-Z][\w.'’]*(?:\s+(?:[A-Z][\w.'’]*|of|the|&)){0,8})/)?.[1]?.replace(/[.,;!?]+$/, '').trim();
   if (!RECORD_CUE.test(question) && context.requestedFact !== 'court-record' && !prior && !directDocket
-    && !(caption && documentTerms(question).length)) return undefined;
+    && !(caption && /\b(?:find|retrieve|pull|fetch|show|link|download|read|look up|get|summariz\w*)\b/i.test(question)
+      && !/\b(?:holding|hold|held|precedent|require\w*|legal standard|case law)\b/i.test(question)
+      && documentTerms(question).length)) return undefined;
   const docketNumber = directDocket || (!caption ? prior?.docketNumber : undefined);
   const subject = caption || context.subject?.trim() || prior?.subject;
   const selectionQuestion = [question, !directDocket && !caption ? prior?.objective : undefined].filter(Boolean).join(' ');
@@ -97,7 +99,7 @@ function filingScore(description: string, term: string): number {
 /** Only skip general legal research for an identified, factual record request. */
 export function isLexaraCourtRecordLookup(plan: LexaraCourtRecordPlan): boolean {
   return Boolean(plan.lookupQuery) && /\b(?:find|retrieve|show|pull|link|summariz\w*|records?|filings?|docket|what (?:does|do|did)|who got|how much)\b/i.test(plan.objective)
-    && !/\b(?:can i|should i|must i|am i|do i|my rights|legal|law|precedent|statute|rule|deadline|appeal|challenge|enforce|sue|liable|binding|controlling)\b/i.test(plan.objective);
+    && !/\b(?:can i|should i|must i|am i|do i|my rights|legal|law|precedent|holding|hold|held|require\w*|statute|rule|deadline|appeal|challenge|enforce|sue|liable|binding|controlling)\b/i.test(plan.objective);
 }
 
 function publicCourtUrl(value: unknown): string | undefined {
