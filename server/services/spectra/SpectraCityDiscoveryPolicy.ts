@@ -54,6 +54,25 @@ export function chooseSpectraPublicRetrievalUrls(
   const urls: string[] = [];
   const seenUrls = new Set<string>();
   const seenPublishers = new Set<string>();
+  // Reserve bounded retrieval slots for actual public directory/profile pages.
+  // Search snippets alone never become address or account evidence.
+  if (capacity >= 4) {
+    for (const hosts of [
+      /(?:^|\.)(?:whitepages\.com|yellowbook\.com|yellowpages\.com)$/,
+      /(?:^|\.)(?:facebook\.com|instagram\.com|x\.com|twitter\.com)$/,
+    ]) {
+      const candidate = ranked.find(item => {
+        try { return hosts.test(new URL(item.url).hostname.toLowerCase()); }
+        catch { return false; }
+      });
+      if (!candidate) continue;
+      const publisher = publicPublisherDomain(candidate.url);
+      if (!publisher || seenPublishers.has(publisher)) continue;
+      seenPublishers.add(publisher);
+      seenUrls.add(candidate.url);
+      urls.push(candidate.url);
+    }
+  }
   for (const candidate of ranked) {
     const publisher = publicPublisherDomain(candidate.url);
     if (!publisher || seenPublishers.has(publisher) || seenUrls.has(candidate.url)) continue;
