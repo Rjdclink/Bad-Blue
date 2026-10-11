@@ -639,7 +639,7 @@ export async function discoverLegalMeshTier3(
     if (hint) variants.push(`${query} ${hint}`);
   }
   const uniqueVariants=[...new Set(variants)].slice(0,options.firstUseful ? 2 : 6);
-  const groups=options.firstUseful
+  const groups=options.firstUseful && !options.officialFormQuery
     ? [await firstUsefulSearchVariants(uniqueVariants,signal)]
     : await Promise.all(uniqueVariants.map(variant=>freeSearch(variant,signal,false,options.officialFormQuery)));
   const learnedSources=await Promise.race([
