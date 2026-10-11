@@ -28,7 +28,7 @@ function publishedStaticSeoPaths(): Set<string> {
   if (!sitemapRoot) return pages; // Fail closed when publishing inventory is unavailable.
   try {
     const sitemap = readFileSync(join(sitemapRoot, "sitemap.xml"), "utf8");
-    for (const match of sitemap.matchAll(/<loc>([^<]+)<\\/loc>/g)) {
+    for (const match of sitemap.matchAll(new RegExp('<loc>([^<]+)</loc>', 'g'))) {
       const url = new URL(match[1]);
       if (url.origin !== "https://legalwhat.com" || url.search || url.hash) continue;
       const normalized = normalizeSubscriptionPath(url.pathname);
