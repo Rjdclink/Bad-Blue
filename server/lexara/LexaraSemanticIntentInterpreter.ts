@@ -124,8 +124,9 @@ export async function resolveLexaraResearchDecisionSemantic(
   const text = String(prompt || '').trim();
   const deterministic = decideLexaraResearchNeed(text, previousUserTurns);
   // An explicit case identifier supplies the record objective without a classifier.
+  const explicitDocket = /\b(?:\d{1,2}:)?\d{2,4}-(?:cv|cr|bk|ap|mc|civ)-\d{2,7}\b/i.test(text);
   if (courtRecordIdentified && ['court-record', 'none'].includes(deterministic.requestedFact)
-    && !hasMultipleLexaraBackgroundSubjectCandidates(text)) return deterministic;
+    && (explicitDocket || !hasMultipleLexaraBackgroundSubjectCandidates(text))) return deterministic;
   const deterministicFactual = deterministic.intent === 'factual' || deterministic.intent === 'mixed';
   const needsSubjectReview = deterministicFactual && (
     deterministicSubjectNeedsSemanticReview(deterministic.subject)

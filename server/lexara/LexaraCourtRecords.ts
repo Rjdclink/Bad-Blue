@@ -111,16 +111,16 @@ export async function searchLexaraCourtRecords(
   const results = await courtJson('search/?' + new URLSearchParams({ q: plan.lookupQuery, type: 'r', order_by: 'score desc' }), signal);
   const candidates = (Array.isArray(results?.results) ? results.results : []).slice(0, 4);
   const sources: LexaraAuthoritySource[] = [];
-  const matchedDockets = new Set<string>();
+  const matchedDockets = new Map<string, { title: string; metadata: string }>();
   const documentCandidates: Array<{ id: number; url: string; title: string; metadata: string }> = [];
   for (const item of candidates) {
     if (plan.docketNumber && !sameLexaraDocket(plan.docketNumber, cleanText(item.docketNumber))) continue;
-    const url = publicCourtUrl(item.absolute_url);
+    const url = publicCourtUrl(item.docket_absolute_url || item.absolute_url);
     if (!url) continue;
-    matchedDockets.add(new URL(url).pathname.split('/')[2]);
     const metadata = [item.court && `Court: ${cleanText(item.court)}`, item.docketNumber && `Case number: ${cleanText(item.docketNumber)}`,
       item.dateFiled && `Filed: ${item.dateFiled}`].filter(Boolean).join('; ');
     const title = cleanText(item.caseName) || 'Federal docket';
+    matchedDockets.set(new URL(url).pathname.split('/')[2], { title, metadata });
     sources.push({ title, url, kind: 'secondary', provider: 'courtlistener-recap',
       recordType: 'docket', evidenceLevel: 'metadata',
       excerpt: `${metadata}. Candidate case: match the court and parties to the user's matter before attributing it. This is docket metadata, not the contents of a filing.` });
@@ -135,16 +135,18 @@ export async function searchLexaraCourtRecords(
   // Search within the identified case for issue-relevant filings, beyond the
   // three documents nested in each docket search result.
   if (matchedDockets.size && !signal?.aborted) {
-    const terms = [...new Set(plan.neededDocuments.join(' ').split(/\s+/).filter(word => word.length > 3))].slice(0, 5);
+    const requestedTerms = plan.objective.match(/\b(?:complaint|petition|order|judgment|indictment|decree|mandate|notice|distribution|discharge)\b/gi) || [];
+    const terms = [...new Set([...requestedTerms.map(word => word.toLowerCase()), ...plan.neededDocuments.join(' ').split(/\s+/).filter(word => word.length > 3)])].slice(0, 5);
     const documents = await courtJson('search/?' + new URLSearchParams({ type: 'rd',
-      q: `${plan.lookupQuery} AND (${terms.join(' OR ')})`, available_only: 'on', order_by: 'score desc' }), signal);
+      q: `docket_id:(${[...matchedDockets.keys()].join(' OR ')}) AND (${terms.join(' OR ')})`, available_only: 'on', order_by: 'score desc' }), signal);
     const relevantDocuments: typeof documentCandidates = [];
     for (const doc of (Array.isArray(documents?.results) ? documents.results : []).slice(0, 6)) {
       const url = publicCourtUrl(doc.absolute_url);
       const id = Number(doc.id || doc.recap_document_id);
-      if (url && matchedDockets.has(new URL(url).pathname.split('/')[2]) && Number.isSafeInteger(id) && id > 0) relevantDocuments.push({ id, url,
-        title: `${cleanText(doc.caseName)}: ${cleanText(doc.description) || 'filing'}`,
-        metadata: [doc.court, doc.docketNumber, doc.dateFiled].filter(Boolean).map(cleanText).join('; ') });
+      const docket = url ? matchedDockets.get(new URL(url).pathname.split('/')[2]) : undefined;
+      if (url && docket && Number.isSafeInteger(id) && id > 0) relevantDocuments.push({ id, url,
+        title: `${docket.title}: ${cleanText(doc.description) || 'filing'}`,
+        metadata: [docket.metadata, doc.entry_date_filed && `Document filed: ${cleanText(doc.entry_date_filed)}`].filter(Boolean).join('; ') });
     }
     documentCandidates.unshift(...relevantDocuments);
   }
