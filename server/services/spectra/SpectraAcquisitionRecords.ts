@@ -115,7 +115,7 @@ export function buildSpectraAcquisitionRecords(
         discoveryProvider: textValue(metadata.discoveryProvider) || textValue(result.provider),
         // A supplied URL or an article mention does not bind the record to
         // the investigated person. Preserve that limitation with the snapshot.
-        subjectAssociation: textValue(metadata.subjectAssociation),
+        subjectAssociation: textValue(metadata.subjectAssociation) || 'unverified_search_result',
         sourceRecordId: sourceRecordId?.slice(0, 1_000),
         title,
         textExcerpt,
