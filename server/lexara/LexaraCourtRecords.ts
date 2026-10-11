@@ -46,7 +46,10 @@ export function planLexaraCourtRecords(
   const directDocket = question.match(/\b(?:\d{1,2}:)?\d{2,4}-(?:cv|cr|bk|ap|mc|civ)-\d{2,7}(?:-[a-z]{1,8})?\b/i)?.[0]
     || question.match(/\b(?:case|docket)\s*(?:no\.?|number|#)?\s*[:#]?\s*([a-z]{2,5}\d{4,12}|\d{2}-\d{3,7})\b/i)?.[1];
   const caption = question.match(/\b([A-Z][\w.'’]*(?:\s+(?:[A-Z][\w.'’]*|of|the|&)){0,8}\s+[vV]\.?\s+[A-Z][\w.'’]*(?:\s+(?:[A-Z][\w.'’]*|of|the|&)){0,8})/)?.[1]?.replace(/[.,;!?]+$/, '').trim();
-  if (!RECORD_CUE.test(question) && context.requestedFact !== 'court-record' && !prior && !directDocket) return undefined;
+  if (!RECORD_CUE.test(question) && context.requestedFact !== 'court-record' && !prior && !directDocket
+    && !(caption && /\b(?:find|retrieve|pull|fetch|show|link|download|read|look up|get|summariz\w*)\b/i.test(question)
+      && !/\b(?:holding|hold|held|precedent|require\w*|legal standard|case law)\b/i.test(question)
+      && documentTerms(question).length)) return undefined;
   const docketNumber = directDocket || (!caption ? prior?.docketNumber : undefined);
   const subject = caption || context.subject?.trim() || prior?.subject;
   const selectionQuestion = [question, !directDocket && !caption ? prior?.objective : undefined].filter(Boolean).join(' ');
@@ -74,14 +77,18 @@ export function planLexaraCourtRecords(
   };
 }
 
-const DOCUMENT_TERMS = /\b(?:complaint|petition|order|judgment|indictment|decree|mandate|notice|distribution|discharge|motion|service)\b/gi;
+const DOCUMENT_TERMS = /\b(?:plea agreements?|claims registers?|sale reports?|disbursement accounting|appeal decisions?|proof of service|notice of sale|notice of appeal|sentencing orders?|distribution orders?|discharge orders?|dismissal orders?|writ of possession|custody orders?|support orders?|complaints?|petitions?|orders?|judgments?|indictments?|decrees?|mandates?|notices?|distribution|discharge|motions?|service)\b/gi;
 
 function documentTerms(text: string): string[] {
-  return [...new Set((text.match(DOCUMENT_TERMS) || []).map(word => word.toLowerCase()))];
+  return [...new Set((text.match(DOCUMENT_TERMS) || []).map(word => word.toLowerCase()
+    .replace(/\b(agreement|register|report|decision|order|complaint|petition|judgment|indictment|decree|mandate|notice|motion)s\b/g, '$1')))];
 }
+
+const filingDescription = (doc: any) => [...new Set([cleanText(doc.short_description), cleanText(doc.description)].filter(Boolean))].join(' | ');
 
 /** Keep a requested complaint ahead of answers and motions merely mentioning it. */
 function filingScore(description: string, term: string): number {
+  if (description.includes(' | ')) return Math.max(...description.split(' | ').map(field => filingScore(field, term)));
   const text = description.toLowerCase();
   if (term === 'complaint' && /\b(?:answer|response|dismiss|motion)\b/.test(text)) return 0;
   if (term === 'order' && /\b(?:proposed|request|motion|letter)\b/.test(text) && !/^order\b/.test(text)) return 0;
@@ -92,7 +99,7 @@ function filingScore(description: string, term: string): number {
 /** Only skip general legal research for an identified, factual record request. */
 export function isLexaraCourtRecordLookup(plan: LexaraCourtRecordPlan): boolean {
   return Boolean(plan.lookupQuery) && /\b(?:find|retrieve|show|pull|link|summariz\w*|records?|filings?|docket|what (?:does|do|did)|who got|how much)\b/i.test(plan.objective)
-    && !/\b(?:can i|should i|must i|am i|do i|my rights|legal|law|precedent|statute|rule|deadline|appeal|challenge|enforce|sue|liable|binding|controlling)\b/i.test(plan.objective);
+    && !/\b(?:can i|should i|must i|am i|do i|my rights|legal|law|precedent|holding|hold|held|require\w*|statute|rule|deadline|appeal|challenge|enforce|sue|liable|binding|controlling)\b/i.test(plan.objective);
 }
 
 function publicCourtUrl(value: unknown): string | undefined {
@@ -131,7 +138,7 @@ export async function searchLexaraCourtRecords(
       if (docUrl && new URL(docUrl).pathname.split('/')[2] === new URL(url).pathname.split('/')[2]
         && Number.isSafeInteger(id) && id > 0) documentCandidates.push({ id, url: docUrl,
         title: `${title}: ${cleanText(doc.short_description || doc.description) || 'filing'}`, metadata,
-        description: cleanText(doc.short_description || doc.description) });
+        description: filingDescription(doc) });
     }
   }
   // Search within the identified case for issue-relevant filings, beyond the
@@ -139,8 +146,11 @@ export async function searchLexaraCourtRecords(
   if (matchedDockets.size && !signal?.aborted) {
     // A stable case/document query can be reused on follow-ups. Description
     // fields find the filing type instead of every document quoting that word.
-    const terms = [...new Set([...documentTerms(plan.neededDocuments.join(' ')), ...documentTerms(plan.objective)])].slice(0, 8);
-    const descriptions = terms.map(term => `(short_description:${term}^${term === 'complaint' ? 8 : 2} OR description:${term})`);
+    const terms = [...new Set([...documentTerms(plan.objective), ...documentTerms(plan.neededDocuments.join(' '))])].slice(0, 8).sort();
+    const descriptions = terms.map(term => {
+      const value = term.includes(' ') ? quoted(term) : term;
+      return `(short_description:${value}^${term === 'complaint' ? 8 : 2} OR description:${value})`;
+    });
     const documents = await courtJson('search/?' + new URLSearchParams({ type: 'rd',
       q: `docket_id:(${[...matchedDockets.keys()].join(' OR ')}) AND (${descriptions.join(' OR ')})`, available_only: 'on', order_by: 'score desc' }), signal);
     const relevantDocuments: typeof documentCandidates = [];
@@ -150,7 +160,7 @@ export async function searchLexaraCourtRecords(
       const docket = url ? matchedDockets.get(new URL(url).pathname.split('/')[2]) : undefined;
       if (url && docket && Number.isSafeInteger(id) && id > 0) relevantDocuments.push({ id, url,
         title: `${docket.title}: ${cleanText(doc.short_description || doc.description) || 'filing'}`,
-        description: cleanText(doc.short_description || doc.description),
+        description: filingDescription(doc),
         metadata: [docket.metadata, doc.entry_date_filed && `Document filed: ${cleanText(doc.entry_date_filed)}`].filter(Boolean).join('; ') });
     }
     documentCandidates.unshift(...relevantDocuments);
