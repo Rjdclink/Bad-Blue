@@ -933,7 +933,8 @@ export async function generateLexaraConversationResponse(
       : '')
     + (backgroundResearchRequested && !mixedLegalFactNeed
       ? '\nBACKGROUND ANSWER LENGTH: Answer the exact factual question in one or two sentences, at most 60 words, unless the user explicitly asks for a detailed report. No URLs, source list, search mechanics, unrelated case facts, or offers of further work.'
-      : '');
+      : '')
+    + '\n\nFINAL REPLY RULE: Give a brief, direct answer in plain language: 1-3 sentences and at most 60 words, excluding source URLs. Put the answer first, include only indispensable uncertainty or one necessary question, then stop. Research may be extensive; do not reproduce the research packet, case background, duplicate filings, or internal checklist. Include relevant court-record links when supplied and permitted by the presentation rules above. Keep any stricter workflow limit. Expand only if the user explicitly asks for a detailed explanation or one additional sentence is essential to avoid a materially misleading answer; full document drafting belongs in the document workflow.';
   const userPrompt = `${history ? `CONVERSATION SO FAR:\n${history}\n\n` : ''}CURRENT USER TURN:\n${cleanPrompt}`;
   const claudeModel = backgroundResearchRequested && !mixedLegalFactNeed
     ? context.allowClaudeOpus === true ? CURRENT_AI_MODELS.claudeBalanced : LEGAL_AI_MODELS.claudeFast

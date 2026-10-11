@@ -148,6 +148,8 @@ interface AcquisitionResponse {
     publicNewsStatus?: string;
     publicNewsArticleLeads?: number;
     publicNewsRecordCount?: number;
+    publicCourtStatus?: string;
+    publicCourtRecordCount?: number;
   };
   locationObservations?: GPSPoint[];
   candidateLocations?: SpectraLocationCandidate[];
@@ -554,6 +556,9 @@ export default function SpectraPage() {
           : []),
         ...(payload.acquisition?.publicNewsStatus && payload.acquisition.publicNewsStatus !== 'not_applicable'
           ? [`Public news: ${payload.acquisition.publicNewsStatus}; ${payload.acquisition.publicNewsRecordCount ?? 0} retrieved article records from ${payload.acquisition.publicNewsArticleLeads ?? 0} leads. Article identity remains unverified.`]
+          : []),
+        ...(payload.acquisition?.publicCourtStatus && payload.acquisition.publicCourtStatus !== 'not_applicable'
+          ? [`Public court dockets: ${payload.acquisition.publicCourtStatus.replace(/_/g, ' ')}; ${payload.acquisition.publicCourtRecordCount ?? 0} dated docket records. A case-name match does not verify identity, residence, or current location.`]
           : []),
       ]);
       setPlaceSources(payload.publicPlace?.sources || []);

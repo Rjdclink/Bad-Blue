@@ -5,9 +5,13 @@ const path = require('node:path');
 const vm = require('node:vm');
 const ts = require('typescript');
 const source = fs.readFileSync(path.join(__dirname, '../client/src/lib/lexaraRealtimeVoiceClient.ts'), 'utf8');
+const speechText = { exports: {} };
+vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(__dirname, '../shared/lexaraSpeechText.ts'), 'utf8'), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+}).outputText, speechText);
 function harness() {
   const timers = new Map(); let timerId = 0; const sent = []; const audio = []; const exports = {};
-  const context = { exports, require: () => ({}), navigator: { userAgent: 'fixture', sendBeacon() {} },
+  const context = { exports, require: name => name === '@shared/lexaraSpeechText' ? speechText.exports : {}, navigator: { userAgent: 'fixture', sendBeacon() {} },
     Blob, performance, WebSocket: { OPEN: 1, CLOSING: 2 },
     window: { setTimeout: (fn, ms) => { timers.set(++timerId, { fn, ms }); return timerId; }, clearTimeout: id => timers.delete(id) },
   };
