@@ -77,6 +77,7 @@ import { collectSpectraPublicWikimediaRecords } from '../services/spectra/Spectr
 import { publicProfileContactMatch, publicProfileNameMatch } from '../services/spectra/SpectraPublicProfileIdentity';
 import { publicProfileLeads } from '../services/spectra/SpectraPublicProfileLeads';
 import { collectSpectraPublicBlueskyImages } from '../services/spectra/SpectraPublicImageRecords';
+import { shouldRunSpectraClaudeBackground } from '../services/spectra/SpectraClaudeBudget';
 
 const router = Router();
 router.use(isAuthenticated);
@@ -143,6 +144,7 @@ const directEvidenceSchema = z.object({
 const acquireSchema = z.object({
   target: z.string().trim().min(1).max(500),
   details: z.string().trim().min(1).max(12_000),
+  refreshOnly: z.boolean().optional(),
   sessionId: z.string().trim().min(1).max(200).optional(),
   originSessionId: z.string().trim().min(1).max(200).optional(),
   directEvidence: z.array(directEvidenceSchema).max(20).default([]),
@@ -930,6 +932,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
     target,
     details,
     directEvidence,
+    refreshOnly,
     sessionId: requestedSessionId,
     originSessionId,
   } = parsed.data;
@@ -988,7 +991,12 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
     ])];
 
     const backgroundBudgetMs = Math.min(SPECTRA_OSINT_TIMEOUT_MS, 20_000);
-    const backgroundPromise = settleWithin(
+    // The visible-page five-minute refresh keeps collecting public records,
+    // but must not repurchase the same Claude research for unchanged clues.
+    // A manual acquisition still receives the full initial investigation.
+    const backgroundPromise = !shouldRunSpectraClaudeBackground({ refreshOnly, sessionId: requestedSessionId })
+      ? Promise.resolve({ status: 'fulfilled' as const, value: null })
+      : settleWithin(
       investigateLexaraBackgroundQuestion(
         `Where is ${resolvedTargetLabel}? ${details}`,
         {

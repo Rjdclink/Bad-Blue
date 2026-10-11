@@ -456,6 +456,7 @@ export default function SpectraPage() {
         body: JSON.stringify({
           target: targetValue,
           details: detailsValue,
+          refreshOnly: silentRefresh,
           sessionId: sessionOverride || spectraSessionId || undefined,
           originSessionId: originLexaraSessionIdRef.current || undefined,
           directEvidence: extraEvidence.map(point => ({
