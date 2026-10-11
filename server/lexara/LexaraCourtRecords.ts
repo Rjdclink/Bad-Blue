@@ -18,6 +18,18 @@ const MAX_DOCUMENTS = 3;
 const cleanText = (value: unknown) => String(value || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
 const quoted = (value: string) => '"' + value.replace(/["\\]/g, ' ').trim().slice(0, 180) + '"';
 
+function federalDocket(value: string) {
+  const match = value.match(/\b(?:(\d{1,2}):)?(\d{2,4})[-\s]*(cv|cr|bk|ap|mc|civ)\.?[-\s]*(\d{2,7})/i);
+  return match ? { office: match[1], year: match[2].slice(-2), type: match[3].toLowerCase().replace('civ', 'cv'), number: Number(match[4]), digits: match[4] } : undefined;
+}
+
+export function sameLexaraDocket(expected: string, actual: string): boolean {
+  const left = federalDocket(expected), right = federalDocket(actual);
+  if (left && right) return left.year === right.year && left.type === right.type && left.number === right.number
+    && (!left.office || !right.office || left.office === right.office);
+  return expected.replace(/[^a-z0-9]/gi, '').toLowerCase() === actual.replace(/[^a-z0-9]/gi, '').toLowerCase();
+}
+
 /** Select case evidence, not an unrelated person's background report. No model call. */
 export function planLexaraCourtRecords(
   question: string,
@@ -51,7 +63,9 @@ export function planLexaraCourtRecords(
             : /appeal/i.test(selectionQuestion)
               ? ['judgment', 'notice of appeal', 'appellate decision', 'mandate']
               : ['complaint', 'proof of service', 'relevant motion', 'latest order', 'judgment'];
-  const lookupQuery = docketNumber ? `docketNumber:${quoted(docketNumber)}`
+  const federal = docketNumber ? federalDocket(docketNumber) : undefined;
+  const searchNumber = federal ? `${federal.year}-${federal.type}-${federal.digits}` : docketNumber;
+  const lookupQuery = searchNumber ? `docketNumber:${quoted(searchNumber)}`
     : caption ? `caseName:${quoted(caption)}` : prior?.lookupQuery || (subject ? quoted(subject) : undefined);
   return {
     objective: question.slice(0, 1800), docketNumber, subject, lookupQuery,
@@ -100,8 +114,7 @@ export async function searchLexaraCourtRecords(
   const matchedDockets = new Set<string>();
   const documentCandidates: Array<{ id: number; url: string; title: string; metadata: string }> = [];
   for (const item of candidates) {
-    if (plan.docketNumber && cleanText(item.docketNumber).replace(/[^a-z0-9]/gi, '').toLowerCase()
-      !== plan.docketNumber.replace(/[^a-z0-9]/gi, '').toLowerCase()) continue;
+    if (plan.docketNumber && !sameLexaraDocket(plan.docketNumber, cleanText(item.docketNumber))) continue;
     const url = publicCourtUrl(item.absolute_url);
     if (!url) continue;
     matchedDockets.add(new URL(url).pathname.split('/')[2]);
@@ -146,7 +159,7 @@ export async function searchLexaraCourtRecords(
       excerpt: `${doc.metadata}\nRetrieved filing text (bounded extract): ${courtRecordExcerpt(content, plan)}` };
   }));
   const filings = extracted.filter((item): item is NonNullable<typeof item> => Boolean(item));
-  console.info('[LEXARA CourtRecords]', { docketCount: sources.length, filingCount: filings.length,
+  console.info('[LEXARA CourtRecords]', { candidateCount: candidates.length, docketCount: sources.length, filingCount: filings.length,
     identifiedCase: Boolean(plan.lookupQuery), paidFetches: 0 });
   return [...filings, ...sources];
 }

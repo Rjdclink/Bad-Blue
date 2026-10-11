@@ -214,6 +214,7 @@ async function discoverAuthoritySources(
     requestedFact:context.requestedFact,
     officialFormQuery: formLookup,
     allowClaudePlanning: courtPlan ? false : undefined,
+    firstUseful: courtPlan?.lookupQuery ? true : undefined,
   };
   const discoveryQuery = formLookup
     ? [context.jurisdiction, formObjective]
@@ -237,8 +238,8 @@ async function discoverAuthoritySources(
   if(includeLegalAuthorities){
     const indexQuery = [context.jurisdiction, formObjective].filter(Boolean).join(' ').slice(0, 900);
     const [courtListenerResult, govInfoResult, courtRecordResult] = await Promise.all([
-      searchCourtListener(indexQuery, signal),
-      searchGovInfo(courtPlan ? `collection:USCOURTS AND (${indexQuery.replace(/[():"\\]/g, ' ')})` : indexQuery, signal),
+      searchCourtListener(courtPlan?.lookupQuery || indexQuery, signal),
+      searchGovInfo(courtPlan ? `collection:USCOURTS AND (${(context.subject || courtPlan.subject || courtPlan.docketNumber || indexQuery).replace(/[():"\\]/g, ' ')})` : indexQuery, signal),
       courtPlan ? searchLexaraCourtRecords(courtPlan, signal) : Promise.resolve([]),
     ]);
     courtRecordResult.forEach(add);
@@ -261,7 +262,7 @@ async function discoverAuthoritySources(
     mesh.forEach(item => add(item));
   }
   supportingAuthorities.forEach(add);
-  if (courtPlan || legalMeshSufficient(mesh) || sources.length >= MAX_AUTHORITY_SOURCES) return sources;
+  if ((courtPlan && sources.some(source => source.evidenceLevel === 'document')) || legalMeshSufficient(mesh) || sources.length >= MAX_AUTHORITY_SOURCES) return sources;
 
   const supplemental = await discoverLegalMeshSupplemental(discoveryQuery, [...seen], signal, meshOptions);
   supplemental.forEach(item => add(item));
@@ -277,7 +278,7 @@ async function enrichAuthoritySourcesWithLexaraRetrieval(
   if (!sources.length) return sources;
   const targets = sources.filter(source => source.recordType !== 'docket' && source.evidenceLevel !== 'document' && (!source.excerpt?.trim()
     || source.recordType === 'opinion'
-    || (courtLookup && source.kind === 'primary')
+    || (courtLookup && (source.kind === 'primary' || /^https:\/\/(?:law|dockets)\.justia\.com\/(?:cases|docket)\//i.test(source.url)))
     || (formLookup && source.kind === 'primary' && /\b(?:forms?|instructions?|petition|cover\s+sheet|assignment)\b/i.test([source.title, source.excerpt].join(' ')))
     )).slice(0, 6).map(source => source.url);
   if (!targets.length) return sources;
@@ -388,9 +389,12 @@ export async function researchLegalAuthority(
     const sourceList = courtRecordPlan ? sources.map((source, index) =>
       `${index + 1}. ${source.title} — ${source.url}`).join('\n') + '\n\nEvidence extracts:\n' : '';
     const summary = (sourceList + sources.map((source, index) => {
-      const excerpt = source.excerpt ? `\nEvidence excerpt: ${source.excerpt}` : '';
+      const selectedExcerpt = courtRecordPlan && source.evidenceLevel !== 'document'
+        ? source.excerpt?.slice(0, 350) : source.excerpt;
+      const excerpt = selectedExcerpt ? `\nEvidence excerpt: ${selectedExcerpt}` : '';
       const evidence = source.evidenceLevel ? `; ${source.recordType || 'source'} ${source.evidenceLevel}` : '';
-      return `${index + 1}. [${source.kind.toUpperCase()}${evidence}] ${source.title} — ${source.url}${excerpt}`;
+      const label = courtRecordPlan ? '' : ` ${source.title} — ${source.url}`;
+      return `${index + 1}. [${source.kind.toUpperCase()}${evidence}]${label}${excerpt}`;
     }).join('\n')).slice(0, courtRecordPlan ? 12_000 : MAX_RESEARCH_SUMMARY_CHARACTERS);
 
     return {
