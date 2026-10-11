@@ -124,7 +124,8 @@ if (!legalMesh.includes('isPreferredOfficialCandidate') || !legalMesh.includes('
   throw new Error('Lexara factual discovery does not prioritize matching official registries');
 }
 if (!legalMesh.includes('async function firstUsefulParallelSearch')
-  || !legalMesh.includes('Promise.allSettled([')
+  || !legalMesh.includes('Promise.allSettled(providers)')
+  || !legalMesh.includes('queries.map(query => freeSearch(query, signal, false))')
   || legalMesh.includes('const learnedOutcomes=await Promise.allSettled')
   || legalMesh.includes('const plannedOutcomes=await Promise.allSettled')) {
   throw new Error('Lexara supplemental discovery must preserve parallel provider evidence until scoring');

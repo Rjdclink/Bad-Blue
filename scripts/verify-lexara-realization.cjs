@@ -1007,7 +1007,8 @@ must(
 );
 must(
   lexaraLegalMesh.includes('async function firstUsefulParallelSearch') &&
-    lexaraLegalMesh.includes('Promise.allSettled([') &&
+    lexaraLegalMesh.includes('Promise.allSettled(providers)') &&
+    lexaraLegalMesh.includes('queries.map(query => freeSearch(query, signal, false))') &&
     !lexaraLegalMesh.includes('const learnedOutcomes=await Promise.allSettled') &&
     !lexaraLegalMesh.includes('const plannedOutcomes=await Promise.allSettled') &&
     lexaraBackgroundInvestigation.includes('LIVE_TOTAL_CANDIDATES = 18') &&
