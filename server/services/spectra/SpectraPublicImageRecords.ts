@@ -104,7 +104,7 @@ export async function collectSpectraPublicBlueskyImages(
     }
   }));
   return {
-    records: outcomes.filter((record): record is SpectraRetrievedEvidence => Boolean(record)),
+    records: outcomes.filter((record): record is NonNullable<typeof record> => record !== null),
     attempted: leads.length,
     failed: outcomes.filter(record => !record).length,
   };

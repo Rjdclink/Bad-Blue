@@ -58,6 +58,8 @@ The next local pass adds bounded first/last-name profile discovery on Bluesky's 
 
 ## Record and hypothesis contract
 
+Phone and directory implementation: Spectra searches the supplied number in formatted and ten-digit forms against public reverse-number and directory pages. It also fetches a public NPA-NXX assignment table and selects the exact thousand-number block. That block describes the original assignment area, never the subscriber's current residence, carrier, IP address, or live position. A fetched directory entry in the form “full name, age, City, ST; lived in …” creates a provisional city claim from the first location and excludes the historical list. The fetched page and supporting statement are archived, and a source publication date is separate from retrieval time. A person-specific residence claim outranks number-origin context. Phone-only context is shown with very low confidence. These local checks do not establish live end-to-end accuracy.
+
 1. Store source bytes or an explicit extracted snapshot, canonical URL, provider, publisher, stable record ID, content hash, HTTP result, retrieval time and source publication/capture time separately. A failed fetch stays a lead, not evidence.
 2. Extract claims as `{subjectCandidate, relation, place, eventTime, publicationTime, sourceRecordId, extractionMethod, limitations}`. Preserve the exact sentence/field supporting the claim and the original record. Missing times and place precision stay missing.
 3. Link records to candidate identities, with positive and contradictory attributes and an explicit `unknown` state. Multiple pages repeating the same upstream story form one source family.
