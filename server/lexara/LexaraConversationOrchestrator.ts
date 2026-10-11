@@ -13,6 +13,7 @@ import {
 } from './LexaraLegalDomainProfiles';
 import { decideLexaraResearchNeed, isLexaraGenericLegalIntake, isLexaraRepeatRequest, isLexaraDocumentIntakeQuestion, isLexaraOfficialFormQuestion } from './LexaraResearchIntentRouter';
 import { planLexaraSequence } from './LexaraSequenceRouter';
+import { planLexaraCourtRecords, formatLexaraCourtRecordPlan } from './LexaraCourtRecords';
 import { resolveLexaraResearchDecisionSemantic } from './LexaraSemanticIntentInterpreter';
 import { mergeCompatibleLexaraBackgroundSubjects, resolveLexaraBackgroundSubject } from './LexaraBackgroundSubject';
 import {
@@ -615,6 +616,9 @@ export async function generateLexaraConversationResponse(
       jurisdiction: publicJurisdiction, mappedLawType };
   }
   const researchDecision = sequencePlan.researchDecision;
+  const courtRecordPlan = planLexaraCourtRecords(researchDecision.standaloneQuery || cleanPrompt, {
+    jurisdiction, subject: researchDecision.subject, requestedFact: researchDecision.requestedFact,
+  }, previousUserTurns);
   console.log('[LEXARA ResearchRoute]', {
     sequence: sequencePlan.sequence,
     researchNeeded: researchDecision.needed,
@@ -644,10 +648,10 @@ export async function generateLexaraConversationResponse(
     };
   }
 
-  // The explicit six-sequence router owns subsystem selection. Mixed legal and
-  // background questions deliberately run both research domains in parallel.
-  const mixedLegalFactNeed = sequencePlan.useLegalResearch && sequencePlan.useBackgroundResearch;
-  const backgroundResearchRequested = sequencePlan.useBackgroundResearch;
+  // Court-case evidence uses the existing authority lane; a separate person's
+  // background investigation would add latency and unrelated records.
+  const backgroundResearchRequested = sequencePlan.useBackgroundResearch && !courtRecordPlan;
+  const mixedLegalFactNeed = sequencePlan.useLegalResearch && backgroundResearchRequested;
   const parsedDecisionBackgroundSubject = backgroundResearchRequested && researchDecision.subject
     ? resolveLexaraBackgroundSubject(researchDecision.subject, previousUserTurns, jurisdiction)
     : null;
@@ -735,7 +739,7 @@ export async function generateLexaraConversationResponse(
   const relayResearchAbort = () => researchController.abort();
   if (context.signal?.aborted) researchController.abort();
   else context.signal?.addEventListener('abort', relayResearchAbort, { once: true });
-  const researchRouteSelected = sequencePlan.useLegalResearch;
+  const researchRouteSelected = sequencePlan.useLegalResearch || Boolean(courtRecordPlan);
   const authorityResearchPromise = researchRouteSelected
     ? researchLegalAuthority(researchDecision.standaloneQuery || researchDecision.objective || cleanPrompt, {
         jurisdiction,
@@ -746,7 +750,8 @@ export async function generateLexaraConversationResponse(
         researchIntent: researchDecision.intent,
         subject: researchDecision.subject,
         requestedFact: researchDecision.requestedFact,
-        sourceCategories: researchDecision.sourceCategories,
+        sourceCategories: courtRecordPlan ? [...new Set([...researchDecision.sourceCategories, 'courts' as const])] : researchDecision.sourceCategories,
+        courtRecordPlan,
         standaloneQuery: researchDecision.standaloneQuery,
         signal: researchController.signal,
       }).catch(() => null)
@@ -903,6 +908,7 @@ export async function generateLexaraConversationResponse(
     + formatDeadlineCalculationForSystem(verifiedDeterministicDeadline)
     + resolvedBackgroundSubjectPrompt
     + researchStatusPrompt
+    + (!authorityResearch ? formatLexaraCourtRecordPlan(courtRecordPlan) : '')
     + formatLexaraBackgroundResearchForSystem(backgroundInvestigation)
     + backgroundPresentationPrompt
     + (isLexaraDocumentIntakeQuestion(cleanPrompt)
@@ -936,6 +942,7 @@ export async function generateLexaraConversationResponse(
   // correction. Research-backed turns remain final-answer-first so a preliminary
   // model sentence can never outrun source validation.
   const progressiveClaudeAllowed = !backgroundResearchRequested
+    && !courtRecordPlan
     && !researchDecision.needed;
   // Document-routing answers may stream text immediately. The existing route
   // still blocks document text from the real-time speech channel.
@@ -1145,6 +1152,8 @@ export async function generateLexaraConversationResponse(
       : null,
     researchSubject: resolvedBackgroundSubject?.name || researchDecision.subject || null,
     researchLanes: authorityResearch?.selectedCrawlers || backgroundInvestigation?.discoveryLanes || [],
+    courtRecordLookup: Boolean(courtRecordPlan),
+    courtFilingCount: authorityResearch?.sources.filter(source => source.recordType === 'filing' && source.evidenceLevel === 'document').length || 0,
     researchSourceCount: authorityResearch?.sources?.length || backgroundInvestigation?.sources?.length || 0,
     citationVerificationCount,
     unresolvedCitationCount,
