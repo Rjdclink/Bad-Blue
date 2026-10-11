@@ -161,7 +161,7 @@ export function htmlEvidence(raw: string, sourceUrl: string): {
     .first();
   const excerptRoot = (semanticRoot.length ? semanticRoot : $('body').first()).clone();
   excerptRoot.find(
-    'nav, header, footer, aside, form, button, [role="navigation"], [aria-hidden="true"]'
+    'script, nav, header, footer, aside, form, button, [role="navigation"], [aria-hidden="true"]'
   ).remove();
   const textExcerpt = excerptRoot.text().replace(/\s+/g, ' ').trim().slice(0, 8_000) || undefined;
   const observations: SpectraRetrievedObservation[] = [];
