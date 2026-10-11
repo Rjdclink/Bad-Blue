@@ -32,6 +32,7 @@ export interface LexaraAuthorityResearch {
   summary: string;
   sources: LexaraAuthoritySource[];
   hasPrimaryAuthority: boolean;
+  hasUsableEvidence: boolean;
   searchedAt: string;
   selectedCrawlers: string[];
   researchIntent: LexaraResearchIntent;
@@ -216,7 +217,10 @@ async function discoverAuthoritySources(
   if (recordLookup && courtPlan) {
     const records = await searchLexaraCourtRecords(courtPlan, signal);
     records.forEach(add);
-    if (records.some(source => source.recordType === 'filing' && source.evidenceLevel === 'document')) return sources;
+    // Captions/subjects and ambiguous docket matches remain discovery leads.
+    // They cannot suppress independent court/party clarification or web discovery.
+    if (courtPlan.docketNumber && records.filter(source => source.recordType === 'docket').length === 1
+      && records.some(source => source.recordType === 'filing' && source.evidenceLevel === 'document')) return sources;
     if (signal?.aborted) return sources;
   }
   if (courtPlan) {
@@ -379,7 +383,7 @@ export async function researchLegalAuthority(
     });
     const sources = await enrichAuthoritySourcesWithLexaraRetrieval(discoveredSources, context.signal, formLookup, Boolean(courtRecordPlan));
 
-    void Promise.allSettled(sources.map(source => rememberLexaraDiscoveryOutcome(
+    void Promise.allSettled(sources.filter(source => source.recordType !== 'portal').map(source => rememberLexaraDiscoveryOutcome(
       source.url,
       Boolean(source.excerpt?.trim()),
       {
@@ -405,7 +409,8 @@ export async function researchLegalAuthority(
     return {
       summary,
       sources,
-      hasPrimaryAuthority: sources.some(source => source.kind === 'primary'),
+      hasPrimaryAuthority: sources.some(source => source.kind === 'primary' && source.recordType !== 'portal'),
+      hasUsableEvidence: sources.some(source => source.recordType !== 'portal' && Boolean(source.excerpt?.trim())),
       searchedAt: new Date().toISOString(),
       selectedCrawlers:[...new Set(sources.map(source=>source.provider||'lexara-direct-retrieval'))],
       researchIntent:intent,

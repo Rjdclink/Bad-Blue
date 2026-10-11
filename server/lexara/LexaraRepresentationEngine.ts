@@ -427,7 +427,8 @@ async function buildPacket(
   const research: LexaraAuthorityResearch | null = firstResearch && mergedSources.length ? {
     ...firstResearch,
     sources: mergedSources,
-    hasPrimaryAuthority: mergedSources.some(source => source.kind === 'primary'),
+    hasPrimaryAuthority: mergedSources.some(source => source.kind === 'primary' && source.recordType !== 'portal'),
+    hasUsableEvidence: mergedSources.some(source => source.recordType !== 'portal' && Boolean(source.excerpt?.trim())),
     selectedCrawlers: [...new Set(researchResults.flatMap(result => result.selectedCrawlers))],
     searchedAt: researchResults.map(result => result.searchedAt).sort().slice(-1)[0] || firstResearch.searchedAt,
     summary: mergedSources.map((source, index) =>

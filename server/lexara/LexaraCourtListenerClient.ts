@@ -90,7 +90,10 @@ export async function lexaraCourtListenerJson(path: string, signal?: AbortSignal
     const finish = (value: any | null) => {
       if (finished) return;
       finished = true; signal?.removeEventListener('abort', abort);
-      entry.users--; if (!entry.users && pending.get(key) === entry) entry.controller.abort();
+      entry.users--;
+      if (!entry.users && pending.get(key) === entry) {
+        pending.delete(key); entry.controller.abort();
+      }
       resolve(value);
     };
     const abort = () => finish(null);
