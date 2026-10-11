@@ -133,6 +133,9 @@ interface AcquisitionResponse {
     publicProfileCandidateCount?: number;
     publicProfileContactMatches?: number;
     publicProfileCandidatePostCount?: number;
+    publicBlueskyImageAttemptCount?: number;
+    publicBlueskyImageRecordCount?: number;
+    publicBlueskyImageFailureCount?: number;
     publicMastodonStatus?: string;
     publicMastodonReason?: string;
     publicMastodonRecordCount?: number;
@@ -535,6 +538,9 @@ export default function SpectraPage() {
           : []),
         ...(payload.acquisition?.publicProfileCandidateStatus && payload.acquisition.publicProfileCandidateStatus !== 'skipped'
           ? [`Bluesky discovery: ${payload.acquisition.publicProfileCandidateCount ?? 0} possible profiles, ${payload.acquisition.publicProfileCandidatePostCount ?? 0} public posts; ${payload.acquisition.publicProfileContactMatches ?? 0} public contact matches. Account ownership remains unverified.`]
+          : []),
+        ...((payload.acquisition?.publicBlueskyImageAttemptCount ?? 0) > 0
+          ? [`Public Bluesky images: ${payload.acquisition?.publicBlueskyImageRecordCount ?? 0} of ${payload.acquisition?.publicBlueskyImageAttemptCount ?? 0} downloaded and inspected for metadata; ${payload.acquisition?.publicBlueskyImageFailureCount ?? 0} failed. Image bytes are not archived; an image scene does not establish a person's location.`]
           : []),
         ...(payload.acquisition?.publicMastodonStatus && payload.acquisition.publicMastodonStatus !== 'not_supplied'
           ? [`Public Mastodon profile: ${payload.acquisition.publicMastodonStatus.replace(/_/g, ' ')}${payload.acquisition.publicMastodonReason ? ` (${payload.acquisition.publicMastodonReason.replace(/_/g, ' ')})` : ''}; ${payload.acquisition.publicMastodonRecordCount ?? 0} public account records collected. Profile ownership remains unverified.`]

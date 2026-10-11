@@ -7,6 +7,7 @@ import { inferProvisionalRegionalCities, inferPublicContactProfileCities } from 
 import { mergePublicRetrievedMetadata } from '../server/services/spectra/SpectraPublicEvidenceProvenance';
 import { publicProfileContactMatch, publicProfileNameMatch } from '../server/services/spectra/SpectraPublicProfileIdentity';
 import { publicProfileLeads } from '../server/services/spectra/SpectraPublicProfileLeads';
+import { collectSpectraPublicBlueskyImages } from '../server/services/spectra/SpectraPublicImageRecords';
 import type { SpectraRetrievedEvidence } from '../server/services/spectra/SpectraPublicRetrieval';
 
 const did = `did:plc:${'a'.repeat(24)}`;
@@ -104,6 +105,29 @@ assert.equal((account.records[1].structuredRecord as any).record.text, 'Public s
 assert.equal((account.records[1].structuredRecord as any).embed.images[0].alt, 'Public photograph');
 assert.equal(account.records[0].observations.length, 0);
 assert(calls.every(url => new URL(url).host === 'public.api.bsky.app'));
+const imageCalls: string[] = [];
+const publicImages = await collectSpectraPublicBlueskyImages([account.records[1]], {
+  fetchImpl: async (request, init) => {
+    imageCalls.push(String(request));
+    assert.equal(init?.redirect, 'manual');
+    assert.equal(new Headers(init?.headers).get('authorization'), null);
+    return new Response(Buffer.from([0xff, 0xd8, 0xff, 0xd9]),
+      { headers: { 'content-type': 'image/jpeg' } });
+  },
+});
+assert.equal(publicImages.attempted, 1);
+assert.equal(publicImages.records.length, 1);
+assert.equal(imageCalls[0], 'https://cdn.bsky.app/img/example');
+assert.equal(publicImages.records[0].observations.length, 0);
+assert.equal((publicImages.records[0].structuredRecord as any).imageBytesArchived, false);
+assert.equal((publicImages.records[0].structuredRecord as any).byteLength, 4);
+const rejectedImage = await collectSpectraPublicBlueskyImages([account.records[1]], {
+  fetchImpl: async () => new Response('oversized', {
+    headers: { 'content-type': 'image/jpeg', 'content-length': '3000001' },
+  }),
+});
+assert.equal(rejectedImage.failed, 1);
+assert.equal(rejectedImage.records.length, 0);
 const profileOnly = await collectSpectraPublicAccountRecords('https://bsky.app/profile/sample.bsky.social', {
   fetchImpl: async (request) => String(request).includes('getProfile')
     ? new Response(JSON.stringify({ did, handle: 'sample.bsky.social' }), { headers: { 'content-type': 'application/json' } })

@@ -76,6 +76,7 @@ import { collectSpectraPublicMastodonRecords, discoverSpectraPublicMastodonProfi
 import { collectSpectraPublicWikimediaRecords } from '../services/spectra/SpectraPublicWikimediaRecords';
 import { publicProfileContactMatch, publicProfileNameMatch } from '../services/spectra/SpectraPublicProfileIdentity';
 import { publicProfileLeads } from '../services/spectra/SpectraPublicProfileLeads';
+import { collectSpectraPublicBlueskyImages } from '../services/spectra/SpectraPublicImageRecords';
 
 const router = Router();
 router.use(isAuthenticated);
@@ -1099,6 +1100,14 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
     const mastodonCandidatePosts = mastodonCandidateCollections.flatMap(collection =>
       collection.records.filter(record => record.title === 'Public Mastodon status')
     );
+    const contactMatchedBlueskyPosts = blueskyCandidateCollections
+      .filter(collection => collection.records.some(record =>
+        record.title === 'Public Bluesky profile' && contactMatch(record)))
+      .flatMap(collection => collection.records.filter(record => record.title === 'Public Bluesky post'));
+    if (publicAccount.records.some(record => record.title === 'Public Bluesky profile' && contactMatch(record))) {
+      contactMatchedBlueskyPosts.push(...publicAccount.records.filter(record => record.title === 'Public Bluesky post'));
+    }
+    const publicBlueskyImages = await collectSpectraPublicBlueskyImages(contactMatchedBlueskyPosts);
 
     const activeBatchOutcomes = await Promise.allSettled(
       activeAcquisition.batches.map(batch =>
@@ -1143,6 +1152,10 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
         title: record.title, url: record.url, publishedAt: record.publishedAt,
         snippet: record.textExcerpt, provider: 'Bluesky public API',
         identityStatus: 'Possible profile; post ownership of target unverified',
+      })), ...publicBlueskyImages.records.map(record => ({
+        title: record.title, url: record.url, publishedAt: record.publishedAt,
+        snippet: record.textExcerpt, provider: 'Bluesky public image CDN',
+        identityStatus: 'Public image inspected; scene and subject presence unverified',
       })), ...publicAccount.records.map(record => ({
         title: record.title,
         url: record.url,
@@ -1290,7 +1303,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
     // A later successful fetch of an existing search hit must reach the archive.
     const retrievedEvidence = [
       ...firstPass.retrievedEvidence, ...publicProfileCandidates.records,
-      ...blueskyCandidatePosts, ...publicAccount.records,
+      ...blueskyCandidatePosts, ...publicBlueskyImages.records, ...publicAccount.records,
       ...publicMastodonCandidates.records, ...mastodonCandidatePosts,
       ...publicMastodon.records, ...publicWikimedia.records, ...publicNews.records,
     ];
@@ -1781,6 +1794,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
     const publicCandidateUrls = new Set([
       ...publicProfileCandidates.records, ...blueskyCandidatePosts,
     ].map(record => record.url));
+    const publicImageUrls = new Set(publicBlueskyImages.records.map(record => record.url));
     const publicMastodonUrls = new Set(publicMastodon.records.map(record => record.url));
     const publicMastodonCandidateUrls = new Set([
       ...publicMastodonCandidates.records, ...mastodonCandidatePosts,
@@ -1789,12 +1803,16 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
     const publicNewsUrls = new Set(publicNews.records.map(record => record.url));
     const evidenceRecords = buildSpectraAcquisitionRecords(retrievedEvidence.map(evidence => ({
       url: evidence.url,
-      provider: publicAccountUrls.has(evidence.url) || publicCandidateUrls.has(evidence.url) ? 'bluesky-public-api'
+      provider: publicImageUrls.has(evidence.url) ? 'bluesky-image-binary'
+        : publicAccountUrls.has(evidence.url) || publicCandidateUrls.has(evidence.url) ? 'bluesky-public-api'
         : publicMastodonUrls.has(evidence.url) || publicMastodonCandidateUrls.has(evidence.url) ? 'mastodon-public-api'
         : publicWikimediaUrls.has(evidence.url) ? 'wikimedia-commons-api'
         : publicNewsUrls.has(evidence.url) ? 'gdelt-article-retrieval' : 'spectra-public-retrieval',
       metadata: {
         ...mergePublicRetrievedMetadata(undefined, evidence),
+        ...(publicImageUrls.has(evidence.url)
+          ? { retrievalProvider: 'bluesky-image-binary', subjectAssociation: 'public_media_scene_unverified' }
+          : {}),
         ...(publicAccountUrls.has(evidence.url)
           ? { retrievalProvider: 'bluesky-public-api', subjectAssociation: 'supplied_profile_url_unverified' }
           : {}),
@@ -1858,6 +1876,9 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
         publicProfileCandidateCount: publicProfileCandidates.records.length,
         publicProfileContactMatches: publicProfileCandidates.records.filter(record => contactMatch(record)).length,
         publicProfileCandidatePostCount: blueskyCandidatePosts.length,
+        publicBlueskyImageAttemptCount: publicBlueskyImages.attempted,
+        publicBlueskyImageRecordCount: publicBlueskyImages.records.length,
+        publicBlueskyImageFailureCount: publicBlueskyImages.failed,
         publicMastodonStatus: publicMastodon.status,
         publicMastodonReason: publicMastodon.reason,
         publicMastodonRecordCount: publicMastodon.records.length,
@@ -1934,6 +1955,9 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
         publicProfileCandidateCount: publicProfileCandidates.records.length,
         publicProfileContactMatches: publicProfileCandidates.records.filter(record => contactMatch(record)).length,
         publicProfileCandidatePostCount: blueskyCandidatePosts.length,
+        publicBlueskyImageAttemptCount: publicBlueskyImages.attempted,
+        publicBlueskyImageRecordCount: publicBlueskyImages.records.length,
+        publicBlueskyImageFailureCount: publicBlueskyImages.failed,
         publicMastodonStatus: publicMastodon.status,
         publicMastodonReason: publicMastodon.reason,
         publicMastodonRecordCount: publicMastodon.records.length,
