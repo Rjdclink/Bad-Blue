@@ -3,7 +3,7 @@ import { collectSpectraPublicAccountRecords, discoverSpectraPublicBlueskyProfile
 import { collectSpectraPublicNewsRecords } from '../server/services/spectra/SpectraPublicNewsRecords';
 import { collectSpectraPublicMastodonRecords, discoverSpectraPublicMastodonProfiles } from '../server/services/spectra/SpectraPublicMastodonRecords';
 import { collectSpectraPublicWikimediaRecords } from '../server/services/spectra/SpectraPublicWikimediaRecords';
-import { inferProvisionalRegionalCities, inferPublicContactProfileCities } from '../server/services/spectra/SpectraRegionalInference';
+import { inferProvisionalRegionalCities, inferPublicContactProfileCities, retrievedRegionalSources } from '../server/services/spectra/SpectraRegionalInference';
 import { mergePublicRetrievedMetadata } from '../server/services/spectra/SpectraPublicEvidenceProvenance';
 import { publicProfileContactMatch, publicProfileNameMatch } from '../server/services/spectra/SpectraPublicProfileIdentity';
 import { publicProfileLeads } from '../server/services/spectra/SpectraPublicProfileLeads';
@@ -272,12 +272,20 @@ assert.deepEqual(inferProvisionalRegionalCities('Jane Doe', [localNews]).map(cit
 const midwestNews = {
   url: 'https://www.nwestiowa.com/news/example', title: 'Hartley man jailed', snippet: '',
   metadata: {
-    fetchedExcerpt: 'HARTLEY—A 45-year-old Hartley man was arrested about 11 a.m. Wednesday. The arrest of John Example stemmed from a report.',
+    fetchedExcerpt: 'HARTLEY—A 45-year-old Hartley man was arrested about 11 a.m. Wednesday, Dec. 17, on charges of possession. The arrest of John Example stemmed from a report.',
     publishedAt: now,
   },
 };
 assert.deepEqual(inferProvisionalRegionalCities('John Example', [midwestNews]).map(city => [city.city, city.state]),
   [['Hartley', 'IA']], 'the local-news phrasing seen in the production record must produce a dated candidate');
+const fetchedMidwestArticle: SpectraRetrievedEvidence = {
+  url: midwestNews.url, requestedUrl: midwestNews.url,
+  retrievedAt: now, publishedAt: now,
+  textExcerpt: midwestNews.metadata.fetchedExcerpt, observations: [],
+};
+assert.deepEqual(inferProvisionalRegionalCities('John Example', retrievedRegionalSources([fetchedMidwestArticle]))
+  .map(city => [city.city, city.state]), [['Hartley', 'IA']],
+  'a retrieved page must reach city inference even without a surviving search-result lead');
 assert.equal(inferProvisionalRegionalCities('Other Person', [localNews]).length, 0,
   'a different person must not inherit the article city');
 assert.equal(inferProvisionalRegionalCities('Jane Doe', [{ ...localNews, url: 'https://unrelatednews.com/story' }]).length, 0,

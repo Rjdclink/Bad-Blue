@@ -58,7 +58,7 @@ import {
   mergePublicRetrievedMetadata,
   stripUnboundPublicGeoContext,
 } from '../services/spectra/SpectraPublicEvidenceProvenance';
-import { inferCorroboratedRegionalCity, inferProvisionalRegionalCities, inferPublicContactProfileCities } from '../services/spectra/SpectraRegionalInference';
+import { inferCorroboratedRegionalCity, inferProvisionalRegionalCities, inferPublicContactProfileCities, retrievedRegionalSources } from '../services/spectra/SpectraRegionalInference';
 import { inferPublicDirectoryCities } from '../services/spectra/SpectraPublicDirectoryCities';
 import { collectSpectraPhoneOrigin } from '../services/spectra/SpectraPhoneOrigin';
 import {
@@ -1343,6 +1343,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
     ]);
     // Preserve fetched records independently of search-result ranking/deduping.
     // A later successful fetch of an existing search hit must reach the archive.
+    const searchRetrievedEvidence = [...firstPass.retrievedEvidence];
     const retrievedEvidence = [
       ...firstPass.retrievedEvidence, ...publicProfileCandidates.records,
       ...blueskyCandidatePosts, ...publicBlueskyImages.records, ...publicAccount.records,
@@ -1353,7 +1354,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
     ];
     // Person-city guesses must rest on the retrieved publisher text. A search
     // title or snippet can describe someone else even when the URL resolves.
-    const fetchedCitySources = () => discoveryResults.filter(result =>
+    const fetchedCitySources = () => [...discoveryResults.filter(result =>
       result.metadata?.subjectAssociation !== 'supplied_profile_url_unverified'
       && result.metadata?.subjectAssociation !== 'name_match_unverified'
       && result.metadata?.subjectAssociation !== 'case_name_match_unverified'
@@ -1361,7 +1362,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
     ).map(result => ({
       ...result, title: '', snippet: '',
       metadata: { ...result.metadata, fetchedOrCitedText: undefined },
-    }));
+    })), ...retrievedRegionalSources(searchRetrievedEvidence)];
     const retrievalCounts = { ...firstPass.retrieval };
     let discoveryQueriesAttempted = firstPass.attempted;
     let discoveryQueriesFailed = firstPass.failed;
@@ -1420,6 +1421,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       });
       discoveryQueriesAttempted += nextPass.attempted;
       retrievedEvidence.push(...nextPass.retrievedEvidence);
+      searchRetrievedEvidence.push(...nextPass.retrievedEvidence);
       discoveryQueriesFailed += nextPass.failed;
       retrievalCounts.selected += nextPass.retrieval.selected;
       retrievalCounts.retrieved += nextPass.retrieval.retrieved;
