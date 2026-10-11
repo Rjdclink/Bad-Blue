@@ -606,7 +606,11 @@ async function firstUsefulParallelSearch(
   signal?: AbortSignal,
   _providerFirstUseful = false,
 ): Promise<LegalMeshCandidate[]> {
-  const results = await firstUsefulSearchVariants(queries, signal);
+  const results = _providerFirstUseful
+    ? await firstUsefulSearchVariants(queries, signal)
+    : fuseRankedCandidates((await Promise.allSettled(
+        queries.map(query => freeSearch(query, signal, false)),
+      )).flatMap(outcome => outcome.status === 'fulfilled' ? [outcome.value] : []));
   return diversify(results
     .filter(item => !seen.has(item.url))
     .map(item => ({ ...item, tier: 5 as const, provider: `${providerPrefix}-${item.provider}` })), 12);
