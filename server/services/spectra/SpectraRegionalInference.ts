@@ -15,6 +15,24 @@ export interface RegionalSourceExcerpt {
   metadata?: Record<string, unknown>;
 }
 
+/** Fetched search pages remain eligible for city extraction even when a
+ * search-result deduper discards their lead. Only page text, not the original
+ * snippet or retrieval time, becomes a claim. */
+export function retrievedRegionalSources(
+  records: readonly SpectraRetrievedEvidence[],
+): RegionalSourceExcerpt[] {
+  return records.filter(record => typeof record.textExcerpt === 'string' && record.textExcerpt.trim())
+    .map(record => ({
+      url: record.requestedUrl, title: '', snippet: '',
+      metadata: {
+        requestedUrl: record.requestedUrl,
+        sourceUrl: record.url,
+        fetchedExcerpt: record.textExcerpt,
+        publishedAt: record.publishedAt,
+      },
+    }));
+}
+
 export interface CorroboratedRegionalCity {
   city: string;
   state: string;
@@ -148,9 +166,10 @@ function localNewsResidentClaim(
   const lead = /\b(?:a|an)\s+\d{1,3}-year-old\s+([A-Za-z][A-Za-z'’-]*(?:\s+[A-Za-z][A-Za-z'’-]*){0,2})\s+(?:man|woman|resident)\s+(?:was|is)\s+(?:arrested|charged|jailed)\b/gi;
   for (const match of text.slice(0, 1_500).matchAll(lead)) {
     const following = text.slice(match.index! + match[0].length, match.index! + match[0].length + 450);
-    const identity = /\b(?:the\s+)?(?:arrest|jailing|charges?)\s+of\s+/i.exec(following);
-    const named = identity && fullName.exec(following.slice(identity.index + identity[0].length, identity.index + identity[0].length + 140));
-    if (!named || named.index !== 0) continue;
+    const identity = [...following.matchAll(/\b(?:the\s+)?(?:arrest|jailing|charges?)\s+of\s+/gi)]
+      .find(anchor => fullName.exec(following.slice(anchor.index! + anchor[0].length,
+        anchor.index! + anchor[0].length + 140))?.index === 0);
+    if (!identity) continue;
     const region = extractCityStateHint(`${match[1]}, ${state}`);
     if (!region) continue;
     return {
