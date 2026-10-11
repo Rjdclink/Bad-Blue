@@ -8,7 +8,7 @@ const entry = path.join(root, 'server/lexara/LexaraConversationOrchestrator.ts')
 const sourceUrl = 'https://records.example.test/jane-avery';
 const evidenceText = 'Jane Avery was arrested and booked in Iowa in the official 2024 record.';
 const verifiedEvidence = {
-  text: `1. SOURCE: ${sourceUrl}\nASSESSMENT: STRONG (96%)\nEVIDENCE: ${evidenceText}`,
+  text: `1. SOURCE: ${sourceUrl}\nRETRIEVED: 2026-10-11T00:00:00Z\nASSESSMENT: DIRECT (96%)\nEVIDENCE: ${evidenceText}`,
   sourceUrl,
   endpoint: 'evidence-sufficient',
 };
@@ -16,13 +16,23 @@ const verifiedEvidence = {
 globalThis.__lexaraProviderlessTest = { scenario: null };
 
 const mocks = {
-  '../aiCollaborationOrchestrator': `
-    export const AICollaborationOrchestrator = {async orchestrateCollaboration(...args) {
+  './RecordReliefWorkflow': `export const recordReliefTopic=()=>false,generateRecordReliefResponse=async()=>null;`,
+  './LexaraCourtRecords': `export const planLexaraCourtRecords=()=>undefined, formatLexaraCourtRecordPlan=()=>'';`,
+  './LexaraSemanticIntentInterpreter': `export const resolveLexaraResearchDecisionSemantic=async()=>null;`,
+  './LexaraJurisdictionResolver': `export const hasExplicitLocationCue=()=>false; export const resolveUSJurisdiction=async(_text,state)=>state?{display:state,state}:null;`,
+  './LexaraJurisdictionAuthority': `export const resolveJurisdictionAuthorityProfile=async()=>null,formatJurisdictionAuthorityForSystem=()=>'';`,
+  './LexaraCitationVerifier': `export const verifyLegalCitationsInText=async()=>[],formatCitationVerificationForCorrection=()=>'';`,
+  './LegalDeadlineEngine': `export const inferLegalDeadlineFromPrompt=()=>null,formatDeadlineCalculationForSystem=()=>'';`,
+
+  '../claude': `
+    export async function callClaude() {
       const s=globalThis.__lexaraProviderlessTest.scenario;
-      s.collaborationCalls++;
-      if (s.collaborationError) throw new Error('fixture provider mesh failure');
-      return {finalAnswer:s.modelAnswer || 'No successful responses from collaboration.'};
-    }};
+      if (!s.providers.includes('claude')) throw new Error('fixture Claude unavailable');
+      s.claudeCalls++;
+      if (s.claudeError) throw new Error('fixture Claude failure');
+      return {content:s.modelAnswer || '',tokensUsed:0};
+    }
+    export const callClaudeStreaming=callClaude;
   `,
   '../openRouterService': `
     export async function generateOpenRouterText() {
@@ -31,7 +41,8 @@ const mocks = {
     }
   `,
   '../aiHarmonyModelRegistry': `
-    export const CURRENT_AI_MODELS={openRouterAuto:'fixture-openrouter'};
+    export const CURRENT_AI_MODELS={claudeFast:'fixture-haiku',claude:'fixture-sonnet',claudeDeep:'fixture-opus'};
+    export const LEGAL_AI_MODELS={claudeFast:'fixture-haiku',claude:'fixture-sonnet',claudeDeep:'fixture-opus'};
     export function getConfiguredHarmonyProviders(){return globalThis.__lexaraProviderlessTest.scenario.providers || [];}
   `,
   '../aiTokenGovernor': `export const UsageContext={USER:'user'};`,
@@ -40,9 +51,9 @@ const mocks = {
     export async function researchLegalAuthority(){return null;}
     export function formatAuthorityResearchForSystem(){return '';}
   `,
-  './LexaraPantheonInvestigation': `
-    export async function investigatePersonQuestion(){return globalThis.__lexaraProviderlessTest.scenario.investigation;}
-    export function formatPantheonInvestigationForSystem(){return ' VERIFIED EVIDENCE FIXTURE ';}
+  './LexaraBackgroundInvestigation': `
+    export async function investigateLexaraBackgroundQuestion(){return globalThis.__lexaraProviderlessTest.scenario.investigation;}
+    export function formatLexaraBackgroundResearchForSystem(){return ' VERIFIED EVIDENCE FIXTURE ';}
   `,
   './LexaraLegalDomainProfiles': `
     export function getLexaraLegalDomainProfile(){return null;}
@@ -51,14 +62,15 @@ const mocks = {
   './LexaraResearchIntentRouter': `
     export function decideLexaraResearchNeed(){return {needed:false,reason:'none',objective:'',objectiveKind:'none'};}
     export function isLexaraLegalAuthorityIntent(){return false;}
+    export const isLexaraGenericLegalIntake=()=>false, isLexaraRepeatRequest=()=>false, isLexaraDocumentIntakeQuestion=()=>false, isLexaraOfficialFormQuestion=()=>false;
   `,
   './LexaraSequenceRouter': `
     export function planLexaraSequence(){
       const s=globalThis.__lexaraProviderlessTest.scenario;
-      return {sequence:s.legalOnly?'lexara-legal':'pantheon-background',
-        researchDecision:{needed:false,reason:'none',objective:'',objectiveKind:'none'},
-        useLegalResearch:!!s.legalOnly,usePantheon:!s.legalOnly,recursive:false,
-        classifyPantheon:!s.legalOnly,documentAction:false,reason:'fixture'};
+      return {sequence:s.legalOnly?'lexara-legal':'lexara-background',
+        researchDecision:{needed:!s.legalOnly,reason:'external-fact-question',objective:'Jane Avery arrest record',objectiveKind:'external-fact',intent:s.legalOnly?'legal':'factual',requestedFact:s.legalOnly?'none':'criminal-arrest',subject:s.legalOnly?undefined:'Jane Avery',sourceCategories:['criminal'],standaloneQuery:'Jane Avery arrest record'},
+        useLegalResearch:!!s.legalOnly,useBackgroundResearch:!s.legalOnly,recursive:false,
+        classifyBackground:!s.legalOnly,documentAction:false,reason:'fixture'};
     }
   `,
 };
@@ -95,7 +107,7 @@ function setup(overrides = {}) {
   delete process.env.FIRECRAWL_API_KEY;
   globalThis.__lexaraProviderlessTest.scenario = {
     providers: [],
-    collaborationCalls: 0,
+    claudeCalls: 0,
     openRouterCalls: 0,
     investigation: {
       evidenceSummary: verifiedEvidence.text,
@@ -121,9 +133,9 @@ async function main() {
   assert.match(sourceFallback.text, /Jane Avery was arrested and booked in Iowa/);
   assert.match(sourceFallback.text, new RegExp(sourceUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   assert.match(sourceFallback.text, /retrieved evidence, not a separate conclusion/);
-  assert.equal(sourceFallback.pantheonStatus, 'completed',
+  assert.equal(sourceFallback.backgroundStatus, 'completed',
     'evidence-sufficient source excerpt answers the exact named-subject and arrest question');
-  assert.equal(globalThis.__lexaraProviderlessTest.scenario.collaborationCalls, 0);
+  assert.equal(globalThis.__lexaraProviderlessTest.scenario.claudeCalls, 0);
   assert.equal(globalThis.__lexaraProviderlessTest.scenario.openRouterCalls, 0);
   assert.equal(process.env.OPENROUTER_API_KEY, undefined);
   assert.equal(process.env.FIRECRAWL_API_KEY, undefined);
@@ -134,17 +146,17 @@ async function main() {
     { jurisdiction: 'Iowa' },
   );
   assert.equal(meshAnswer.text, 'The verified answer from the configured Harmony provider.');
-  assert.equal(globalThis.__lexaraProviderlessTest.scenario.collaborationCalls, 1);
+  assert.equal(globalThis.__lexaraProviderlessTest.scenario.claudeCalls, 1);
   assert.equal(globalThis.__lexaraProviderlessTest.scenario.openRouterCalls, 0,
     'a successful configured Harmony answer does not use OpenRouter');
 
-  setup({ providers: ['claude'], collaborationError: true });
+  setup({ providers: ['claude'], claudeError: true });
   const meshFailureFallback = await orchestrator.generateLexaraConversationResponse(
     'Was Jane Avery arrested in Iowa?',
     { jurisdiction: 'Iowa' },
   );
   assert.match(meshFailureFallback.text, /Jane Avery was arrested and booked in Iowa/);
-  assert.equal(meshFailureFallback.pantheonStatus, 'completed',
+  assert.equal(meshFailureFallback.backgroundStatus, 'completed',
     'a configured mesh failure does not block a directly verified source answer');
   assert.equal(globalThis.__lexaraProviderlessTest.scenario.openRouterCalls, 0,
     'failed Harmony and absent OpenRouter still preserve verified source material');
@@ -154,13 +166,13 @@ async function main() {
     'Was Jane Avery arrested in Iowa?',
     { jurisdiction: 'Iowa' },
   );
-  assert.match(refusalFallback.text, /retrieved evidence, not a separate conclusion/);
+  assert.match(refusalFallback.text, /Jane Avery was arrested and booked in Iowa/);
   assert.doesNotMatch(refusalFallback.text, /cannot provide personal information/i);
   assert.equal(globalThis.__lexaraProviderlessTest.scenario.openRouterCalls, 0);
 
   setup({
     investigation: {
-      evidenceSummary: `1. SOURCE: ${sourceUrl}\nASSESSMENT: STRONG (96%)\nEVIDENCE: Jane Avery was told "I cannot provide personal information about a private individual."`,
+      evidenceSummary: `1. SOURCE: ${sourceUrl}\nRETRIEVED: 2026-10-11T00:00:00Z\nASSESSMENT: DIRECT (96%)\nEVIDENCE: Jane Avery was told "I cannot provide personal information about a private individual."`,
       sources: [sourceUrl],
       categories: ['criminal'],
       fullBackgroundReportRequested: false,
@@ -173,12 +185,12 @@ async function main() {
   );
   assert.doesNotMatch(quotedRefusal.text, /cannot provide personal information/i,
     'a quoted source excerpt must not be mistaken for an answer or echo a blanket permission refusal');
-  assert.equal(quotedRefusal.pantheonStatus, 'partial',
+  assert.equal(quotedRefusal.backgroundStatus, 'partial',
     'a source quoting a refusal does not complete the requested fact');
 
   setup({
     investigation: {
-      evidenceSummary: `1. SOURCE: ${sourceUrl}\nASSESSMENT: STRONG (96%)\nEVIDENCE: ${evidenceText}`,
+      evidenceSummary: `1. SOURCE: ${sourceUrl}\nRETRIEVED: 2026-10-11T00:00:00Z\nASSESSMENT: DIRECT (96%)\nEVIDENCE: ${evidenceText}`,
       sources: ['https://unrelated.example.test/other'],
       categories: ['criminal'],
       fullBackgroundReportRequested: false,
@@ -189,14 +201,14 @@ async function main() {
     'Was Jane Avery arrested in Iowa?',
     { jurisdiction: 'Iowa' },
   );
-  assert.match(invalidCitation.text, /source citation could not be validated/i);
+  assert.match(invalidCitation.text, /(?:source citation.*validat|validat.*source citation)/i);
   assert.doesNotMatch(invalidCitation.text, /unrelated\.example\.test/,
     'evidence summary is not cited when its URL is outside the verified sources');
-  assert.equal(invalidCitation.pantheonStatus, 'partial');
+  assert.equal(invalidCitation.backgroundStatus, 'partial');
 
   setup({
     investigation: {
-      evidenceSummary: `1. SOURCE: ${sourceUrl}\nASSESSMENT: STRONG (96%)\nEVIDENCE: A different person was arrested in Iowa in the official 2024 record.`,
+      evidenceSummary: `1. SOURCE: ${sourceUrl}\nRETRIEVED: 2026-10-11T00:00:00Z\nASSESSMENT: DIRECT (96%)\nEVIDENCE: A different person was arrested in Iowa in the official 2024 record.`,
       sources: [sourceUrl],
       categories: ['criminal'],
       fullBackgroundReportRequested: false,
@@ -207,11 +219,11 @@ async function main() {
     'Was Jane Avery arrested in Iowa?',
     { jurisdiction: 'Iowa' },
   );
-  assert.equal(wrongSubject.pantheonStatus, 'partial', 'a matching fact term cannot compensate for a missing subject match');
+  assert.equal(wrongSubject.backgroundStatus, 'partial', 'a matching fact term cannot compensate for a missing subject match');
 
   setup({
     investigation: {
-      evidenceSummary: `1. SOURCE: ${sourceUrl}\nASSESSMENT: STRONG (96%)\nEVIDENCE: Jane Avery appears in an official 2024 court filing.`,
+      evidenceSummary: `1. SOURCE: ${sourceUrl}\nRETRIEVED: 2026-10-11T00:00:00Z\nASSESSMENT: DIRECT (96%)\nEVIDENCE: Jane Avery appears in an official 2024 court filing.`,
       sources: [sourceUrl],
       categories: ['courts'],
       fullBackgroundReportRequested: false,
@@ -222,11 +234,11 @@ async function main() {
     'Was Jane Avery arrested in Iowa?',
     { jurisdiction: 'Iowa' },
   );
-  assert.equal(missingFact.pantheonStatus, 'partial', 'subject identity alone cannot complete an unanswered fact question');
+  assert.equal(missingFact.backgroundStatus, 'partial', 'subject identity alone cannot complete an unanswered fact question');
 
   setup({
     investigation: {
-      evidenceSummary: `1. SOURCE: ${sourceUrl}\nASSESSMENT: STRONG (96%)\nEVIDENCE: ${evidenceText}`,
+      evidenceSummary: `1. SOURCE: ${sourceUrl}\nRETRIEVED: 2026-10-11T00:00:00Z\nASSESSMENT: DIRECT (96%)\nEVIDENCE: ${evidenceText}`,
       sources: [sourceUrl],
       categories: ['criminal'],
       fullBackgroundReportRequested: false,
@@ -237,12 +249,12 @@ async function main() {
     'Is Jane Avery currently listed as arrested in Iowa?',
     { jurisdiction: 'Iowa' },
   );
-  assert.equal(missingCurrentness.pantheonStatus, 'partial',
+  assert.equal(missingCurrentness.backgroundStatus, 'partial',
     'historical arrest evidence does not answer a current-status question without currentness in the excerpt');
 
   setup({
     investigation: {
-      evidenceSummary: `1. SOURCE: ${sourceUrl}\nASSESSMENT: PARTIAL/INFERENTIAL (72%)\nEVIDENCE: ${evidenceText}`,
+      evidenceSummary: `1. SOURCE: ${sourceUrl}\nRETRIEVED: 2026-10-11T00:00:00Z\nASSESSMENT: PARTIAL (72%)\nEVIDENCE: ${evidenceText}`,
       sources: [sourceUrl],
       categories: ['criminal'],
       fullBackgroundReportRequested: false,
@@ -253,7 +265,7 @@ async function main() {
     'Was Jane Avery arrested in Iowa?',
     { jurisdiction: 'Iowa' },
   );
-  assert.equal(lowConfidence.pantheonStatus, 'partial',
+  assert.equal(lowConfidence.backgroundStatus, 'partial',
     'matching text on a partial evidence endpoint is not marked completed');
 
   setup({ legalOnly: true });
@@ -262,7 +274,7 @@ async function main() {
     { jurisdiction: 'Iowa' },
   );
   assert.match(legalFailure.text, /live legal-reasoning service is temporarily unavailable/i);
-  assert.equal(legalFailure.pantheonEndpoint, undefined);
+  assert.equal(legalFailure.backgroundEndpoint, undefined);
   assert.equal(globalThis.__lexaraProviderlessTest.scenario.openRouterCalls, 0);
 
   console.log('LEXARA providerless background fallback passed (OpenRouter and Firecrawl unset; Harmony, source fallback, refusal guard, citation validation, and legal-only failure verified).');

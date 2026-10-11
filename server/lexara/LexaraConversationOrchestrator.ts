@@ -1012,11 +1012,7 @@ export async function generateLexaraConversationResponse(
   if (!text && backgroundResearchRequested && !mixedLegalFactNeed && backgroundInvestigation?.evidenceSummary) {
     const fallback = extractVerifiedBackgroundSourceExcerpt(backgroundInvestigation);
     if (fallback) {
-      const docket = /\b(?:No\.?\s*)?(\d{2}-CR-\d{4}(?:-[A-Z]+(?:-[A-Z]+)?)?)\b/i.exec(fallback.excerpt)?.[1];
-      const captionMatches = /UNITED STATES OF AMERICA[\s\S]{0,160}\bvs?\.?\s+(?:REPORT AND RECOMMENDATION\s+)?ROBERT JOSEPH DALE\s+CLINKENBEARD/i.test(fallback.excerpt);
-      text = researchDecision.requestedFact === 'court-record' && captionMatches && docket
-        ? `A federal criminal court record names ${resolvedBackgroundSubject?.name || unverifiedSubject} as the defendant in United States v. Clinkenbeard (No. ${docket}).`
-        : `I found a subject-matched public record, but could not complete the answer to ${unverifiedObjective}.`;
+      text = `Source excerpt (retrieved evidence, not a separate conclusion): ${fallback.text}\nSource: ${fallback.sourceUrl}`;
       usedBackgroundSourceExcerptFallback = true;
     }
   }

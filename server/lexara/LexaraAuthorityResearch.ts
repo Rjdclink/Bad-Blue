@@ -210,6 +210,7 @@ async function discoverAuthoritySources(
   // discovery before the official court and agency sources are searched.
   const formObjective = context.standaloneQuery || query.match(/Question(?:\/facts)?:\s*([\s\S]*)/i)?.[1] || query;
   const formLookup = isOfficialFormLookup(formObjective);
+  const primaryTextLookup = !formLookup && /\b(?:statutes?|statutory|code\s+(?:section|chapter|§?\s*\d[\dA-Z.]*)|official\s+(?:source|link))\b/i.test(formObjective);
   const courtPlan = context.courtRecordPlan;
   const recordLookup = courtPlan ? isLexaraCourtRecordLookup(courtPlan) : false;
   const meshOptions:LegalMeshSearchOptions={
@@ -218,10 +219,10 @@ async function discoverAuthoritySources(
     subject:context.subject,
     requestedFact:context.requestedFact,
     officialFormQuery: formLookup,
-    allowClaudePlanning: courtPlan ? false : context.allowClaudePlanning,
+    allowClaudePlanning: courtPlan || primaryTextLookup ? false : context.allowClaudePlanning,
     firstUseful: courtPlan?.lookupQuery ? true : undefined,
   };
-  const discoveryQuery = formLookup
+  const discoveryQuery = formLookup || primaryTextLookup
     ? [context.jurisdiction, formObjective]
         .filter(Boolean).join(' ').replace(/\b(?:Do not draft a document|Answer briefly)\.?/gi, '').trim().slice(0, 390)
     : courtPlan?.discoveryQuery || query;
@@ -247,6 +248,21 @@ async function discoverAuthoritySources(
   const reliefProfile = getRecordReliefProfile(context.recordReliefState || '');
   reliefProfile?.urls.forEach(url => add({ title: `${reliefProfile.state} official criminal record relief guidance`,
     url, provider: 'official-record-relief-directory' }));
+  // The legislature publishes current Iowa Code sections at a stable official
+  // endpoint. Resolve the requested citation, then retrieve it; a URL alone is
+  // only a lead and never establishes a rule or amount.
+  if (primaryTextLookup && !courtPlan && /\biowa\b/i.test([context.jurisdiction, formObjective].join(' '))) {
+    const section = formObjective.match(/(?:\bcode\s+(?:section\s+|§\s*)?|\bsection\s+|§\s*)(\d+[A-Z]?\.\d+[A-Z]?)(?=\b|[\s.,;])/i)?.[1]
+      || (/\bsmall\s+claims?\b/i.test(formObjective) ? '631.1' : undefined);
+    if (section) {
+      add({ title: `Iowa Code section ${section}`, url: `https://www.legis.iowa.gov/docs/code/${section.toUpperCase()}.pdf`, provider: 'official-statute-directory' });
+      const retrieved = await enrichAuthoritySourcesWithLexaraRetrieval(sources, signal);
+      sources.splice(0, sources.length, ...retrieved);
+      if (!/\b(?:case\s+law|precedent|interpret\w*|holdings?|compare|constitutional|strategy)\b/i.test(formObjective)
+        && sources.some(source => source.provider === 'official-statute-directory' && source.evidenceLevel === 'document')) return sources;
+      if (signal?.aborted) return sources;
+    }
+  }
   // Official files are discovery seeds, never cached legal conclusions. Each
   // turn still retrieves their current contents and retains normal mesh search.
   if (formLookup && /\biowa\b/i.test([context.jurisdiction, formObjective].join(' '))
@@ -268,9 +284,9 @@ async function discoverAuthoritySources(
       courtPlan ? searchLexaraCourtRecords(courtPlan, signal) : Promise.resolve([]),
     ]);
     courtRecordResult.forEach(add);
-    if (courtPlan) supportingAuthorities.push(...courtListenerResult, ...govInfoResult);
+    if (courtPlan || primaryTextLookup) supportingAuthorities.push(...courtListenerResult, ...govInfoResult);
     else [...courtListenerResult, ...govInfoResult].forEach(add);
-    if (!formLookup && !courtPlan && intent==='legal' && (sources.some(source => source.kind === 'primary' && Boolean(source.excerpt?.trim()))
+    if (!formLookup && !primaryTextLookup && !courtPlan && intent==='legal' && (sources.some(source => source.kind === 'primary' && Boolean(source.excerpt?.trim()) && !/^Issued:/i.test(source.excerpt || ''))
       || courtListenerResult.some(source => Boolean(source.excerpt?.trim())))) return sources;
   }
 
@@ -292,14 +308,14 @@ async function discoverAuthoritySources(
         new Promise<never[]>(resolve => { reliefTimer = setTimeout(() => { reliefController.abort(); resolve([]); }, 8_000); }),
       ]).finally(() => { clearTimeout(reliefTimer); })
     : await (courtMeshPromise || discoverLegalMeshTier3(discoveryQuery, signal, meshOptions));
-  if (formLookup) {
+  if (formLookup || primaryTextLookup) {
     // Prioritize the actual form sources over unrelated federal leads while
     // retaining the other authorities as fallback context.
     const priorSources = sources.splice(0);
     seen.clear();
-    priorSources.filter(item => /^official-(?:form|record-relief)-directory$/.test(item.provider || '')).forEach(item => add(item));
+    priorSources.filter(item => /^official-(?:form|statute|record-relief)-directory$/.test(item.provider || '')).forEach(item => add(item));
     mesh.forEach(item => add(item));
-    priorSources.filter(item => !/^official-(?:form|record-relief)-directory$/.test(item.provider || '')).forEach(item => add(item));
+    priorSources.filter(item => !/^official-(?:form|statute|record-relief)-directory$/.test(item.provider || '')).forEach(item => add(item));
   } else {
     mesh.forEach(item => add(item));
   }
