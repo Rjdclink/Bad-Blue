@@ -101,7 +101,7 @@ export default function TrialAccessPage({ review = false, required = false, earl
                 : early
                   ? "You can keep using your free trial until it ends. If you choose to subscribe now, Square checkout will show the payment details before you confirm."
                 : required
-                  ? "Your account and saved information are safe. This account does not have an active trial or paid subscription. Start a subscription to access protected tools."
+                  ? "Your account and saved information are safe. An active paid subscription is required to access LegalWhat pages and tools."
                   : "Your 72-hour trial is over. Your account and saved information remain available; start a subscription to restore access to protected tools."}
             </p>
           </div>
@@ -123,3 +123,4 @@ export default function TrialAccessPage({ review = false, required = false, earl
     </main>
   );
 }
+

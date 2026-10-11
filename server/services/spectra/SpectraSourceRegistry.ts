@@ -146,9 +146,24 @@ export function buildSpectraPriorityTargets(
     clueKinds.includes('employment')
       ? target('employment-location', 'employment location', 'high', 'connect employer and workplace clues to locations', [identity, cleanClues, 'employer workplace staff address'].filter(Boolean).join(' '), ['identity', 'employment', 'address', 'location'])
       : null,
-    clueKinds.includes('social')
-      ? target('social-location', 'social location', 'high', 'find profile, place, check-in, geotag, and dated location references', [identity, cleanClues, 'profile place geotag check-in location'].filter(Boolean).join(' '), ['identity', 'social', 'location'])
-      : null,
+    // Search public biography and public profile-city evidence even when the
+    // operator has not supplied a social-media handle or an upload.
+    target(
+      'public-profile-city',
+      'public profile and city discovery',
+      'high',
+      'find independently published city or residence references in profiles, biographies and directories',
+      [identity, cleanClues, 'public biography profile city residence based in'].filter(Boolean).join(' '),
+      ['identity', 'social', 'location'],
+    ),
+    target(
+      'social-location',
+      'public social-location discovery',
+      'high',
+      'find public social profiles, published places, check-ins and dated city references',
+      [identity, cleanClues, 'public social profile place check-in city location date'].filter(Boolean).join(' '),
+      ['identity', 'social', 'location'],
+    ),
     clueKinds.includes('property')
       ? target('property-location', 'property location', 'high', 'connect property and parcel clues to recorded locations', [identity, cleanClues, 'property assessor parcel deed address'].filter(Boolean).join(' '), ['identity', 'property', 'address', 'location'])
       : null,

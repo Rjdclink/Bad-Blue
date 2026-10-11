@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useLocation } from 'wouter';
-import { ArrowLeft, Loader2, Mic, MicOff, Paperclip, RotateCcw, Send, Target } from 'lucide-react';
+import { Loader2, Mic, MicOff, Paperclip, RotateCcw, Send, Target } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { BackButton } from '@/components/BackButton';
 import { SEOHead } from '@/components/SEOHead';
 import { GeoconsoleRadarDashboard } from '@/components/geoconsole';
+import { SpectraEvidenceRecords } from '@/components/geoconsole/SpectraEvidenceRecords';
 import { useVoiceMode } from '@/hooks/useVoiceMode';
 import { useVoiceSynthesis } from '@/hooks/useVoiceSynthesis';
 import { getLexaraLiveEnabled } from '@/components/LexaraLiveConsentModal';
 import type { GPSPoint, LocationCandidate } from '@shared/geoconsoleTypes';
+import { spectraFeedNotice, spectraFeedNotices, spectraObservationNotices, spectraPipelineNotices, spectraRetrievalNotices, type SpectraFeedDiagnostics, type SpectraPipelineDiagnostics, type SpectraRetrievalSummary } from '@/lib/spectraFeedStatus';
 
 type Phase = 'awaiting_target' | 'awaiting_details' | 'acquiring' | 'active' | 'error';
 
@@ -22,6 +24,14 @@ interface MediaExtractionResponse {
   point?: GPSPoint | null;
   hasGPS?: boolean;
   hasCaptureTimestamp?: boolean;
+  mediaAssessment?: {
+    status?: 'accepted' | 'missing_gps' | 'invalid_gps' | 'conflicting_gps'
+      | 'missing_capture_time' | 'future_capture_time';
+    capturedAt?: string;
+    ageBand?: 'within_24_hours' | 'within_7_days' | 'within_30_days' | 'older';
+    subjectPresenceVerified?: boolean;
+    currentPositionVerified?: boolean;
+  };
   metadata?: Record<string, any>;
   error?: string;
 }
@@ -39,7 +49,7 @@ interface TelemetryImportResponse {
 
 function isSpectraTelemetryFile(file: File): boolean {
   const extension = file.name.toLowerCase().split('.').pop() || '';
-  return ['geojson', 'gpx', 'kml', 'nmea', 'csv', 'ndjson', 'jsonl', 'log', 'txt'].includes(extension);
+  return ['geojson', 'json', 'gpx', 'kml', 'nmea', 'csv', 'ndjson', 'jsonl', 'log', 'txt'].includes(extension);
 }
 
 interface SpectraLaunchPayload {
@@ -101,10 +111,15 @@ interface AcquisitionResponse {
   resolvedTargetLabel?: string;
   sessionId?: string;
   persistenceAvailable?: boolean;
+  evidenceArchive?: { stored: number; omitted: number };
+  feedDiagnostics?: SpectraFeedDiagnostics;
   acquisition?: {
     identityConfidence: number;
     locationConfidence: number;
+    liveLocationStatus?: string;
     sourceCount: number;
+    feedDiagnostics?: SpectraFeedDiagnostics;
+    pipelineDiagnostics?: SpectraPipelineDiagnostics;
     evidenceItemCount?: number;
     observationCount: number;
     discoveryPasses?: number;
@@ -115,6 +130,7 @@ interface AcquisitionResponse {
   };
   locationObservations?: GPSPoint[];
   candidateLocations?: LocationCandidate[];
+  publicPlace?: { sources: Array<{ url: string; title: string; status: string }>; diagnostics: { selected: number; retrieved: number; supported: number; outcome: string; retrieval?: SpectraRetrievalSummary; distinctRetrievedUrls?: number; duplicateRetrievedUrls?: number } };
 }
 
 const FIRST_PROMPT = 'What is it that you want to locate?';
@@ -128,8 +144,16 @@ function makeMessage(role: Message['role'], content: string): Message {
   };
 }
 
+// Zero is a valid latitude/longitude, but null, blanks and invalid values are
+// not. Never turn a missing preview coordinate into a fictitious (0, 0) pin.
+function finitePreviewNumber(value: unknown): number | null {
+  if (value === null || value === undefined ||
+    (typeof value === 'string' && !value.trim())) return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
 export default function SpectraPage() {
-  const [, setLocation] = useLocation();
   const lexaraLaunchRef = useRef<SpectraLaunchPayload | null>(readLexaraSpectraLaunch());
   const initialLexaraLaunch = lexaraLaunchRef.current;
   const launchedFromLexaraRef = useRef(Boolean(initialLexaraLaunch));
@@ -149,11 +173,15 @@ export default function SpectraPage() {
       : makeMessage('spectra', FIRST_PROMPT),
   ]);
   const [input, setInput] = useState('');
+  const [publicPlaceMode, setPublicPlaceMode] = useState(false);
+  const [placeSources, setPlaceSources] = useState<Array<{ url: string; title: string; status: string }>>([]);
   const [observations, setObservations] = useState<GPSPoint[]>([]);
   const [candidateLocations, setCandidateLocations] = useState<LocationCandidate[]>([]);
   const [directEvidence, setDirectEvidence] = useState<GPSPoint[]>([]);
   const [confidence, setConfidence] = useState<number | null>(null);
   const [sourceCount, setSourceCount] = useState(0);
+  const [feedNotice, setFeedNotice] = useState<string | null>(null);
+  const [pipelineNotices, setPipelineNotices] = useState<string[]>([]);
   const [spectraSessionId, setSpectraSessionId] = useState<string | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
   const [acquisitionStage, setAcquisitionStage] = useState('Waiting for target');
@@ -282,6 +310,9 @@ export default function SpectraPage() {
     setDirectEvidence([]);
     setConfidence(null);
     setSourceCount(0);
+    setFeedNotice(null);
+    setPipelineNotices([]);
+    setPlaceSources([]);
     setSpectraSessionId(null);
     setLastError(null);
     setAcquisitionStage('Waiting for target');
@@ -296,8 +327,12 @@ export default function SpectraPage() {
     extraEvidence: GPSPoint[] = directEvidence,
     sessionOverride?: string,
   ) => {
+    if (publicPlaceMode) extraEvidence = [];
     const requestId = ++requestRef.current;
     setPhase('acquiring');
+    setFeedNotice(null);
+    setPipelineNotices([]);
+    setPlaceSources([]);
     setLastError(null);
     setAcquisitionStage('Resolving supplied location context…');
 
@@ -327,8 +362,13 @@ export default function SpectraPage() {
       });
     }
 
+    // A regional preview is advisory. Once canonical acquisition settles,
+    // its slower response must never replace the final map candidates.
+    let previewOpen = true;
     const previewRegionPromise = (async () => {
+      if (publicPlaceMode) return;
       for (const locationText of [detailsValue, targetValue]) {
+        if (!previewOpen || requestId !== requestRef.current) return;
         if (!locationText.trim()) continue;
         try {
           const previewResponse = await fetch('/api/geoconsole/geocode-city-state', {
@@ -339,6 +379,7 @@ export default function SpectraPage() {
           });
           const previewPayload = await previewResponse.json().catch(() => ({}));
           if (
+            !previewOpen ||
             requestId !== requestRef.current ||
             !previewResponse.ok ||
             previewPayload?.success !== true
@@ -347,18 +388,21 @@ export default function SpectraPage() {
           }
 
           const region = previewPayload.data;
+          const latitude = finitePreviewNumber(region?.latitude);
+          const longitude = finitePreviewNumber(region?.longitude);
+          const accuracyMeters = finitePreviewNumber(region?.accuracyMeters);
           if (
-            Number.isFinite(Number(region?.latitude)) &&
-            Number.isFinite(Number(region?.longitude))
+            latitude !== null && Math.abs(latitude) <= 90 &&
+            longitude !== null && Math.abs(longitude) <= 180
           ) {
             setCandidateLocations([{
-              latitude: Number(region.latitude),
-              longitude: Number(region.longitude),
+              latitude,
+              longitude,
               label: String(region.displayName || locationText),
               confidence: 0.25,
               basis: 'regional_context',
-              accuracyMeters: Number.isFinite(Number(region.accuracyMeters))
-                ? Number(region.accuracyMeters)
+              accuracyMeters: accuracyMeters !== null && accuracyMeters > 0
+                ? accuracyMeters
                 : 25_000,
             }]);
             setAcquisitionStage('Regional context mapped; broadening identity discovery…');
@@ -368,14 +412,14 @@ export default function SpectraPage() {
           // Regional preview is advisory and must never block deeper discovery.
         }
       }
-      if (requestId === requestRef.current) {
+      if (previewOpen && requestId === requestRef.current) {
         setAcquisitionStage('Broadening identity and source discovery…');
       }
     })();
 
     try {
       void previewRegionPromise;
-      const response = await fetch('/api/spectra/acquire', {
+      const response = await fetch(publicPlaceMode ? '/api/spectra/public-place' : '/api/spectra/acquire', {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
@@ -403,9 +447,12 @@ export default function SpectraPage() {
       });
 
       const payload = await response.json() as AcquisitionResponse;
+      previewOpen = false;
       if (requestId !== requestRef.current) return;
 
       if (!response.ok || !payload.success) {
+        setFeedNotice(spectraFeedNotice(payload.feedDiagnostics));
+        setPipelineNotices(spectraFeedNotices(payload.feedDiagnostics));
         throw new Error(payload.error || 'Target acquisition failed.');
       }
 
@@ -441,6 +488,23 @@ export default function SpectraPage() {
           : null
       );
       setSourceCount(payload.acquisition?.sourceCount ?? 0);
+      setFeedNotice(spectraFeedNotice(payload.acquisition?.feedDiagnostics));
+      setPipelineNotices([
+        ...spectraFeedNotices(payload.acquisition?.feedDiagnostics),
+        ...(payload.publicPlace
+        ? [
+          `${payload.publicPlace.diagnostics.retrieved} of ${payload.publicPlace.diagnostics.selected} pages retrieved; ${payload.publicPlace.diagnostics.supported} supported venue address pages.`,
+          ...spectraRetrievalNotices(payload.publicPlace.diagnostics.retrieval),
+          ...(payload.publicPlace.diagnostics.distinctRetrievedUrls !== undefined
+            ? [`${payload.publicPlace.diagnostics.distinctRetrievedUrls} distinct retrieved URLs; ${payload.publicPlace.diagnostics.duplicateRetrievedUrls ?? 0} duplicate URL records. Distinct URLs do not establish independent evidence.`] : []),
+          `Result: ${payload.publicPlace.diagnostics.outcome}. City-level context; no calibrated probability or live-position claim.`,
+        ]
+        : spectraPipelineNotices(payload.acquisition?.pipelineDiagnostics)),
+        ...spectraObservationNotices(points, payload.acquisition?.liveLocationStatus),
+        ...(payload.persistenceAvailable === false ? ['This acquisition could not be saved. Its displayed results are not durably archived.'] : []),
+        ...(payload.evidenceArchive ? [`${payload.evidenceArchive.stored} source records retained; ${payload.evidenceArchive.omitted} records omitted by archive limits or validation.`] : []),
+      ]);
+      setPlaceSources(payload.publicPlace?.sources || []);
       if (typeof payload.sessionId === 'string' && payload.sessionId.trim()) {
         setSpectraSessionId(payload.sessionId.trim());
       }
@@ -454,25 +518,30 @@ export default function SpectraPage() {
         ? payload.candidateLocations
         : [];
       const resolvedTarget = payload.resolvedTargetLabel?.trim() || targetValue;
-      const responseText = points.length > 0
-        ? `I acquired ${points.length} timestamped location observation${points.length === 1 ? '' : 's'} for ${resolvedTarget}. The map is updated${certainty !== null ? ` with ${certainty}% location-evidence confidence` : ''}.`
+      const responseText = payload.publicPlace
+        ? regionalCandidates.length > 0
+          ? `The public venue's reported city is ${regionalCandidates[0].label}. Sources are listed above.`
+          : `No supported public-place map result: ${payload.publicPlace.diagnostics.outcome}. See the source assessments above.`
+        : points.length > 0
+        ? `The map contains ${points.length} timestamped location observation${points.length === 1 ? '' : 's'}${certainty !== null ? ` with ${certainty}% location-evidence confidence` : ''}. ${spectraObservationNotices(points, payload.acquisition?.liveLocationStatus).join(' ') || 'Current presence is not verified by a timestamp alone.'}`
         : regionalCandidates.length > 0
-          ? `I found a regional location candidate for ${resolvedTarget} and placed it on the map. I do not yet have timestamped coordinate evidence for a movement track.`
-          : `I completed the current discovery pass for ${resolvedTarget} across ${payload.acquisition?.sourceCount ?? 0} distinct source group${(payload.acquisition?.sourceCount ?? 0) === 1 ? '' : 's'}, but I do not yet have timestamped coordinate evidence strong enough to place the target precisely on the map.`;
+          ? `My best available regional estimate for ${resolvedTarget} is ${regionalCandidates[0].label || 'the area shown on the map'}. This is an estimate; the current live position is unverified.`
+          : `This pass referenced ${payload.acquisition?.sourceCount ?? 0} source group${(payload.acquisition?.sourceCount ?? 0) === 1 ? '' : 's'} for ${resolvedTarget}. This pass did not produce a mappable location estimate.`;
 
       addMessage('spectra', responseText);
       speakIfEnabled(responseText);
     } catch (error) {
+      previewOpen = false;
       if (requestId !== requestRef.current) return;
       const message = error instanceof Error ? error.message : 'Target acquisition failed.';
       setLastError(message);
-      setAcquisitionStage('Acquisition needs additional information');
+      setAcquisitionStage('Acquisition could not finish');
       setPhase('error');
-      const responseText = 'I could not complete that acquisition. Give me corrected or additional target information and I will try again.';
+      const responseText = 'I could not complete that search. A request or service failed; please try again later.';
       addMessage('spectra', responseText);
       speakIfEnabled(responseText);
     }
-  }, [addMessage, directEvidence, speakIfEnabled, spectraSessionId]);
+  }, [addMessage, directEvidence, speakIfEnabled, spectraSessionId, publicPlaceMode]);
 
   useEffect(() => {
     const launch = lexaraLaunchRef.current;
@@ -530,21 +599,39 @@ export default function SpectraPage() {
 
       const device = payload.metadata?.device;
       const capture = payload.metadata?.capture;
+      const captureStatus = payload.mediaAssessment?.status;
+      const ageDescriptions: Record<string, string> = {
+        within_24_hours: 'within 24 hours of review',
+        within_7_days: 'within the preceding week',
+        within_30_days: 'within the preceding month',
+        older: 'older than one month',
+      };
+      const captureAge = payload.mediaAssessment?.ageBand
+        ? ageDescriptions[payload.mediaAssessment.ageBand] : '';
       const evidenceDescription = [
-        `Uploaded target media: ${file.name}`,
+        `Uploaded media file: ${file.name}`,
         device?.make || device?.model
-          ? `Device: ${[device?.make, device?.model].filter(Boolean).join(' ')}`
+          ? `File device metadata: ${[device?.make, device?.model].filter(Boolean).join(' ')}`
           : '',
-        capture?.dateTimeOriginal ? `Capture time metadata: ${capture.dateTimeOriginal}` : '',
-        extractedPoint ? 'Timestamped GPS metadata present.' : 'No timestamped GPS metadata present.',
+        payload.mediaAssessment?.capturedAt
+          ? `Recorded media capture time: ${payload.mediaAssessment.capturedAt}` : '',
+        capture?.dateTimeOriginal ? `Original capture-date field: ${capture.dateTimeOriginal}` : '',
+        captureAge ? `Capture age: ${captureAge}` : '',
+        extractedPoint
+          ? 'Media capture-site GPS is historical scene evidence; subject presence and live location remain unverified.'
+          : captureStatus === 'conflicting_gps'
+            ? 'Conflicting GPS metadata was excluded from geographic evidence.'
+            : 'No verified timestamped capture-site coordinates were admitted.',
       ].filter(Boolean).join('. ');
 
       const expandedDetails = [details, evidenceDescription].filter(Boolean).join('\n');
       setDetails(expandedDetails);
 
       const responseText = extractedPoint
-        ? 'I extracted timestamped location metadata from that media and added it to the target evidence.'
-        : 'I analyzed that media and added the available metadata to the target evidence. It did not contain timestamped GPS coordinates.';
+        ? 'I identified where and when the media was captured and preserved its age as historical scene evidence.'
+        : captureStatus === 'conflicting_gps'
+          ? 'The media contains conflicting GPS metadata; I kept the conflict visible without treating it as a location fix.'
+          : 'I reviewed the media metadata, including its capture dates. There was no reliable timestamped GPS scene fix.';
       addMessage('spectra', responseText);
       speakIfEnabled(responseText);
 
@@ -696,6 +783,10 @@ export default function SpectraPage() {
   ]);
 
   const handleTargetFile = useCallback((file: File) => {
+    if (publicPlaceMode) {
+      addMessage('spectra', 'Public-place mode reads public venue pages. Add a visitor-page link in the message box.');
+      return;
+    }
     if (isSpectraTelemetryFile(file)) {
       void handleTelemetryEvidence(file);
       return;
@@ -709,7 +800,7 @@ export default function SpectraPage() {
     addMessage('spectra', response);
     speakIfEnabled(response);
     if (mediaInputRef.current) mediaInputRef.current.value = '';
-  }, [addMessage, handleMediaEvidence, handleTelemetryEvidence, speakIfEnabled]);
+  }, [addMessage, handleMediaEvidence, handleTelemetryEvidence, speakIfEnabled, publicPlaceMode]);
 
   const handleUserMessage = useCallback(async (rawMessage: string) => {
     const message = rawMessage.trim();
@@ -836,15 +927,7 @@ export default function SpectraPage() {
       />
 
       <header className="h-14 border-b border-slate-800 bg-slate-950/95 backdrop-blur flex items-center justify-between px-3 sm:px-5">
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => setLocation('/lexara-consent')}
-          className="text-slate-300 hover:text-white"
-        >
-          <ArrowLeft className="h-4 w-4 mr-1" />
-          Back
-        </Button>
+        <BackButton fallbackRoute="/lexara-consent" className="text-slate-300 hover:text-white" />
 
         <div className="flex items-center gap-2">
           <Target className="h-4 w-4 text-cyan-400" />
@@ -874,6 +957,8 @@ export default function SpectraPage() {
             candidateLocations={candidateLocations}
             subject={target || 'SPECTRA target'}
             sessionId={spectraSessionId}
+            onSessionCreated={setSpectraSessionId}
+            allowDeviceLocation={false}
             spectraShell
           />
 
@@ -883,11 +968,11 @@ export default function SpectraPage() {
 
           {phase === 'acquiring' && (
             <div className="pointer-events-none absolute bottom-3 left-3 z-30 max-w-[min(88%,26rem)] rounded-xl border border-slate-700/70 bg-slate-950/88 px-3 py-2 text-[11px] text-slate-300 shadow-xl backdrop-blur">
-              <div className="font-medium text-cyan-200">Acquired so far</div>
+              <div className="font-medium text-cyan-200">Search progress</div>
               <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1">
-                <span>Target description ✓</span>
+                <span>Target description received ✓</span>
                 <span>Details received ✓</span>
-                <span>{/\d[\d\s().+-]{6,}\d/.test(details) ? 'Phone anchor ✓' : 'Phone anchor —'}</span>
+                <span>{/\d[\d\s().+-]{6,}\d/.test(details) ? 'Phone clue supplied ✓' : 'Phone clue not supplied'}</span>
                 <span>{candidateLocations.length > 0 ? 'Regional context ✓' : 'Regional context searching'}</span>
                 <span>{observations.length > 0 ? `${observations.length} timed observation${observations.length === 1 ? '' : 's'} ✓` : 'Timed evidence searching'}</span>
               </div>
@@ -916,8 +1001,30 @@ export default function SpectraPage() {
               <div>
                 <h1 className="text-sm font-semibold text-slate-100">SPECTRA Console</h1>
                 <p className="text-[11px] text-slate-500">
-                  {sourceCount > 0 ? `${sourceCount} evidence sources reviewed` : 'Tell SPECTRA what you need located'}
+                  {sourceCount > 0 ? `${sourceCount} source groups referenced` : 'Tell SPECTRA what you need located'}
                 </p>
+                {phase === 'awaiting_target' && <label className="mt-2 flex gap-2 text-xs text-slate-300">
+                  <input type="checkbox" checked={publicPlaceMode} onChange={event => setPublicPlaceMode(event.target.checked)} />
+                  Locate a public venue (city-level)
+                </label>}
+                {placeSources.length > 0 && <details className="mt-2 text-xs text-slate-300">
+                  <summary>Public-place sources</summary>
+                  {placeSources.map(source => <p key={source.url} className="mt-1">
+                    <a href={source.url} target="_blank" rel="noopener noreferrer" className="underline">{source.title}</a>
+                    {' — '}{source.status.replaceAll('-', ' ')}
+                  </p>)}
+                </details>}
+                {feedNotice && (
+                  <p role="status" className="mt-1 text-xs text-amber-300" data-testid="spectra-feed-status">
+                    {feedNotice}
+                  </p>
+                )}
+                {pipelineNotices.length > 0 && (
+                  <details className="mt-2 text-xs text-slate-300" data-testid="spectra-pipeline-status">
+                    <summary className="cursor-pointer">Evidence and collection status</summary>
+                    {pipelineNotices.map(notice => <p key={notice} className="mt-1">{notice}</p>)}
+                  </details>
+                )}
               </div>
               <Button
                 variant="ghost"
@@ -931,6 +1038,8 @@ export default function SpectraPage() {
               </Button>
             </div>
           </div>
+
+          <SpectraEvidenceRecords sessionId={spectraSessionId} refreshKey={phase} />
 
           <div className="flex-1 overflow-y-auto px-3 py-4 space-y-3">
             {messages.map(message => (
@@ -973,10 +1082,10 @@ export default function SpectraPage() {
             }}
             className="border-t border-slate-800 p-3"
           >
+            {/* Use the original-file picker: mobile image/* pickers can strip GPS metadata. */}
             <input
               ref={mediaInputRef}
               type="file"
-              accept="image/*,video/*,.geojson,.gpx,.kml,.nmea,.csv,.ndjson,.jsonl,.log,.txt"
               className="hidden"
               onChange={event => {
                 const file = event.target.files?.[0];
@@ -1001,11 +1110,11 @@ export default function SpectraPage() {
                 type="button"
                 variant="ghost"
                 size="icon"
-                disabled={phase === 'awaiting_target' || phase === 'acquiring'}
+                disabled={publicPlaceMode || phase === 'awaiting_target' || phase === 'acquiring'}
                 onClick={() => mediaInputRef.current?.click()}
                 className="h-11 w-11 shrink-0 rounded-full text-slate-400 hover:text-cyan-300"
                 title="Add target media or telemetry"
-                aria-label="Add target photo or video"
+                aria-label="Add target photo, video, or location file"
               >
                 <Paperclip className="h-4 w-4" />
               </Button>
@@ -1051,3 +1160,4 @@ export default function SpectraPage() {
     </div>
   );
 }
+

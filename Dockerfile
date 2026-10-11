@@ -133,6 +133,7 @@ COPY --from=builder /app/server/migrations/065_spectra_server_only_access.sql ./
 COPY --from=builder /app/server/migrations/066_spectra_foreign_key_indexes.sql ./dist/migrations/066_spectra_foreign_key_indexes.sql
 COPY --from=builder /app/server/migrations/067_spectra_motion_context.sql ./dist/migrations/067_spectra_motion_context.sql
 COPY --from=builder /app/server/migrations/068_spectra_motion_context_server_only_access.sql ./dist/migrations/068_spectra_motion_context_server_only_access.sql
+COPY --from=builder /app/server/migrations/069_spectra_public_evidence_records.sql ./dist/migrations/069_spectra_public_evidence_records.sql
 COPY --from=builder /app/server/migrations/overflow/001_cryptara_comp_cache.sql ./dist/migrations/overflow/001_cryptara_comp_cache.sql
 COPY --from=builder /app/server/migrations/overflow/002_cryptara_parallel_proxy.sql ./dist/migrations/overflow/002_cryptara_parallel_proxy.sql
 COPY --from=builder /app/server/migrations/overflow/003_cryptocrawler_runtime_prerequisites.sql ./dist/migrations/overflow/003_cryptocrawler_runtime_prerequisites.sql

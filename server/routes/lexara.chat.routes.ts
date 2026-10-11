@@ -16,7 +16,7 @@ import {
 import { MASTER_USER_ID } from '../masterPassword';
 import { isAuthenticated } from '../auth';
 import { getConfiguredHarmonyParticipants } from '../aiHarmonyModelRegistry';
-import { isBlankLegalDocumentRequest, resolveLegalDocumentType } from '../lexara/legalDocumentRegistry';
+import { inferLegalDocumentNeed, isBlankLegalDocumentRequest, resolveLegalDocumentType } from '../lexara/legalDocumentRegistry';
 import { resolveBestLocationEstimate, type BrowserLocationSignal } from '../lexara/LexaraJurisdictionResolver';
 import {
   advanceRepresentationMatter,
@@ -29,7 +29,7 @@ import {
 } from '../lexara/LexaraRepresentationEngine';
 import { readMatterBuffer } from '../lexara/LexaraMatterStorage';
 import { buildDeadlineCalendar, calculateLegalDeadline, LEGAL_DEADLINE_RULES, type LegalDeadlineRuleId } from '../lexara/LegalDeadlineEngine';
-import { isLexaraGenericLegalIntake } from '../lexara/LexaraResearchIntentRouter';
+import { isLexaraGenericLegalIntake, isLexaraDocumentIntakeQuestion, isLexaraOfficialFormQuestion } from '../lexara/LexaraResearchIntentRouter';
 
 const router = express.Router();
 router.use(isAuthenticated);
@@ -260,13 +260,23 @@ function cleanDeviceLocation(value: unknown): BrowserLocationSignal | undefined 
 function detectDocumentIntent(prompt: string, previousMessages: LexaraConversationMessage[] = []): {
   requested: boolean;
   explicit: boolean;
+  inferred: boolean;
   documentType: string;
   templateMode: boolean;
   packetItem?: boolean;
 } {
   const p = prompt.toLowerCase();
-  const explicit = /\b(draft|prepare|create|generate|write|download|downloadable|export|pdf|docx|word document)\b/.test(p);
+  if (isLexaraDocumentIntakeQuestion(prompt)) return {
+    requested: false, explicit: false, inferred: false, documentType: 'Custom Document', templateMode: false,
+  };
+  const genericDocumentRequest = (/^(?:please\s+)?(?:i\s+(?:need|want)|(?:give|provide|make|prepare|draft|create|generate|write|download|export)\b)/i.test(prompt.trim())
+    || (/^(?:please\s+)?show\s+me\b/i.test(prompt.trim()) && /\b(?:blank|template|empty|fillable)\b/i.test(prompt)))
+    && /\b(?:documents?|forms?|paperwork)\b/.test(p)
+    && !/\b(?:want|need)\s+to\s+(?:know|understand|learn)\b/.test(p);
+  const explicit = genericDocumentRequest || /\b(draft|prepare|create|generate|write|download|downloadable|export|pdf|docx|word document)\b/.test(p);
   const currentType = resolveLegalDocumentType(prompt);
+  const candidateInference = explicit ? null : inferLegalDocumentNeed(prompt);
+  const inferredType = !currentType || (candidateInference === 'Answer' && currentType === 'Complaint') ? candidateInference : null;
   const currentAction = /\b(need|want|make|give|provide|prepare|draft|create|generate|write|download|export|file|filing|submit|serve|send)\b/.test(p);
   const referentialFollowup = /\b(it|that|one|document|form|template|blank|pdf|docx)\b/.test(p);
 
@@ -281,14 +291,17 @@ function detectDocumentIntent(prompt: string, previousMessages: LexaraConversati
     }
   }
 
-  const requested = explicit
+  const negated = /\b(?:do not|don't|dont|never|no longer|not trying to)\s+(?:want|need|plan|intend|file|prepare|draft|create)\b/i.test(prompt);
+  const requested = !negated && (explicit || Boolean(inferredType)
     || Boolean(currentType && currentAction)
-    || Boolean(!currentType && historyType && referentialFollowup);
+    || Boolean(!currentType && historyType && referentialFollowup
+      && (currentAction || /\b(?:document|form|template|blank|pdf|docx)\b/.test(p))));
 
   return {
     requested,
     explicit,
-    documentType: currentType || historyType || 'Custom Document',
+    inferred: Boolean(inferredType),
+    documentType: inferredType || currentType || historyType || 'Custom Document',
     templateMode: isBlankLegalDocumentRequest(prompt),
   };
 }
@@ -298,8 +311,11 @@ function selectPacketDocumentIntent(prompt: string, matter: RepresentationMatter
   explicit: boolean;
   documentType: string;
   templateMode: boolean;
+  inferred: false;
   packetItem: true;
 } | null {
+  if (isLexaraDocumentIntakeQuestion(prompt)
+    || /\b(?:do not|don't|dont|never)\s+(?:draft|prepare|create|generate|write)\b/i.test(prompt)) return null;
   const packet = matter?.packet;
   if (!packet?.items?.length) return null;
   const text = String(prompt || '').trim().toLowerCase();
@@ -336,6 +352,7 @@ function selectPacketDocumentIntent(prompt: string, matter: RepresentationMatter
     explicit: true,
     documentType: selected.title,
     templateMode: false,
+    inferred: false,
     packetItem: true,
   };
 }
@@ -425,6 +442,7 @@ async function persistConversationTurn(
     lawType?: string;
     jurisdiction?: string;
     mappedLawType?: string | null;
+    backgroundDocumentContext?: string;
     behaviorMode: string;
     audioBase64?: string;
     representationMatter?: RepresentationMatterState | null;
@@ -455,6 +473,7 @@ async function persistConversationTurn(
       lawType: data.lawType || null,
       jurisdiction: data.jurisdiction || null,
       mappedLawType: data.mappedLawType || null,
+      backgroundDocumentContext: data.backgroundDocumentContext?.slice(0, 9_000) || null,
       behaviorMode: data.behaviorMode,
       representationMatter: data.representationMatter || null,
       ...(data.matterEnrichmentPending ? {
@@ -589,6 +608,55 @@ router.post('/acknowledge', express.json(), (req: Request, res: Response) => {
 });
 
 /**
+ * Full court-packet discovery can entail recursive official-form retrieval.
+ * Run that ahead of the answer only when the user explicitly requests the
+ * packet or all required/local forms. Ordinary conversations still create the
+ * matter record immediately; durable packet planning follows after the reply.
+ */
+function shouldPreflightFilingPacket(prompt: string): boolean {
+  if (isLexaraDocumentIntakeQuestion(prompt) || isBlankLegalDocumentRequest(prompt)
+    || /\b(?:do not|don't|dont|never)\s+(?:draft|prepare|create|generate|write)\b/i.test(prompt)) return false;
+  return /\b(?:complete|full|entire|all|required|mandatory|local)\b.{0,55}\b(?:forms?|packet|paperwork|filing)\b|\b(?:forms?|packet|paperwork|filing)\b.{0,55}\b(?:complete|full|entire|all|required|mandatory|local)\b/i.test(prompt);
+}
+
+/**
+ * Non-persistent matter enrichment is advisory. An optional secondary provider
+ * must never delay or cancel the already-completed legal answer. Persistent
+ * users continue to get the existing durable post-response enrichment queue.
+ */
+async function recoverEphemeralMatter(
+  input: Parameters<typeof advanceRepresentationMatter>[0],
+  fallback: RepresentationMatterState | null,
+  parentSignal: AbortSignal,
+): Promise<RepresentationMatterState | null> {
+  if (parentSignal.aborted) return fallback;
+  const controller = new AbortController();
+  const relay = () => controller.abort(parentSignal.reason);
+  parentSignal.addEventListener('abort', relay, { once: true });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      advanceRepresentationMatter({ ...input, skipPacketPlanning: true, signal: controller.signal })
+        .catch(error => {
+          log.warn('[LEXARA] Optional live matter update failed; preserving completed answer', {
+            message: error instanceof Error ? error.message : String(error),
+          });
+          return fallback;
+        }),
+      new Promise<RepresentationMatterState | null>(resolve => {
+        timer = setTimeout(() => {
+          controller.abort(new Error('Optional live matter update exceeded time budget'));
+          resolve(fallback);
+        }, 1_500);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+    parentSignal.removeEventListener('abort', relay);
+  }
+}
+
+/**
  * POST /api/lexara/chat/stream
  * Server-Sent Events transport for progressive Lexara research.
  */
@@ -655,12 +723,18 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
           jurisdiction: explicitJurisdiction || representationContext.activeMatter?.jurisdiction,
           prior: representationContext.activeMatter,
           allowClaudeOpus: canUseClaudeOpus(req),
+          skipPacketPlanning: !shouldPreflightFilingPacket(prompt),
           signal: controller.signal,
+        }).catch(error => {
+          log.warn('[LEXARA] Matter preflight unavailable; continuing legal answer', {
+            message: error instanceof Error ? error.message : String(error),
+          });
+          return representationContext.activeMatter;
         });
     const savedArtifact = selectSavedArtifactRequest(prompt, preRepresentationMatter || representationContext.activeMatter);
     const packetDocumentIntent = savedArtifact ? null : selectPacketDocumentIntent(prompt, preRepresentationMatter);
     if (savedArtifact) {
-      documentIntent = { requested: false, explicit: true, documentType: 'Custom Document', templateMode: false };
+      documentIntent = { requested: false, explicit: true, inferred: false, documentType: 'Custom Document', templateMode: false };
     } else if (packetDocumentIntent) {
       documentIntent = packetDocumentIntent;
     }
@@ -688,7 +762,7 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
       onTextDelta: delta => send('answer-delta', { delta }),
       // A document turn must never enter realtime TTS. Flux can emit audio as
       // soon as Speak text arrives, so gate speech before the first chunk.
-      onSpeechChunk: documentIntent.requested
+      onSpeechChunk: documentIntent.requested && !documentIntent.inferred
         ? undefined
         : chunk => send('speech-chunk', { chunk }),
     });
@@ -697,7 +771,10 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
       ...effectivePreviousMessages,
       { role: 'user', content: prompt },
     ]);
-    if (!savedArtifact && !documentIntent.requested && reasoningDocumentIntent.requested && reasoningDocumentIntent.explicit && reasoningDocumentIntent.documentType !== 'Custom Document') {
+    if (documentIntent.requested && documentIntent.documentType === 'Custom Document' && reasoningDocumentIntent.requested && reasoningDocumentIntent.documentType !== 'Custom Document') {
+      documentIntent.documentType = reasoningDocumentIntent.documentType;
+    }
+    if (!savedArtifact && !documentIntent.requested && !isLexaraDocumentIntakeQuestion(prompt) && !/\b(?:do not|don't|dont|never)\s+(?:draft|prepare|create|generate|write)\b/i.test(prompt) && reasoningDocumentIntent.requested && reasoningDocumentIntent.explicit && reasoningDocumentIntent.documentType !== 'Custom Document') {
       documentIntent.requested = true;
       if (documentIntent.documentType === 'Custom Document') {
         documentIntent.documentType = reasoningDocumentIntent.documentType;
@@ -707,12 +784,15 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
     const baseRepresentationMatter = preRepresentationMatter || representationContext.activeMatter;
     const durableEnrichmentNeeded = Boolean(
       representationContext.persistent
+      && !isLexaraDocumentIntakeQuestion(prompt)
+      && !isBlankLegalDocumentRequest(prompt)
+      && (documentIntent.requested || !isLexaraOfficialFormQuestion(prompt))
       && baseRepresentationMatter
       && result.backgroundOnly !== true
       && shouldEnrichRepresentationMatter(prompt, response, baseRepresentationMatter)
     );
-    const representationMatter = !representationContext.persistent && !genericLegalIntake && result.backgroundOnly !== true
-      ? await advanceRepresentationMatter({
+    const representationMatter = !representationContext.persistent && !genericLegalIntake && !isLexaraDocumentIntakeQuestion(prompt) && !isBlankLegalDocumentRequest(prompt) && (documentIntent.requested || !isLexaraOfficialFormQuestion(prompt)) && result.backgroundOnly !== true
+      ? await recoverEphemeralMatter({
           prompt,
           response,
           sessionId: activeSessionId,
@@ -721,9 +801,9 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
           prior: baseRepresentationMatter,
           allowClaudeOpus: canUseClaudeOpus(req),
           signal: controller.signal,
-        })
+        }, baseRepresentationMatter, controller.signal)
       : baseRepresentationMatter;
-    let persistence: Awaited<ReturnType<typeof persistConversationTurn>>;
+    let persistence: Awaited<ReturnType<typeof persistConversationTurn>> | { conversationId: null; persistenceSuccess: false; persistenceStatus: 'save-failed' };
     try {
       persistence = await persistConversationTurn(req, {
         prompt,
@@ -732,21 +812,16 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
         lawType: cleanOptionalString((rawContext as any).lawType),
         jurisdiction: result.jurisdiction || cleanOptionalString((rawContext as any).jurisdiction, 80),
         mappedLawType: result.mappedLawType,
+        backgroundDocumentContext: result.backgroundDocumentContext,
         behaviorMode: (rawContext as any).behaviorMode === 'personable' ? 'personable' : 'professional',
         representationMatter,
         matterEnrichmentPending: durableEnrichmentNeeded,
       });
     } catch (dbError) {
-      log.error('[LEXARA] Failed to persist streamed conversation', { error: dbError });
-      send('error', {
-        success: false,
-        jobCompleted: false,
-        jobStatus: 'failed',
-        persistenceSuccess: false,
-        persistenceStatus: 'failed',
-        error: 'LEXARA could not save this reply; please try again',
+      log.error('[LEXARA] Legal answer complete but conversation save failed', {
+        message: dbError instanceof Error ? dbError.message : String(dbError),
       });
-      return;
+      persistence = { conversationId: null, persistenceSuccess: false, persistenceStatus: 'save-failed' };
     }
     if (durableEnrichmentNeeded && persistence.persistenceStatus === 'saved') {
       res.once('finish', scheduleMatterEnrichmentDrain);
@@ -769,7 +844,10 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
         : undefined,
     });
   } catch (error) {
-    log.error('[LEXARA] Stream turn failed', { error });
+    log.error('[LEXARA] Stream turn failed', {
+      message: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     if (!controller.signal.aborted) send('error', {
       success: false, jobCompleted: false, jobStatus: 'failed',
       error: error instanceof Error ? error.message : 'LEXARA research failed',
@@ -850,12 +928,13 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
           jurisdiction: explicitJurisdiction || representationContext.activeMatter?.jurisdiction,
           prior: representationContext.activeMatter,
           allowClaudeOpus: canUseClaudeOpus(req),
+          skipPacketPlanning: !shouldPreflightFilingPacket(prompt),
         });
     let documentIntent = detectDocumentIntent(prompt, effectivePreviousMessages);
     const savedArtifact = selectSavedArtifactRequest(prompt, preRepresentationMatter || representationContext.activeMatter);
     const packetDocumentIntent = savedArtifact ? null : selectPacketDocumentIntent(prompt, preRepresentationMatter);
     if (savedArtifact) {
-      documentIntent = { requested: false, explicit: true, documentType: 'Custom Document', templateMode: false };
+      documentIntent = { requested: false, explicit: true, inferred: false, documentType: 'Custom Document', templateMode: false };
     } else if (packetDocumentIntent) {
       documentIntent = packetDocumentIntent;
     }
@@ -902,9 +981,9 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
 
 
     const responseText = conversationResult.text;
-    const representationMatter = genericLegalIntake || conversationResult.backgroundOnly === true
+    const representationMatter = genericLegalIntake || isLexaraDocumentIntakeQuestion(prompt) || isBlankLegalDocumentRequest(prompt) || (!documentIntent.requested && isLexaraOfficialFormQuestion(prompt)) || conversationResult.backgroundOnly === true
       ? preRepresentationMatter || representationContext.activeMatter
-      : await advanceRepresentationMatter({
+      : await recoverEphemeralMatter({
           prompt,
           response: responseText,
           sessionId,
@@ -913,7 +992,7 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
           prior: preRepresentationMatter || representationContext.activeMatter,
           allowClaudeOpus: canUseClaudeOpus(req),
           signal: requestController.signal,
-        });
+        }, preRepresentationMatter || representationContext.activeMatter, requestController.signal);
     const model = 'lexara-legal-orchestrator';
 
     // Preserve the deterministic explicit-request fast path, but let LEXARA's
@@ -923,7 +1002,10 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
       ...effectivePreviousMessages,
       { role: 'user', content: prompt },
     ]);
-    if (!savedArtifact && !documentIntent.requested && reasoningDocumentIntent.requested && reasoningDocumentIntent.explicit && reasoningDocumentIntent.documentType !== 'Custom Document') {
+    if (documentIntent.requested && documentIntent.documentType === 'Custom Document' && reasoningDocumentIntent.requested && reasoningDocumentIntent.documentType !== 'Custom Document') {
+      documentIntent.documentType = reasoningDocumentIntent.documentType;
+    }
+    if (!savedArtifact && !documentIntent.requested && !isLexaraDocumentIntakeQuestion(prompt) && !/\b(?:do not|don't|dont|never)\s+(?:draft|prepare|create|generate|write)\b/i.test(prompt) && reasoningDocumentIntent.requested && reasoningDocumentIntent.explicit && reasoningDocumentIntent.documentType !== 'Custom Document') {
       documentIntent.requested = true;
       if (documentIntent.documentType === 'Custom Document') {
         documentIntent.documentType = reasoningDocumentIntent.documentType;
@@ -968,9 +1050,8 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
       }
     }
 
-    // A successful reply must be recoverable. Master consultations remain
-    // deliberately ephemeral, without opening a database connection.
-    let persistence: Awaited<ReturnType<typeof persistConversationTurn>>;
+    // A successful reply remains usable even if storage is temporarily unavailable.
+    let persistence: Awaited<ReturnType<typeof persistConversationTurn>> | { conversationId: null; persistenceSuccess: false; persistenceStatus: 'save-failed' };
     try {
       persistence = await persistConversationTurn(req, {
         prompt,
@@ -979,18 +1060,14 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
         lawType,
         jurisdiction: conversationResult.jurisdiction || jurisdiction,
         mappedLawType: conversationResult.mappedLawType,
+        backgroundDocumentContext: conversationResult.backgroundDocumentContext,
         behaviorMode,
         audioBase64: audioData?.audioBase64,
         representationMatter,
       });
     } catch (dbError) {
-      log.error('[LEXARA] Failed to persist conversation', { error: dbError });
-      return res.status(503).json({
-        success: false,
-        error: 'LEXARA could not save this reply; please try again',
-        persistenceSuccess: false,
-        persistenceStatus: 'failed',
-      });
+      log.error('[LEXARA] Conversational answer complete but save failed', { message: dbError instanceof Error ? dbError.message : String(dbError) });
+      persistence = { conversationId: null, persistenceSuccess: false, persistenceStatus: 'save-failed' };
     }
 
     return res.json({

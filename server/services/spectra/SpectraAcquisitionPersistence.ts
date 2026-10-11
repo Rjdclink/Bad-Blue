@@ -1,11 +1,34 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { pool } from '../../db';
 import type { GPSPoint } from '../geoconsole/types';
+import {
+  prepareSpectraAcquisitionEvidenceRecords,
+  readSpectraAcquisitionEvidenceRecords,
+  writeSpectraAcquisitionEvidenceRecords,
+  type SpectraAcquisitionEvidenceRecord,
+  type SpectraAcquisitionEvidenceRecordList,
+  type SpectraEvidenceRecordOmissions,
+} from './SpectraAcquisitionRecords';
 
 export interface SpectraAcquisitionPersistenceResult {
   available: boolean;
   sessionId: string;
   investigationId?: string;
+  /** Records represented by this request, including unchanged archived versions. */
+  evidenceRecordCount?: number;
+  evidenceRecordsInserted?: number;
+  evidenceRecordsOmitted?: number;
+  evidenceRecordOmissions?: SpectraEvidenceRecordOmissions;
+}
+
+export async function loadSpectraAcquisitionEvidenceRecords(
+  userId: string,
+  sessionId: string,
+  limit = 100,
+): Promise<SpectraAcquisitionEvidenceRecordList> {
+  return readSpectraAcquisitionEvidenceRecords(
+    (sql, parameters) => pool.query(sql, parameters), userId, sessionId, limit,
+  );
 }
 
 function normalizeClue(value: string): string {
@@ -37,6 +60,10 @@ function evidenceClassForPoint(point: GPSPoint): string {
     point.observationKind === 'historical'
     || point.source === 'historical_location'
     || point.source === 'public_record'
+    || point.source === 'exif_photo'
+    || point.source === 'exif_video'
+    || point.source === 'xmp_sidecar'
+    || point.source === 'json_sidecar'
   ) return 'HISTORICAL';
   if (point.observationKind === 'inferred') return 'INFERRED';
 
@@ -47,6 +74,9 @@ function evidenceClassForPoint(point: GPSPoint): string {
 }
 
 function optionalConfidence(value: unknown): number | null {
+  // Unknown provider confidence is not a measured zero-confidence result.
+  if (value === null || value === undefined ||
+    (typeof value === 'string' && !value.trim())) return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed >= 0 && parsed <= 1 ? parsed : null;
 }
@@ -62,10 +92,26 @@ function metadataString(point: GPSPoint, ...keys: string[]): string | null {
 
 const GENERIC_SPECTRA_SUBJECT_RE = /^(?:person|individual|target|device|vehicle|car|truck|business|company|organization|object|place|address|thing|property|phone|phone number)$/i;
 
+function isOrderedWholeTokenRefinement(shorter: string, longer: string): boolean {
+  // Subject labels can gain middle names or extra identifiers, but a partial
+  // word match (Ann vs Anna, Lee vs Leela) never establishes compatibility.
+  const required = shorter.split(/\s+/).filter(Boolean);
+  const available = longer.split(/\s+/).filter(Boolean);
+  if (!required.length || required.length > available.length) return false;
+
+  let matched = 0;
+  for (const token of available) {
+    if (token === required[matched]) matched += 1;
+    if (matched === required.length) return true;
+  }
+  return false;
+}
+
 function subjectsCompatible(existing: string, incoming: string): boolean {
   if (!existing || !incoming || existing === incoming) return true;
   if (GENERIC_SPECTRA_SUBJECT_RE.test(existing) || GENERIC_SPECTRA_SUBJECT_RE.test(incoming)) return true;
-  return existing.includes(incoming) || incoming.includes(existing);
+  return isOrderedWholeTokenRefinement(existing, incoming)
+    || isOrderedWholeTokenRefinement(incoming, existing);
 }
 
 function clueType(value: string): string {
@@ -231,9 +277,11 @@ export async function persistSpectraAcquisition(input: {
   subjectLabel: string;
   clues: string[];
   observations: GPSPoint[];
+  evidenceRecords?: SpectraAcquisitionEvidenceRecord[];
   state?: Record<string, unknown>;
 }): Promise<SpectraAcquisitionPersistenceResult> {
   const sessionId = input.sessionId?.trim() || `spectra-${randomUUID()}`;
+  const evidenceRecords = prepareSpectraAcquisitionEvidenceRecords(input.evidenceRecords || []);
   const client = await pool.connect();
 
   try {
@@ -271,6 +319,8 @@ export async function persistSpectraAcquisition(input: {
          clues = EXCLUDED.clues,
          state = public.spectra_investigations.state || EXCLUDED.state,
          updated_at = now()
+       WHERE public.spectra_investigations.user_id IS NULL
+          OR public.spectra_investigations.user_id = EXCLUDED.user_id
        RETURNING id`,
       [
         input.userId,
@@ -281,6 +331,9 @@ export async function persistSpectraAcquisition(input: {
       ],
     );
     const investigationId = String(investigation.rows[0]?.id || '');
+    // A concurrent first acquisition may create this session after the locked
+    // lookup. The ownership condition on the upsert must also hold in that case.
+    if (!investigationId) throw new Error('SPECTRA session ownership mismatch');
 
     const existingSubject = existing.rows.length
       ? normalizeClue(String(existing.rows[0]?.subject_label || ''))
@@ -292,7 +345,10 @@ export async function persistSpectraAcquisition(input: {
       && (
         !existingSubject
         || GENERIC_SPECTRA_SUBJECT_RE.test(existingSubject)
-        || (incomingSubject.includes(existingSubject) && incomingSubject.length > existingSubject.length)
+        || (
+          isOrderedWholeTokenRefinement(existingSubject, incomingSubject)
+          && incomingSubject.split(/\s+/).length > existingSubject.split(/\s+/).length
+        )
       )
     ) {
       await client.query(
@@ -386,12 +442,31 @@ export async function persistSpectraAcquisition(input: {
       );
     }
 
+    const archived = await writeSpectraAcquisitionEvidenceRecords(
+      (sql, parameters) => client.query(sql, parameters),
+      { investigationId, userId: input.userId, sessionId },
+      evidenceRecords,
+    );
+
     await client.query('COMMIT');
-    return { available: true, sessionId, investigationId };
+    return {
+      available: true, sessionId, investigationId,
+      evidenceRecordCount: archived.count,
+      evidenceRecordsInserted: archived.inserted,
+      evidenceRecordsOmitted: evidenceRecords.omittedCount,
+      evidenceRecordOmissions: evidenceRecords.omissions,
+    };
   } catch (error: any) {
     await client.query('ROLLBACK').catch(() => undefined);
     if (error?.code === '42P01') {
-      return { available: false, sessionId };
+      return {
+        available: false, sessionId, evidenceRecordCount: 0, evidenceRecordsInserted: 0,
+        evidenceRecordsOmitted: evidenceRecords.omittedCount + evidenceRecords.records.length,
+        evidenceRecordOmissions: {
+          ...evidenceRecords.omissions,
+          storageUnavailable: evidenceRecords.records.length,
+        },
+      };
     }
     throw error;
   } finally {

@@ -436,11 +436,13 @@ function normalizeAndroidManagedLostMode(
 
   for (const rawEvent of events.slice(0, 2000)) {
     const event = record(rawEvent);
-    const lostMode = record(
-      event.lostModeLocationEvent
-      || event.locationEvent
-      || event.location
-    );
+    // Google Android Management usage logs distinguish the LostMode
+    // location event from unrelated device and network observations. Only
+    // the official LostModeLocationEvent can establish this source type.
+    const eventType = String(event.eventType || '').trim().toUpperCase();
+    if (eventType && eventType !== 'LOST_MODE_LOCATION') continue;
+    const lostMode = record(event.lostModeLocationEvent);
+    if (!Object.keys(lostMode).length) continue;
     const location = record(lostMode.location || lostMode);
     const latitude = bounded(location.latitude ?? location.lat, -90, 90);
     const longitude = bounded(
@@ -497,6 +499,11 @@ function normalizeAppleManagedLostMode(
 
   for (const rawResponse of responses.slice(0, 1000)) {
     const response = record(rawResponse);
+    // The Apple DeviceLocation MDM response is authoritative only when the
+    // supervised device acknowledges the command. An error response cannot
+    // become a valid fix just because it includes old coordinate fields.
+    const status = text(response.Status ?? response.status, 80);
+    if (status && status.toLowerCase() !== 'acknowledged') continue;
     const latitude = bounded(
       response.Latitude ?? response.latitude,
       -90,
@@ -666,13 +673,13 @@ function normalizeCiscoSpaces(
         : Array.isArray(event.rawCoordinates)
           ? event.rawCoordinates
           : [];
-    const latitude = bounded(
-      location.latitude ?? location.lat ?? coordinates[0],
-      -90,
-      90,
-    );
+    // Cisco Spaces API `coordinates` and `rawCoordinates` are
+    // Cartesian floor-plan X/Y, *not* WGS84 latitude/longitude. A valid
+    // campus/floor anchor must be georeferenced upstream before it can be
+    // admitted into the geographic subject-position pipeline.
+    const latitude = bounded(location.latitude ?? location.lat, -90, 90);
     const longitude = bounded(
-      location.longitude ?? location.lng ?? location.lon ?? coordinates[1],
+      location.longitude ?? location.lng ?? location.lon,
       -180,
       180,
     );
@@ -699,12 +706,16 @@ function normalizeCiscoSpaces(
       timestamp: observedAt,
       latitude,
       longitude,
+      // Cisco confidenceFactor is not a radius in metres. Use only an
+      // explicitly specified geographic uncertainty; otherwise retain a
+      // conservative one-kilometre estimate.
       accuracy: finite(
-        location.accuracy
-        ?? location.uncertainty
+        location.accuracyMeters
+        ?? location.horizontalAccuracyMeters
+        ?? location.accuracy
+        ?? event.accuracyMeters
         ?? event.accuracy
-        ?? event.confidenceFactor
-      ),
+      ) ?? 1_000,
       provider: wrapped.providerId,
       recordId: text(event.eventId || event.id, 300),
       correlationGroup:
@@ -725,8 +736,11 @@ function normalizeCiscoSpaces(
         computeType: text(event.computeType, 80),
         detectingAccessPointCount: finite(event.numDetectingAps),
         maxDetectedRssi: finite(record(event.maxDetectedRssi).rssi),
-        xPos: finite(location.xPos ?? location.x),
-        yPos: finite(location.yPos ?? location.y),
+        coordinateSystem: 'wgs84-explicit',
+        confidenceFactor: finite(event.confidenceFactor),
+        // Informational floor-relative numbers never become geodesic fixes.
+        xPos: finite(location.xPos ?? location.x ?? coordinates[0]),
+        yPos: finite(location.yPos ?? location.y ?? coordinates[1]),
       },
     }));
   }

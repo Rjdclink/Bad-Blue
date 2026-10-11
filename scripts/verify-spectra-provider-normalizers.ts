@@ -890,6 +890,15 @@ function measurement(batch: ReturnType<typeof normalizeSpectraProviderPayload>, 
   assert.equal(point.source, 'device_gps');
   assert.equal(point.metadata.providerKind, 'android-managed-lost-mode');
   assert.equal(point.metadata.batteryLevel, 72);
+  assert.throws(() => normalizeSpectraProviderPayload(
+    'android-managed-lost-mode', 'android-management', {
+      usageLogEvents: [{
+        eventType: 'NETWORK_ACTIVITY',
+        eventTime: '2026-10-02T20:59:55Z',
+        location: { latitude: 43.5446, longitude: -96.7311 },
+      }],
+    },
+  ), /no usable/i, 'non-Lost-Mode Android events cannot become location fixes');
 }
 
 {
@@ -910,6 +919,15 @@ function measurement(batch: ReturnType<typeof normalizeSpectraProviderPayload>, 
   assert.equal(point.source, 'device_gps');
   assert.equal(point.metadata.providerKind, 'apple-managed-lost-mode');
   assert.equal(point.accuracy, 3.677859038862057);
+  assert.throws(() => normalizeSpectraProviderPayload(
+    'apple-managed-lost-mode', 'apple-mdm', {
+      Latitude: 37.33385013244351,
+      Longitude: -122.01079213269968,
+      Timestamp: '2026-10-02T20:59:55Z',
+      UDID: 'device-1',
+      Status: 'Error',
+    },
+  ), /no usable/i, 'Apple MDM error responses must not be treated as device fixes');
 }
 
 {
@@ -962,6 +980,23 @@ function measurement(batch: ReturnType<typeof normalizeSpectraProviderPayload>, 
   const point = measurement(batch);
   assert.equal(point.source, 'wifi_fingerprint');
   assert.equal(point.metadata.providerKind, 'cisco-spaces-location');
+  assert.equal(point.latitude, 43.5446);
+  assert.equal(point.longitude, -96.7311);
+
+  // Official Cisco Spaces v1/v2 coordinates are floor-relative Cartesian
+  // X/Y. They must never be interpreted as a latitude/longitude pair.
+  assert.throws(() => normalizeSpectraProviderPayload(
+    'cisco-spaces-location',
+    'cisco-spaces',
+    {
+      results: [{
+        macAddress: '00:11:22:33:44:55',
+        coordinates: [43.5446, -96.7311],
+        confidenceFactor: 12,
+        lastLocationAt: '2026-10-02T20:59:55Z',
+      }],
+    },
+  ), /no usable/i);
 }
 
 {

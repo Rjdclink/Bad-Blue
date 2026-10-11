@@ -41,6 +41,13 @@ function normalizeSpaces(value: string): string {
   return value.replace(/\s+/g, ' ').trim();
 }
 
+function normalizeLocationLanguage(value: string): string {
+  return normalizeSpaces(value).replace(
+    /\b(?:(?:my|his|her|their|our|the)\s+)?(?:(?:last(?:\s+known)?|previous|current)\s+location|last\s+seen)\s*(?:(?:was|is|in|at)\s+|[:=]\s*)/gi,
+    'located in ',
+  );
+}
+
 function normalizeState(value: string): string | null {
   const cleaned = normalizeSpaces(value).replace(/\.$/, '');
   const upper = cleaned.toUpperCase();
@@ -50,7 +57,7 @@ function normalizeState(value: string): string | null {
 
 function cleanCity(value: string): string {
   return normalizeSpaces(value)
-    .replace(/^(?:in|at|from|near|around|city of|located in)\s+/i, '')
+    .replace(/^(?:in|at|from|near|around|city of|located in|last known (?:in|at))\s+/i, '')
     .replace(/^[,;:\-\s]+|[,;:\-\s]+$/g, '')
     .trim();
 }
@@ -63,9 +70,14 @@ const STREET_ADDRESS_RE = new RegExp(
 
 export function extractStreetAddressHint(input: string): AddressHint | null {
   const text = normalizeSpaces(input);
-  const street = text.match(STREET_ADDRESS_RE)?.[1]?.trim();
-  if (!street) return null;
-  const regional = extractCityStateHint(text);
+  const streetMatch = STREET_ADDRESS_RE.exec(text);
+  const street = streetMatch?.[1]?.trim();
+  if (!streetMatch || !street) return null;
+  const streetStart = streetMatch.index;
+  const afterStreet = text.slice(streetStart + streetMatch[0].length)
+    .replace(/^[,;\s]+/, '')
+    .replace(/^(?:apt|apartment|unit|suite|ste|#)\s*[A-Za-z0-9-]+\s*[,;]\s*/i, '');
+  const regional = extractCityStateHint(afterStreet) || extractCityStateHint(text.slice(0, streetStart));
   const zip = text.match(/\b\d{5}(?:-\d{4})?\b/)?.[0];
   return {
     street,
@@ -92,13 +104,20 @@ export function extractLocationClues(input: string): string[] {
 }
 
 export function extractCityStateHint(input: string): { city: string; state: string; query: string } | null {
-  const text = normalizeSpaces(input);
+  // The last sentence punctuation is not part of a city or state code.
+  // Preserve internal periods (e.g. St. Louis) and commas in the clue.
+  const text = normalizeLocationLanguage(input).replace(/[.!?]+$/g, '').trim();
   if (!text) return null;
 
   const commaSeparated = text.match(/^(.{2,100}?),\s*([A-Za-z]{2})$/);
   if (commaSeparated) {
     const state = normalizeState(commaSeparated[2]);
-    const city = cleanCity(commaSeparated[1]);
+    // A location clause embedded in a longer identity sentence is not part
+    // of the city name: "Example Person resides in Cedar Rapids, IA".
+    const context = commaSeparated[1].match(
+      /\b(?:located\s+in|lives?\s+in|resides?\s+in|based\s+in|last\s+known\s+in|in|near|from|at)\s+([A-Za-z][A-Za-z.'\-]*(?:\s+[A-Za-z][A-Za-z.'\-]*){0,3})\s*$/i,
+    );
+    const city = cleanCity(context?.[1] || commaSeparated[1]);
     if (state && city.length >= 2) return { city, state, query: `${city}, ${state}` };
   }
 
@@ -118,6 +137,16 @@ export function extractCityStateHint(input: string): { city: string; state: stri
     const before = text.slice(0, stateMatch.index).trim();
     const after = text.slice(stateMatch.index + stateMatch[0].length).trim();
 
+    // Prefer an explicit place clause over treating preceding conversation
+    // text as part of the city, including when the state ends the message.
+    const explicitLocation = before.match(
+      /\b(?:located\s+in|last\s+known\s+(?:in|at)|in|at|from|near|around|city(?:\s+of)?)\s+([A-Za-z][A-Za-z.'\-]*(?:\s+[A-Za-z][A-Za-z.'\-]*){0,3})\s*,?\s*$/i,
+    );
+    if (explicitLocation) {
+      const city = cleanCity(explicitLocation[1]);
+      if (city.length >= 2 && city.length <= 100) return { city, state, query: `${city}, ${state}` };
+    }
+
     // "Sanborn Iowa" / "Sanborn, Iowa" as the whole supplied hint.
     if (!after) {
       const directCity = cleanCity(before.replace(/[,;]\s*$/, ''));
@@ -132,10 +161,7 @@ export function extractCityStateHint(input: string): { city: string; state: stri
 
     // Within a longer sentence, require explicit location language so a state
     // name used in an employer/person name is not mistaken for geography.
-    const explicitLocation = before.match(
-      /\b(?:located\s+in|last\s+known\s+(?:in|at)|in|at|from|near|around|city(?:\s+of)?)\s+([A-Za-z][A-Za-z.'\-]*(?:\s+[A-Za-z][A-Za-z.'\-]*){0,3})\s*,?\s*$/i,
-    );
-    const cityMatch = explicitLocation || before.match(
+    const cityMatch = before.match(
       /(?:^|[,;.])\s*([A-Za-z][A-Za-z.'\-]*(?:\s+[A-Za-z][A-Za-z.'\-]*){0,3})\s*$/i,
     );
     const city = cleanCity(cityMatch?.[1] || '');
@@ -150,6 +176,13 @@ export function extractCityStateHint(input: string): { city: string; state: stri
     const state = normalizeState(match[1]);
     if (!state) continue;
     const before = text.slice(0, match.index).trim();
+    // In conversation these codes are also ordinary words. Require geographic
+    // context instead of interpreting "Show me" as the city "Show" in Maine.
+    // Whole city/state hints have already been handled above.
+    if (
+      /^(?:IN|ME|OR|HI|OK)$/i.test(match[1]) &&
+      !/(?:[,;.]|\b(?:located\s+in|last\s+known\s+(?:in|at)|in|at|from|near|around|city(?:\s+of)?)\s+[A-Za-z][A-Za-z.'\-]*(?:\s+[A-Za-z][A-Za-z.'\-]*){0,3})\s*$/i.test(before)
+    ) continue;
     const cityMatch = before.match(/(?:^|[,;.]|\b(?:in|at|from|near|around|city(?:\s+of)?)\s+)([A-Za-z][A-Za-z.'\-]*(?:\s+[A-Za-z][A-Za-z.'\-]*){0,3})\s*$/i);
     const city = cleanCity(cityMatch?.[1] || '');
     if (city.length >= 2 && city.length <= 100) return { city, state, query: `${city}, ${state}` };
@@ -189,7 +222,8 @@ export function extractFreeformLocationHint(input: string): string | null {
     if (
       phrase.length >= 2 &&
       phrase.length <= 120 &&
-      !/\d{7,}/.test(phrase)
+      !/\d{7,}/.test(phrase) &&
+      !/^(?:(?:my|your|his|her|their|our|the)\s+)?(?:contacts|emails?|inbox|files?|photos?|pictures?|browser|history|accounts?|messages|records|documents)\b/i.test(phrase)
     ) {
       return phrase;
     }
@@ -211,17 +245,44 @@ function haversineMeters(lat1: number, lon1: number, lat2: number, lon2: number)
   return radius * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+// Provider data is untrusted. Number(null) and Number('') both produce zero,
+// which would invent a coordinate even when the response contains no fix.
+function parseGeocoderCoordinates(
+  rawLatitude: unknown,
+  rawLongitude: unknown,
+): { latitude: number; longitude: number } | null {
+  const coordinate = (value: unknown): number | null => {
+    if (typeof value !== 'string' && typeof value !== 'number') return null;
+    if (typeof value === 'string' && !value.trim()) return null;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+
+  const latitude = coordinate(rawLatitude);
+  const longitude = coordinate(rawLongitude);
+  if (
+    latitude === null || Math.abs(latitude) > 90 ||
+    longitude === null || Math.abs(longitude) > 180
+  ) return null;
+  return { latitude, longitude };
+}
+
 function geocoderAccuracyMeters(
   latitude: number,
   longitude: number,
   boundingbox?: string[],
 ): number {
   if (!Array.isArray(boundingbox) || boundingbox.length < 4) return 25_000;
-  const south = Number(boundingbox[0]);
-  const north = Number(boundingbox[1]);
-  const west = Number(boundingbox[2]);
-  const east = Number(boundingbox[3]);
-  if (![south, north, west, east].every(Number.isFinite)) return 25_000;
+  // Apply the same strict parsing as location points. Number(null) and
+  // Number('') would otherwise silently turn missing bounding-box edges into
+  // valid zeros, producing an invented map uncertainty envelope.
+  const southWest = parseGeocoderCoordinates(boundingbox[0], boundingbox[2]);
+  const northEast = parseGeocoderCoordinates(boundingbox[1], boundingbox[3]);
+  if (!southWest || !northEast || southWest.latitude > northEast.latitude) {
+    return 25_000;
+  }
+  const { latitude: south, longitude: west } = southWest;
+  const { latitude: north, longitude: east } = northEast;
 
   const corners = [
     [south, west],
@@ -238,12 +299,20 @@ function geocoderAccuracyMeters(
   return Math.max(1_000, Math.min(500_000, radius || 25_000));
 }
 
+// Reserve request slots sequentially. If several research tasks start together,
+// independently sleeping until the same second would produce a burst on the
+// public Nominatim service (which allows at most one request per second).
+let geocoderSlotQueue: Promise<void> = Promise.resolve();
 async function waitForGeocoderSlot(): Promise<void> {
-  const elapsed = Date.now() - lastRequestAt;
-  if (lastRequestAt && elapsed < 1000) {
-    await new Promise(resolve => setTimeout(resolve, 1000 - elapsed));
-  }
-  lastRequestAt = Date.now();
+  const slot = geocoderSlotQueue.then(async () => {
+    const elapsed = Date.now() - lastRequestAt;
+    if (lastRequestAt && elapsed < 1000) {
+      await new Promise(resolve => setTimeout(resolve, 1000 - elapsed));
+    }
+    lastRequestAt = Date.now();
+  });
+  geocoderSlotQueue = slot.catch(() => undefined);
+  await slot;
 }
 
 const geocoderCache = new Map<string, { expiresAt: number; results: Array<{ lat?: string; lon?: string; display_name?: string; boundingbox?: string[] }> }>();
@@ -276,12 +345,18 @@ async function queryGeocoder(url: URL, strategy = 'unknown'): Promise<Array<{
     console.warn('[SPECTRA_GEOCODER] http_error', { strategy, status: response.status });
     throw new Error('Location service is unavailable.');
   }
-  const results = await response.json() as Array<{
+  const payload: unknown = await response.json();
+  if (!Array.isArray(payload)) {
+    console.warn('[SPECTRA_GEOCODER] invalid_payload', { strategy });
+    throw new Error('Location service returned invalid data.');
+  }
+  const results = payload as Array<{
     lat?: string;
     lon?: string;
     display_name?: string;
     boundingbox?: string[];
   }>;
+  // Malformed provider payloads must never enter the response cache.
   geocoderCache.set(cacheKey, { expiresAt: Date.now() + 5 * 60_000, results });
   if (results.length === 0) console.info('[SPECTRA_GEOCODER] no_match', { strategy });
   else console.info('[SPECTRA_GEOCODER] matched', { strategy, resultCount: results.length });
@@ -300,9 +375,9 @@ export async function geocodeFreeformLocation(input: string): Promise<CityStateL
 
   const results = await queryGeocoder(url, 'freeform');
   const result = results[0];
-  const latitude = Number(result?.lat);
-  const longitude = Number(result?.lon);
-  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+  const coordinates = parseGeocoderCoordinates(result?.lat, result?.lon);
+  if (!coordinates) return null;
+  const { latitude, longitude } = coordinates;
 
   return {
     latitude,
@@ -329,9 +404,9 @@ export async function geocodeCityState(input: string): Promise<CityStateLocation
 
   const results = await queryGeocoder(url, 'city_state');
   const result = results[0];
-  const latitude = Number(result?.lat);
-  const longitude = Number(result?.lon);
-  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+  const coordinates = parseGeocoderCoordinates(result?.lat, result?.lon);
+  if (!coordinates) return null;
+  const { latitude, longitude } = coordinates;
 
   return {
     latitude,
@@ -370,9 +445,12 @@ async function queryCensusAddressGeocoder(address: AddressHint): Promise<CitySta
     if (!response.ok) return null;
     const payload: any = await response.json();
     const match = payload?.result?.addressMatches?.[0];
-    const latitude = Number(match?.coordinates?.y);
-    const longitude = Number(match?.coordinates?.x);
-    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+    const coordinates = parseGeocoderCoordinates(
+      match?.coordinates?.y,
+      match?.coordinates?.x,
+    );
+    if (!coordinates) return null;
+    const { latitude, longitude } = coordinates;
 
     return {
       latitude,
@@ -409,9 +487,9 @@ export async function geocodeBestLocation(input: string): Promise<CityStateLocat
     try {
       const results = await queryGeocoder(structured, 'structured_address');
       const result = results[0];
-      const latitude = Number(result?.lat);
-      const longitude = Number(result?.lon);
-      if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
+      const coordinates = parseGeocoderCoordinates(result?.lat, result?.lon);
+      if (coordinates) {
+        const { latitude, longitude } = coordinates;
         return {
           latitude,
           longitude,
@@ -446,9 +524,9 @@ export async function geocodeBestLocation(input: string): Promise<CityStateLocat
       direct.searchParams.set('q', clue);
       const results = await queryGeocoder(direct, 'normalized_freeform');
       const result = results[0];
-      const latitude = Number(result?.lat);
-      const longitude = Number(result?.lon);
-      if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
+      const coordinates = parseGeocoderCoordinates(result?.lat, result?.lon);
+      if (coordinates) {
+        const { latitude, longitude } = coordinates;
         return {
           latitude,
           longitude,

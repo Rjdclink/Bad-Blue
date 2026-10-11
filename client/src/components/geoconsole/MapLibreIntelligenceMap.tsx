@@ -17,6 +17,8 @@ import maplibregl, { GeoJSONSource, Map as MapLibreMap, MapLayerMouseEvent } fro
 import 'maplibre-gl/dist/maplibre-gl.css';
 import type { GeoFrame } from '@/hooks/useGeoRuntime';
 import type { LocationCandidate } from '@shared/geoconsoleTypes';
+import RasterIntelligenceMap from './RasterIntelligenceMap';
+import { mapDeadline, PLACE_LABELS, SATELLITE_FALLBACK, satelliteBasemap, satelliteStyle } from './mapBasemap';
 
 export type IntelligenceMapMode = 'satellite' | 'hybrid' | 'street' | 'dark';
 
@@ -35,7 +37,7 @@ export interface IntelligenceLayerState {
   streetImagery: boolean;
 }
 
-interface Props {
+export interface IntelligenceMapProps {
   currentFrame: GeoFrame | null;
   trail: GeoFrame[];
   futurecast: GeoFrame[];
@@ -66,6 +68,7 @@ interface MapProviderStatus {
   satellite: MapProviderState;
   earthObservation: MapProviderState;
   terrain: MapProviderState;
+  buildings: MapProviderState;
   weather: MapProviderState;
 }
 
@@ -78,17 +81,17 @@ const OPENFREEMAP_DARK =
 
 const CUSTOM_SATELLITE_TILES =
   import.meta.env?.VITE_SATELLITE_TILES_URL as string | undefined;
-const SATELLITE_TILES =
-  CUSTOM_SATELLITE_TILES ||
-  'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
-const SATELLITE_ATTRIBUTION =
-  (import.meta.env?.VITE_SATELLITE_ATTRIBUTION as string | undefined) ||
-  (CUSTOM_SATELLITE_TILES
-    ? 'Satellite imagery'
-    : 'Esri, Maxar, Earthstar Geographics, and the GIS User Community');
+const SATELLITE_BASEMAP = satelliteBasemap(
+  CUSTOM_SATELLITE_TILES,
+  import.meta.env?.VITE_SATELLITE_ATTRIBUTION as string | undefined,
+);
+const SATELLITE_TILES = SATELLITE_BASEMAP.tiles;
+const SATELLITE_ATTRIBUTION = SATELLITE_BASEMAP.attribution;
 
-const SATELLITE_FALLBACK_TILES =
-  'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/MODIS_Terra_CorrectedReflectance_TrueColor/default/{date}/GoogleMapsCompatible_Level9/{z}/{y}/{x}.jpg';
+const styleKeyFor = (mode: IntelligenceMapMode, satellite: boolean) =>
+  satellite && (mode === 'satellite' || mode === 'hybrid')
+    ? 'satellite' : mode === 'dark' ? OPENFREEMAP_DARK : OPENFREEMAP_LIBERTY;
+const styleFor = (key: string) => key === 'satellite' ? satelliteStyle(SATELLITE_BASEMAP) : key;
 
 const TERRAIN_TILES =
   (import.meta.env?.VITE_TERRAIN_TILES_URL as string | undefined) ||
@@ -267,6 +270,14 @@ function observationZoomForAccuracy(accuracyMeters?: number): number {
   if (accuracy >= 250) return 13;
   if (accuracy >= 50) return 14.5;
   return 16;
+}
+
+// A missing accuracy value must not become a misleading 0-meter reading.
+function finiteOptionalNumber(value: unknown): number | null {
+  if (value === null || value === undefined ||
+    (typeof value === 'string' && !value.trim())) return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
 }
 
 function popupTextNode(lines: Array<{ label?: string; value: string }>): HTMLDivElement {
@@ -569,7 +580,7 @@ function addRuntimeLayers(map: MapLibreMap) {
       type: 'raster',
       tiles: [SATELLITE_TILES],
       tileSize: 256,
-      maxzoom: 19,
+      maxzoom: SATELLITE_BASEMAP.maxNativeZoom,
       attribution: SATELLITE_ATTRIBUTION,
     });
   }
@@ -580,6 +591,16 @@ function addRuntimeLayers(map: MapLibreMap) {
       source: 'spectra-satellite',
       paint: { 'raster-opacity': 1 },
     }, map.getStyle().layers?.find(layer => layer.type === 'symbol')?.id);
+  }
+
+  if (!map.getSource('spectra-place-labels')) {
+    map.addSource('spectra-place-labels', {
+      type: 'raster', tiles: [PLACE_LABELS], tileSize: 256,
+      maxzoom: 19, attribution: 'Labels © Esri',
+    });
+    // Labels are decorative and cannot block evidence or basemap rendering.
+    map.addLayer({ id: 'spectra-place-labels', type: 'raster', source: 'spectra-place-labels',
+      layout: { visibility: 'none' } }, map.getStyle().layers?.find(layer => layer.id.startsWith('spectra-') && layer.id !== 'spectra-satellite')?.id);
   }
 
   if (!map.getSource('spectra-earth-observation')) {
@@ -648,6 +669,14 @@ function addRuntimeLayers(map: MapLibreMap) {
     });
   }
 
+  // An inline satellite style has no vector basemap. Keep its building source
+  // independent so unavailable vector tiles cannot prevent NASA imagery opening.
+  if (!firstVectorSourceId(map) && !map.getSource('spectra-buildings-source')) {
+    map.addSource('spectra-buildings-source', {
+      type: 'vector', url: 'https://tiles.openfreemap.org/planet',
+      attribution: '<a href="https://openfreemap.org/">OpenFreeMap</a> © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>',
+    });
+  }
   const vectorSource = firstVectorSourceId(map);
   if (vectorSource && !map.getLayer('spectra-buildings-3d')) {
     try {
@@ -708,7 +737,7 @@ function setRasterTiles(map: MapLibreMap, sourceId: string, tiles: string[]) {
   if (source?.setTiles) source.setTiles(tiles);
 }
 
-export const MapLibreIntelligenceMap: React.FC<Props> = ({
+export const MapLibreIntelligenceMap: React.FC<IntelligenceMapProps> = ({
   currentFrame,
   trail,
   futurecast,
@@ -726,11 +755,13 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
   const [streetPhoto, setStreetPhoto] = useState<KartaViewPhoto | null>(null);
   const [streetLoading, setStreetLoading] = useState(false);
   const [rendererRecovering, setRendererRecovering] = useState(false);
+  const [rendererUnavailable, setRendererUnavailable] = useState(false);
   const [providerStatus, setProviderStatus] = useState<MapProviderStatus>({
     basemap: 'primary',
     satellite: 'primary',
     earthObservation: 'primary',
     terrain: 'primary',
+    buildings: 'primary',
     weather: 'primary',
   });
   const lastFollowRef = useRef<[number, number] | null>(null);
@@ -738,7 +769,8 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
   const streetRequestRef = useRef(0);
   const providerFailureCountRef = useRef<Record<string, number>>({});
   const providerFallbackAppliedRef = useRef<Set<string>>(new Set());
-  const activeStyleRef = useRef(mapMode === 'dark' ? OPENFREEMAP_DARK : OPENFREEMAP_LIBERTY);
+  const activeStyleRef = useRef(styleKeyFor(mapMode, layers.satellite));
+  const startupDeadlineRef = useRef<ReturnType<typeof mapDeadline> | null>(null);
   const displayTimeMs = displayTime?.getTime() ?? null;
 
   const initialCenter = useMemo<[number, number]>(() => {
@@ -773,10 +805,18 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
   ): boolean => {
     if (providerFallbackAppliedRef.current.has(sourceId)) return false;
 
-    const now = new Date();
     if (sourceId === 'spectra-satellite') {
-      const fallback = SATELLITE_FALLBACK_TILES.replace('{date}', utcDateKey(now));
-      setRasterTiles(map, sourceId, [fallback]);
+      // Replace the source to update native zoom and attribution along with tiles.
+      const style = map.getStyle();
+      const index = style.layers.findIndex(layer => layer.id === sourceId);
+      const layer = style.layers[index];
+      const before = style.layers[index + 1]?.id;
+      if (!layer) return false;
+      map.removeLayer(sourceId);
+      map.removeSource(sourceId);
+      map.addSource(sourceId, { type: 'raster', tiles: [SATELLITE_FALLBACK.tiles], tileSize: 256,
+        maxzoom: SATELLITE_FALLBACK.maxNativeZoom, attribution: SATELLITE_FALLBACK.attribution });
+      map.addLayer(layer, before);
       providerFallbackAppliedRef.current.add(sourceId);
       markProviderState('satellite', 'fallback');
       return true;
@@ -795,11 +835,13 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
   }, [markProviderState]);
 
   useEffect(() => {
-    if (!containerRef.current || mapRef.current) return;
+    if (rendererUnavailable || !containerRef.current || mapRef.current) return;
 
-    const map = new maplibregl.Map({
+    let map: MapLibreMap;
+    try {
+      map = new maplibregl.Map({
       container: containerRef.current,
-      style: mapMode === 'dark' ? OPENFREEMAP_DARK : OPENFREEMAP_LIBERTY,
+      style: styleFor(activeStyleRef.current),
       center: initialCenter,
       zoom: currentFrame
         ? observationZoomForAccuracy(currentFrame.position.accuracy)
@@ -811,23 +853,49 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
       pitch: layers.terrain || layers.buildings ? 52 : 0,
       bearing: 0,
       antialias: typeof navigator === 'undefined' || !navigator.hardwareConcurrency || navigator.hardwareConcurrency > 4,
-      attributionControl: true,
+      attributionControl: {},
       maxPitch: 85,
-    });
+      });
+    } catch {
+      console.warn('[SPECTRA_MAP]', JSON.stringify({ event: 'renderer_fallback', reason: 'webgl_initialization' }));
+      // Some browsers cannot create a WebGL context. Keep the investigation
+      // and its evidence usable instead of triggering the app error boundary.
+      containerRef.current.replaceChildren();
+      setRendererUnavailable(true);
+      return;
+    }
 
     map.addControl(new maplibregl.NavigationControl({
       showCompass: true,
       showZoom: true,
       visualizePitch: true,
-    }), 'top-left');
+    }), 'bottom-right');
     map.addControl(new maplibregl.ScaleControl({ unit: 'imperial', maxWidth: 140 }), 'bottom-left');
 
+    // The map is inside a responsive split-panel/fullscreen layout. Resize
+    // the WebGL viewport when the container changes without a window resize.
+    const resizeObserver = typeof ResizeObserver !== 'undefined'
+      ? new ResizeObserver(() => map.resize())
+      : null;
+    if (resizeObserver && containerRef.current) resizeObserver.observe(containerRef.current);
+
+    const useRaster = (reason: string) => {
+      console.warn('[SPECTRA_MAP]', JSON.stringify({ event: 'renderer_fallback', reason }));
+      setRendererRecovering(false);
+      setRendererUnavailable(true);
+    };
+    const startupDeadline = mapDeadline(() => useRaster('style_startup_timeout'));
+    startupDeadlineRef.current = startupDeadline;
+    startupDeadline.arm();
+    const contextDeadline = mapDeadline(() => useRaster('webgl_context_timeout'));
     const canvas = map.getCanvas();
     const handleContextLost = (event: Event) => {
       event.preventDefault();
       setRendererRecovering(true);
+      contextDeadline.arm();
     };
     const handleContextRestored = () => {
+      contextDeadline.cancel();
       setRendererRecovering(false);
       map.resize();
     };
@@ -850,19 +918,15 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
       const sourceId = String(event?.sourceId || event?.source?.id || '');
       const key = providerSourceKey(sourceId);
 
+      if (sourceId === 'spectra-buildings-source') {
+        markProviderState('buildings', 'unavailable');
+        setVisibility(map, 'spectra-buildings-3d', false);
+        return;
+      }
       if (!key) {
-        const message = String(event?.error?.message || event?.error || '');
-        if (
-          message &&
-          activeStyleRef.current !== OPENFREEMAP_LIBERTY &&
-          !providerFallbackAppliedRef.current.has('basemap')
-        ) {
-          providerFallbackAppliedRef.current.add('basemap');
-          activeStyleRef.current = OPENFREEMAP_LIBERTY;
-          markProviderState('basemap', 'fallback');
-          setReady(false);
-          map.setStyle(OPENFREEMAP_LIBERTY);
-        }
+        // A failed style request has no source ID. Previously the default style
+        // was excluded from recovery, leaving the reserved map panel blank.
+        if (!sourceId && startupDeadline.isPending()) useRaster('style_load_error');
         return;
       }
 
@@ -888,16 +952,28 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
       } else if (sourceId === 'spectra-earth-observation') {
         setVisibility(map, 'spectra-earth-observation', false);
       } else if (sourceId === 'spectra-satellite') {
+        if (activeStyleRef.current === 'satellite') {
+          useRaster('satellite_tiles_unavailable');
+          return;
+        }
         setVisibility(map, 'spectra-satellite', false);
       }
     };
 
     map.on('error', handleMapError);
-    map.on('load', () => initializeRuntimeLayers(map));
-    map.on('style.load', () => {
-      if (!map.isStyleLoaded()) return;
-      initializeRuntimeLayers(map);
-    });
+    const handleStyleReady = () => {
+      try {
+        initializeRuntimeLayers(map);
+        startupDeadline.cancel();
+        console.info('[SPECTRA_MAP]', JSON.stringify({ event: 'style_ready' }));
+      } catch {
+        useRaster('runtime_layer_initialization');
+      }
+    };
+    map.on('load', handleStyleReady);
+    // style.load fires when a replacement style is available for custom
+    // layers; waiting for every tile via isStyleLoaded can skip restoration.
+    map.on('style.load', handleStyleReady);
 
     const popup = new maplibregl.Popup({ closeButton: true, closeOnClick: true });
     map.on('click', 'spectra-candidate-points', (event: MapLayerMouseEvent) => {
@@ -906,8 +982,8 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
       const coordinates = feature.geometry.coordinates.slice() as [number, number];
       const label = String(feature.properties?.label || 'Regional candidate');
       const confidence = Math.round(Number(feature.properties?.confidence || 0) * 100);
-      const accuracyMeters = Number(feature.properties?.accuracyMeters);
-      const areaText = Number.isFinite(accuracyMeters)
+      const accuracyMeters = finiteOptionalNumber(feature.properties?.accuracyMeters);
+      const areaText = accuracyMeters !== null
         ? accuracyMeters < 1000
           ? `±${Math.round(accuracyMeters)} m region`
           : `±${(accuracyMeters / 1000).toFixed(1)} km region`
@@ -930,7 +1006,7 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
       const confidence = Math.round(Number(feature.properties?.confidence || 0) * 100);
       const timestamp = String(feature.properties?.timestamp || '');
       const observationKind = String(feature.properties?.observationKind || 'observed');
-      const accuracy = Number(feature.properties?.accuracy);
+      const accuracy = finiteOptionalNumber(feature.properties?.accuracy);
       const provider = String(feature.properties?.provider || '');
       popup
         .setLngLat(coordinates)
@@ -938,7 +1014,7 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
           { label: 'Evidence:', value: source.replace(/_/g, ' ') },
           { label: 'Classification:', value: observationKind },
           ...(provider ? [{ label: 'Provider:', value: provider }] : []),
-          ...(Number.isFinite(accuracy) ? [{
+          ...(accuracy !== null ? [{
             label: 'Horizontal accuracy:',
             value: accuracy < 1000 ? `±${Math.round(accuracy)} m` : `±${(accuracy / 1000).toFixed(1)} km`,
           }] : []),
@@ -951,29 +1027,38 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
     mapRef.current = map;
 
     return () => {
+      startupDeadline.cancel();
+      contextDeadline.cancel();
+      startupDeadlineRef.current = null;
+      resizeObserver?.disconnect();
       canvas.removeEventListener('webglcontextlost', handleContextLost, false);
       canvas.removeEventListener('webglcontextrestored', handleContextRestored, false);
       map.off('error', handleMapError);
+      map.off('load', handleStyleReady);
+      map.off('style.load', handleStyleReady);
       popup.remove();
       map.remove();
       mapRef.current = null;
       setReady(false);
     };
-  }, []);
+  }, [rendererUnavailable]);
 
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
-    const desired = mapMode === 'dark' ? OPENFREEMAP_DARK : OPENFREEMAP_LIBERTY;
+    const desired = styleKeyFor(mapMode, layers.satellite);
     if (activeStyleRef.current === desired) return;
 
-    // Satellite/hybrid are instant raster overlays. Only the vector base style
-    // changes when crossing into or out of dark mode.
+    // Satellite startup uses an inline style so it does not wait on a vector-style host.
     setReady(false);
     activeStyleRef.current = desired;
-    map.setStyle(desired);
-    map.once('style.load', () => initializeRuntimeLayers(map));
-  }, [mapMode, initializeRuntimeLayers]);
+    startupDeadlineRef.current?.arm();
+    providerFallbackAppliedRef.current.clear();
+    providerFailureCountRef.current = {};
+    setProviderStatus({ basemap: 'primary', satellite: 'primary', earthObservation: 'primary', terrain: 'primary', buildings: 'primary', weather: 'primary' });
+    try { map.setStyle(styleFor(desired)); } catch { setRendererUnavailable(true); }
+    // The permanent style.load handler above restores runtime overlays.
+  }, [mapMode, layers.satellite, initializeRuntimeLayers]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -991,9 +1076,10 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
     });
     safeSetData(map, 'spectra-futurecast', {
       type: 'FeatureCollection',
-      features: futurecast.length
+      // A LineString needs two coordinates. Keep a lone forecast as a point.
+      features: futurecast.length > 1
         ? [lineFeature(futurecast), ...futurecast.map(pointFeature)]
-        : [],
+        : futurecast.map(pointFeature),
     });
     safeSetData(map, 'spectra-futurecast-uncertainty', {
       type: 'FeatureCollection',
@@ -1136,15 +1222,16 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
     setVisibility(map, 'spectra-uncertainty-outline', layers.uncertainty);
     setVisibility(map, 'spectra-weather-radar', layers.weather && weatherAvailable);
     setVisibility(map, 'spectra-hillshade', layers.terrain && terrainAvailable);
-    setVisibility(map, 'spectra-buildings-3d', layers.buildings);
+    setVisibility(map, 'spectra-buildings-3d', layers.buildings && providerStatus.buildings !== 'unavailable');
 
     const showSatellite =
       satelliteAvailable &&
       layers.satellite &&
       (mapMode === 'satellite' || mapMode === 'hybrid');
     setVisibility(map, 'spectra-satellite', showSatellite);
+    setVisibility(map, 'spectra-place-labels', showSatellite && mapMode === 'hybrid');
     if (map.getLayer('spectra-satellite')) {
-      map.setPaintProperty('spectra-satellite', 'raster-opacity', mapMode === 'hybrid' ? 0.76 : 1);
+      map.setPaintProperty('spectra-satellite', 'raster-opacity', 1);
     }
 
     try {
@@ -1282,8 +1369,21 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
   return (
     <div className="absolute inset-0" data-gesture-navigation="ignore">
       <div ref={containerRef} className="absolute inset-0" />
+      {rendererUnavailable && <RasterIntelligenceMap
+        currentFrame={currentFrame} trail={trail} futurecast={futurecast}
+        candidateLocations={candidateLocations} displayTime={displayTime}
+        mapMode={mapMode} layers={layers} isLive={isLive}
+        lockOnTarget={lockOnTarget} onUserInteraction={onUserInteraction}
+      />}
 
-      {Object.values(providerStatus).some(state => state !== 'primary') && (
+      {!rendererUnavailable && layers.satellite && (mapMode === 'satellite' || mapMode === 'hybrid') && (
+        <div role="status" className="pointer-events-none absolute bottom-10 left-3 z-10 rounded bg-slate-950/90 px-2 py-1 text-xs text-slate-200">
+          {providerStatus.satellite === 'fallback' ? SATELLITE_FALLBACK.label : SATELLITE_BASEMAP.label}
+          {layers.terrain && providerStatus.terrain !== 'unavailable' ? ' · 3D terrain' : ''}
+        </div>
+      )}
+
+      {!rendererUnavailable && Object.values(providerStatus).some(state => state !== 'primary') && (
         <div
           data-testid="map-provider-status"
           className="pointer-events-none absolute left-3 top-3 z-20 max-w-[min(420px,calc(100%-1.5rem))] rounded-lg border border-slate-700/70 bg-slate-950/90 px-3 py-2 text-[10px] text-slate-300 shadow-lg backdrop-blur"
@@ -1338,3 +1438,4 @@ export const MapLibreIntelligenceMap: React.FC<Props> = ({
 };
 
 export default MapLibreIntelligenceMap;
+

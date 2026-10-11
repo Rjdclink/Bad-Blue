@@ -10,7 +10,7 @@ import { MaintenanceMode } from "@/components/MaintenanceMode";
 import { lazy, Suspense, useEffect, useState, Component, ErrorInfo, ReactNode } from "react";
 import { AuthLoadingSkeleton, PageSkeleton } from "@/components/ui/page-skeleton";
 import { useGlobalGestureNavigation } from "@/hooks/useGlobalGestureNavigation";
-import { TrialStatusBanner } from "@/components/TrialStatusBanner";
+import { isPaidAccessState, isSubscriptionEntryPath } from "@shared/subscriptionPolicy";
 import TrialAccessPage from "@/pages/trial-access";
 
 if (typeof window !== 'undefined') {
@@ -106,6 +106,7 @@ const LegalToolsPage = lazyWithRetry(() => import("@/pages/legal-tools"), 'Legal
 const PantheonPage = lazyWithRetry(() => import("@/pages/pantheon"), 'Pantheon');
 const ConsultationPage = lazyWithRetry(() => import("@/pages/legal-consultation"), 'Consultation');
 const SpectraPage = lazyWithRetry(() => import("@/pages/spectra"), 'Spectra');
+const SpectraPublicPage = lazyWithRetry(() => import("@/pages/spectra-public"), 'SpectraPublicMap');
 const SubscriptionSuccess = lazyWithRetry(() => import("@/pages/subscription-success"), 'SubscriptionSuccess');
 const FAQPage = lazyWithRetry(() => import("@/pages/faq"), 'FAQ');
 const InmateLocatorPage = lazyWithRetry(() => import("@/pages/inmate-locator"), 'InmateLocator');
@@ -212,14 +213,27 @@ function GatedControlRoom() {
   return <FeatureGate feature="reactor"><ControlRoomPage /></FeatureGate>;
 }
 
+const SPECTRA_PUBLIC_ROUTES = [
+  "/spectra",
+  "/people-finder",
+  "/geo-console",
+  "/location-intel",
+  "/tshpe",
+  "/tshpe-locator",
+  "/positioning",
+  "/geoconsole",
+  "/geoconsole-command",
+  "/geoconsole-process",
+  "/geoconsole-report",
+] as const;
+
 function Router() {
+  const [currentPath] = useLocation();
   const { user, isAuthenticated, isLoading } = useAuth();
   const isMasterSession = Boolean((user as any)?.isMasterBypass);
   const accessState = String((user as any)?.accessState || "");
   const hasPaidAccess = isMasterSession ||
-    accessState === "master" ||
-    accessState === "paid" ||
-    accessState === "trial_active" ||
+    isPaidAccessState(accessState) ||
     (!accessState &&
       Boolean((user as any)?.hasPaidForAccess === true) &&
       !["suspended", "past_due", "canceled", "expired"].includes(
@@ -282,28 +296,27 @@ function Router() {
   if (isLoading) return <AuthLoadingSkeleton />;
   if (maintenanceStatus?.maintenanceMode) return <MaintenanceMode />;
 
+  // This also covers client-side navigation that never makes an HTML request.
+  if (!isSubscriptionEntryPath(currentPath) && !(isAuthenticated && hasPaidAccess)) {
+    return <Redirect to={isAuthenticated ? "/subscription-required" : "/login"} replace />;
+  }
+
   return (
     <Suspense fallback={<PageLoader />}>
       <>
-        <TrialStatusBanner
-          accessState={accessState}
-          trialRemainingMs={Number((user as any)?.trialRemainingMs || 0)}
-          trialExpiresAt={(user as any)?.trialExpiresAt || null}
-          userId={(user as any)?.id}
-        />
         <Switch>
           <Route path="/" component={Landing} />
           <Route path="/landing" component={Landing} />
 
           <Route path="/subscription-success" component={SubscriptionSuccess} />
           <Route path="/trial-expired">
-            <TrialAccessPage />
+            <TrialAccessPage required />
           </Route>
           <Route path="/trial-upgrade">
-            <TrialAccessPage early />
+            <TrialAccessPage required />
           </Route>
           <Route path="/trial-review">
-            <TrialAccessPage review />
+            <TrialAccessPage required />
           </Route>
           <Route path="/subscription-required">
             <TrialAccessPage required />
@@ -386,6 +399,14 @@ function Router() {
             </>
           ) : null}
 
+          {/* Anyone can explore the general map without an account.
+              The authenticated SPECTRA investigator is registered above;
+              its acquisition, telemetry and stored records remain private. */}
+          {(!isAuthenticated || !hasPaidAccess) &&
+            SPECTRA_PUBLIC_ROUTES.map(path => (
+              <Route key={path} path={path} component={SpectraPublicPage} />
+            ))}
+
           <Route>
             {isAuthenticated && accessState === "trial_expired"
               ? <Redirect to="/trial-expired" />
@@ -415,3 +436,4 @@ export default function App() {
     </ErrorBoundary>
   );
 }
+

@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "NODE_ENV=development tsx server/index.ts",
     "dev:worker": "NODE_ENV=development tsx workers/peopleSearchWorker/index.ts",
-    "prebuild": "node scripts/cryptocrawl/verify-manual-master-lifecycle.cjs && npm run verify:auth-runtime && npm run verify:master-access && npm run verify:geoconsole && node scripts/cryptocrawl/verify-deployment-preflight.cjs && node scripts/cryptocrawl/verify-self-funded-capital-authority.cjs && node scripts/cryptocrawl/verify-compound-runtime-profitability-repairs.cjs && node --import tsx server/services/cryptocrawl/testing/verify-autonomous-stage-progression.ts && node --import tsx scripts/cryptocrawl/verify-profit-ladder-terminal-evidence.ts && node --import tsx scripts/cryptocrawl/verify-runtime-readiness-policy.ts && node scripts/cryptocrawl/verify-zero-capital-bps-propagation.cjs && node scripts/cryptocrawl/verify-bootstrap-execution-history.cjs && node scripts/cryptocrawl/verify-unified-multileg-adaptive-engine.cjs && node scripts/cryptocrawl/verify-research-bps-transform-reassessment.cjs",
+    "prebuild": "npm run verify:subscription-gate && node scripts/cryptocrawl/verify-manual-master-lifecycle.cjs && npm run verify:auth-runtime && npm run verify:master-access && npm run verify:geoconsole && node scripts/cryptocrawl/verify-deployment-preflight.cjs && node scripts/cryptocrawl/verify-self-funded-capital-authority.cjs && node scripts/cryptocrawl/verify-compound-runtime-profitability-repairs.cjs && node --import tsx server/services/cryptocrawl/testing/verify-autonomous-stage-progression.ts && node --import tsx scripts/cryptocrawl/verify-profit-ladder-terminal-evidence.ts && node --import tsx scripts/cryptocrawl/verify-runtime-readiness-policy.ts && node scripts/cryptocrawl/verify-zero-capital-bps-propagation.cjs && node scripts/cryptocrawl/verify-bootstrap-execution-history.cjs && node scripts/cryptocrawl/verify-unified-multileg-adaptive-engine.cjs && node scripts/cryptocrawl/verify-research-bps-transform-reassessment.cjs",
     "verify:seo": "node scripts/verify-seo-branding.cjs",
     "verify:neon-failover": "node scripts/verify-legalwhat-neon-failover.cjs",
     "db:neon:push": "drizzle-kit push --config drizzle.neon.config.ts",
@@ -62,7 +62,8 @@
     "verify:master-access": "npm run verify:master-auth && node scripts/verify-master-access-navigation.cjs",
     "verify:auth-runtime": "node --import tsx scripts/verify-auth-runtime.ts",
     "verify:geoconsole": "node scripts/verify-geoconsole.cjs && node scripts/verify-geoconsole-e2e.cjs && node scripts/verify-geoconsole-links.cjs && node scripts/verify-production-mode.cjs && node scripts/verify-spectra.cjs",
-    "verify:spectra": "node scripts/verify-spectra.cjs && node --import tsx scripts/verify-spectra-clue-intelligence.ts && node --import tsx scripts/verify-spectra-provider-normalizers.ts && node --import tsx scripts/verify-spectra-active-acquisition.ts && node --import tsx scripts/verify-spectra-live-confidence.ts && node --import tsx scripts/verify-spectra-posterior-calibration.ts && node --import tsx scripts/verify-spectra-identity-binding.ts && node --import tsx scripts/verify-spectra-constraint-solver.ts",
+    "verify:spectra": "npm run verify:spectra:records && node scripts/verify-spectra-evidence-status.cjs && node scripts/verify-spectra-retrieval-diagnostics.cjs && node --import tsx scripts/verify-spectra-public-place.ts && node scripts/verify-spectra-pipeline.cjs && node scripts/verify-spectra-configuration.cjs && node scripts/verify-spectra-feed-diagnostics.cjs && node --import tsx scripts/verify-spectra-map-basemap.ts && node scripts/verify-spectra.cjs && node --import tsx scripts/verify-spectra-media-capture.ts && node --import tsx scripts/verify-spectra-city-discovery-policy.ts && node --import tsx scripts/verify-spectra-public-city-field.ts --fixtures && node --import tsx scripts/verify-spectra-public-content-retrieval.ts && node --import tsx scripts/verify-spectra-public-evidence-provenance.ts && node --import tsx scripts/verify-spectra-clue-intelligence.ts && node --import tsx scripts/verify-spectra-regional-inference.ts && node --import tsx scripts/verify-spectra-city-synthetic-regressions.ts && node --import tsx scripts/verify-spectra-publication-dates.ts && node --import tsx scripts/verify-spectra-provider-normalizers.ts && node --import tsx scripts/verify-spectra-active-acquisition.ts && node --import tsx scripts/verify-spectra-live-confidence.ts && node --import tsx scripts/verify-spectra-posterior-calibration.ts && node --import tsx scripts/verify-spectra-identity-binding.ts && node --import tsx scripts/verify-spectra-constraint-solver.ts && node --import tsx scripts/verify-spectra-json-location-exports.ts && node scripts/verify-spectra-client-controls.cjs && node --import tsx scripts/verify-spectra-motion-runtime.ts && node scripts/verify-spectra-claude-fallback.cjs && node scripts/verify-spectra-neon-schema.cjs",
+    "verify:spectra:public-city-field": "node --import tsx scripts/verify-spectra-public-city-field.ts --live",
     "verify:lexara-realization": "node scripts/verify-lexara-realization.cjs",
     "verify:ai-harmony": "node scripts/verify-ai-harmony-platform.cjs",
     "verify:pantheon-source-registry": "node scripts/verify-pantheon-source-registry.cjs",
@@ -76,7 +77,9 @@
     "verify:pantheon-frontier": "node scripts/verify-pantheon-durable-frontier.cjs",
     "verify:pantheon-evidence-lifecycle": "node scripts/verify-pantheon-evidence-lifecycle.cjs && node --import tsx scripts/verify-pantheon-report-e2e.ts",
     "verify:pantheon-source-contract": "node scripts/verify-pantheon-source-contract.cjs",
-    "verify:pantheon-blueprint-66": "node --import tsx scripts/verify-pantheon-blueprint-through-66.ts"
+    "verify:pantheon-blueprint-66": "node --import tsx scripts/verify-pantheon-blueprint-through-66.ts",
+    "verify:spectra:records": "node scripts/verify-spectra-public-feed-store.cjs && node --import tsx scripts/verify-spectra-public-feeds.ts && node --import tsx scripts/verify-spectra-acquisition-records.ts",
+    "verify:subscription-gate": "node --import tsx scripts/verify-subscription-gate.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.133.0",
@@ -228,6 +231,7 @@
     "@replit/vite-plugin-cartographer": "^0.3.1",
     "@replit/vite-plugin-dev-banner": "^0.1.1",
     "@replit/vite-plugin-runtime-error-modal": "^0.0.3",
+    "@sinonjs/fake-timers": "^15.4.0",
     "@tailwindcss/typography": "^0.5.15",
     "@tailwindcss/vite": "^4.1.3",
     "@types/connect-pg-simple": "^7.0.3",

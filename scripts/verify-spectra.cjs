@@ -16,6 +16,7 @@ const test = (name, condition) => {
 };
 
 const spectra = read('client/src/pages/spectra.tsx');
+const publicMap = read('client/src/pages/spectra-public.tsx');
 const dashboard = read('client/src/components/geoconsole/GeoconsoleRadarDashboard.tsx');
 const welcome = read('client/src/pages/welcome.tsx');
 const app = read('client/src/App.tsx');
@@ -32,6 +33,10 @@ const exifTool = read('server/services/locationIntelligence/ExifToolExtractor.ts
 const spectraSources = read('server/services/spectra/SpectraSourceRegistry.ts');
 const pantheonSources = read('server/services/pantheon/PantheonSovereignSourceRegistry.ts');
 const geocoder = read('server/services/geoconsole/city-state-geocoder.ts');
+const regionalInference = read('server/services/spectra/SpectraRegionalInference.ts');
+const cityDiscoveryPolicy = read('server/services/spectra/SpectraCityDiscoveryPolicy.ts');
+const cityAccuracyFixtures = read('scripts/verify-spectra-city-synthetic-regressions.ts');
+const locationQuality = read('server/services/geoconsole/location-quality.ts');
 const geoconsoleRoutes = read('server/routes/geoconsole.routes.ts');
 const adapterRegistry = read('server/services/spectra/SpectraAdapterRegistry.ts');
 const activeAcquisition = read('server/services/spectra/SpectraActiveAcquisition.ts');
@@ -50,6 +55,9 @@ const telemetryImport = read('server/services/spectra/SpectraTelemetryImport.ts'
 const acquisitionPersistence = read('server/services/spectra/SpectraAcquisitionPersistence.ts');
 const placeContext = read('server/services/spectra/SpectraPlaceContext.ts');
 const publicRetrieval = read('server/services/spectra/SpectraPublicRetrieval.ts');
+const publicProvenance = read('server/services/spectra/SpectraPublicEvidenceProvenance.ts');
+const gpsRoutes = read('server/routes/gps.routes.ts');
+const mediaEvidence = read('server/services/spectra/SpectraMediaEvidence.ts');
 const cameraDirectories = read('server/services/spectra/SpectraCameraDirectoryAdapters.ts');
 const motionContext = read('server/services/spectra/SpectraMotionContext.ts');
 const monteCarlo = read('server/services/geoconsole/monteCarloPathEngine.ts');
@@ -102,6 +110,26 @@ test('Media intelligence is folded into the conversation',
   spectra.includes('/api/gps/extract-upload') &&
   spectra.includes('handleMediaEvidence') &&
   spectra.includes('Paperclip'));
+test('SPECTRA searches public profiles automatically and stops only on actual corroborated city claims',
+  spectraSources.includes("'public-profile-city'") &&
+  spectraSources.includes("'social-location'") &&
+  cityDiscoveryPolicy.includes('assessSpectraCityDiscoveryReadiness') &&
+  cityDiscoveryPolicy.includes('chooseSpectraPublicRetrievalUrls') &&
+  cityDiscoveryPolicy.includes('Boolean(city)') &&
+  routes.includes('chooseSpectraPublicRetrievalUrls(enrichedResults, 8)') &&
+  routes.includes('if (readiness.sufficientToStop) break;'));
+
+test('Media GPS remains dated scene context with explicit freshness and uncertainty',
+  gpsRoutes.includes('assessSpectraMediaCapture(metadata)') &&
+  gpsRoutes.includes("mediaAssessment.status === 'accepted'") &&
+  gpsRoutes.includes("observationKind: 'historical'") &&
+  gpsRoutes.includes("evidenceRole: 'media_capture_scene'") &&
+  gpsRoutes.includes("currentPositionVerified: false") &&
+  mediaEvidence.includes("status: 'conflicting_gps'") &&
+  mediaEvidence.includes("status: 'future_capture_time'") &&
+  spectra.includes('Capture age:') &&
+  spectra.includes('historical scene evidence') &&
+  spectra.includes('Conflicting GPS metadata was excluded'));
 test('SPECTRA map exposes simplified shell',
   dashboard.includes('spectraShell?: boolean') &&
   dashboard.includes('!spectraShell && inspectorOpen'));
@@ -112,7 +140,9 @@ test('SPECTRA map is unconditional from initial load',
 test('Map is progressively populated from supplied clues',
   spectra.includes('/api/geoconsole/geocode-city-state') &&
   spectra.includes('Regional context mapped; broadening identity discovery') &&
-  spectra.includes('Acquired so far'));
+  spectra.includes('Search progress') &&
+  spectra.includes('Phone clue supplied') &&
+  !spectra.includes('Phone anchor'));
 test('Natural-language clues are decomposed into address and regional candidates',
   geocoder.includes('extractStreetAddressHint') &&
   geocoder.includes('extractLocationClues') &&
@@ -120,6 +150,30 @@ test('Natural-language clues are decomposed into address and regional candidates
   geocoder.includes("strategy, 'structured_address'") === false &&
   geocoder.includes("queryGeocoder(structured, 'structured_address')") &&
   geocoder.includes("queryGeocoder(direct, 'normalized_freeform')"));
+test('SPECTRA rejects missing or impossible provider coordinates before mapping',
+  geocoder.includes('function parseGeocoderCoordinates(') &&
+  geocoder.includes("typeof value !== 'string' && typeof value !== 'number'") &&
+  geocoder.includes('Math.abs(latitude) > 90') &&
+  geocoder.includes('Math.abs(longitude) > 180') &&
+  geocoder.includes("'[SPECTRA_GEOCODER] invalid_payload'") &&
+  (geocoder.match(/parseGeocoderCoordinates\(/g) || []).length >= 6);
+test('General location quality rejects impossible fixes without inventing precision',
+  locationQuality.includes("code: 'invalid_coordinate'") &&
+  locationQuality.includes("code: 'invalid_confidence'") &&
+  locationQuality.includes("code: 'invalid_accuracy'") &&
+  locationQuality.includes('timestampValue instanceof Date') &&
+  locationQuality.includes('Number.isFinite(point.latitude)') &&
+  locationQuality.includes('Number.isFinite(point.longitude)'));
+
+test('Regional uncertainty rejects empty bounding-box edges instead of coercing them to zero',
+  geocoder.includes('const southWest = parseGeocoderCoordinates(boundingbox[0], boundingbox[2])') &&
+  geocoder.includes('const northEast = parseGeocoderCoordinates(boundingbox[1], boundingbox[3])') &&
+  !geocoder.includes('const south = Number(boundingbox[0])'));
+test('Parallel requests reserve sequential public geocoder slots',
+  geocoder.includes('let geocoderSlotQueue: Promise<void> = Promise.resolve()') &&
+  geocoder.includes('geocoderSlotQueue.then(async () => {') &&
+  geocoder.includes('geocoderSlotQueue = slot.catch(() => undefined)'));
+
 test('Geocoder failures are classified without logging raw clue text',
   geocoder.includes("'[SPECTRA_GEOCODER] request_failed'") &&
   geocoder.includes("'[SPECTRA_GEOCODER] no_match'") &&
@@ -131,9 +185,57 @@ test('Direct media evidence is sent to the server and preserved immediately',
   routes.includes('directEvidence.map'));
 test('Regional candidates remain separate from timed observations',
   spectra.includes('candidateLocations={candidateLocations}') &&
-  routes.includes('candidateLocations') &&
+  routes.includes('const locationObservations = solvedLocationObservations') &&
+  routes.includes('if (locationObservations.length === 0)') &&
+  routes.includes('candidateLocations.push({') &&
   routes.includes("basis: 'regional_context'") &&
-  routes.includes('accuracyMeters: region.accuracyMeters'));
+  routes.includes('region.accuracyMeters,'));
+test('Unbound public-page coordinates cannot enter the subject GPS pipeline',
+  routes.includes('stripUnboundPublicGeoContext(result?.metadata)') &&
+  routes.includes('mergePublicRetrievedMetadata(existing.metadata, evidence)') &&
+  routes.includes('byUrl.get(evidence.requestedUrl) || byUrl.get(evidence.url)'));
+
+test('SPECTRA can use corroborated public city context without claiming a live position',
+  routes.includes('inferCorroboratedRegionalCity(') &&
+  routes.includes('discoveryResults,') &&
+  routes.includes('if (!region && corroboratedCity)') &&
+  regionalInference.includes('winner.domains.size < 2') &&
+  regionalInference.includes('currentPositionVerified: false') &&
+  regionalInference.includes('HISTORICAL_LANGUAGE_RE') &&
+  geocoder.includes('const context = commaSeparated[1].match('));
+
+test('Search clues cannot impersonate independently discovered current cities',
+  routes.indexOf('if (!region && corroboratedCity)') <
+    routes.indexOf('for (const locationInput of locationInputs)') &&
+  routes.includes('(supplied search clue; current city not verified)') &&
+  routes.includes('(corroborated public residence; not a live location)') &&
+  routes.includes('confidence: cityCorroborationUsed ? 0.35 : 0.05') &&
+  regionalInference.includes('const residenceClause = residence[1].split(') &&
+  regionalInference.includes('extractCityStateHint(residenceClause)'));
+
+test('Broad-city corroboration filters stale, copied and contradictory evidence',
+  regionalInference.includes('MAX_DATED_SOURCE_AGE_MS') &&
+  regionalInference.includes('item.metadata?.publishedAt') &&
+  regionalInference.includes('hasUsablePublicationDate(item, asOf.getTime())') &&
+  regionalInference.includes('winner.domains.size < 2 || ranked.length !== 1') &&
+  regionalInference.includes('const uniqueClaims = new Set<string>()') &&
+  regionalInference.includes('if (independentDomains.length < 2) return null'));
+test('Synthetic city regression suite records both correct matches and abstentions',
+  cityAccuracyFixtures.includes('correctCityPredictions') &&
+  cityAccuracyFixtures.includes('falseCityPredictions') &&
+  cityAccuracyFixtures.includes('correctlyAbstained') &&
+  cityAccuracyFixtures.includes('not real-world accuracy'));
+
+test('Public evidence publication time reaches SPECTRA city corroboration',
+  publicRetrieval.includes('publishedAt?: string') &&
+  publicRetrieval.includes("meta.get('article:published_time')") &&
+  publicRetrieval.includes("meta.get('datepublished')") &&
+  publicRetrieval.includes("candidate['@type']") &&
+  publicRetrieval.includes('publishedAt: extracted.publishedAt') &&
+  routes.includes('mergePublicRetrievedMetadata(existing.metadata, evidence)') &&
+  publicProvenance.includes('publishedAt: evidence.publishedAt ?? previous?.publishedAt') &&
+  publicProvenance.includes('fetchedExcerpt: evidence.textExcerpt ?? previous?.fetchedExcerpt'));
+
 test('One-hour previous/future timeline remains available',
   dashboard.includes('min={-60}') && dashboard.includes('max={60}'));
 
@@ -193,9 +295,10 @@ test('SPECTRA broad discovery runs through independent native and Claude researc
   routes.includes('discoverLegalMeshTier3') &&
   routes.includes('callClaudeWebSearch') &&
   routes.includes('allowFetch: true'));
-test('SPECTRA recursively broadens until evidence sufficiency or diminishing returns',
+test('SPECTRA recursively broadens until corroborated city evidence or diminishing returns',
   routes.includes('SPECTRA_DISCOVERY_POLICY.maxPasses') &&
-  routes.includes('SPECTRA_DISCOVERY_POLICY.sufficientConfidence') &&
+  cityDiscoveryPolicy.includes('SPECTRA_DISCOVERY_POLICY.sufficientConfidence') &&
+  routes.includes('if (readiness.sufficientToStop) break;') &&
   routes.includes('SPECTRA_DISCOVERY_POLICY.diminishingReturnFloor') &&
   routes.includes('buildSpectraAdaptiveQuery'));
 test('Generic target classes resolve identity without treating city/state as a person name',
@@ -358,6 +461,13 @@ test('SPECTRA adapter capability registry truthfully exposes optional and built-
   adapterRegistry.includes("id: 'trafficland'") &&
   adapterRegistry.includes("id: 'overpass-place-context'") &&
   adapterRegistry.includes("id: 'geonames-place-context'"));
+test('Cisco Spaces Cartesian coordinates cannot masquerade as latitude/longitude',
+  externalLocationNormalizer.includes('coordinateSystem: \'wgs84-explicit\'') &&
+  externalLocationNormalizer.includes('confidenceFactor: finite(event.confidenceFactor)') &&
+  externalLocationNormalizer.includes('location.longitude ?? location.lng ?? location.lon,') &&
+  !externalLocationNormalizer.includes('location.lat ?? coordinates[0]') &&
+  activeAcquisition.includes('Active provider returned telemetry for a different device.'));
+
 test('SPECTRA active acquisition uses managed-device identifiers and canonical telemetry processing',
   routes.includes('acquireSpectraActiveTelemetry') &&
   routes.includes('resolveSpectraNormalizedTelemetryBatch') &&
@@ -670,18 +780,26 @@ test('Radio positioning has independent Google, beaconDB and OpenCellID lanes',
   geoconsoleRoutes.includes('opencellid.org/cell/get') &&
   geoconsoleRoutes.includes('Promise.allSettled([') &&
   adapterRegistry.includes("id: 'beacondb-radio-geolocation'"));
-test('Public discovery retrieves underlying pages before admitting coordinate evidence',
+test('Public webpage text recovery prioritizes article content over long navigation menus',
+  publicRetrieval.includes("const semanticRoot = $('main, article, [role=\"main\"]')") &&
+  publicRetrieval.includes("const MAX_TEXT = 320_000") &&
+  publicRetrieval.includes("slice(0, 8_000)"));
+
+test('Public discovery retrieves source pages without promoting unbound venue GPS',
   routes.includes('retrieveSpectraPublicEvidence') &&
-  publicRetrieval.includes('MAX_TARGETS = 6') &&
+  publicRetrieval.includes('MAX_TARGETS = 8') &&
   publicRetrieval.includes('application/ld+json') &&
   publicRetrieval.includes('json-geospatial-field-extraction') &&
-  routes.includes('subjectMatchConfidence: 0.35') &&
-  routes.includes('timestampConfidence: observation.timestamp ? 0.75 : 0'));
+  routes.includes('mergePublicRetrievedMetadata(existing.metadata, evidence)') &&
+  routes.includes('stripUnboundPublicGeoContext(result?.metadata)') &&
+  publicProvenance.includes('subjectMatchConfidence: 0') &&
+  publicProvenance.includes('currentPositionVerified: false'));
 test('SPECTRA attachment flow accepts both media and structured telemetry files',
   spectra.includes('/api/gps/extract-upload') &&
   spectra.includes('/api/geoconsole/telemetry/import-file') &&
   spectra.includes('handleTargetFile') &&
-  spectra.includes('.geojson,.gpx,.kml,.nmea,.csv,.ndjson,.jsonl,.log,.txt'));
+  spectra.includes("['geojson', 'json', 'gpx', 'kml', 'nmea', 'csv', 'ndjson', 'jsonl', 'log', 'txt']") &&
+  !/accept=["'][^"']*image\/\*/.test(spectra));
 test('Lexara exposes the SPECTRA icon only on matching location command responses',
   lexaraConversation.includes('spectraTargetFromPrompt') &&
   lexaraConversation.includes('data-testid="lexara-spectra-launch"') &&
@@ -744,8 +862,76 @@ test('Generic vehicle/camera feeds preserve track identity and velocity context'
   geoconsoleRoutes.includes("typeof inputMetadata.trackId === 'string'") &&
   geoconsoleRoutes.includes('velocity: (') &&
   geoconsoleRoutes.includes(': inputMetadata.velocity'));
+test('SPECTRA map restores layers on style changes without waiting for every tile',
+  intelligenceMap.includes("map.on('style.load', handleStyleReady)") &&
+  intelligenceMap.includes('initializeRuntimeLayers(map);') &&
+  intelligenceMap.includes("map.off('style.load', handleStyleReady)") &&
+  !intelligenceMap.includes("if (!map.isStyleLoaded()) return;") &&
+  !intelligenceMap.includes("map.once('style.load'"));
+test('SPECTRA map adjusts to split-panel and fullscreen size changes',
+  intelligenceMap.includes('new ResizeObserver(() => map.resize())') &&
+  intelligenceMap.includes('resizeObserver?.disconnect()'));
+test('One forecast observation renders as a point rather than invalid LineString',
+  intelligenceMap.includes('features: futurecast.length > 1') &&
+  intelligenceMap.includes(': futurecast.map(pointFeature),'));
+test('Superseded timeline loads cannot override newer investigations',
+  runtime.includes('const loadRequestRef = useRef(0);') &&
+  runtime.includes('const loadRequestId = ++loadRequestRef.current;') &&
+  (runtime.match(/loadRequestId !== loadRequestRef\.current/g) || []).length >= 3);
+test('Superseded forecast requests are invalidated before the minimum-frame check',
+  runtime.includes('const requestId = ++futurecastRequestRef.current;\n    if (!cfg.predictiveEnabled || sourceFrames.length < 3)') &&
+  runtime.includes('++futurecastRequestRef.current;\n    setStatus(\'loading\')'));
+
+test('Canonical acquisition candidates cannot be replaced by a late regional preview',
+  spectra.includes('let previewOpen = true;') &&
+  spectra.includes('if (!previewOpen || requestId !== requestRef.current) return;') &&
+  spectra.includes('previewOpen = false;') &&
+  spectra.includes('if (previewOpen && requestId === requestRef.current)'));
+
+test('SPECTRA map routes wait for authentication and require a paid subscription',
+  app.includes('const SpectraPublicPage = lazyWithRetry(') &&
+  app.includes('SPECTRA_PUBLIC_ROUTES.map(path => (') &&
+  app.includes('<Route key={path} path={path} component={SpectraPublicPage} />') &&
+  app.includes('if (isLoading) return <AuthLoadingSkeleton />') &&
+  app.includes('if (!isSubscriptionEntryPath(currentPath)') &&
+  publicMap.includes('<MapLibreIntelligenceMap') &&
+  publicMap.includes('currentFrame={null}') &&
+  publicMap.includes('trail={NO_OBSERVATIONS}') &&
+  publicMap.includes('futurecast={NO_OBSERVATIONS}') &&
+  publicMap.includes('isLive={false}') &&
+  !publicMap.includes('navigator.geolocation') &&
+  !publicMap.includes('/api/spectra/acquire') &&
+  !publicMap.includes('/api/geoconsole/telemetry'));
+
+test('Private person-specific acquisition and saved records retain server authentication',
+  app.includes('isAuthenticated && hasPaidAccess') &&
+  routes.includes('router.use(isAuthenticated)') &&
+  geoconsoleRoutes.includes('router.use(isAuthenticated)'));
+
+test('SPECTRA removes the browser-device-location control and watcher for its own shell',
+  spectra.includes('allowDeviceLocation={false}') &&
+  dashboard.includes('allowDeviceLocation?: boolean') &&
+  dashboard.includes('autoFetch: allowDeviceLocation') &&
+  dashboard.includes('{allowDeviceLocation && (') &&
+  dashboard.includes('{allowDeviceLocation && state.isLive && ('));
+
+
+test('SPECTRA Back follows browser history with the standard authorized fallback',
+  spectra.includes("import { BackButton } from '@/components/BackButton'") &&
+  spectra.includes('<BackButton fallbackRoute="/lexara-consent"') &&
+  !spectra.includes("onClick={() => setLocation('/lexara-consent')}"));
+
+test('Persisted SPECTRA sessions bind to full subject tokens, not name substrings',
+  acquisitionPersistence.includes('function isOrderedWholeTokenRefinement(') &&
+  acquisitionPersistence.includes('isOrderedWholeTokenRefinement(existing, incoming)') &&
+  acquisitionPersistence.includes('isOrderedWholeTokenRefinement(existingSubject, incomingSubject)') &&
+  !acquisitionPersistence.includes('return existing.includes(incoming) || incoming.includes(existing)') &&
+  !acquisitionPersistence.includes('incomingSubject.includes(existingSubject)'));
+
 test('SPECTRA API is mounted',
   serverRoutes.includes("app.use('/api/spectra', spectraRoutes.default)"));
 
 console.log(`\nPassed: ${passed}  Failed: ${failed}\n`);
 process.exit(failed === 0 ? 0 : 1);
+
+

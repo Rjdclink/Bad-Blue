@@ -59,6 +59,21 @@ const COURTLISTENER_TIMEOUT_MS = 1_800;
 const AUTHORITY_SENSITIVE_PATTERN = /\b(?:cite|citation|source|authority|case\s*law|precedent|holding|statute|statutory|code\s+section|regulation|c\.f\.r\.|u\.s\.c\.|court\s+rule|rule\s+\d|legal\s+standard|elements?\s+of|controlling\s+law|current\s+law|recent\s+law|supreme\s+court|circuit\s+court|appellate\s+court|judge|judges|court|sentenc(?:e|ed|es|ing)|statistics?|data|rates?|average|compare|comparison|outcomes?|disposition|statute\s+of\s+limitations|limitations\s+period|filing\s+deadline|appeal\s+deadline|notice\s+deadline|deadline|jurisdiction|venue|preemption)\b/i;
 const HIGH_CONSEQUENCE_PATTERN = /\b(?:criminal\s+charge|charged\s+with|arrested|indicted|sentencing|post[- ]conviction|habeas|2254|2255|ineffective\s+assistance|actual\s+innocence|deportation|removal\s+proceedings|asylum|child\s+custody|termination\s+of\s+parental\s+rights|restraining\s+order|protective\s+order|eviction|foreclosure|injunction|appeal|hearing\s+(?:today|tomorrow)|court\s+(?:today|tomorrow))\b/i;
 
+function isOfficialFormLookup(text: string): boolean {
+  return /\b(?:forms?|cover\s+sheet|case[- ]assignment)\b/i.test(text)
+    && /\b(?:official|prescribed|required|mandatory|local|court|filing)\b/i.test(text);
+}
+
+function officialFormEvidenceExcerpt(content: string): string {
+  const prefix = content.slice(0, 4000);
+  // Later filing-method exceptions can qualify an earlier requirement. Keep
+  // those source clauses alongside the existing form excerpt.
+  const conditions = [...content.matchAll(/\b(?:if|when|unless)\b[^.\n]{0,180}\b(?:filing|file|electronic)[^.\n]{0,220}/gi)]
+    .filter(match => (match.index || 0) >= 3800)
+    .slice(0, 5).map(match => content.slice(Math.max(0, (match.index || 0) - 80), (match.index || 0) + match[0].length + 160));
+  return [prefix, conditions.join('\n').slice(0, 1400)].filter(Boolean).join('\n');
+}
+
 function clampTail(value: string, maxLength: number): string {
   const trimmed = value.trim();
   if (trimmed.length <= maxLength) return trimmed;
@@ -175,6 +190,23 @@ async function discoverAuthoritySources(
   const intent=context.researchIntent || 'legal';
   const categories=context.sourceCategories || [];
   const includeLegalAuthorities=intent==='legal' || intent==='mixed' || categories.includes('courts');
+  // Federal publications and opinion indexes cannot establish which current
+  // state/county form is required. Their date-only snippets must not end that
+  // discovery before the official court and agency sources are searched.
+  const formObjective = context.standaloneQuery || query.match(/Question(?:\/facts)?:\s*([\s\S]*)/i)?.[1] || query;
+  const formLookup = isOfficialFormLookup(formObjective);
+  // Official files are discovery seeds, never cached legal conclusions. Each
+  // turn still retrieves their current contents and retains normal mesh search.
+  if (formLookup && /\biowa\b/i.test([context.jurisdiction, formObjective].join(' '))
+    && /\b(?:small claims?|form\s*3\.1|money judgment)\b/i.test(formObjective)) {
+    add({title:'Iowa Judicial Branch Instructions for Filing a Small Claims Action for Money Judgment', url:'https://www.iowacourts.gov/browse/files/cc85952321f54914bf6ba14535b8ac9d/download', kind:'primary', provider:'official-form-directory'});
+    add({title:'Small Claims Form 3.1: Original Notice and Petition for a Money Judgment', url:'https://www.iowacourts.gov/collections/304/files/535/embedDocument', kind:'primary', provider:'official-form-directory'});
+  }
+  if (formLookup && /\bking county\b/i.test(formObjective)
+    && /\b(?:divorce|family|dissolution)\b/i.test(formObjective)) {
+    add({title:'King County Superior Court official forms and filing requirements', url:'https://kingcounty.gov/en/dept/dja/courts-jails-legal-system/court-forms-document-filing/forms', kind:'primary', provider:'official-form-directory'});
+    add({title:'King County Superior Court Family Case Assignment Area Designation and Case Information Cover Sheet (CICS)', url:'https://cdn.kingcounty.gov/-/media/king-county/depts/dja/forms/cics-family-pdf.pdf', kind:'primary', provider:'official-form-directory'});
+  }
 
   if(includeLegalAuthorities){
     const [courtListenerResult, govInfoResult] = await Promise.all([
@@ -182,7 +214,7 @@ async function discoverAuthoritySources(
       searchGovInfo(query, signal),
     ]);
     [...courtListenerResult, ...govInfoResult].forEach(add);
-    if (intent==='legal' && (sources.some(source => source.kind === 'primary' && Boolean(source.excerpt?.trim()))
+    if (!formLookup && intent==='legal' && (sources.some(source => source.kind === 'primary' && Boolean(source.excerpt?.trim()))
       || courtListenerResult.some(source => Boolean(source.excerpt?.trim())))) return sources;
   }
 
@@ -191,12 +223,27 @@ async function discoverAuthoritySources(
     jurisdiction:context.jurisdiction,
     subject:context.subject,
     requestedFact:context.requestedFact,
+    officialFormQuery: formLookup,
   };
-  const mesh = await discoverLegalMeshTier3(query, signal, meshOptions);
-  mesh.forEach(item => add(item));
+  const discoveryQuery = formLookup
+    ? [context.jurisdiction, formObjective]
+        .filter(Boolean).join(' ').replace(/\b(?:Do not draft a document|Answer briefly)\.?/gi, '').trim().slice(0, 390)
+    : query;
+  const mesh = await discoverLegalMeshTier3(discoveryQuery, signal, meshOptions);
+  if (formLookup) {
+    // Prioritize the actual form sources over unrelated federal leads while
+    // retaining the other authorities as fallback context.
+    const priorSources = sources.splice(0);
+    seen.clear();
+    priorSources.filter(item => item.provider === 'official-form-directory').forEach(item => add(item));
+    mesh.forEach(item => add(item));
+    priorSources.filter(item => item.provider !== 'official-form-directory').forEach(item => add(item));
+  } else {
+    mesh.forEach(item => add(item));
+  }
   if (legalMeshSufficient(mesh) || sources.length >= MAX_AUTHORITY_SOURCES) return sources;
 
-  const supplemental = await discoverLegalMeshSupplemental(query, [...seen], signal, meshOptions);
+  const supplemental = await discoverLegalMeshSupplemental(discoveryQuery, [...seen], signal, meshOptions);
   supplemental.forEach(item => add(item));
   return sources;
 }
@@ -204,9 +251,12 @@ async function discoverAuthoritySources(
 async function enrichAuthoritySourcesWithLexaraRetrieval(
   sources: LexaraAuthoritySource[],
   signal?: AbortSignal,
+  formLookup = false,
 ): Promise<LexaraAuthoritySource[]> {
   if (!sources.length) return sources;
-  const targets = sources.filter(source => !source.excerpt?.trim()).slice(0, 8).map(source => source.url);
+  const targets = sources.filter(source => !source.excerpt?.trim()
+    || (formLookup && source.kind === 'primary' && /\b(?:forms?|instructions?|petition|cover\s+sheet|assignment)\b/i.test([source.title, source.excerpt].join(' '))))
+    .slice(0, 8).map(source => source.url);
   if (!targets.length) return sources;
 
   try {
@@ -226,8 +276,10 @@ async function enrichAuthoritySourcesWithLexaraRetrieval(
     if (!enrichment?.evidence?.length) return sources;
 
     const byTarget = new Map(enrichment.evidence.filter(item => item.content?.trim())
-      .map(item => [item.target, item.content.trim().slice(0, 900)]));
-    return sources.map(source => ({ ...source, excerpt: source.excerpt || byTarget.get(source.url) || undefined }));
+      .map(item => [item.target, formLookup ? officialFormEvidenceExcerpt(item.content.trim()) : item.content.trim().slice(0, 900)]));
+    return sources.map(source => ({ ...source, excerpt: formLookup
+      ? [source.excerpt, byTarget.get(source.url)].filter(Boolean).join('\n') || undefined
+      : source.excerpt || byTarget.get(source.url) || undefined }));
   } catch (error) {
     console.warn('[LEXARA Research] Direct source retrieval failed route-locally', {
       error: error instanceof Error ? error.message : String(error),
@@ -288,7 +340,13 @@ export async function researchLegalAuthority(
     const discoveredSources = await discoverAuthoritySources(query, context.signal, context);
     if (!discoveredSources.length) return null;
     if (context.signal?.aborted) return null;
-    const sources = await enrichAuthoritySourcesWithLexaraRetrieval(discoveredSources, context.signal);
+    const formLookup = isOfficialFormLookup(question);
+    if (formLookup) discoveredSources.sort((a,b) => {
+      const score = (source: LexaraAuthoritySource) => source.provider === 'govinfo' && /^Issued:/i.test(source.excerpt || '') ? 0 : source.kind === 'primary'
+        ? /\b(?:instructions?|filing requirements|local rules)\b/i.test(source.title) ? 2 : 1 : 0;
+      return score(b)-score(a);
+    });
+    const sources = await enrichAuthoritySourcesWithLexaraRetrieval(discoveredSources, context.signal, formLookup);
 
     void Promise.allSettled(sources.map(source => rememberLexaraDiscoveryOutcome(
       source.url,

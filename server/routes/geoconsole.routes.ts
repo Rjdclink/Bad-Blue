@@ -24,6 +24,7 @@ import {
   signServerEvidence,
 } from '../services/geoconsole/evidence-proof';
 import { getSpectraAdapterCapabilities } from '../services/spectra/SpectraAdapterRegistry';
+import { getSpectraConfigurationDiagnostics, readSpectraEnvironmentValue } from '../services/spectra/SpectraConfigurationDiagnostics';
 import { getSpectraActiveAcquisitionCapabilities } from '../services/spectra/SpectraActiveAcquisition';
 import { getConfiguredSpectraAnchorCount } from '../services/spectra/SpectraAnchorRegistry';
 import {
@@ -813,12 +814,9 @@ async function beaconDbRadioPoint(
 async function googleRadioPoint(
   measurement: z.infer<typeof telemetryRadioSchema>,
 ): Promise<GPSPoint | null> {
-  const key = String(
-    process.env.SPECTRA_GOOGLE_GEOLOCATION_API_KEY
-    || process.env.GOOGLE_GEOLOCATION_API_KEY
-    || process.env.GOOGLE_MAPS_API_KEY
-    || ''
-  ).trim();
+  const key = readSpectraEnvironmentValue([
+    'SPECTRA_GOOGLE_GEOLOCATION_API_KEY', 'GOOGLE_GEOLOCATION_API_KEY', 'GOOGLE_MAPS_API_KEY',
+  ]);
   if (!key) return null;
 
   const wifiAccessPoints = sanitizedWifiAccessPoints(measurement);
@@ -1811,6 +1809,8 @@ router.get('/telemetry-capabilities', (_req: Request, res: Response) => {
   return res.json({
     success: true,
     data: {
+      configurationDiagnostics: getSpectraConfigurationDiagnostics(),
+      capabilityNotice: 'Configuration and parser availability do not verify a connection, successful authentication, or usable observations.',
       transports: ['https-json', 'signed-webhook', 'structured-import'],
       positionSources: [
         'browser_geolocation', 'device_gps', 'gnss_fix', 'gnss_raw',
@@ -1827,14 +1827,12 @@ router.get('/telemetry-capabilities', (_req: Request, res: Response) => {
       radioGeolocationConfigured: true,
       radioGeolocationProviders: {
         beaconDb: true,
-        google: Boolean(
-          process.env.SPECTRA_GOOGLE_GEOLOCATION_API_KEY
-          || process.env.GOOGLE_GEOLOCATION_API_KEY
-          || process.env.GOOGLE_MAPS_API_KEY
-        ),
-        openCellId: Boolean(process.env.OPENCELLID_API_KEY),
+        google: Boolean(readSpectraEnvironmentValue([
+          'SPECTRA_GOOGLE_GEOLOCATION_API_KEY', 'GOOGLE_GEOLOCATION_API_KEY', 'GOOGLE_MAPS_API_KEY',
+        ])),
+        openCellId: Boolean(readSpectraEnvironmentValue(['OPENCELLID_API_KEY'])),
       },
-      providerWebhookConfigured: Boolean(process.env.SPECTRA_TELEMETRY_HMAC_SECRET),
+      providerWebhookConfigured: Boolean(readSpectraEnvironmentValue(['SPECTRA_TELEMETRY_HMAC_SECRET'])),
       crossReplicaRealtimeConfigured: spectraRealtimeBridgeConfigured(),
       adapters: getSpectraAdapterCapabilities(),
       activeAcquisitionAdapters: getSpectraActiveAcquisitionCapabilities(),
@@ -3310,3 +3308,4 @@ router.post('/futurecast', async (req: Request, res: Response) => {
 });
 
 export default router;
+

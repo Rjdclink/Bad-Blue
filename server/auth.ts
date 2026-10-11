@@ -20,7 +20,6 @@ import {
 import { authRateLimit } from "./rateLimit";
 import {
   LOCAL_SESSION_COOKIE,
-  activateLocalTrialHttp,
   authenticateLocalUserHttp,
   createLocalSessionToken,
   createLocalPasswordResetTokenHttp,
@@ -35,6 +34,7 @@ import {
   type StatelessLocalUser,
 } from "./statelessLocalAuth";
 import { getLegalWhatAccessState, getTrialRemainingMilliseconds } from "./trialAccess";
+import { isPaidAccessState } from "../shared/subscriptionPolicy";
 import { sendAdminEmail, sendEmail } from "./emailService";
 import { getBaseUrl } from "./config";
 
@@ -210,9 +210,13 @@ export async function refreshRequestUser(req: any, res?: any): Promise<any | nul
   const id = getPlatformUserId(current);
   if (!id) return null;
 
-  const fresh = cachedPaidAccessUser(id) || await getLocalUserByIdHttp(id);
-  if (!fresh) return null;
-  cachePaidAccessUser(fresh);
+  let fresh = cachedPaidAccessUser(id);
+  if (!fresh) {
+    fresh = await getLocalUserByIdHttp(id);
+    if (!fresh) return null;
+    // Reading a cached value must not extend its expiry indefinitely.
+    cachePaidAccessUser(fresh);
+  }
 
   const nextUser = {
     ...current,
@@ -265,7 +269,7 @@ export async function resolvePaidAccess(req: any, res?: any): Promise<{
       return { authenticated: false, authorized: false, reason: "unauthenticated", accessState: "no_access", user: null };
     }
     const accessState = getLegalWhatAccessState(fresh);
-    const authorized = accessState === "paid" || accessState === "trial_active";
+    const authorized = isPaidAccessState(accessState);
     return {
       authenticated: true,
       authorized,
@@ -385,13 +389,6 @@ export async function setupAuth(app: Express) {
       let user = await authenticateLocalUserHttp(email, password);
       if (!user) return res.status(401).json({ message: "Invalid email or password" });
 
-      let trialOutcome: string | undefined;
-      if (user.trialEligible && !user.trialStartedAt) {
-        const activation = await activateLocalTrialHttp(user.id);
-        user = activation.user;
-        trialOutcome = activation.outcome;
-      }
-
       setLocalCookie(res, createLocalSessionToken(user));
       cachePaidAccessUser(user);
       clearMasterCookie(res);
@@ -401,7 +398,6 @@ export async function setupAuth(app: Express) {
         hasActiveSubscription: hasPaidServiceAccess(user),
         accessState: getLegalWhatAccessState(user),
         trialExpiresAt: user.trialExpiresAt || null,
-        trialOutcome,
       });
     } catch (error) {
       console.error("[AUTH] HTTP local login unavailable:", error instanceof Error ? error.message : String(error));
@@ -422,11 +418,8 @@ export async function setupAuth(app: Express) {
         subject: "LegalWhat: New signup",
         message: `New LegalWhat signup\n\nName: ${[createdUser.firstName, createdUser.lastName].filter(Boolean).join(" ") || "Not provided"}\nEmail: ${createdUser.email}`,
       }).catch((error) => console.error("[AUTH] Signup notification failed:", error));
-      const skipTrial = req.body?.skipTrial === true;
-      const activation = skipTrial ? null : await activateLocalTrialHttp(createdUser.id);
-      const user = activation?.user || createdUser;
-      // Signup establishes a pending authenticated session so the user can move
-      // directly into a trial or the existing Square subscription path.
+      const user = createdUser;
+      // Establish identity for checkout; payment alone activates protected access.
       setLocalCookie(res, createLocalSessionToken(user));
       cachePaidAccessUser(user);
       clearMasterCookie(res);
@@ -436,11 +429,8 @@ export async function setupAuth(app: Express) {
         hasActiveSubscription: hasPaidServiceAccess(user),
         accessState: getLegalWhatAccessState(user),
         trialExpiresAt: user.trialExpiresAt || null,
-        trialOutcome: activation?.outcome,
-        trialSkipped: skipTrial,
-        paymentRequired: skipTrial ||
-          activation?.outcome !== "ELIGIBLE" ||
-          getLegalWhatAccessState(user) !== "trial_active",
+        trialSkipped: true,
+        paymentRequired: true,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Registration failed";
@@ -679,3 +669,4 @@ export const adminAuthMiddleware: RequestHandler = async (req, res, next) => {
 
   return next();
 };
+

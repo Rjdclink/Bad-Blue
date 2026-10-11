@@ -117,8 +117,7 @@
     <!-- Leaflet CSS for GPS Maps -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
     
-    <!-- Preload Critical Resources -->
-    <link rel="preload" href="/src/main.tsx" as="script" />
+    <!-- Vite emits build-specific module scripts; do not preload the dev-only TSX path. -->
 
     <script nowprocket nitro-exclude 
       type="text/javascript" id="sa-dynamic-optimization" 
@@ -235,6 +234,8 @@
           <a href="/affordable-legal-guidance/">Affordable Legal Guidance</a> ·
           <a href="/areas/">40 Legal Areas</a> ·
           <a href="/services/">Services</a> ·
+          <a href="/live-legal-conversation/">Live Legal Conversation</a> ·
+          <a href="/legal-document-generator/">Legal Document Generator</a> ·
           <a href="/guides/">Legal Guides</a> ·
           <a href="/documents/">Legal Documents</a> ·
           <a href="/sources-accuracy/">Sources &amp; Accuracy</a> ·

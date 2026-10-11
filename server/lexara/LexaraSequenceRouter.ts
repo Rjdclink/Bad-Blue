@@ -1,4 +1,4 @@
-import { decideLexaraResearchNeed, isLexaraConversationControl, type LexaraResearchDecision } from './LexaraResearchIntentRouter';
+import { decideLexaraResearchNeed, isLexaraConversationControl, isLexaraDocumentIntakeQuestion, type LexaraResearchDecision } from './LexaraResearchIntentRouter';
 
 export type LexaraSequenceId =
   | 'simple-factual'
@@ -21,7 +21,7 @@ export interface LexaraSequencePlan {
 }
 
 const DEEP_PATTERN = /\b(?:deep|thorough|comprehensive|recursive|broaden|keep looking|look harder|search again|investigate|everything|full background|background report)\b/i;
-const DOCUMENT_PATTERN = /\b(?:draft|prepare|create|generate|write|download|export|pdf|docx|word document|demand|complaint|petition|motion|affidavit|declaration|letter|request)\b/i;
+const DOCUMENT_PATTERN = /\b(?:draft|prepare|create|generate|write|download|export|pdf|docx|documents?|forms?|paperwork|word document|demand|complaint|petition|motion|affidavit|declaration|letter|request)\b/i;
 const ACTION_PATTERN = /\b(?:need|want|give|provide|make|prepare|draft|create|generate|write|download|export|file|serve|send)\b/i;
 
 export function planLexaraSequence(
@@ -56,7 +56,9 @@ export function planLexaraSequence(
 
   const legal = researchDecision.intent === 'legal' || researchDecision.intent === 'mixed';
   const factual = researchDecision.intent === 'factual' || researchDecision.intent === 'mixed';
-  const documentAction = DOCUMENT_PATTERN.test(text) && ACTION_PATTERN.test(text);
+  const documentAction = !isLexaraDocumentIntakeQuestion(text)
+    && !/\b(?:do not|don't|dont|never)\s+(?:draft|prepare|create|generate|write)\b/i.test(text)
+    && DOCUMENT_PATTERN.test(text) && ACTION_PATTERN.test(text);
   const deep = DEEP_PATTERN.test(text) && researchDecision.needed;
 
   if (documentAction) {

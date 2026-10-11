@@ -8,7 +8,7 @@ function load(file, imports = {}) {
   const exports = {};
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(root, file), 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
-  }).outputText, { exports, require: name => imports[name] || {}, console });
+  }).outputText, { exports, require: name => imports[name] || {}, console, URL });
   return exports;
 }
 const { lexaraDocumentSpeech } = load('shared/lexaraDocumentSpeech.ts');
@@ -17,6 +17,18 @@ assert.equal(lexaraDocumentSpeech('What is your neighbor’s name?', true), 'Wha
 assert.equal(lexaraDocumentSpeech('How can I help you?', false), 'How can I help you?');
 assert.ok(!lexaraDocumentSpeech('DEMAND LETTER\n[NAME NEEDED]\nDear Neighbor,', true).includes('[NAME'));
 const registry = load('server/lexara/legalDocumentRegistry.ts');
+assert.equal(registry.inferLegalDocumentNeed('I was just served with a complaint. What should I do?'), 'Answer');
+assert.equal(registry.inferLegalDocumentNeed('I need to recover my security deposit back.'), 'Demand Letter');
+assert.equal(registry.inferLegalDocumentNeed('I want to appeal the court judgment.'), 'Notice of Appeal');
+assert.equal(registry.inferLegalDocumentNeed('What is a court complaint?'), null);
+assert.equal(registry.inferLegalDocumentNeed("I don't want to file a complaint."), null);
+const forms = load('server/lexara/OfficialLegalFormResolver.ts');
+assert.equal(forms.resolveOfficialLegalForm({ searchedAt:'2026-10-07', sources:[
+  { url:'https://example.gov/civil-cover-sheet.pdf', title:'Required Civil Cover Sheet', excerpt:'This required form must be used.' },
+]}, 'Notice of Appeal').requirement, 'unverified');
+assert.equal(forms.resolveOfficialLegalForm({ searchedAt:'2026-10-07', sources:[
+  { url:'https://example.gov/notice-of-appeal.pdf', title:'Notice of Appeal Form', excerpt:'Required form. Use this form when filing a notice of appeal.' },
+]}, 'Notice of Appeal').requirement, 'mandatory');
 const draft = `DEMAND LETTER\n[DATE]\n[SENDER NAME AND ADDRESS]\n[RECIPIENT NAME AND ADDRESS]\nRe: Dog waste on my lawn in Spirit Lake, Iowa\nDear [NEIGHBOR NAME],\nYour dog has been leaving waste on my lawn. I ask that you prevent your dog from entering my property and promptly remove any waste it leaves. Please confirm how you will prevent this from recurring. I would prefer to resolve this matter cooperatively. Please contact me at [CONTACT INFORMATION] to discuss a resolution.\nSincerely,\n[SIGNATURE]`;
 async function run(outputs) {
   const calls = [], warnings = [], routes = new Map();
