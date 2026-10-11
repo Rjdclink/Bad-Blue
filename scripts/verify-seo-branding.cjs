@@ -134,6 +134,10 @@ function verifyStaticSitemapCoverage(directory) {
     } else if (entry.isFile() && entry.name === 'index.html' && !inactiveStaticPages.has(fullPath)) {
       const url = `https://legalwhat.com/${fullPath.slice('public/'.length).replace(/index\.html$/, '')}`;
       must(sitemapSet.has(url), `public SEO page missing from sitemap: ${url}`);
+      const page = read(fullPath);
+      must(page.includes('<meta name="robots" content="index,follow'), `SEO page improperly noindexed: ${url}`);
+      must(page.includes(`rel="canonical" href="${url}"`), `SEO page canonical mismatch: ${url}`);
+
     }
   }
 }
@@ -157,6 +161,10 @@ mustNot(llms, '[People finder]', 'llms.txt must not advertise inactive people fi
 mustNot(llms, '[Inmate locator]', 'llms.txt must not advertise inactive inmate search');
 
 must(serverIndex.includes('staticSitemap.matchAll') && serverIndex.includes('staticUrls') && serverIndex.includes('new Set([...canonicalPaths, ...staticUrls])'), 'live sitemap must merge the expanded static crawl inventory with canonical SPA routes');
+must(serverIndex.includes('parsed.origin === BASE_URL && isPublicSeoPage(parsed.pathname)'), 'live sitemap must publish public SEO pages rather than only subscriber-entry URLs');
+must(viteServer.includes('!isPublicMarketingAppPath(pathname)'), 'public marketing SPA shell must be indexable');
+must(seoHead.includes('!isPublicMarketingAppPath(path)'), 'public marketing client pages must be indexable');
+
 must(serverIndex.includes('Do not emit synthetic freshness'), 'dynamic sitemap must not fabricate lastmod freshness');
 must(viteServer.includes('renderSeoShell') && viteServer.includes('SEO_CONFIG[pathname]'), 'SPA fallback must render route-specific SEO metadata before React');
 must(viteServer.includes('rel="canonical"') && viteServer.includes('canonicalUrl'), 'SPA fallback must emit a route-correct canonical in initial HTML');
