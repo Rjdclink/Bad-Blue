@@ -12,7 +12,9 @@ import {
 } from './LegalProviderMesh';
 import { rememberLexaraDiscoveryOutcome } from './LexaraDiscoveryLearning';
 import type { LexaraSourceCategory } from './LexaraPublicSourceRegistry';
-import { planLexaraCourtRecords, searchLexaraCourtRecords, formatLexaraCourtRecordPlan, type LexaraCourtRecordPlan } from './LexaraCourtRecords';
+import { planLexaraCourtRecords, searchLexaraCourtRecords, formatLexaraCourtRecordPlan, isLexaraCourtRecordLookup, type LexaraCourtRecordPlan } from './LexaraCourtRecords';
+import { lexaraCourtListenerJson } from './LexaraCourtListenerClient';
+import type { JurisdictionOfficialResource } from './LexaraJurisdictionAuthority';
 
 export type LexaraAuthoritySourceKind = 'primary' | 'secondary' | 'web';
 
@@ -22,7 +24,7 @@ export interface LexaraAuthoritySource {
   kind: LexaraAuthoritySourceKind;
   excerpt?: string;
   provider?: string;
-  recordType?: 'opinion' | 'docket' | 'filing';
+  recordType?: 'opinion' | 'docket' | 'filing' | 'portal';
   evidenceLevel?: 'metadata' | 'snippet' | 'document';
 }
 
@@ -44,6 +46,7 @@ export interface LexaraAuthorityResearchContext {
   domainName?: string;
   researchHints?: readonly string[];
   preferredOfficialDomains?: readonly string[];
+  officialResources?: readonly JurisdictionOfficialResource[];
   signal?: AbortSignal;
   forceResearch?: boolean;
   researchIntent?: LexaraResearchIntent;
@@ -59,7 +62,6 @@ const MAX_RESEARCH_SUMMARY_CHARACTERS = 7_000;
 const MAX_AUTHORITY_SOURCES = 14;
 const RESEARCH_TIMEOUT_MS = 3 * 60_000;
 const LEXARA_RETRIEVAL_TIMEOUT_MS = 1_800;
-const COURTLISTENER_TIMEOUT_MS = 1_800;
 
 const AUTHORITY_SENSITIVE_PATTERN = /\b(?:cite|citation|source|authority|case\s*law|precedent|holding|statute|statutory|code\s+section|regulation|c\.f\.r\.|u\.s\.c\.|court\s+rule|rule\s+\d|legal\s+standard|elements?\s+of|controlling\s+law|current\s+law|recent\s+law|supreme\s+court|circuit\s+court|appellate\s+court|judge|judges|court|sentenc(?:e|ed|es|ing)|statistics?|data|rates?|average|compare|comparison|outcomes?|disposition|statute\s+of\s+limitations|limitations\s+period|filing\s+deadline|appeal\s+deadline|notice\s+deadline|deadline|jurisdiction|venue|preemption)\b/i;
 const HIGH_CONSEQUENCE_PATTERN = /\b(?:criminal\s+charge|charged\s+with|arrested|indicted|sentencing|post[- ]conviction|habeas|2254|2255|ineffective\s+assistance|actual\s+innocence|deportation|removal\s+proceedings|asylum|child\s+custody|termination\s+of\s+parental\s+rights|restraining\s+order|protective\s+order|eviction|foreclosure|injunction|appeal|hearing\s+(?:today|tomorrow)|court\s+(?:today|tomorrow))\b/i;
@@ -147,20 +149,9 @@ async function searchGovInfo(query: string, signal?: AbortSignal): Promise<Lexar
 }
 
 async function searchCourtListener(query: string, signal?: AbortSignal): Promise<LexaraAuthoritySource[]> {
-  const token = process.env.COURTLISTENER_API_TOKEN?.trim();
-  if (!token) return [];
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), COURTLISTENER_TIMEOUT_MS);
-  const relayAbort = () => controller.abort();
-  if (signal?.aborted) controller.abort(); else signal?.addEventListener('abort', relayAbort, { once: true });
   try {
-    const url = new URL('https://www.courtlistener.com/api/rest/v4/search/');
-    url.searchParams.set('q', query.slice(0, 1500));
-    url.searchParams.set('type', 'o');
-    const response = await fetch(url, { headers: { Authorization: `Token ${token}`, Accept: 'application/json' }, signal: controller.signal });
-    if (!response.ok) return [];
-    const payload = await response.json() as { results?: Array<{ caseName?: string; absolute_url?: string; snippet?: string; court?: string; docketNumber?: string; dateFiled?: string; opinions?: Array<{ snippet?: string }> }> };
-    return (payload.results || []).slice(0, 6).flatMap(item => {
+    const payload = await lexaraCourtListenerJson('search/?' + new URLSearchParams({ q: query.slice(0, 1500), type: 'o' }), signal) as { results?: Array<{ caseName?: string; absolute_url?: string; snippet?: string; court?: string; docketNumber?: string; dateFiled?: string; opinions?: Array<{ snippet?: string }> }> } | null;
+    return (payload?.results || []).slice(0, 6).flatMap(item => {
       const raw = item.absolute_url || '';
       const href = raw.startsWith('http') ? raw : raw ? `https://www.courtlistener.com${raw}` : '';
       const snippet = [item.snippet, ...(item.opinions || []).map(opinion => opinion.snippet)].filter(Boolean).join(' ').replace(/<[^>]+>/g, ' ').trim();
@@ -170,7 +161,6 @@ async function searchCourtListener(query: string, signal?: AbortSignal): Promise
         recordType:'opinion' as const, evidenceLevel:snippet ? 'snippet' as const : 'metadata' as const }] : [];
     });
   } catch { return []; }
-  finally { clearTimeout(timer); signal?.removeEventListener('abort', relayAbort); }
 }
 
 async function discoverAuthoritySources(
@@ -207,6 +197,7 @@ async function discoverAuthoritySources(
   const formObjective = context.standaloneQuery || query.match(/Question(?:\/facts)?:\s*([\s\S]*)/i)?.[1] || query;
   const formLookup = isOfficialFormLookup(formObjective);
   const courtPlan = context.courtRecordPlan;
+  const recordLookup = courtPlan ? isLexaraCourtRecordLookup(courtPlan) : false;
   const meshOptions:LegalMeshSearchOptions={
     categories: courtPlan ? [...new Set<LexaraSourceCategory>([...categories, 'courts'])] : categories,
     jurisdiction:context.jurisdiction,
@@ -220,7 +211,21 @@ async function discoverAuthoritySources(
     ? [context.jurisdiction, formObjective]
         .filter(Boolean).join(' ').replace(/\b(?:Do not draft a document|Answer briefly)\.?/gi, '').trim().slice(0, 390)
     : courtPlan?.discoveryQuery || query;
-  const courtMeshPromise = courtPlan ? discoverLegalMeshTier3(discoveryQuery, signal, meshOptions) : undefined;
+  // Straight record requests try the case archive first. Avoid unrelated
+  // opinion/publication searches and web-provider calls when readable filings suffice.
+  if (recordLookup && courtPlan) {
+    const records = await searchLexaraCourtRecords(courtPlan, signal);
+    records.forEach(add);
+    if (records.some(source => source.recordType === 'filing' && source.evidenceLevel === 'document')) return sources;
+    if (signal?.aborted) return sources;
+  }
+  if (courtPlan) {
+    (context.officialResources || []).filter(resource => /^(?:state-judiciary|state-appellate|state-trial|federal-district|directory)$/.test(resource.kind))
+      .slice(0, 3).forEach(resource => add({ title: resource.title, url: resource.url,
+        provider: 'official-court-directory', recordType: 'portal', evidenceLevel: 'metadata',
+        excerpt: 'Official court/directory access lead only. No case search or filing was retrieved from this link. Use its clerk or public-record portal for missing records; do not infer any case facts.' }));
+  }
+  const courtMeshPromise = courtPlan && !recordLookup ? discoverLegalMeshTier3(discoveryQuery, signal, meshOptions) : undefined;
   const supportingAuthorities: LexaraAuthoritySource[] = [];
   // Official files are discovery seeds, never cached legal conclusions. Each
   // turn still retrieves their current contents and retains normal mesh search.
@@ -235,7 +240,7 @@ async function discoverAuthoritySources(
     add({title:'King County Superior Court Family Case Assignment Area Designation and Case Information Cover Sheet (CICS)', url:'https://cdn.kingcounty.gov/-/media/king-county/depts/dja/forms/cics-family-pdf.pdf', kind:'primary', provider:'official-form-directory'});
   }
 
-  if(includeLegalAuthorities){
+  if(includeLegalAuthorities && !recordLookup){
     const indexQuery = [context.jurisdiction, formObjective].filter(Boolean).join(' ').slice(0, 900);
     const [courtListenerResult, govInfoResult, courtRecordResult] = await Promise.all([
       searchCourtListener(courtPlan?.lookupQuery || indexQuery, signal),
@@ -276,7 +281,7 @@ async function enrichAuthoritySourcesWithLexaraRetrieval(
   courtLookup = false,
 ): Promise<LexaraAuthoritySource[]> {
   if (!sources.length) return sources;
-  const targets = sources.filter(source => source.recordType !== 'docket' && source.evidenceLevel !== 'document' && (!source.excerpt?.trim()
+  const targets = sources.filter(source => source.recordType !== 'docket' && source.recordType !== 'portal' && source.evidenceLevel !== 'document' && (!source.excerpt?.trim()
     || source.recordType === 'opinion'
     || (courtLookup && (source.kind === 'primary' || /^https:\/\/(?:law|dockets)\.justia\.com\/(?:cases|docket)\//i.test(source.url)))
     || (formLookup && source.kind === 'primary' && /\b(?:forms?|instructions?|petition|cover\s+sheet|assignment)\b/i.test([source.title, source.excerpt].join(' ')))

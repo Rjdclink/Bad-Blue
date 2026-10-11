@@ -748,6 +748,7 @@ export async function generateLexaraConversationResponse(
         domainName,
         researchHints: jurisdictionResearchHints,
         preferredOfficialDomains: jurisdictionOfficialDomains,
+        officialResources: jurisdictionAuthorityProfile?.officialResources,
         forceResearch: true,
         researchIntent: researchDecision.intent,
         subject: researchDecision.subject,
