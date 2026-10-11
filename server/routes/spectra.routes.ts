@@ -72,6 +72,7 @@ import { buildSpectraPipelineDiagnostics, type SpectraRetrievalCounts } from '..
 import { acquirePublicPlace, isPublicPlaceTarget } from '../services/spectra/SpectraPublicPlace';
 import { collectSpectraPublicAccountRecords, discoverSpectraPublicBlueskyProfiles } from '../services/spectra/SpectraPublicAccountRecords';
 import { collectSpectraPublicNewsRecords } from '../services/spectra/SpectraPublicNewsRecords';
+import { collectSpectraPublicCourtRecords } from '../services/spectra/SpectraPublicCourtRecords';
 import { collectSpectraPublicMastodonRecords, discoverSpectraPublicMastodonProfiles } from '../services/spectra/SpectraPublicMastodonRecords';
 import { collectSpectraPublicWikimediaRecords } from '../services/spectra/SpectraPublicWikimediaRecords';
 import { publicProfileContactMatch, publicProfileNameMatch } from '../services/spectra/SpectraPublicProfileIdentity';
@@ -302,18 +303,19 @@ function buildDiscoveryQueries(args: {
     email && quotedName ? `${quotedName} "${email}"` : '',
     phoneDigits.length >= 7 ? `"${phoneDigits}"` : '',
     [identityAnchor, compactDetails].filter(Boolean).join(' '),
-    quotedName ? `${quotedName} (Bluesky OR Mastodon) public profile` : '',
+    quotedName ? `${quotedName} (Facebook OR Instagram OR X OR Bluesky OR Mastodon) profile` : '',
     [normalizedTarget, compactDetails].filter(Boolean).join(' '),
     compactDetails,
     phoneDigits.length >= 7 ? `"${phoneDigits}"` : '',
   ].filter(Boolean);
 
   const secondPass = [
-    [identityAnchor, compactDetails, 'address location'].filter(Boolean).join(' '),
+    quotedName ? `${quotedName} (site:whitepages.com OR site:yellowbook.com) address` : '',
+    quotedName ? `${quotedName} (site:facebook.com OR site:instagram.com OR site:x.com)` : '',
+    [identityAnchor, compactDetails, 'public court docket record'].filter(Boolean).join(' '),
     [identityAnchor, compactDetails, 'employment property profile'].filter(Boolean).join(' '),
-    [identityAnchor, compactDetails, 'historical record archive'].filter(Boolean).join(' '),
     [identityAnchor, compactDetails, 'media geotag timestamp'].filter(Boolean).join(' '),
-    [identityAnchor, compactDetails, 'independent corroboration'].filter(Boolean).join(' '),
+    [identityAnchor, compactDetails, 'historical record archive'].filter(Boolean).join(' '),
   ].filter(Boolean);
 
   return {
@@ -1032,6 +1034,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
     const publicMastodonCandidatesPromise = discoverSpectraPublicMastodonProfiles(resolvedName);
     const publicWikimediaPromise = collectSpectraPublicWikimediaRecords(combinedTargetText);
     const publicNewsPromise = collectSpectraPublicNewsRecords(resolvedName || resolvedSubjectName);
+    const publicCourtPromise = collectSpectraPublicCourtRecords(resolvedName || resolvedSubjectName);
 
     const [
       backgroundOutcome,
@@ -1045,6 +1048,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       publicMastodonCandidates,
       publicWikimedia,
       publicNews,
+      publicCourt,
     ] = await Promise.all([
       backgroundPromise,
       firstPassPromise,
@@ -1057,6 +1061,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       publicMastodonCandidatesPromise,
       publicWikimediaPromise,
       publicNewsPromise,
+      publicCourtPromise,
     ]);
 
     // Exact public contact matches rank candidates ahead of name-only matches.
@@ -1198,6 +1203,10 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
         snippet: record.textExcerpt,
         provider: 'GDELT article lead; publisher page retrieved',
         identityStatus: 'Article association with subject not independently verified',
+      })), ...publicCourt.records.map(record => ({
+        title: record.title, url: record.url, publishedAt: record.publishedAt,
+        snippet: record.textExcerpt, provider: 'CourtListener public RECAP search',
+        identityStatus: 'Case-name match only; party identity, residence, and current location unverified',
       }))],
       onlineMentions: backgroundSources.map(url => ({
         title: 'SPECTRA background source',
@@ -1306,6 +1315,18 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
           subjectAssociation: 'unverified_article_mention',
         },
       })),
+      ...publicCourt.records.map(record => ({
+        title: record.title || 'Public court docket metadata',
+        url: record.url, snippet: record.textExcerpt,
+        provider: 'courtlistener-public-recap',
+        reliability: 'high' as const,
+        relevanceScore: 35,
+        metadata: {
+          ...mergePublicRetrievedMetadata(undefined, record),
+          retrievalProvider: 'courtlistener-public-recap',
+          subjectAssociation: 'case_name_match_unverified',
+        },
+      })),
     ]);
     // Preserve fetched records independently of search-result ranking/deduping.
     // A later successful fetch of an existing search hit must reach the archive.
@@ -1314,12 +1335,14 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       ...blueskyCandidatePosts, ...publicBlueskyImages.records, ...publicAccount.records,
       ...publicMastodonCandidates.records, ...mastodonCandidatePosts,
       ...publicMastodon.records, ...publicWikimedia.records, ...publicNews.records,
+      ...publicCourt.records,
     ];
     // Person-city guesses must rest on the retrieved publisher text. A search
     // title or snippet can describe someone else even when the URL resolves.
     const fetchedCitySources = () => discoveryResults.filter(result =>
       result.metadata?.subjectAssociation !== 'supplied_profile_url_unverified'
       && result.metadata?.subjectAssociation !== 'name_match_unverified'
+      && result.metadata?.subjectAssociation !== 'case_name_match_unverified'
       && typeof result.metadata?.fetchedExcerpt === 'string'
     ).map(result => ({
       ...result, title: '', snippet: '',
@@ -1809,13 +1832,15 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
     ].map(record => record.url));
     const publicWikimediaUrls = new Set(publicWikimedia.records.map(record => record.url));
     const publicNewsUrls = new Set(publicNews.records.map(record => record.url));
+    const publicCourtUrls = new Set(publicCourt.records.map(record => record.url));
     const evidenceRecords = buildSpectraAcquisitionRecords(retrievedEvidence.map(evidence => ({
       url: evidence.url,
       provider: publicImageUrls.has(evidence.url) ? 'bluesky-image-binary'
         : publicAccountUrls.has(evidence.url) || publicCandidateUrls.has(evidence.url) ? 'bluesky-public-api'
         : publicMastodonUrls.has(evidence.url) || publicMastodonCandidateUrls.has(evidence.url) ? 'mastodon-public-api'
         : publicWikimediaUrls.has(evidence.url) ? 'wikimedia-commons-api'
-        : publicNewsUrls.has(evidence.url) ? 'gdelt-article-retrieval' : 'spectra-public-retrieval',
+        : publicNewsUrls.has(evidence.url) ? 'gdelt-article-retrieval'
+        : publicCourtUrls.has(evidence.url) ? 'courtlistener-public-recap' : 'spectra-public-retrieval',
       metadata: {
         ...mergePublicRetrievedMetadata(undefined, evidence),
         ...(publicImageUrls.has(evidence.url)
@@ -1838,6 +1863,9 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
           : {}),
         ...(publicNewsUrls.has(evidence.url)
           ? { retrievalProvider: 'gdelt-article-retrieval', subjectAssociation: 'unverified_article_mention' }
+          : {}),
+        ...(publicCourtUrls.has(evidence.url)
+          ? { retrievalProvider: 'courtlistener-public-recap', subjectAssociation: 'case_name_match_unverified' }
           : {}),
       },
     })), contextEvidence);
@@ -1899,6 +1927,8 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
         publicNewsStatus: publicNews.status,
         publicNewsArticleLeads: publicNews.articleLeads,
         publicNewsRecordCount: publicNews.records.length,
+        publicCourtStatus: publicCourt.status,
+        publicCourtRecordCount: publicCourt.records.length,
         originSessionId: originSessionId || null,
         lastAcquiredAt: new Date().toISOString(),
       },
