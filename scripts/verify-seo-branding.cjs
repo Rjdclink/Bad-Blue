@@ -135,8 +135,10 @@ function verifyStaticSitemapCoverage(directory) {
       const url = `https://legalwhat.com/${fullPath.slice('public/'.length).replace(/index\.html$/, '')}`;
       must(sitemapSet.has(url), `public SEO page missing from sitemap: ${url}`);
       const page = read(fullPath);
-      must(page.includes('<meta name="robots" content="index,follow'), `SEO page improperly noindexed: ${url}`);
-      must(page.includes(`rel="canonical" href="${url}"`), `SEO page canonical mismatch: ${url}`);
+      const robotsMatch = page.match(/<meta\s+name=['"]?robots['"]?\s+content=['"]([^'"]+)['"]/i);
+      must(robotsMatch && /^index\s*,\s*follow\b/i.test(robotsMatch[1]), `SEO page improperly noindexed: ${url}`);
+      const canonicalMatch = page.match(/<link\s+rel=['"]?canonical['"]?\s+href=['"]([^'"]+)['"]/i);
+      must(canonicalMatch && canonicalMatch[1] === url, `SEO page canonical mismatch: ${url}`);
 
     }
   }
