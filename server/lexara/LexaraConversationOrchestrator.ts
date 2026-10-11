@@ -900,7 +900,7 @@ export async function generateLexaraConversationResponse(
   const resolvedBackgroundSubjectPrompt = resolvedBackgroundSubject
     ? `\n\nLEXARA RESOLVED BACKGROUND SUBJECT\nThe exact subject for this turn is: "${resolvedBackgroundSubject.name}". Preserve that exact subject as one identity. Do not split a multi-part name into alternatives, rename the subject, or reinterpret conversational filler as the subject. Use the rest of the user's wording only as clues and as the requested factual objective.`
     : '';
-  const researchStatusPrompt = researchRouteSelected && !authorityResearch
+  const researchStatusPrompt = researchRouteSelected && !authorityResearch?.hasUsableEvidence && !backgroundInvestigation?.evidenceSummary
     ? '\n\nAPPLICATION RESEARCH STATUS\nLexara attempted the selected external research route for this turn but no independently usable source result was returned within the live research budget. Do not claim that no search was attempted. Do not invent the requested fact; say it could not be verified from the completed search and preserve useful next steps or clarification.'
     : '';
   const jurisdictionCorrectionPrompt = jurisdictionCorrectionOnly
@@ -1040,7 +1040,7 @@ export async function generateLexaraConversationResponse(
   // extra latency.
   let permissionRefusalUnverified = false;
   const factualAuthorityResearch = Boolean(
-    authorityResearch && (authorityResearch.researchIntent === 'factual' || authorityResearch.researchIntent === 'mixed')
+    authorityResearch?.hasUsableEvidence && (authorityResearch.researchIntent === 'factual' || authorityResearch.researchIntent === 'mixed')
   );
   const modelPermissionRefusal = Boolean(
     (backgroundInvestigation || factualAuthorityResearch) && !usedBackgroundSourceExcerptFallback && isPersonPermissionRefusal(text)
@@ -1143,11 +1143,11 @@ export async function generateLexaraConversationResponse(
     researchWaitMs,
     claudeMs: Date.now() - claudeStartedAt,
     totalMs: Date.now() - turnStartedAt,
-    grounded: !!authorityResearch || !!backgroundInvestigation?.evidenceSummary,
+    grounded: !!authorityResearch?.hasUsableEvidence || !!backgroundInvestigation?.evidenceSummary,
     backgroundTargeted: researchDecision.intent === 'factual' || researchDecision.intent === 'mixed',
     backgroundEvidence: factualAuthorityResearch || !!backgroundInvestigation?.evidenceSummary,
     backgroundCategories: authorityResearch?.sourceCategories || backgroundInvestigation?.categories || [],
-    backgroundSourceCount: authorityResearch?.sources?.length || backgroundInvestigation?.sources?.length || 0,
+    backgroundSourceCount: authorityResearch?.sources.filter(source => source.recordType !== 'portal').length || backgroundInvestigation?.sources?.length || 0,
     backgroundCoverageLimited: backgroundInvestigation?.coverageLimited === true,
     backgroundEndpoint: backgroundInvestigation?.endpoint || null,
     answerServiceUnavailable,
@@ -1169,11 +1169,11 @@ export async function generateLexaraConversationResponse(
     researchLanes: authorityResearch?.selectedCrawlers || backgroundInvestigation?.discoveryLanes || [],
     courtRecordLookup: Boolean(courtRecordPlan),
     courtFilingCount: authorityResearch?.sources.filter(source => source.recordType === 'filing' && source.evidenceLevel === 'document').length || 0,
-    researchSourceCount: authorityResearch?.sources?.length || backgroundInvestigation?.sources?.length || 0,
+    researchSourceCount: authorityResearch?.sources.filter(source => source.recordType !== 'portal').length || backgroundInvestigation?.sources?.length || 0,
     citationVerificationCount,
     unresolvedCitationCount,
     negativeTreatmentSignalCount,
-    researchEndpointReached: !researchDecision.needed || Boolean(authorityResearch || backgroundInvestigation?.endpoint),
+    researchEndpointReached: !researchDecision.needed || Boolean(authorityResearch?.hasUsableEvidence || backgroundInvestigation?.endpoint),
     jurisdictionAuthoritySystem: jurisdictionAuthorityProfile?.system || null,
     jurisdictionFederalCircuit: jurisdictionAuthorityProfile?.federalCircuit || null,
     jurisdictionCourtClarificationNeeded: jurisdictionAuthorityProfile?.needsCourtClarification || false,
