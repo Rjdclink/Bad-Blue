@@ -129,9 +129,20 @@ interface AcquisitionResponse {
     verificationStatus: string;
     publicAccountStatus?: string;
     publicAccountRecordCount?: number;
+    publicProfileCandidateStatus?: string;
+    publicProfileCandidateCount?: number;
+    publicProfileContactMatches?: number;
+    publicProfileCandidatePostCount?: number;
+    publicBlueskyImageAttemptCount?: number;
+    publicBlueskyImageRecordCount?: number;
+    publicBlueskyImageFailureCount?: number;
     publicMastodonStatus?: string;
     publicMastodonReason?: string;
     publicMastodonRecordCount?: number;
+    publicMastodonCandidateStatus?: string;
+    publicMastodonCandidateCount?: number;
+    publicMastodonContactMatches?: number;
+    publicMastodonCandidatePostCount?: number;
     publicWikimediaStatus?: string;
     publicWikimediaRecordCount?: number;
     publicNewsStatus?: string;
@@ -445,6 +456,7 @@ export default function SpectraPage() {
         body: JSON.stringify({
           target: targetValue,
           details: detailsValue,
+          refreshOnly: silentRefresh,
           sessionId: sessionOverride || spectraSessionId || undefined,
           originSessionId: originLexaraSessionIdRef.current || undefined,
           directEvidence: extraEvidence.map(point => ({
@@ -525,8 +537,17 @@ export default function SpectraPage() {
         ...(payload.acquisition?.publicAccountStatus && payload.acquisition.publicAccountStatus !== 'not_supplied'
           ? [`Public Bluesky profile: ${payload.acquisition.publicAccountStatus.replace(/_/g, ' ')}; ${payload.acquisition.publicAccountRecordCount ?? 0} public account records collected. Profile ownership remains unverified.`]
           : []),
+        ...(payload.acquisition?.publicProfileCandidateStatus && payload.acquisition.publicProfileCandidateStatus !== 'skipped'
+          ? [`Bluesky discovery: ${payload.acquisition.publicProfileCandidateCount ?? 0} possible profiles, ${payload.acquisition.publicProfileCandidatePostCount ?? 0} public posts; ${payload.acquisition.publicProfileContactMatches ?? 0} public contact matches. Account ownership remains unverified.`]
+          : []),
+        ...((payload.acquisition?.publicBlueskyImageAttemptCount ?? 0) > 0
+          ? [`Public Bluesky images: ${payload.acquisition?.publicBlueskyImageRecordCount ?? 0} of ${payload.acquisition?.publicBlueskyImageAttemptCount ?? 0} downloaded and inspected for metadata; ${payload.acquisition?.publicBlueskyImageFailureCount ?? 0} failed. Image bytes are not archived; an image scene does not establish a person's location.`]
+          : []),
         ...(payload.acquisition?.publicMastodonStatus && payload.acquisition.publicMastodonStatus !== 'not_supplied'
           ? [`Public Mastodon profile: ${payload.acquisition.publicMastodonStatus.replace(/_/g, ' ')}${payload.acquisition.publicMastodonReason ? ` (${payload.acquisition.publicMastodonReason.replace(/_/g, ' ')})` : ''}; ${payload.acquisition.publicMastodonRecordCount ?? 0} public account records collected. Profile ownership remains unverified.`]
+          : []),
+        ...(payload.acquisition?.publicMastodonCandidateStatus && !['skipped', 'not_configured'].includes(payload.acquisition.publicMastodonCandidateStatus)
+          ? [`Mastodon discovery: ${payload.acquisition.publicMastodonCandidateCount ?? 0} possible profiles, ${payload.acquisition.publicMastodonCandidatePostCount ?? 0} public statuses; ${payload.acquisition.publicMastodonContactMatches ?? 0} public contact matches. Account ownership remains unverified.`]
           : []),
         ...(payload.acquisition?.publicWikimediaStatus && payload.acquisition.publicWikimediaStatus !== 'not_supplied'
           ? [`Wikimedia Commons file: ${payload.acquisition.publicWikimediaStatus}; ${payload.acquisition.publicWikimediaRecordCount ?? 0} file metadata records collected. Image subject, scene and capture time remain unverified.`]
@@ -1079,7 +1100,9 @@ export default function SpectraPage() {
                       {candidate.sourceUrls?.slice(0, 3).map(url => <a key={url} href={url} target="_blank" rel="noopener noreferrer" className="ml-2 underline">Source</a>)}
                       {candidate.supportingClaims?.slice(0, 3).map(claim =>
                         <p key={`${claim.sourceUrl}:${claim.statement}`} className="mt-1 text-slate-400">
-                          “{claim.statement}” · name match unverified
+                          “{claim.statement}” · {claim.identityStatus === 'public_contact_match_unverified'
+                            ? 'public contact match; account ownership unverified'
+                            : 'name match unverified'}
                         </p>)}
                     </div>)}
                   </details>

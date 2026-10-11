@@ -58,7 +58,7 @@ import {
   mergePublicRetrievedMetadata,
   stripUnboundPublicGeoContext,
 } from '../services/spectra/SpectraPublicEvidenceProvenance';
-import { inferCorroboratedRegionalCity, inferProvisionalRegionalCities } from '../services/spectra/SpectraRegionalInference';
+import { inferCorroboratedRegionalCity, inferProvisionalRegionalCities, inferPublicContactProfileCities } from '../services/spectra/SpectraRegionalInference';
 import {
   assessSpectraCityDiscoveryReadiness,
   chooseSpectraPublicRetrievalUrls,
@@ -70,10 +70,14 @@ import { acquireConfiguredSpectraCameras } from '../services/spectra/SpectraCame
 import { acquireSpectraActiveTelemetry, getSpectraActiveAcquisitionCapabilities } from '../services/spectra/SpectraActiveAcquisition';
 import { buildSpectraPipelineDiagnostics, type SpectraRetrievalCounts } from '../services/spectra/SpectraPipelineDiagnostics';
 import { acquirePublicPlace, isPublicPlaceTarget } from '../services/spectra/SpectraPublicPlace';
-import { collectSpectraPublicAccountRecords } from '../services/spectra/SpectraPublicAccountRecords';
+import { collectSpectraPublicAccountRecords, discoverSpectraPublicBlueskyProfiles } from '../services/spectra/SpectraPublicAccountRecords';
 import { collectSpectraPublicNewsRecords } from '../services/spectra/SpectraPublicNewsRecords';
-import { collectSpectraPublicMastodonRecords } from '../services/spectra/SpectraPublicMastodonRecords';
+import { collectSpectraPublicMastodonRecords, discoverSpectraPublicMastodonProfiles } from '../services/spectra/SpectraPublicMastodonRecords';
 import { collectSpectraPublicWikimediaRecords } from '../services/spectra/SpectraPublicWikimediaRecords';
+import { publicProfileContactMatch, publicProfileNameMatch } from '../services/spectra/SpectraPublicProfileIdentity';
+import { publicProfileLeads } from '../services/spectra/SpectraPublicProfileLeads';
+import { collectSpectraPublicBlueskyImages } from '../services/spectra/SpectraPublicImageRecords';
+import { shouldRunSpectraClaudeBackground } from '../services/spectra/SpectraClaudeBudget';
 
 const router = Router();
 router.use(isAuthenticated);
@@ -140,6 +144,7 @@ const directEvidenceSchema = z.object({
 const acquireSchema = z.object({
   target: z.string().trim().min(1).max(500),
   details: z.string().trim().min(1).max(12_000),
+  refreshOnly: z.boolean().optional(),
   sessionId: z.string().trim().min(1).max(200).optional(),
   originSessionId: z.string().trim().min(1).max(200).optional(),
   directEvidence: z.array(directEvidenceSchema).max(20).default([]),
@@ -297,6 +302,7 @@ function buildDiscoveryQueries(args: {
     email && quotedName ? `${quotedName} "${email}"` : '',
     phoneDigits.length >= 7 ? `"${phoneDigits}"` : '',
     [identityAnchor, compactDetails].filter(Boolean).join(' '),
+    quotedName ? `${quotedName} (Bluesky OR Mastodon) public profile` : '',
     [normalizedTarget, compactDetails].filter(Boolean).join(' '),
     compactDetails,
     phoneDigits.length >= 7 ? `"${phoneDigits}"` : '',
@@ -926,6 +932,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
     target,
     details,
     directEvidence,
+    refreshOnly,
     sessionId: requestedSessionId,
     originSessionId,
   } = parsed.data;
@@ -936,6 +943,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
   const normalizedTarget = normalizeTargetIntent(target);
   const combinedTargetText = [normalizedTarget, details].filter(Boolean).join(' ');
   const phone = extractPhoneNumber(combinedTargetText);
+  const email = combinedTargetText.match(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i)?.[0];
   const deviceRef = extractDeviceRef(combinedTargetText);
   const targetPhone = extractPhoneNumber(normalizedTarget);
   const remainingTarget = targetPhone
@@ -983,7 +991,12 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
     ])];
 
     const backgroundBudgetMs = Math.min(SPECTRA_OSINT_TIMEOUT_MS, 20_000);
-    const backgroundPromise = settleWithin(
+    // The visible-page five-minute refresh keeps collecting public records,
+    // but must not repurchase the same Claude research for unchanged clues.
+    // A manual acquisition still receives the full initial investigation.
+    const backgroundPromise = !shouldRunSpectraClaudeBackground({ refreshOnly, sessionId: requestedSessionId })
+      ? Promise.resolve({ status: 'fulfilled' as const, value: null })
+      : settleWithin(
       investigateLexaraBackgroundQuestion(
         `Where is ${resolvedTargetLabel}? ${details}`,
         {
@@ -1014,7 +1027,9 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       subjectLabel: resolvedTargetLabel,
     });
     const publicAccountPromise = collectSpectraPublicAccountRecords(combinedTargetText);
+    const publicProfileCandidatesPromise = discoverSpectraPublicBlueskyProfiles(resolvedName);
     const publicMastodonPromise = collectSpectraPublicMastodonRecords(combinedTargetText);
+    const publicMastodonCandidatesPromise = discoverSpectraPublicMastodonProfiles(resolvedName);
     const publicWikimediaPromise = collectSpectraPublicWikimediaRecords(combinedTargetText);
     const publicNewsPromise = collectSpectraPublicNewsRecords(resolvedName || resolvedSubjectName);
 
@@ -1025,7 +1040,9 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       identityBindingEvidence,
       activeAcquisition,
       publicAccount,
+      publicProfileCandidates,
       publicMastodon,
+      publicMastodonCandidates,
       publicWikimedia,
       publicNews,
     ] = await Promise.all([
@@ -1035,10 +1052,70 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       identityBindingsPromise,
       activeAcquisitionPromise,
       publicAccountPromise,
+      publicProfileCandidatesPromise,
       publicMastodonPromise,
+      publicMastodonCandidatesPromise,
       publicWikimediaPromise,
       publicNewsPromise,
     ]);
+
+    // Exact public contact matches rank candidates ahead of name-only matches.
+    // They corroborate a clue, but do not authenticate who controls an account.
+    const contactMatch = (record: SpectraRetrievedEvidence) =>
+      publicProfileContactMatch(record, { email, phone });
+    publicProfileCandidates.records.sort((a, b) => Number(Boolean(contactMatch(b))) - Number(Boolean(contactMatch(a))));
+    publicMastodonCandidates.records.sort((a, b) => Number(Boolean(contactMatch(b))) - Number(Boolean(contactMatch(a))));
+
+    // Search providers also find public profile links outside either account
+    // directory's first page. Resolve at most two such leads per platform to
+    // source JSON, and retain only profiles whose own display name matches.
+    const blueskyApiUrls = publicProfileCandidates.records.slice(0, 2).map(record => record.url);
+    const mastodonApiUrls = publicMastodonCandidates.records.slice(0, 2).map(record => record.url);
+    const foundProfileUrls = firstPass.results.map(result => result.url);
+    const blueskyUrls = [...new Set([...blueskyApiUrls,
+      ...publicProfileLeads(foundProfileUrls, 'bluesky', [...blueskyApiUrls, publicAccount.profileUrl || ''])])]
+      .filter(url => url !== publicAccount.profileUrl).slice(0, 4);
+    const mastodonUrls = [...new Set([...mastodonApiUrls,
+      ...publicProfileLeads(foundProfileUrls, 'mastodon', [...mastodonApiUrls, publicMastodon.profileUrl || ''])])]
+      .filter(url => url !== publicMastodon.profileUrl).slice(0, 4);
+    const [blueskyFetched, mastodonFetched] = await Promise.all([
+      Promise.all(blueskyUrls.map(url => collectSpectraPublicAccountRecords(url))),
+      Promise.all(mastodonUrls.map(url => collectSpectraPublicMastodonRecords(url))),
+    ]);
+    const blueskyCandidateCollections = blueskyFetched.filter(collection =>
+      collection.records.some(record => record.title === 'Public Bluesky profile'
+        && publicProfileNameMatch(record, resolvedName))
+    );
+    const mastodonCandidateCollections = mastodonFetched.filter(collection =>
+      collection.records.some(record => record.title === 'Public Mastodon profile'
+        && publicProfileNameMatch(record, resolvedName))
+    );
+    for (const collection of blueskyCandidateCollections) {
+      if (publicProfileCandidates.records.some(record => record.url === collection.profileUrl)) continue;
+      const profile = collection.records.find(record => record.title === 'Public Bluesky profile');
+      if (profile) publicProfileCandidates.records.push({ ...profile, title: 'Possible public Bluesky profile' });
+    }
+    for (const collection of mastodonCandidateCollections) {
+      if (publicMastodonCandidates.records.some(record => record.url === collection.profileUrl)) continue;
+      const profile = collection.records.find(record => record.title === 'Public Mastodon profile');
+      if (profile) publicMastodonCandidates.records.push({ ...profile, title: 'Possible public Mastodon profile' });
+    }
+    // A public display-name match never becomes subject identity or a
+    // location observation. Posts retain their source timestamps and media.
+    const blueskyCandidatePosts = blueskyCandidateCollections.flatMap(collection =>
+      collection.records.filter(record => record.title === 'Public Bluesky post')
+    );
+    const mastodonCandidatePosts = mastodonCandidateCollections.flatMap(collection =>
+      collection.records.filter(record => record.title === 'Public Mastodon status')
+    );
+    const contactMatchedBlueskyPosts = blueskyCandidateCollections
+      .filter(collection => collection.records.some(record =>
+        record.title === 'Public Bluesky profile' && contactMatch(record)))
+      .flatMap(collection => collection.records.filter(record => record.title === 'Public Bluesky post'));
+    if (publicAccount.records.some(record => record.title === 'Public Bluesky profile' && contactMatch(record))) {
+      contactMatchedBlueskyPosts.push(...publicAccount.records.filter(record => record.title === 'Public Bluesky post'));
+    }
+    const publicBlueskyImages = await collectSpectraPublicBlueskyImages(contactMatchedBlueskyPosts);
 
     const activeBatchOutcomes = await Promise.allSettled(
       activeAcquisition.batches.map(batch =>
@@ -1073,13 +1150,37 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       contactInformation: [] as any[],
       locationHistory: [] as string[],
       employmentAndEducation: [] as any[],
-      publicRecords: [...publicAccount.records.map(record => ({
+      publicRecords: [...publicProfileCandidates.records.map(record => ({
+        title: record.title, url: record.url, snippet: record.textExcerpt,
+        provider: 'Bluesky public API',
+        identityStatus: contactMatch(record)
+          ? 'Name and public contact match; account ownership unverified'
+          : 'Name match only; account ownership unverified',
+      })), ...blueskyCandidatePosts.map(record => ({
+        title: record.title, url: record.url, publishedAt: record.publishedAt,
+        snippet: record.textExcerpt, provider: 'Bluesky public API',
+        identityStatus: 'Possible profile; post ownership of target unverified',
+      })), ...publicBlueskyImages.records.map(record => ({
+        title: record.title, url: record.url, publishedAt: record.publishedAt,
+        snippet: record.textExcerpt, provider: 'Bluesky public image CDN',
+        identityStatus: 'Public image inspected; scene and subject presence unverified',
+      })), ...publicAccount.records.map(record => ({
         title: record.title,
         url: record.url,
         publishedAt: record.publishedAt,
         snippet: record.textExcerpt,
         provider: 'Bluesky public API',
         identityStatus: 'Profile link supplied; ownership not independently verified',
+      })), ...publicMastodonCandidates.records.map(record => ({
+        title: record.title, url: record.url, snippet: record.textExcerpt,
+        provider: 'Mastodon public API',
+        identityStatus: contactMatch(record)
+          ? 'Name and public contact match; account ownership unverified'
+          : 'Name match only; account ownership unverified',
+      })), ...mastodonCandidatePosts.map(record => ({
+        title: record.title, url: record.url, publishedAt: record.publishedAt,
+        snippet: record.textExcerpt, provider: 'Mastodon public API',
+        identityStatus: 'Possible profile; post ownership of target unverified',
       })), ...publicMastodon.records.map(record => ({
         title: record.title,
         url: record.url,
@@ -1104,6 +1205,16 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
         snippet: background?.evidenceSummary?.slice(0, 1_200),
       })),
       socialMediaPresence: [
+        ...publicProfileCandidates.records.map(record => ({
+          platform: 'Bluesky', url: record.url,
+          recordCount: Math.max(1, blueskyCandidateCollections.find(item => item.profileUrl === record.url)?.records.length || 0),
+          identityStatus: contactMatch(record) ? 'Public contact match; unverified' : 'Name match only; unverified',
+        })),
+        ...publicMastodonCandidates.records.map(record => ({
+          platform: 'Mastodon', url: record.url,
+          recordCount: Math.max(1, mastodonCandidateCollections.find(item => item.profileUrl === record.url)?.records.length || 0),
+          identityStatus: contactMatch(record) ? 'Public contact match; unverified' : 'Name match only; unverified',
+        })),
         ...(publicAccount.profileUrl
           ? [{ platform: 'Bluesky', url: publicAccount.profileUrl,
             recordCount: publicAccount.records.length, identityStatus: 'Unverified' }] : []),
@@ -1118,6 +1229,44 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
 
     let discoveryResults = dedupeDiscoveryResults([
       ...firstPass.results,
+      ...publicProfileCandidates.records.map(record => ({
+        title: record.title || 'Possible public Bluesky profile',
+        url: record.url,
+        snippet: record.textExcerpt,
+        provider: 'bluesky-public-api',
+        reliability: 'medium' as const,
+        relevanceScore: 35,
+        metadata: {
+          ...mergePublicRetrievedMetadata(undefined, record),
+          retrievalProvider: 'bluesky-public-api',
+          subjectAssociation: 'name_match_unverified',
+        },
+      })),
+      ...publicMastodonCandidates.records.map(record => ({
+        title: record.title || 'Possible public Mastodon profile',
+        url: record.url,
+        snippet: record.textExcerpt,
+        provider: 'mastodon-public-api',
+        reliability: 'medium' as const,
+        relevanceScore: 35,
+        metadata: {
+          ...mergePublicRetrievedMetadata(undefined, record),
+          retrievalProvider: 'mastodon-public-api',
+          subjectAssociation: 'name_match_unverified',
+        },
+      })),
+      ...[...blueskyCandidatePosts, ...mastodonCandidatePosts].map(record => ({
+        title: record.title || 'Public candidate post',
+        url: record.url, snippet: record.textExcerpt,
+        provider: record.title === 'Public Mastodon status' ? 'mastodon-public-api' : 'bluesky-public-api',
+        reliability: 'medium' as const,
+        relevanceScore: 25,
+        metadata: {
+          ...mergePublicRetrievedMetadata(undefined, record),
+          retrievalProvider: record.title === 'Public Mastodon status' ? 'mastodon-public-api' : 'bluesky-public-api',
+          subjectAssociation: 'name_match_unverified',
+        },
+      })),
       ...publicAccount.records.map(record => ({
         title: record.title || 'Public Bluesky post',
         url: record.url,
@@ -1161,13 +1310,16 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
     // Preserve fetched records independently of search-result ranking/deduping.
     // A later successful fetch of an existing search hit must reach the archive.
     const retrievedEvidence = [
-      ...firstPass.retrievedEvidence, ...publicAccount.records,
+      ...firstPass.retrievedEvidence, ...publicProfileCandidates.records,
+      ...blueskyCandidatePosts, ...publicBlueskyImages.records, ...publicAccount.records,
+      ...publicMastodonCandidates.records, ...mastodonCandidatePosts,
       ...publicMastodon.records, ...publicWikimedia.records, ...publicNews.records,
     ];
     // Person-city guesses must rest on the retrieved publisher text. A search
     // title or snippet can describe someone else even when the URL resolves.
     const fetchedCitySources = () => discoveryResults.filter(result =>
       result.metadata?.subjectAssociation !== 'supplied_profile_url_unverified'
+      && result.metadata?.subjectAssociation !== 'name_match_unverified'
       && typeof result.metadata?.fetchedExcerpt === 'string'
     ).map(result => ({
       ...result, title: '', snippet: '',
@@ -1378,7 +1530,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       accuracyMeters: number;
       sourceUrls?: string[];
       publishedAt?: string | null;
-      supportingClaims?: Array<{ sourceUrl: string; statement: string; publishedAt: string | null; identityStatus: 'name_mention_unverified' }>;
+      supportingClaims?: Array<{ sourceUrl: string; statement: string; publishedAt: string | null; identityStatus: 'name_mention_unverified' | 'public_contact_match_unverified' }>;
     }> = [];
 
     // Regional hints are useful when precise timestamped coordinates are not
@@ -1405,6 +1557,13 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
         resolvedName || resolvedSubjectName,
         fetchedCitySources(),
       );
+      const profileCities = inferPublicContactProfileCities(
+        resolvedName,
+        [...publicProfileCandidates.records, ...publicMastodonCandidates.records,
+          ...publicAccount.records.filter(record => record.title === 'Public Bluesky profile'),
+          ...publicMastodon.records.filter(record => record.title === 'Public Mastodon profile')],
+        { email, phone },
+      );
       let region = null;
       let cityCorroborationUsed = false;
       // An independently reported city must not be silently overridden by
@@ -1415,30 +1574,65 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
             `${corroboratedCity.city}, ${corroboratedCity.state}`,
           );
           cityCorroborationUsed = Boolean(region);
+          if (region) candidateLocations.push({
+            latitude: region.latitude,
+            longitude: region.longitude,
+            label: `${corroboratedCity.city}, ${corroboratedCity.state} (corroborated public residence; not a live location)`,
+            confidence: 0.35,
+            basis: 'regional_context',
+            accuracyMeters: Math.max(25_000, region.accuracyMeters),
+            sourceUrls: corroboratedCity.sourceUrls,
+          });
         } catch {
           // Failed regional geocoding never substitutes arbitrary coordinates.
         }
       }
-      if (!region) {
-        for (const provisional of provisionalCities) {
-          try {
-            const candidate = await geocodeCityState(`${provisional.city}, ${provisional.state}`);
-            if (!candidate) continue;
-            region = candidate;
-            candidateLocations.push({
-              latitude: candidate.latitude,
-              longitude: candidate.longitude,
-              label: `${provisional.city}, ${provisional.state} (provisional public residence clue; current city unverified)`,
-              confidence: Math.min(0.22, 0.10 + 0.04 * provisional.independentSourceCount),
-              basis: 'regional_context',
-              accuracyMeters: Math.max(25_000, candidate.accuracyMeters),
-              sourceUrls: provisional.sourceUrls,
-              publishedAt: provisional.publishedAt,
-              supportingClaims: provisional.supportingClaims,
-            });
-          } catch {
-            // An unavailable geocoder leaves the document and its limitations in the archive.
-          }
+      // Keep competing source-backed cities visible even if one has already
+      // reached the independent-publisher rule. A conflicting claim should
+      // never disappear merely because another was ranked first.
+      for (const provisional of provisionalCities) {
+        if (candidateLocations.length >= 3) break;
+        if (corroboratedCity && provisional.city.toLowerCase() === corroboratedCity.city.toLowerCase()
+          && provisional.state === corroboratedCity.state) continue;
+        try {
+          const candidate = await geocodeCityState(`${provisional.city}, ${provisional.state}`);
+          if (!candidate) continue;
+          if (!region) region = candidate;
+          candidateLocations.push({
+            latitude: candidate.latitude,
+            longitude: candidate.longitude,
+            label: `${provisional.city}, ${provisional.state} (provisional public residence clue; current city unverified)`,
+            confidence: Math.min(0.22, 0.10 + 0.04 * provisional.independentSourceCount),
+            basis: 'regional_context',
+            accuracyMeters: Math.max(25_000, candidate.accuracyMeters),
+            sourceUrls: provisional.sourceUrls,
+            publishedAt: provisional.publishedAt,
+            supportingClaims: provisional.supportingClaims,
+          });
+        } catch {
+          // An unavailable geocoder leaves the document and its limitations in the archive.
+        }
+      }
+      for (const profileCity of profileCities) {
+        if (candidateLocations.length >= 3) break;
+        if ((corroboratedCity && profileCity.city.toLowerCase() === corroboratedCity.city.toLowerCase()
+          && profileCity.state === corroboratedCity.state)
+          || provisionalCities.some(city => city.city.toLowerCase() === profileCity.city.toLowerCase()
+            && city.state === profileCity.state)) continue;
+        try {
+          const candidate = await geocodeCityState(`${profileCity.city}, ${profileCity.state}`);
+          if (!candidate) continue;
+          if (!region) region = candidate;
+          candidateLocations.push({
+            latitude: candidate.latitude, longitude: candidate.longitude,
+            label: `${profileCity.city}, ${profileCity.state} (public profile city; account ownership and current city unverified)`,
+            confidence: 0.12, basis: 'regional_context',
+            accuracyMeters: Math.max(25_000, candidate.accuracyMeters),
+            sourceUrls: profileCity.sourceUrls, publishedAt: null,
+            supportingClaims: profileCity.supportingClaims,
+          });
+        } catch {
+          // The profile remains archived even if the city cannot be mapped.
         }
       }
       // Preserve a supplied location solely as labeled search context. A
@@ -1605,22 +1799,39 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
     }));
 
     const publicAccountUrls = new Set(publicAccount.records.map(record => record.url));
+    const publicCandidateUrls = new Set([
+      ...publicProfileCandidates.records, ...blueskyCandidatePosts,
+    ].map(record => record.url));
+    const publicImageUrls = new Set(publicBlueskyImages.records.map(record => record.url));
     const publicMastodonUrls = new Set(publicMastodon.records.map(record => record.url));
+    const publicMastodonCandidateUrls = new Set([
+      ...publicMastodonCandidates.records, ...mastodonCandidatePosts,
+    ].map(record => record.url));
     const publicWikimediaUrls = new Set(publicWikimedia.records.map(record => record.url));
     const publicNewsUrls = new Set(publicNews.records.map(record => record.url));
     const evidenceRecords = buildSpectraAcquisitionRecords(retrievedEvidence.map(evidence => ({
       url: evidence.url,
-      provider: publicAccountUrls.has(evidence.url) ? 'bluesky-public-api'
-        : publicMastodonUrls.has(evidence.url) ? 'mastodon-public-api'
+      provider: publicImageUrls.has(evidence.url) ? 'bluesky-image-binary'
+        : publicAccountUrls.has(evidence.url) || publicCandidateUrls.has(evidence.url) ? 'bluesky-public-api'
+        : publicMastodonUrls.has(evidence.url) || publicMastodonCandidateUrls.has(evidence.url) ? 'mastodon-public-api'
         : publicWikimediaUrls.has(evidence.url) ? 'wikimedia-commons-api'
         : publicNewsUrls.has(evidence.url) ? 'gdelt-article-retrieval' : 'spectra-public-retrieval',
       metadata: {
         ...mergePublicRetrievedMetadata(undefined, evidence),
+        ...(publicImageUrls.has(evidence.url)
+          ? { retrievalProvider: 'bluesky-image-binary', subjectAssociation: 'public_media_scene_unverified' }
+          : {}),
         ...(publicAccountUrls.has(evidence.url)
           ? { retrievalProvider: 'bluesky-public-api', subjectAssociation: 'supplied_profile_url_unverified' }
           : {}),
+        ...(publicCandidateUrls.has(evidence.url) && !publicAccountUrls.has(evidence.url)
+          ? { retrievalProvider: 'bluesky-public-api', subjectAssociation: 'name_match_unverified' }
+          : {}),
         ...(publicMastodonUrls.has(evidence.url)
           ? { retrievalProvider: 'mastodon-public-api', subjectAssociation: 'supplied_profile_url_unverified' }
+          : {}),
+        ...(publicMastodonCandidateUrls.has(evidence.url) && !publicMastodonUrls.has(evidence.url)
+          ? { retrievalProvider: 'mastodon-public-api', subjectAssociation: 'name_match_unverified' }
           : {}),
         ...(publicWikimediaUrls.has(evidence.url)
           ? { retrievalProvider: 'wikimedia-commons-api', subjectAssociation: 'supplied_file_scene_unverified' }
@@ -1669,9 +1880,20 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
         activeAcquisitionPositionCount: activeLocationPoints.length,
         publicAccountStatus: publicAccount.status,
         publicAccountRecordCount: publicAccount.records.length,
+        publicProfileCandidateStatus: publicProfileCandidates.status,
+        publicProfileCandidateCount: publicProfileCandidates.records.length,
+        publicProfileContactMatches: publicProfileCandidates.records.filter(record => contactMatch(record)).length,
+        publicProfileCandidatePostCount: blueskyCandidatePosts.length,
+        publicBlueskyImageAttemptCount: publicBlueskyImages.attempted,
+        publicBlueskyImageRecordCount: publicBlueskyImages.records.length,
+        publicBlueskyImageFailureCount: publicBlueskyImages.failed,
         publicMastodonStatus: publicMastodon.status,
         publicMastodonReason: publicMastodon.reason,
         publicMastodonRecordCount: publicMastodon.records.length,
+        publicMastodonCandidateStatus: publicMastodonCandidates.status,
+        publicMastodonCandidateCount: publicMastodonCandidates.records.length,
+        publicMastodonContactMatches: publicMastodonCandidates.records.filter(record => contactMatch(record)).length,
+        publicMastodonCandidatePostCount: mastodonCandidatePosts.length,
         publicWikimediaStatus: publicWikimedia.status,
         publicWikimediaRecordCount: publicWikimedia.records.length,
         publicNewsStatus: publicNews.status,
@@ -1737,9 +1959,20 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
         activeAcquisitionPositionCount: activeLocationPoints.length,
         publicAccountStatus: publicAccount.status,
         publicAccountRecordCount: publicAccount.records.length,
+        publicProfileCandidateStatus: publicProfileCandidates.status,
+        publicProfileCandidateCount: publicProfileCandidates.records.length,
+        publicProfileContactMatches: publicProfileCandidates.records.filter(record => contactMatch(record)).length,
+        publicProfileCandidatePostCount: blueskyCandidatePosts.length,
+        publicBlueskyImageAttemptCount: publicBlueskyImages.attempted,
+        publicBlueskyImageRecordCount: publicBlueskyImages.records.length,
+        publicBlueskyImageFailureCount: publicBlueskyImages.failed,
         publicMastodonStatus: publicMastodon.status,
         publicMastodonReason: publicMastodon.reason,
         publicMastodonRecordCount: publicMastodon.records.length,
+        publicMastodonCandidateStatus: publicMastodonCandidates.status,
+        publicMastodonCandidateCount: publicMastodonCandidates.records.length,
+        publicMastodonContactMatches: publicMastodonCandidates.records.filter(record => contactMatch(record)).length,
+        publicMastodonCandidatePostCount: mastodonCandidatePosts.length,
         publicWikimediaStatus: publicWikimedia.status,
         publicWikimediaRecordCount: publicWikimedia.records.length,
         publicNewsStatus: publicNews.status,
