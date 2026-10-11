@@ -79,7 +79,7 @@ function isPrivateAddress(address: string): boolean {
   return true;
 }
 
-async function assertPublicUrl(raw: string): Promise<URL> {
+export async function assertPublicUrl(raw: string): Promise<URL> {
   let url: URL;
   try { url = new URL(raw); } catch { throw new RetrievalFailure('invalid_url'); }
   if (!['http:', 'https:'].includes(url.protocol)) throw new RetrievalFailure('blocked_url');

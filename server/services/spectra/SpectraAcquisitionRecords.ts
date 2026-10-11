@@ -80,6 +80,11 @@ export function buildSpectraAcquisitionRecords(
     const textExcerpt = textValue(metadata.fetchedExcerpt);
     const structuredRecord = metadata.fetchedRecord !== null && typeof metadata.fetchedRecord === 'object'
       ? metadata.fetchedRecord : undefined;
+    const sourceObject = objectValue(structuredRecord);
+    // Keep the provider's own identifier distinct from our snapshot hash and
+    // from the time at which we happened to retrieve the record.
+    const sourceRecordId = textValue(sourceObject?.uri) || textValue(sourceObject?.id);
+    const sourcePublishedAt = dateValue(metadata.publishedAt);
     const structuredRecordOmitted = metadata.fetchedRecordOmitted === true;
     const rawAddressBlocks = metadata.fetchedAddressBlocks || metadata.addressBlocks;
     const addressBlocks = Array.isArray(rawAddressBlocks)
@@ -108,12 +113,16 @@ export function buildSpectraAcquisitionRecords(
         classification: metadataOnly ? 'retrieved_source_metadata' : 'retrieved_source_document',
         requestedUrl: textValue(metadata.requestedUrl),
         discoveryProvider: textValue(metadata.discoveryProvider) || textValue(result.provider),
+        // A supplied URL or an article mention does not bind the record to
+        // the investigated person. Preserve that limitation with the snapshot.
+        subjectAssociation: textValue(metadata.subjectAssociation),
+        sourceRecordId: sourceRecordId?.slice(0, 1_000),
         title,
         textExcerpt,
         structuredRecord,
         structuredRecordOmitted: structuredRecordOmitted || undefined,
         contentType: textValue(metadata.fetchedContentType) || textValue(metadata.contentType),
-        publishedAt: textValue(metadata.publishedAt),
+        publishedAt: sourcePublishedAt,
         addressBlocks,
         locationEvidence,
       },
@@ -290,6 +299,7 @@ export async function writeSpectraAcquisitionEvidenceRecords(
 
 export interface SpectraAcquisitionEvidenceRecordList {
   records: SpectraStoredAcquisitionEvidenceRecord[];
+  nextCursor?: string;
   persistenceAvailable: boolean;
   error?: string;
 }
@@ -300,26 +310,35 @@ export async function readSpectraAcquisitionEvidenceRecords(
   userId: string,
   sessionId: string,
   limit = 100,
+  before?: string,
 ): Promise<SpectraAcquisitionEvidenceRecordList> {
   const normalizedSessionId = sessionId.trim();
   if (!userId.trim() || !normalizedSessionId || normalizedSessionId.length > 200) {
     return { records: [], persistenceAvailable: false, error: 'Invalid acquisition record request.' };
   }
   const boundedLimit = Number.isFinite(limit) ? Math.max(1, Math.min(500, Math.floor(limit))) : 100;
+  const cursor = before ? /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3,6}Z)\|([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i.exec(before) : null;
+  if (before && (!cursor || !Number.isFinite(Date.parse(cursor[1])))) {
+    return { records: [], persistenceAvailable: false, error: 'Invalid acquisition record cursor.' };
+  }
   try {
     const result = await query(
       `SELECT r.id, r.record_type, r.provider, r.source_url, r.retrieved_at,
-              r.payload, r.content_hash, r.first_seen_at, r.last_seen_at
+              r.payload, r.content_hash, r.first_seen_at, r.last_seen_at,
+              to_char(r.last_seen_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS last_seen_cursor_at
        FROM public.spectra_acquisition_evidence_records r
        JOIN public.spectra_investigations i
          ON i.id = r.investigation_id AND i.session_id = r.session_id AND i.user_id = r.user_id
        WHERE r.user_id = $1 AND i.user_id = $1 AND r.session_id = $2 AND i.session_id = $2
+       ${cursor ? 'AND (r.last_seen_at, r.id) < ($4::timestamptz, $5::uuid)' : ''}
        ORDER BY r.last_seen_at DESC, r.id DESC
        LIMIT $3`,
-      [userId, normalizedSessionId, boundedLimit],
+      [userId, normalizedSessionId, boundedLimit + 1, ...(cursor ? [cursor[1], cursor[2]] : [])],
     );
+    const rows = result.rows.slice(0, boundedLimit);
+    const last = rows.at(-1);
     return {
-      records: result.rows.map(row => ({
+      records: rows.map(row => ({
         id: String(row.id),
         recordType: row.record_type,
         provider: row.provider,
@@ -330,6 +349,8 @@ export async function readSpectraAcquisitionEvidenceRecords(
         firstSeenAt: new Date(row.first_seen_at).toISOString(),
         lastSeenAt: new Date(row.last_seen_at).toISOString(),
       })),
+      nextCursor: result.rows.length > boundedLimit && last
+        ? `${last.last_seen_cursor_at || new Date(last.last_seen_at).toISOString()}|${last.id}` : undefined,
       persistenceAvailable: true,
     };
   } catch (error: any) {

@@ -46,6 +46,8 @@ const structured = buildSpectraAcquisitionRecords([
 ]);
 assert.equal(structured[0].payload.snapshotKind, 'structured_record');
 assert.deepEqual(structured[0].payload.structuredRecord, json);
+assert.equal(structured[0].payload.sourceRecordId, 'record-1');
+assert.equal(structured[0].payload.publishedAt, undefined, 'a retrieval timestamp is not a source publication date');
 assert.equal(structured[1].payload.snapshotKind, 'retrieval_metadata');
 assert.equal(structured[1].payload.structuredRecordOmitted, true);
 assert.equal(structured[1].payload.structuredRecord, undefined, 'an oversized body is explicitly absent, never claimed as retained');
@@ -165,6 +167,25 @@ assert.equal(listed.records.length, 2, 'changed content appends a version instea
 assert.equal(listed.records[0].payload.textExcerpt, 'Actual fetched text');
 assert.equal(listed.records[0].firstSeenAt, time);
 assert.equal(listed.records[0].lastSeenAt, later);
+const pageRows = ['00000000-0000-4000-8000-000000000003', '00000000-0000-4000-8000-000000000002', '00000000-0000-4000-8000-000000000001']
+  .map(id => ({ id, record_type: 'retrieved_document', provider: 'fixture', source_url: url,
+    retrieved_at: time, first_seen_at: time, last_seen_at: later,
+    last_seen_cursor_at: '2026-10-11T12:00:00.123456Z', payload: {}, content_hash: 'abc' }));
+const paginatedQuery: SpectraEvidenceQuery = async (sql, parameters) => {
+  assert.match(sql, /r\.user_id = \$1 AND i\.user_id = \$1 AND r\.session_id = \$2 AND i\.session_id = \$2/);
+  const rows = parameters.length > 3
+    ? pageRows.filter(row => row.id < String(parameters[4])) : pageRows;
+  return { rows: rows.slice(0, Number(parameters[2])) };
+};
+const firstPage = await readSpectraAcquisitionEvidenceRecords(paginatedQuery, 'user-a', 'session-a', 2);
+assert.equal(firstPage.records.length, 2);
+assert.ok(firstPage.nextCursor);
+assert.match(firstPage.nextCursor!, /\.123456Z\|/, 'paging preserves database microseconds');
+const nextPage = await readSpectraAcquisitionEvidenceRecords(paginatedQuery, 'user-a', 'session-a', 2, firstPage.nextCursor);
+assert.deepEqual(nextPage.records.map(row => row.id), [pageRows[2].id]);
+assert.equal(nextPage.nextCursor, undefined);
+assert.equal((await readSpectraAcquisitionEvidenceRecords(paginatedQuery, 'user-a', 'session-a', 2, 'bad')).error,
+  'Invalid acquisition record cursor.');
 assert.deepEqual((await readSpectraAcquisitionEvidenceRecords(query, 'user-b', 'session-a')).records, [], 'another user cannot read the session archive');
 assert.deepEqual((await readSpectraAcquisitionEvidenceRecords(query, "user-a' OR 1=1 --", 'session-a')).records, []);
 await assert.rejects(writeSpectraAcquisitionEvidenceRecords(query, { ...ownerA, userId: 'user-b' }, prepared),

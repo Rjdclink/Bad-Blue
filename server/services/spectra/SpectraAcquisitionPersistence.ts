@@ -25,9 +25,10 @@ export async function loadSpectraAcquisitionEvidenceRecords(
   userId: string,
   sessionId: string,
   limit = 100,
+  before?: string,
 ): Promise<SpectraAcquisitionEvidenceRecordList> {
   return readSpectraAcquisitionEvidenceRecords(
-    (sql, parameters) => pool.query(sql, parameters), userId, sessionId, limit,
+    (sql, parameters) => pool.query(sql, parameters), userId, sessionId, limit, before,
   );
 }
 
