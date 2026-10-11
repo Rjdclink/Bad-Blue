@@ -146,6 +146,7 @@ interface AcquisitionResponse {
 type SpectraLocationCandidate = LocationCandidate & {
   sourceUrls?: string[];
   publishedAt?: string | null;
+  supportingClaims?: Array<{ sourceUrl: string; statement: string; publishedAt: string | null; identityStatus: string }>;
 };
 
 const FIRST_PROMPT = 'What is it that you want to locate?';
@@ -1076,6 +1077,10 @@ export default function SpectraPage() {
                       {candidate.publishedAt && <span> · published {new Date(candidate.publishedAt).toLocaleDateString()}</span>}
                       {candidate.sourceUrls?.length && !candidate.publishedAt && <span> · source date unknown</span>}
                       {candidate.sourceUrls?.slice(0, 3).map(url => <a key={url} href={url} target="_blank" rel="noopener noreferrer" className="ml-2 underline">Source</a>)}
+                      {candidate.supportingClaims?.slice(0, 3).map(claim =>
+                        <p key={`${claim.sourceUrl}:${claim.statement}`} className="mt-1 text-slate-400">
+                          “{claim.statement}” · name match unverified
+                        </p>)}
                     </div>)}
                   </details>
                 )}

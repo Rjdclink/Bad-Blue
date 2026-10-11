@@ -138,6 +138,9 @@ const source = {
   metadata: mergePublicRetrievedMetadata({}, article),
 };
 assert.deepEqual(inferProvisionalRegionalCities('Jane Doe', [source]).map(city => [city.city, city.state]), [['Salem', 'OR']]);
+assert.deepEqual(inferProvisionalRegionalCities('Jane Doe', [source])[0].supportingClaims,
+  [{ sourceUrl: article.url, statement: 'Jane Doe lives in Salem, Oregon.',
+    publishedAt: now, identityStatus: 'name_mention_unverified' }]);
 assert.equal(inferProvisionalRegionalCities('Jane Doe', [{ ...source, metadata: {} }]).length, 0,
   'a search snippet is not a fetched residence claim');
 assert.equal(inferProvisionalRegionalCities('Other Person', [source]).length, 0);

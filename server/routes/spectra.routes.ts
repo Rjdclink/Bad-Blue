@@ -1059,11 +1059,10 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
 
     const report = {
       identitySummary: {
-        verificationStatus: backgroundConfidence >= 0.8
-          ? 'Verified'
-          : backgroundConfidence > 0
-            ? 'Partial'
-            : 'Unknown',
+        // A model's research completion score cannot verify that two public
+        // records concern the same person. Preserve that distinction in the
+        // report until independent identity binding is actually available.
+        verificationStatus: backgroundConfidence > 0 ? 'Partial' : 'Unknown',
       },
       contactInformation: [] as any[],
       locationHistory: [] as string[],
@@ -1373,6 +1372,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       accuracyMeters: number;
       sourceUrls?: string[];
       publishedAt?: string | null;
+      supportingClaims?: Array<{ sourceUrl: string; statement: string; publishedAt: string | null; identityStatus: 'name_mention_unverified' }>;
     }> = [];
 
     // Regional hints are useful when precise timestamped coordinates are not
@@ -1428,6 +1428,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
               accuracyMeters: Math.max(25_000, candidate.accuracyMeters),
               sourceUrls: provisional.sourceUrls,
               publishedAt: provisional.publishedAt,
+              supportingClaims: provisional.supportingClaims,
             });
           } catch {
             // An unavailable geocoder leaves the document and its limitations in the archive.
