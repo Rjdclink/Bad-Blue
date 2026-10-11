@@ -259,4 +259,30 @@ assert.equal(inferProvisionalRegionalCities('Other Person', [source]).length, 0)
 assert.equal(inferProvisionalRegionalCities('Jane Doe', [{ ...source,
   metadata: { ...source.metadata, publishedAt: '2010-01-01T00:00:00Z' },
 }]).length, 0, 'known stale publications must not support a current hypothesis');
+
+const localNews = {
+  url: 'https://centraloregonnews.com/story', title: 'Local story', snippet: 'Search snippet',
+  metadata: {
+    fetchedExcerpt: 'BEND—A 45-year-old Bend woman was arrested Tuesday. The arrest of Jane Doe followed a report. More details followed.',
+    publishedAt: now,
+  },
+};
+assert.deepEqual(inferProvisionalRegionalCities('Jane Doe', [localNews]).map(city => [city.city, city.state]),
+  [['Bend', 'OR']], 'a dated local article identifying the named resident across adjacent sentences can support a provisional city');
+const midwestNews = {
+  url: 'https://www.nwestiowa.com/news/example', title: 'Hartley man jailed', snippet: '',
+  metadata: {
+    fetchedExcerpt: 'HARTLEY—A 45-year-old Hartley man was arrested about 11 a.m. Wednesday. The arrest of John Example stemmed from a report.',
+    publishedAt: now,
+  },
+};
+assert.deepEqual(inferProvisionalRegionalCities('John Example', [midwestNews]).map(city => [city.city, city.state]),
+  [['Hartley', 'IA']], 'the local-news phrasing seen in the production record must produce a dated candidate');
+assert.equal(inferProvisionalRegionalCities('Other Person', [localNews]).length, 0,
+  'a different person must not inherit the article city');
+assert.equal(inferProvisionalRegionalCities('Jane Doe', [{ ...localNews, url: 'https://unrelatednews.com/story' }]).length, 0,
+  'an ambiguous city without a source-backed state must not be guessed');
+assert.equal(inferProvisionalRegionalCities('Jane Doe', [{ ...localNews,
+  metadata: { ...localNews.metadata, publishedAt: '2010-01-01T00:00:00Z' },
+}]).length, 0, 'a stale local article must not support this provisional estimate');
 console.log('SPECTRA direct public record and provisional city checks passed');
