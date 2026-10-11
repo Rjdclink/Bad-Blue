@@ -5,6 +5,8 @@
  * with the same city; ambiguous or historical references are not promoted.
  */
 import { extractCityStateHint } from '../geoconsole/city-state-geocoder';
+import type { SpectraRetrievedEvidence } from './SpectraPublicRetrieval';
+import { publicProfileContactMatch, publicProfileNameMatch } from './SpectraPublicProfileIdentity';
 
 export interface RegionalSourceExcerpt {
   url?: string;
@@ -33,7 +35,7 @@ export interface ProvisionalRegionalCity {
     sourceUrl: string;
     statement: string;
     publishedAt: string | null;
-    identityStatus: 'name_mention_unverified';
+    identityStatus: 'name_mention_unverified' | 'public_contact_match_unverified';
   }>;
   currentPositionVerified: false;
 }
@@ -47,6 +49,46 @@ const HISTORICAL_LANGUAGE_RE =
 // retrieval time is never a substitute for a publication date.
 const DAY_MS = 86_400_000;
 const MAX_DATED_SOURCE_AGE_MS = 730 * DAY_MS;
+
+/** A public bio with the same full name and exact supplied contact can offer
+ * a tentative city. The profile has no capture date or authenticated owner. */
+export function inferPublicContactProfileCities(
+  name: string,
+  profiles: readonly SpectraRetrievedEvidence[],
+  clues: { email?: string; phone?: string },
+): ProvisionalRegionalCity[] {
+  const cities = new Map<string, ProvisionalRegionalCity>();
+  for (const profile of profiles.slice(0, 12)) {
+    if (!publicProfileNameMatch(profile, name) || !publicProfileContactMatch(profile, clues)) continue;
+    const bio = String(profile.textExcerpt || '').slice(0, 4_000);
+    for (const statement of bio.split(/[\n;!?]|\.(?=\s)/).slice(0, 30)) {
+      const mention = /\b(?:based|living|residing|lives?)\s+(?:currently\s+)?(?:in|at)\s+([A-Za-z][A-Za-z .'-]{1,60},\s*[A-Z]{2})\b/gi.exec(statement);
+      if (!mention || /\b(?:formerly|previously|historically|used to|moved from)\b/i.test(statement)) continue;
+      const region = extractCityStateHint(mention[1]);
+      if (!region) continue;
+      const key = `${region.city.toLowerCase()}|${region.state}`;
+      const claim = {
+        sourceUrl: profile.url,
+        statement: mention[0].replace(/\s+/g, ' ').trim(),
+        publishedAt: null,
+        identityStatus: 'public_contact_match_unverified' as const,
+      };
+      const existing = cities.get(key);
+      if (existing) {
+        if (!existing.sourceUrls.includes(profile.url)) {
+          existing.sourceUrls.push(profile.url);
+          existing.supportingClaims.push(claim);
+        }
+      } else cities.set(key, {
+        city: region.city, state: region.state, sourceUrls: [profile.url],
+        publishedAt: null, independentSourceCount: 1,
+        supportingClaims: [claim], currentPositionVerified: false,
+      });
+      break;
+    }
+  }
+  return [...cities.values()].slice(0, 3);
+}
 
 function hasUsablePublicationDate(
   item: RegionalSourceExcerpt,

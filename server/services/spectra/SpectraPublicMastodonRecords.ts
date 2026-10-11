@@ -9,9 +9,91 @@ export interface SpectraPublicMastodonCollection {
   reason?: 'invalid_configuration' | 'authorization_failed' | 'http_error' | 'invalid_response' | 'body_too_large' | 'timeout' | 'network_error';
 }
 
+export interface SpectraMastodonProfileCandidates {
+  records: SpectraRetrievedEvidence[];
+  status: 'skipped' | 'not_configured' | 'ok' | 'empty' | 'failed';
+  reason?: SpectraPublicMastodonCollection['reason'];
+}
+
 const MAX_RESPONSE_BYTES = 900_000;
 const MAX_STATUSES = 20;
 const TIMEOUT_MS = 3_500;
+
+function nameParts(value: string): string[] {
+  return value.normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase().match(/[a-z]{2,}/g) || [];
+}
+
+/** Searches the configured instance only. Returned accounts are unverified candidates. */
+export async function discoverSpectraPublicMastodonProfiles(
+  name: string,
+  options: {
+    token?: string; instanceUrl?: string; fetchImpl?: typeof fetch; signal?: AbortSignal;
+    validateOrigin?: typeof assertPublicUrl;
+  } = {},
+): Promise<SpectraMastodonProfileCandidates> {
+  const parts = nameParts(name);
+  if (parts.length < 2 || parts.length > 6 || name.length > 120) {
+    return { records: [], status: 'skipped' };
+  }
+  const token = (options.token ?? process.env.SPECTRA_MASTODON_ACCESS_TOKEN ?? '').trim();
+  const instance = (options.instanceUrl ?? process.env.SPECTRA_MASTODON_INSTANCE_URL ?? '').trim();
+  if (!token || !instance) return { records: [], status: 'not_configured' };
+  let origin: URL;
+  try {
+    origin = new URL(instance);
+    if (origin.protocol !== 'https:' || origin.pathname !== '/' || origin.search || origin.hash
+      || origin.port || origin.username || origin.password || isIP(origin.hostname)
+      || !origin.hostname.includes('.')) throw new Error('invalid_configuration');
+    await (options.validateOrigin || assertPublicUrl)(origin.toString());
+  } catch {
+    return { records: [], status: 'failed', reason: 'invalid_configuration' };
+  }
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => { timedOut = true; controller.abort(); }, TIMEOUT_MS);
+  timer.unref?.();
+  const abort = () => controller.abort();
+  options.signal?.addEventListener('abort', abort, { once: true });
+  try {
+    if (options.signal?.aborted) throw new Error('timeout');
+    const endpoint = new URL('/api/v1/accounts/search', origin);
+    endpoint.searchParams.set('q', `${parts[0]} ${parts[parts.length - 1]}`);
+    endpoint.searchParams.set('limit', '20');
+    endpoint.searchParams.set('resolve', 'false');
+    const accounts = await boundedJson(endpoint, token, options.fetchImpl || fetch, controller.signal);
+    if (!Array.isArray(accounts)) throw new Error('invalid_response');
+    const retrievedAt = new Date().toISOString();
+    const records: SpectraRetrievedEvidence[] = [];
+    const seen = new Set<string>();
+    for (const raw of accounts.slice(0, 20)) {
+      const account = object(raw);
+      const displayParts = nameParts(String(account?.display_name || ''));
+      const profile = suppliedMastodonProfile(String(account?.url || ''));
+      if (!profile || !displayParts.includes(parts[0])
+        || !displayParts.includes(parts[parts.length - 1])
+        || seen.has(profile.url)) continue;
+      seen.add(profile.url);
+      records.push({
+        url: profile.url, requestedUrl: profile.url, retrievedAt,
+        contentType: 'application/json', title: 'Possible public Mastodon profile',
+        textExcerpt: load(String(account?.note || '')).text().replace(/\s+/g, ' ').trim().slice(0, 4_000),
+        structuredRecord: account, observations: [],
+      });
+      if (records.length >= 3) break;
+    }
+    return { records, status: records.length ? 'ok' : 'empty' };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '';
+    const reason = timedOut || controller.signal.aborted ? 'timeout'
+      : ['authorization_failed', 'http_error', 'invalid_response', 'body_too_large'].includes(message)
+        ? message as SpectraPublicMastodonCollection['reason'] : 'network_error';
+    return { records: [], status: 'failed', reason };
+  } finally {
+    clearTimeout(timer);
+    options.signal?.removeEventListener('abort', abort);
+  }
+}
 
 /** Mastodon profile links are clues, never proof of account ownership. */
 export function suppliedMastodonProfile(input: string): { account: string; url: string } | null {
