@@ -8,7 +8,7 @@ const start = source.indexOf('const sendGreeting = useCallback');
 const end = source.indexOf('\n\n  useEffect', start);
 function harness(speak) {
   const messages = [];
-  const c = { useCallback: f => f, historyReady: true, liveEnabled: true, voiceReady: true,
+  const c = { useCallback: f => f, historyReady: true, liveEnabled: true, voiceReady: true, hasSavedMatters: false,
     greetingRef: { current: false }, greetingDisplayedRef: { current: false },
     userSpeechObservedRef: { current: false }, generationRef: { current: 1 },
     responseEmotionRef: { current: '' }, appendMessage: (...a) => messages.push(a), speakLexara: speak };

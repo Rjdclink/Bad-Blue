@@ -443,6 +443,7 @@ async function persistConversationTurn(
     jurisdiction?: string;
     mappedLawType?: string | null;
     backgroundDocumentContext?: string;
+    recordReliefDocumentContext?: string;
     behaviorMode: string;
     audioBase64?: string;
     representationMatter?: RepresentationMatterState | null;
@@ -474,6 +475,7 @@ async function persistConversationTurn(
       jurisdiction: data.jurisdiction || null,
       mappedLawType: data.mappedLawType || null,
       backgroundDocumentContext: data.backgroundDocumentContext?.slice(0, 9_000) || null,
+      recordReliefDocumentContext: data.recordReliefDocumentContext?.slice(0, 9_000) || null,
       behaviorMode: data.behaviorMode,
       representationMatter: data.representationMatter || null,
       ...(data.matterEnrichmentPending ? {
@@ -780,6 +782,8 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
         documentIntent.documentType = reasoningDocumentIntent.documentType;
       }
     }
+    // "Form" alone does not mean the relief user requested an empty form.
+    if (result.recordRelief && !/\b(?:blank|template|empty|unfilled)\b/i.test(prompt)) documentIntent.templateMode = false;
     const response = result.text;
     const baseRepresentationMatter = preRepresentationMatter || representationContext.activeMatter;
     const durableEnrichmentNeeded = Boolean(
@@ -813,6 +817,7 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
         jurisdiction: result.jurisdiction || cleanOptionalString((rawContext as any).jurisdiction, 80),
         mappedLawType: result.mappedLawType,
         backgroundDocumentContext: result.backgroundDocumentContext,
+        recordReliefDocumentContext: result.recordReliefDocumentContext,
         behaviorMode: (rawContext as any).behaviorMode === 'personable' ? 'personable' : 'professional',
         representationMatter,
         matterEnrichmentPending: durableEnrichmentNeeded,
@@ -833,6 +838,7 @@ router.post('/chat/stream', express.json(), async (req: Request, res: Response) 
       jurisdiction: result.jurisdiction,
       mappedLawType: result.mappedLawType,
       backgroundDocumentContext: result.backgroundDocumentContext,
+      recordReliefDocumentContext: result.recordReliefDocumentContext,
       documentIntent,
       representationMatter,
       matterSessionId: activeSessionId,
@@ -1012,6 +1018,7 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
       }
     }
 
+    if (conversationResult.recordRelief && !/\b(?:blank|template|empty|unfilled)\b/i.test(prompt)) documentIntent.templateMode = false;
     log.info('[LEXARA] Conversational legal response generated', {
       responseLength: responseText.length,
       jurisdiction: conversationResult.jurisdiction,
@@ -1061,6 +1068,7 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
         jurisdiction: conversationResult.jurisdiction || jurisdiction,
         mappedLawType: conversationResult.mappedLawType,
         backgroundDocumentContext: conversationResult.backgroundDocumentContext,
+        recordReliefDocumentContext: conversationResult.recordReliefDocumentContext,
         behaviorMode,
         audioBase64: audioData?.audioBase64,
         representationMatter,
@@ -1078,6 +1086,7 @@ router.post('/chat', express.json(), async (req: Request, res: Response) => {
       jurisdiction: conversationResult.jurisdiction,
       mappedLawType: conversationResult.mappedLawType,
       backgroundDocumentContext: conversationResult.backgroundDocumentContext,
+      recordReliefDocumentContext: conversationResult.recordReliefDocumentContext,
       ...persistence,
       documentIntent,
       representationMatter,

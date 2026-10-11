@@ -12,6 +12,7 @@ export const LEGAL_DOCUMENT_TYPES = [
   'Post-Conviction Motion', 'Notice of Appeal', 'Appellate Brief', 'Habeas Petition',
   'FOIA or Public Records Request', 'Contract or Agreement', 'Release or Waiver',
   'Legal Research Memorandum', 'Case Chronology', 'Witness Summary', 'Deposition Outline',
+  'Expungement Petition', 'Record Sealing Petition', 'Petition to Set Aside Conviction', 'Petition to Vacate Conviction', 'Petition for Annulment', 'Nondisclosure Petition',
   'Witness List', 'Exhibit List', 'Proposed Jury Instructions', 'Motion in Limine',
   'Trial Brief', 'Proposed Order', 'Client Letter', 'Administrative Appeal',
   'Landlord-Tenant Notice', 'Family-Law Pleading', 'Probate or Estate Document',
@@ -25,6 +26,12 @@ const normalize = (value: string): string =>
   value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
 
 const TYPE_ALIASES: ReadonlyArray<readonly [LegalDocumentType, readonly string[]]> = [
+  ['Expungement Petition', ['expungement motion', 'petition to expunge', 'expunction petition', 'petition for expunction', 'motion to expunge', 'expungement form']],
+  ['Record Sealing Petition', ['petition to seal criminal records', 'motion to seal criminal records', 'criminal record sealing form', 'sealing petition']],
+  ['Petition to Set Aside Conviction', ['set aside conviction petition', 'set aside petition', 'petition to set aside a conviction']],
+  ['Petition to Vacate Conviction', ['vacate conviction petition', 'petition to vacate a conviction']],
+  ['Petition for Annulment', ['annulment of criminal record petition', 'criminal annulment petition']],
+  ['Nondisclosure Petition', ['petition for nondisclosure', 'nondisclosure form']],
   ['Motion to Suppress', ['motion to suppress', 'suppress evidence motion']],
   ['Motion to Dismiss', ['motion to dismiss', 'dismissal motion']],
   ['Motion to Compel', ['motion to compel', 'compel discovery motion']],
@@ -89,6 +96,9 @@ export function resolveLegalDocumentType(text: string): LegalDocumentType | null
   if (!normalized) return null;
 
   for (const type of canonicalByLength) {
+    // Named relief aliases outrank generic "petition"/"motion" in the same
+    // request, just as fully spelled canonical instrument names already do.
+    if (type === 'Petition' || type === 'Motion') continue;
     const canonical = normalize(type);
     if (type === 'Complaint' && /\banswer\s+to\s+(?:the\s+|a\s+)?complaint\b/.test(normalized)) continue;
     // "Answer briefly" describes conversation style, not an answer pleading.
