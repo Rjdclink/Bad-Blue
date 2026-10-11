@@ -1,5 +1,6 @@
 import type { LexaraAuthorityResearchContext, LexaraAuthoritySource } from './LexaraAuthorityResearch';
 import { isLexaraConversationControl, isLexaraDocumentIntakeQuestion, isLexaraOfficialFormQuestion } from './LexaraResearchIntentRouter';
+import { lexaraCourtListenerJson as courtJson } from './LexaraCourtListenerClient';
 
 export interface LexaraCourtRecordPlan {
   objective: string;
@@ -12,7 +13,6 @@ export interface LexaraCourtRecordPlan {
 }
 
 const RECORD_CUE = /\b(?:court records?|court case|docket|case\s*(?:no\.?|number)|filings?|judgments?|lawsuits?|litigation|summons|served|foreclos\w*|evict\w*|sentenc\w*|indict\w*|court order|bankrupt\w*|appeal|custody order|divorce decree)\b/i;
-const REQUEST_TIMEOUT_MS = 2_000;
 const MAX_DOCUMENTS = 3;
 
 const cleanText = (value: unknown) => String(value || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
@@ -74,24 +74,25 @@ export function planLexaraCourtRecords(
   };
 }
 
-async function courtJson(path: string, signal?: AbortSignal): Promise<any | null> {
-  const token = process.env.COURTLISTENER_API_TOKEN?.trim();
-  if (!token || signal?.aborted) return null;
-  const controller = new AbortController();
-  const relay = () => controller.abort();
-  signal?.addEventListener('abort', relay, { once: true });
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-  try {
-    const response = await fetch('https://www.courtlistener.com/api/rest/v4/' + path, {
-      headers: { Authorization: `Token ${token}`, Accept: 'application/json' }, signal: controller.signal,
-    });
-    if (!response.ok) {
-      console.info('[LEXARA CourtRecords]', { endpoint: path.split('?')[0], status: response.status });
-      return null;
-    }
-    return await response.json();
-  } catch { return null; }
-  finally { clearTimeout(timer); signal?.removeEventListener('abort', relay); }
+const DOCUMENT_TERMS = /\b(?:complaint|petition|order|judgment|indictment|decree|mandate|notice|distribution|discharge|motion|service)\b/gi;
+
+function documentTerms(text: string): string[] {
+  return [...new Set((text.match(DOCUMENT_TERMS) || []).map(word => word.toLowerCase()))];
+}
+
+/** Keep a requested complaint ahead of answers and motions merely mentioning it. */
+function filingScore(description: string, term: string): number {
+  const text = description.toLowerCase();
+  if (term === 'complaint' && /\b(?:answer|response|dismiss|motion)\b/.test(text)) return 0;
+  if (term === 'order' && /\b(?:proposed|request|motion|letter)\b/.test(text) && !/^order\b/.test(text)) return 0;
+  if (!new RegExp(`\\b${term}\\b`).test(text)) return 0;
+  return new RegExp(`^(?:(?:amended|final|supplemental|memorandum|opinion|and|\\d+)\\s+)*${term}\\b`).test(text) ? 3 : 1;
+}
+
+/** Only skip general legal research for an identified, factual record request. */
+export function isLexaraCourtRecordLookup(plan: LexaraCourtRecordPlan): boolean {
+  return Boolean(plan.lookupQuery) && /\b(?:find|retrieve|show|pull|link|summariz\w*|records?|filings?|docket|what (?:does|do|did)|who got|how much)\b/i.test(plan.objective)
+    && !/\b(?:can i|should i|must i|am i|do i|my rights|legal|law|precedent|statute|rule|deadline|appeal|challenge|enforce|sue|liable|binding|controlling)\b/i.test(plan.objective);
 }
 
 function publicCourtUrl(value: unknown): string | undefined {
@@ -112,7 +113,7 @@ export async function searchLexaraCourtRecords(
   const candidates = (Array.isArray(results?.results) ? results.results : []).slice(0, 4);
   const sources: LexaraAuthoritySource[] = [];
   const matchedDockets = new Map<string, { title: string; metadata: string }>();
-  const documentCandidates: Array<{ id: number; url: string; title: string; metadata: string }> = [];
+  const documentCandidates: Array<{ id: number; url: string; title: string; metadata: string; description: string }> = [];
   for (const item of candidates) {
     if (plan.docketNumber && !sameLexaraDocket(plan.docketNumber, cleanText(item.docketNumber))) continue;
     const url = publicCourtUrl(item.docket_absolute_url || item.absolute_url);
@@ -129,28 +130,45 @@ export async function searchLexaraCourtRecords(
       const id = Number(doc.id || doc.recap_document_id);
       if (docUrl && new URL(docUrl).pathname.split('/')[2] === new URL(url).pathname.split('/')[2]
         && Number.isSafeInteger(id) && id > 0) documentCandidates.push({ id, url: docUrl,
-        title: `${title}: ${cleanText(doc.description) || 'filing'}`, metadata });
+        title: `${title}: ${cleanText(doc.short_description || doc.description) || 'filing'}`, metadata,
+        description: cleanText(doc.short_description || doc.description) });
     }
   }
   // Search within the identified case for issue-relevant filings, beyond the
   // three documents nested in each docket search result.
   if (matchedDockets.size && !signal?.aborted) {
-    const requestedTerms = plan.objective.match(/\b(?:complaint|petition|order|judgment|indictment|decree|mandate|notice|distribution|discharge)\b/gi) || [];
-    const terms = [...new Set([...requestedTerms.map(word => word.toLowerCase()), ...plan.neededDocuments.join(' ').split(/\s+/).filter(word => word.length > 3)])].slice(0, 5);
+    // A stable case/document query can be reused on follow-ups. Description
+    // fields find the filing type instead of every document quoting that word.
+    const terms = [...new Set([...documentTerms(plan.neededDocuments.join(' ')), ...documentTerms(plan.objective)])].slice(0, 8);
+    const descriptions = terms.map(term => `(short_description:${term}^${term === 'complaint' ? 8 : 2} OR description:${term})`);
     const documents = await courtJson('search/?' + new URLSearchParams({ type: 'rd',
-      q: `docket_id:(${[...matchedDockets.keys()].join(' OR ')}) AND (${terms.join(' OR ')})`, available_only: 'on', order_by: 'score desc' }), signal);
+      q: `docket_id:(${[...matchedDockets.keys()].join(' OR ')}) AND (${descriptions.join(' OR ')})`, available_only: 'on', order_by: 'score desc' }), signal);
     const relevantDocuments: typeof documentCandidates = [];
-    for (const doc of (Array.isArray(documents?.results) ? documents.results : []).slice(0, 6)) {
+    for (const doc of (Array.isArray(documents?.results) ? documents.results : []).slice(0, 20)) {
       const url = publicCourtUrl(doc.absolute_url);
       const id = Number(doc.id || doc.recap_document_id);
       const docket = url ? matchedDockets.get(new URL(url).pathname.split('/')[2]) : undefined;
       if (url && docket && Number.isSafeInteger(id) && id > 0) relevantDocuments.push({ id, url,
-        title: `${docket.title}: ${cleanText(doc.description) || 'filing'}`,
+        title: `${docket.title}: ${cleanText(doc.short_description || doc.description) || 'filing'}`,
+        description: cleanText(doc.short_description || doc.description),
         metadata: [docket.metadata, doc.entry_date_filed && `Document filed: ${cleanText(doc.entry_date_filed)}`].filter(Boolean).join('; ') });
     }
     documentCandidates.unshift(...relevantDocuments);
   }
-  const documents = [...new Map(documentCandidates.map(doc => [doc.id, doc])).values()].slice(0, MAX_DOCUMENTS);
+  const unique = [...new Map(documentCandidates.map(doc => [doc.id, doc])).values()];
+  const requested = documentTerms(plan.objective);
+  const priorities = requested.length ? requested : documentTerms(plan.neededDocuments.join(' '));
+  const documents: typeof documentCandidates = [];
+  for (const term of priorities) {
+    const best = unique.filter(doc => !documents.some(selected => selected.id === doc.id))
+      .sort((a, b) => filingScore(b.description, term) - filingScore(a.description, term))[0];
+    if (best && filingScore(best.description, term) > 0) documents.push(best);
+    if (documents.length >= MAX_DOCUMENTS) break;
+  }
+  // Explicit requests should not spend a third read on an unrelated filing.
+  const remaining = unique.filter(doc => !documents.some(selected => selected.id === doc.id)
+    && (!requested.length || priorities.some(term => filingScore(doc.description, term) > 0)));
+  documents.push(...remaining.slice(0, MAX_DOCUMENTS - documents.length));
   const extracted = await Promise.all(documents.map(async doc => {
     const record = await courtJson(`recap-documents/${doc.id}/`, signal);
     if (publicCourtUrl(record?.absolute_url) !== doc.url) return null;
