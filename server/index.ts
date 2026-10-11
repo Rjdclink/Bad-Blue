@@ -903,7 +903,12 @@ startupTrace('routes_registration_completed');
       const { readFile } = await import("node:fs/promises");
       const staticSitemap = await readFile("public/sitemap.xml", "utf8");
       const staticUrls = [...staticSitemap.matchAll(/<loc>([^<]+)<\/loc>/g)].map((match) => match[1]);
-      const urls = Array.from(new Set([...canonicalPaths, ...staticUrls])).map((url) => `
+      const { isSubscriptionEntryPath } = await import("../shared/subscriptionPolicy");
+      // The source sitemap remains a complete inventory for coverage checks.
+      // Publish only account/legal entry pages; subscriber content is private.
+      const urls = Array.from(new Set([...canonicalPaths, ...staticUrls]))
+        .filter((url) => isSubscriptionEntryPath(new URL(url).pathname))
+        .map((url) => `
   <url>
     <loc>${url}</loc>
   </url>`).join('');
@@ -972,3 +977,4 @@ startupTrace('routes_registration_completed');
     process.exit(1);
   }
 })();
+

@@ -10,7 +10,7 @@ import { MaintenanceMode } from "@/components/MaintenanceMode";
 import { lazy, Suspense, useEffect, useState, Component, ErrorInfo, ReactNode } from "react";
 import { AuthLoadingSkeleton, PageSkeleton } from "@/components/ui/page-skeleton";
 import { useGlobalGestureNavigation } from "@/hooks/useGlobalGestureNavigation";
-import { TrialStatusBanner } from "@/components/TrialStatusBanner";
+import { isPaidAccessState, isSubscriptionEntryPath } from "@shared/subscriptionPolicy";
 import TrialAccessPage from "@/pages/trial-access";
 
 if (typeof window !== 'undefined') {
@@ -229,14 +229,11 @@ const SPECTRA_PUBLIC_ROUTES = [
 
 function Router() {
   const [currentPath] = useLocation();
-  const isSpectraMapRoute = SPECTRA_PUBLIC_ROUTES.some(path => path === currentPath);
   const { user, isAuthenticated, isLoading } = useAuth();
   const isMasterSession = Boolean((user as any)?.isMasterBypass);
   const accessState = String((user as any)?.accessState || "");
   const hasPaidAccess = isMasterSession ||
-    accessState === "master" ||
-    accessState === "paid" ||
-    accessState === "trial_active" ||
+    isPaidAccessState(accessState) ||
     (!accessState &&
       Boolean((user as any)?.hasPaidForAccess === true) &&
       !["suspended", "past_due", "canceled", "expired"].includes(
@@ -296,32 +293,30 @@ function Router() {
     refetchIntervalInBackground: true,
   });
 
-  // A public map must render even when the account check is unavailable.
-  if (isLoading && !isSpectraMapRoute) return <AuthLoadingSkeleton />;
+  if (isLoading) return <AuthLoadingSkeleton />;
   if (maintenanceStatus?.maintenanceMode) return <MaintenanceMode />;
+
+  // This also covers client-side navigation that never makes an HTML request.
+  if (!isSubscriptionEntryPath(currentPath) && !(isAuthenticated && hasPaidAccess)) {
+    return <Redirect to={isAuthenticated ? "/subscription-required" : "/login"} replace />;
+  }
 
   return (
     <Suspense fallback={<PageLoader />}>
       <>
-        <TrialStatusBanner
-          accessState={accessState}
-          trialRemainingMs={Number((user as any)?.trialRemainingMs || 0)}
-          trialExpiresAt={(user as any)?.trialExpiresAt || null}
-          userId={(user as any)?.id}
-        />
         <Switch>
           <Route path="/" component={Landing} />
           <Route path="/landing" component={Landing} />
 
           <Route path="/subscription-success" component={SubscriptionSuccess} />
           <Route path="/trial-expired">
-            <TrialAccessPage />
+            <TrialAccessPage required />
           </Route>
           <Route path="/trial-upgrade">
-            <TrialAccessPage early />
+            <TrialAccessPage required />
           </Route>
           <Route path="/trial-review">
-            <TrialAccessPage review />
+            <TrialAccessPage required />
           </Route>
           <Route path="/subscription-required">
             <TrialAccessPage required />
@@ -441,3 +436,4 @@ export default function App() {
     </ErrorBoundary>
   );
 }
+

@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "NODE_ENV=development tsx server/index.ts",
     "dev:worker": "NODE_ENV=development tsx workers/peopleSearchWorker/index.ts",
-    "prebuild": "node scripts/cryptocrawl/verify-manual-master-lifecycle.cjs && npm run verify:auth-runtime && npm run verify:master-access && npm run verify:geoconsole && node scripts/cryptocrawl/verify-deployment-preflight.cjs && node scripts/cryptocrawl/verify-self-funded-capital-authority.cjs && node scripts/cryptocrawl/verify-compound-runtime-profitability-repairs.cjs && node --import tsx server/services/cryptocrawl/testing/verify-autonomous-stage-progression.ts && node --import tsx scripts/cryptocrawl/verify-profit-ladder-terminal-evidence.ts && node --import tsx scripts/cryptocrawl/verify-runtime-readiness-policy.ts && node scripts/cryptocrawl/verify-zero-capital-bps-propagation.cjs && node scripts/cryptocrawl/verify-bootstrap-execution-history.cjs && node scripts/cryptocrawl/verify-unified-multileg-adaptive-engine.cjs && node scripts/cryptocrawl/verify-research-bps-transform-reassessment.cjs",
+    "prebuild": "npm run verify:subscription-gate && node scripts/cryptocrawl/verify-manual-master-lifecycle.cjs && npm run verify:auth-runtime && npm run verify:master-access && npm run verify:geoconsole && node scripts/cryptocrawl/verify-deployment-preflight.cjs && node scripts/cryptocrawl/verify-self-funded-capital-authority.cjs && node scripts/cryptocrawl/verify-compound-runtime-profitability-repairs.cjs && node --import tsx server/services/cryptocrawl/testing/verify-autonomous-stage-progression.ts && node --import tsx scripts/cryptocrawl/verify-profit-ladder-terminal-evidence.ts && node --import tsx scripts/cryptocrawl/verify-runtime-readiness-policy.ts && node scripts/cryptocrawl/verify-zero-capital-bps-propagation.cjs && node scripts/cryptocrawl/verify-bootstrap-execution-history.cjs && node scripts/cryptocrawl/verify-unified-multileg-adaptive-engine.cjs && node scripts/cryptocrawl/verify-research-bps-transform-reassessment.cjs",
     "verify:seo": "node scripts/verify-seo-branding.cjs",
     "verify:neon-failover": "node scripts/verify-legalwhat-neon-failover.cjs",
     "db:neon:push": "drizzle-kit push --config drizzle.neon.config.ts",
@@ -78,7 +78,8 @@
     "verify:pantheon-evidence-lifecycle": "node scripts/verify-pantheon-evidence-lifecycle.cjs && node --import tsx scripts/verify-pantheon-report-e2e.ts",
     "verify:pantheon-source-contract": "node scripts/verify-pantheon-source-contract.cjs",
     "verify:pantheon-blueprint-66": "node --import tsx scripts/verify-pantheon-blueprint-through-66.ts",
-    "verify:spectra:records": "node scripts/verify-spectra-public-feed-store.cjs && node --import tsx scripts/verify-spectra-public-feeds.ts && node --import tsx scripts/verify-spectra-acquisition-records.ts"
+    "verify:spectra:records": "node scripts/verify-spectra-public-feed-store.cjs && node --import tsx scripts/verify-spectra-public-feeds.ts && node --import tsx scripts/verify-spectra-acquisition-records.ts",
+    "verify:subscription-gate": "node --import tsx scripts/verify-subscription-gate.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.129.0",

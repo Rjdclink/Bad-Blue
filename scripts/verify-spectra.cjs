@@ -888,11 +888,12 @@ test('Canonical acquisition candidates cannot be replaced by a late regional pre
   spectra.includes('previewOpen = false;') &&
   spectra.includes('if (previewOpen && requestId === requestRef.current)'));
 
-test('SPECTRA provides a general map without login, subscription, or device-location permission',
+test('SPECTRA map routes wait for authentication and require a paid subscription',
   app.includes('const SpectraPublicPage = lazyWithRetry(') &&
   app.includes('SPECTRA_PUBLIC_ROUTES.map(path => (') &&
   app.includes('<Route key={path} path={path} component={SpectraPublicPage} />') &&
-  app.includes('if (isLoading && !isSpectraMapRoute)') &&
+  app.includes('if (isLoading) return <AuthLoadingSkeleton />') &&
+  app.includes('if (!isSubscriptionEntryPath(currentPath)') &&
   publicMap.includes('<MapLibreIntelligenceMap') &&
   publicMap.includes('currentFrame={null}') &&
   publicMap.includes('trail={NO_OBSERVATIONS}') &&
@@ -932,4 +933,5 @@ test('SPECTRA API is mounted',
 
 console.log(`\nPassed: ${passed}  Failed: ${failed}\n`);
 process.exit(failed === 0 ? 0 : 1);
+
 

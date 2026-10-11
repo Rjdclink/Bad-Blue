@@ -1,3 +1,4 @@
+import { isSubscriptionEntryPath } from "../shared/subscriptionPolicy";
 import express, { type Express } from "express";
 import fs from "fs";
 import path from "path";
@@ -58,7 +59,7 @@ function renderSeoShell(template: string, pathname: string): string {
   }
 
   const canonicalUrl = `${BASE_URL}${config.canonicalPath}`;
-  const robots = config.noIndex
+  const robots = config.noIndex || !isSubscriptionEntryPath(pathname)
     ? "noindex, nofollow"
     : "index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1";
   const title = escapeHtml(config.title);
@@ -207,3 +208,4 @@ export function serveStatic(app: Express) {
     return res.status(200).type('html').send(renderSeoShell(indexTemplate, pathname));
   });
 }
+
