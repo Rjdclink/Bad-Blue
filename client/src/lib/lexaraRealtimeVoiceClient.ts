@@ -2,6 +2,7 @@ import {
   getLexaraRealtimePlaybackAudioElement,
   getLexaraSharedAudioContext,
 } from '@/lib/lexaraSpeechClient';
+import { lexaraSpeechText } from '@shared/lexaraSpeechText';
 
 export interface LexaraRealtimeSttEvent {
   event?: string;
@@ -799,7 +800,7 @@ class LexaraRealtimeVoiceClient {
   }
 
   appendSpeechStream(text: string, turnId: string): void {
-    const cleanText = text.replace(/\s+/g, ' ').trim();
+    const cleanText = lexaraSpeechText(text);
     const cleanTurnId = turnId.trim();
     if (!cleanText || !cleanTurnId) return;
     if (!this.isSpeechOutputReady() || this.activeSpeech?.turnId !== cleanTurnId) {
@@ -824,7 +825,7 @@ class LexaraRealtimeVoiceClient {
   }
 
   async speak(text: string, turnId: string, options: SpeakOptions = {}): Promise<void> {
-    const cleanText = text.replace(/\s+/g, ' ').trim();
+    const cleanText = lexaraSpeechText(text);
     const cleanTurnId = turnId.trim();
     if (!cleanText || !cleanTurnId) return;
 

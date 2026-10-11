@@ -8,6 +8,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useToast } from './use-toast';
 import type { SpeechContext } from '@shared/lexaraVoicePersona';
+import { lexaraSpeechText } from '@shared/lexaraSpeechText';
 import {
   LexaraServerTTS,
   Lexara,
@@ -437,7 +438,7 @@ export function useVoiceSynthesis(): VoiceSynthesisResult {
     text: string,
     options: VoiceSynthesisOptions = {},
   ) => {
-    const cleanText = text.trim();
+    const cleanText = lexaraSpeechText(text);
     if (!cleanText) return;
 
     stop('superseded');
