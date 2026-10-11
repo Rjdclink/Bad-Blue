@@ -347,6 +347,30 @@ test('Lexara races first search leads while exhaustive discovery retains slower 
   assert(allResults.some(item => item.url === urls[1]));
 });
 
+test('official form discovery preserves slower independent evidence in exhaustive mode', async () => {
+  let slowFinished = false;
+  const h = harness({
+    env: { TAVILY_API_KEY: 'fixture', DDGS_URL: 'https://ddgs.fixture.test' },
+    fetchPayload: async url => {
+      if (url.includes('api.tavily.com')) {
+        return { results: [{ url: urls[0], title: 'Fast form lead', content: 'Unofficial summary' }] };
+      }
+      if (url.includes('ddgs.fixture.test')) {
+        await new Promise(resolve => setTimeout(resolve, 45));
+        slowFinished = true;
+        return { results: [{ href: urls[1], title: 'Official form source', body: 'Official court form instructions' }] };
+      }
+      return { results: [] };
+    },
+  });
+  const found = await h.load('server/lexara/LegalProviderMesh.ts').discoverLegalMeshTier3(
+    'official court form', undefined, { firstUseful: true, officialFormQuery: true },
+  );
+  assert(slowFinished, 'official-form evidence must not be cancelled by a fast provisional lead');
+  assert(found.some(item => item.url === urls[0]));
+  assert(found.some(item => item.url === urls[1]));
+});
+
 test('Tavily HTTP 432 plan limit prevents further calls during its cooldown', async () => {
   let tavilyRequests = 0;
   const h = harness({
