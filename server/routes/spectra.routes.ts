@@ -58,7 +58,7 @@ import {
   mergePublicRetrievedMetadata,
   stripUnboundPublicGeoContext,
 } from '../services/spectra/SpectraPublicEvidenceProvenance';
-import { inferCorroboratedRegionalCity } from '../services/spectra/SpectraRegionalInference';
+import { inferCorroboratedRegionalCity, inferProvisionalRegionalCities } from '../services/spectra/SpectraRegionalInference';
 import {
   assessSpectraCityDiscoveryReadiness,
   chooseSpectraPublicRetrievalUrls,
@@ -70,6 +70,10 @@ import { acquireConfiguredSpectraCameras } from '../services/spectra/SpectraCame
 import { acquireSpectraActiveTelemetry, getSpectraActiveAcquisitionCapabilities } from '../services/spectra/SpectraActiveAcquisition';
 import { buildSpectraPipelineDiagnostics, type SpectraRetrievalCounts } from '../services/spectra/SpectraPipelineDiagnostics';
 import { acquirePublicPlace, isPublicPlaceTarget } from '../services/spectra/SpectraPublicPlace';
+import { collectSpectraPublicAccountRecords } from '../services/spectra/SpectraPublicAccountRecords';
+import { collectSpectraPublicNewsRecords } from '../services/spectra/SpectraPublicNewsRecords';
+import { collectSpectraPublicMastodonRecords } from '../services/spectra/SpectraPublicMastodonRecords';
+import { collectSpectraPublicWikimediaRecords } from '../services/spectra/SpectraPublicWikimediaRecords';
 
 const router = Router();
 router.use(isAuthenticated);
@@ -97,10 +101,16 @@ router.get('/sessions/:sessionId/records', async (req: Request, res: Response) =
   const sessionId = String(req.params.sessionId || '').trim();
   if (!userId) return res.status(401).json({ success: false, error: 'Authentication required.' });
   if (!sessionId || sessionId.length > 200) return res.status(400).json({ success: false, error: 'Invalid session.' });
+  const filters = z.object({
+    limit: z.coerce.number().int().min(1).max(100).default(100),
+    before: z.string().max(100).optional(),
+  }).safeParse(req.query);
+  if (!filters.success) return res.status(400).json({ success: false, error: 'Invalid record filters.' });
   res.setHeader('Cache-Control', 'private, no-store');
   try {
-    const result = await loadSpectraAcquisitionEvidenceRecords(userId, sessionId, 100);
-    return res.status(result.persistenceAvailable ? 200 : 503).json({ success: result.persistenceAvailable, ...result });
+    const result = await loadSpectraAcquisitionEvidenceRecords(userId, sessionId, filters.data.limit, filters.data.before);
+    return res.status(result.persistenceAvailable ? 200 : result.error === 'Invalid acquisition record cursor.' ? 400 : 503)
+      .json({ success: result.persistenceAvailable, ...result });
   } catch {
     return res.status(503).json({ success: false, error: 'Saved acquisition records are unavailable.' });
   }
@@ -997,6 +1007,10 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       sessionId: requestedSessionId,
       subjectLabel: resolvedTargetLabel,
     });
+    const publicAccountPromise = collectSpectraPublicAccountRecords(combinedTargetText);
+    const publicMastodonPromise = collectSpectraPublicMastodonRecords(combinedTargetText);
+    const publicWikimediaPromise = collectSpectraPublicWikimediaRecords(combinedTargetText);
+    const publicNewsPromise = collectSpectraPublicNewsRecords(resolvedName || resolvedSubjectName);
 
     const [
       backgroundOutcome,
@@ -1004,12 +1018,20 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       persistedObservations,
       identityBindingEvidence,
       activeAcquisition,
+      publicAccount,
+      publicMastodon,
+      publicWikimedia,
+      publicNews,
     ] = await Promise.all([
       backgroundPromise,
       firstPassPromise,
       persistedObservationsPromise,
       identityBindingsPromise,
       activeAcquisitionPromise,
+      publicAccountPromise,
+      publicMastodonPromise,
+      publicWikimediaPromise,
+      publicNewsPromise,
     ]);
 
     const activeBatchOutcomes = await Promise.allSettled(
@@ -1046,22 +1068,106 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       contactInformation: [] as any[],
       locationHistory: [] as string[],
       employmentAndEducation: [] as any[],
-      publicRecords: [] as any[],
+      publicRecords: [...publicAccount.records.map(record => ({
+        title: record.title,
+        url: record.url,
+        publishedAt: record.publishedAt,
+        snippet: record.textExcerpt,
+        provider: 'Bluesky public API',
+        identityStatus: 'Profile link supplied; ownership not independently verified',
+      })), ...publicMastodon.records.map(record => ({
+        title: record.title,
+        url: record.url,
+        publishedAt: record.publishedAt,
+        snippet: record.textExcerpt,
+        provider: 'Mastodon public API',
+        identityStatus: 'Profile link supplied; ownership not independently verified',
+      })), ...publicWikimedia.records.map(record => ({
+        title: record.title, url: record.url, provider: 'Wikimedia Commons API',
+        identityStatus: 'Image subject and capture location unverified',
+      })), ...publicNews.records.map(record => ({
+        title: record.title || 'Retrieved public news article',
+        url: record.url,
+        publishedAt: record.publishedAt,
+        snippet: record.textExcerpt,
+        provider: 'GDELT article lead; publisher page retrieved',
+        identityStatus: 'Article association with subject not independently verified',
+      }))],
       onlineMentions: backgroundSources.map(url => ({
         title: 'SPECTRA background source',
         url,
         snippet: background?.evidenceSummary?.slice(0, 1_200),
       })),
-      socialMediaPresence: [] as any[],
+      socialMediaPresence: [
+        ...(publicAccount.profileUrl
+          ? [{ platform: 'Bluesky', url: publicAccount.profileUrl,
+            recordCount: publicAccount.records.length, identityStatus: 'Unverified' }] : []),
+        ...(publicMastodon.profileUrl
+          ? [{ platform: 'Mastodon', url: publicMastodon.profileUrl,
+            recordCount: publicMastodon.records.length, identityStatus: 'Unverified' }] : []),
+      ],
       sources: [] as any[],
       confidenceScore: backgroundConfidence,
       summary: background?.evidenceSummary || '',
     };
 
-    let discoveryResults = firstPass.results;
+    let discoveryResults = dedupeDiscoveryResults([
+      ...firstPass.results,
+      ...publicAccount.records.map(record => ({
+        title: record.title || 'Public Bluesky post',
+        url: record.url,
+        snippet: record.textExcerpt,
+        provider: 'bluesky-public-api',
+        reliability: 'medium' as const,
+        relevanceScore: 65,
+        metadata: {
+          ...mergePublicRetrievedMetadata(undefined, record),
+          retrievalProvider: 'bluesky-public-api',
+          subjectAssociation: 'supplied_profile_url_unverified',
+        },
+      })),
+      ...publicMastodon.records.map(record => ({
+        title: record.title || 'Public Mastodon status',
+        url: record.url,
+        snippet: record.textExcerpt,
+        provider: 'mastodon-public-api',
+        reliability: 'medium' as const,
+        relevanceScore: 65,
+        metadata: {
+          ...mergePublicRetrievedMetadata(undefined, record),
+          retrievalProvider: 'mastodon-public-api',
+          subjectAssociation: 'supplied_profile_url_unverified',
+        },
+      })),
+      ...publicNews.records.map(record => ({
+        title: record.title || 'Retrieved public news article',
+        url: record.url,
+        snippet: record.textExcerpt || '',
+        provider: 'gdelt-article-retrieval',
+        reliability: 'medium' as const,
+        relevanceScore: 55,
+        metadata: {
+          ...mergePublicRetrievedMetadata(undefined, record),
+          retrievalProvider: 'gdelt-article-retrieval',
+          subjectAssociation: 'unverified_article_mention',
+        },
+      })),
+    ]);
     // Preserve fetched records independently of search-result ranking/deduping.
     // A later successful fetch of an existing search hit must reach the archive.
-    const retrievedEvidence = [...firstPass.retrievedEvidence];
+    const retrievedEvidence = [
+      ...firstPass.retrievedEvidence, ...publicAccount.records,
+      ...publicMastodon.records, ...publicWikimedia.records, ...publicNews.records,
+    ];
+    // Person-city guesses must rest on the retrieved publisher text. A search
+    // title or snippet can describe someone else even when the URL resolves.
+    const fetchedCitySources = () => discoveryResults.filter(result =>
+      result.metadata?.subjectAssociation !== 'supplied_profile_url_unverified'
+      && typeof result.metadata?.fetchedExcerpt === 'string'
+    ).map(result => ({
+      ...result, title: '', snippet: '',
+      metadata: { ...result.metadata, fetchedOrCitedText: undefined },
+    }));
     const retrievalCounts = { ...firstPass.retrieval };
     let discoveryQueriesAttempted = firstPass.attempted;
     let discoveryQueriesFailed = firstPass.failed;
@@ -1071,7 +1177,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
     for (let pass = 1; pass < SPECTRA_DISCOVERY_POLICY.maxPasses; pass += 1) {
       const readiness = assessSpectraCityDiscoveryReadiness({
         subject: resolvedName || resolvedSubjectName,
-        sources: discoveryResults,
+        sources: fetchedCitySources(),
         backgroundConfidence,
       });
       const independentSources = new Set(
@@ -1265,6 +1371,8 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       confidence: number;
       basis: 'regional_context';
       accuracyMeters: number;
+      sourceUrls?: string[];
+      publishedAt?: string | null;
     }> = [];
 
     // Regional hints are useful when precise timestamped coordinates are not
@@ -1285,7 +1393,11 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       // broad city estimate, never a live position or individual street fix.
       const corroboratedCity = inferCorroboratedRegionalCity(
         resolvedName || resolvedSubjectName,
-        discoveryResults,
+        fetchedCitySources(),
+      );
+      const provisionalCities = inferProvisionalRegionalCities(
+        resolvedName || resolvedSubjectName,
+        fetchedCitySources(),
       );
       let region = null;
       let cityCorroborationUsed = false;
@@ -1301,6 +1413,27 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
           // Failed regional geocoding never substitutes arbitrary coordinates.
         }
       }
+      if (!region) {
+        for (const provisional of provisionalCities) {
+          try {
+            const candidate = await geocodeCityState(`${provisional.city}, ${provisional.state}`);
+            if (!candidate) continue;
+            region = candidate;
+            candidateLocations.push({
+              latitude: candidate.latitude,
+              longitude: candidate.longitude,
+              label: `${provisional.city}, ${provisional.state} (provisional public residence clue; current city unverified)`,
+              confidence: Math.min(0.22, 0.10 + 0.04 * provisional.independentSourceCount),
+              basis: 'regional_context',
+              accuracyMeters: Math.max(25_000, candidate.accuracyMeters),
+              sourceUrls: provisional.sourceUrls,
+              publishedAt: provisional.publishedAt,
+            });
+          } catch {
+            // An unavailable geocoder leaves the document and its limitations in the archive.
+          }
+        }
+      }
       // Preserve a supplied location solely as labeled search context. A
       // geocoder resolving an input clue is not an independent city discovery.
       if (!region) {
@@ -1313,7 +1446,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
           }
         }
       }
-      if (region) {
+      if (region && candidateLocations.length === 0) {
         candidateLocations.push({
           latitude: region.latitude,
           longitude: region.longitude,
@@ -1322,6 +1455,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
             : `${region.displayName} (supplied search clue; current city not verified)`,
           confidence: cityCorroborationUsed ? 0.35 : 0.05,
           basis: 'regional_context',
+          sourceUrls: cityCorroborationUsed ? corroboratedCity?.sourceUrls : undefined,
           accuracyMeters: Math.max(
             cityCorroborationUsed ? 1_000 : 0,
             region.accuracyMeters,
@@ -1463,10 +1597,31 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       ...pipelineDiagnostics,
     }));
 
+    const publicAccountUrls = new Set(publicAccount.records.map(record => record.url));
+    const publicMastodonUrls = new Set(publicMastodon.records.map(record => record.url));
+    const publicWikimediaUrls = new Set(publicWikimedia.records.map(record => record.url));
+    const publicNewsUrls = new Set(publicNews.records.map(record => record.url));
     const evidenceRecords = buildSpectraAcquisitionRecords(retrievedEvidence.map(evidence => ({
       url: evidence.url,
-      provider: 'spectra-public-retrieval',
-      metadata: mergePublicRetrievedMetadata(undefined, evidence),
+      provider: publicAccountUrls.has(evidence.url) ? 'bluesky-public-api'
+        : publicMastodonUrls.has(evidence.url) ? 'mastodon-public-api'
+        : publicWikimediaUrls.has(evidence.url) ? 'wikimedia-commons-api'
+        : publicNewsUrls.has(evidence.url) ? 'gdelt-article-retrieval' : 'spectra-public-retrieval',
+      metadata: {
+        ...mergePublicRetrievedMetadata(undefined, evidence),
+        ...(publicAccountUrls.has(evidence.url)
+          ? { retrievalProvider: 'bluesky-public-api', subjectAssociation: 'supplied_profile_url_unverified' }
+          : {}),
+        ...(publicMastodonUrls.has(evidence.url)
+          ? { retrievalProvider: 'mastodon-public-api', subjectAssociation: 'supplied_profile_url_unverified' }
+          : {}),
+        ...(publicWikimediaUrls.has(evidence.url)
+          ? { retrievalProvider: 'wikimedia-commons-api', subjectAssociation: 'supplied_file_scene_unverified' }
+          : {}),
+        ...(publicNewsUrls.has(evidence.url)
+          ? { retrievalProvider: 'gdelt-article-retrieval', subjectAssociation: 'unverified_article_mention' }
+          : {}),
+      },
     })), contextEvidence);
     const persistence = await persistSpectraAcquisition({
       userId,
@@ -1505,6 +1660,16 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
           attempt => attempt.status === 'fulfilled'
         ).length,
         activeAcquisitionPositionCount: activeLocationPoints.length,
+        publicAccountStatus: publicAccount.status,
+        publicAccountRecordCount: publicAccount.records.length,
+        publicMastodonStatus: publicMastodon.status,
+        publicMastodonReason: publicMastodon.reason,
+        publicMastodonRecordCount: publicMastodon.records.length,
+        publicWikimediaStatus: publicWikimedia.status,
+        publicWikimediaRecordCount: publicWikimedia.records.length,
+        publicNewsStatus: publicNews.status,
+        publicNewsArticleLeads: publicNews.articleLeads,
+        publicNewsRecordCount: publicNews.records.length,
         originSessionId: originSessionId || null,
         lastAcquiredAt: new Date().toISOString(),
       },
@@ -1563,6 +1728,16 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
         contextEvidenceItemCount,
         activeAcquisitionAttempts: activeAcquisition.attempts,
         activeAcquisitionPositionCount: activeLocationPoints.length,
+        publicAccountStatus: publicAccount.status,
+        publicAccountRecordCount: publicAccount.records.length,
+        publicMastodonStatus: publicMastodon.status,
+        publicMastodonReason: publicMastodon.reason,
+        publicMastodonRecordCount: publicMastodon.records.length,
+        publicWikimediaStatus: publicWikimedia.status,
+        publicWikimediaRecordCount: publicWikimedia.records.length,
+        publicNewsStatus: publicNews.status,
+        publicNewsArticleLeads: publicNews.articleLeads,
+        publicNewsRecordCount: publicNews.records.length,
         summary: report.summary || '',
         verificationStatus: report.identitySummary?.verificationStatus || 'Unknown',
       },

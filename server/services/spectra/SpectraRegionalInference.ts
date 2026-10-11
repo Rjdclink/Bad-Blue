@@ -18,6 +18,17 @@ export interface CorroboratedRegionalCity {
   state: string;
   independentSourceCount: number;
   sourceDomains: string[];
+  sourceUrls: string[];
+  currentPositionVerified: false;
+}
+
+/** A tentative, source-backed city when corroboration is still in progress. */
+export interface ProvisionalRegionalCity {
+  city: string;
+  state: string;
+  sourceUrls: string[];
+  publishedAt: string | null;
+  independentSourceCount: number;
   currentPositionVerified: false;
 }
 
@@ -75,6 +86,65 @@ function sourceText(value: unknown): string {
   return typeof value === 'string' ? value.slice(0, 3_000) : '';
 }
 
+/**
+ * A single retrieved document can support a labeled best guess. Search titles,
+ * snippets and retrieval dates do not qualify. This is deliberately separate
+ * from the corroborated-city rule and cannot create a live observation.
+ */
+export function inferProvisionalRegionalCities(
+  subject: string,
+  sources: readonly RegionalSourceExcerpt[],
+  asOf: Date = new Date(),
+): ProvisionalRegionalCity[] {
+  const name = subject.replace(/\s+/g, ' ').trim();
+  const tokens = name.split(' ').filter(Boolean);
+  if (!Number.isFinite(asOf.getTime()) || tokens.length < 2 || tokens.length > 5
+    || tokens.some(token => !/^[\p{L}][\p{L}'’.-]*$/u.test(token))) return [];
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
+  const fullName = new RegExp(`\\b${escaped}\\b`, 'i');
+  const matches = new Map<string, ProvisionalRegionalCity & { publishers: Set<string> }>();
+
+  for (const item of sources.slice(0, 200)) {
+    const text = sourceText(item.metadata?.fetchedExcerpt);
+    const sourceUrl = item.metadata?.requestedUrl === item.url
+      && typeof item.metadata?.sourceUrl === 'string' ? item.metadata.sourceUrl : item.url;
+    const publisher = sourceDomain(sourceUrl);
+    if (!publisher || !text || !hasUsablePublicationDate(item, asOf.getTime())) continue;
+    const rawDate = item.metadata?.publishedAt;
+    const publishedAt = typeof rawDate === 'string' && Number.isFinite(Date.parse(rawDate))
+      ? new Date(rawDate).toISOString() : null;
+    for (const statement of text.split(/[\n;!?]|\.(?=\s)/).slice(0, 60)) {
+      const named = fullName.exec(statement);
+      if (!named || HISTORICAL_LANGUAGE_RE.test(statement)) continue;
+      const following = statement.slice(named.index + named[0].length).trimStart();
+      const residence = /^(?:,\s*)?(?:is\s+)?(?:(?:currently|now)\s+)?(?:lives?|living|resides?|residing|based|located)\s+(?:currently\s+)?(?:in|at)\s+(.+)$/i.exec(following);
+      if (!residence) continue;
+      const clause = residence[1].split(/,\s*(?:who|whose|which|but|while|whereas)\b|\s+(?:and|but|while|whereas)\s+(?:works?|commutes?|studies|visits?|travels?|stays?)\b/i)[0].trim();
+      if (/^(?:the\s+)?(?:suburbs?\s+of|outskirts\s+of|greater\s+|metro(?:politan)?\s+|near\s+|outside\s+|around\s+)/i.test(clause)) continue;
+      const region = extractCityStateHint(clause);
+      if (!region) continue;
+      const key = `${region.city.toLowerCase()}|${region.state}`;
+      const prior = matches.get(key) || {
+        city: region.city, state: region.state, sourceUrls: [], publishedAt: null,
+        independentSourceCount: 0, currentPositionVerified: false as const,
+        publishers: new Set<string>(),
+      };
+      if (!prior.publishers.has(publisher)) {
+        prior.publishers.add(publisher);
+        prior.sourceUrls.push(sourceUrl!);
+        prior.independentSourceCount = prior.publishers.size;
+      }
+      if (publishedAt && (!prior.publishedAt || publishedAt > prior.publishedAt)) prior.publishedAt = publishedAt;
+      matches.set(key, prior);
+    }
+  }
+  return [...matches.values()]
+    .sort((a, b) => b.independentSourceCount - a.independentSourceCount
+      || Number(Boolean(b.publishedAt)) - Number(Boolean(a.publishedAt))
+      || String(b.publishedAt || '').localeCompare(String(a.publishedAt || '')))
+    .slice(0, 3).map(({ publishers: _publishers, ...result }) => result);
+}
+
 export function inferCorroboratedRegionalCity(
   subject: string,
   sources: readonly RegionalSourceExcerpt[],
@@ -96,6 +166,7 @@ export function inferCorroboratedRegionalCity(
     state: string;
     domains: Set<string>;
     claimsByDomain: Map<string, Set<string>>;
+    urlsByDomain: Map<string, string>;
   }>();
 
   for (const item of sources.slice(0, 200)) {
@@ -151,8 +222,10 @@ export function inferCorroboratedRegionalCity(
           state: region.state,
           domains: new Set<string>(),
           claimsByDomain: new Map<string, Set<string>>(),
+          urlsByDomain: new Map<string, string>(),
         };
         existing.domains.add(domain);
+        if (typeof urlForPublisher === 'string') existing.urlsByDomain.set(domain, urlForPublisher);
         const claims = existing.claimsByDomain.get(domain) || new Set<string>();
         claims.add(normalizedClaim(statement));
         existing.claimsByDomain.set(domain, claims);
@@ -188,6 +261,7 @@ export function inferCorroboratedRegionalCity(
     state: winner.state,
     independentSourceCount: independentDomains.length,
     sourceDomains: independentDomains,
+    sourceUrls: independentDomains.flatMap(domain => winner.urlsByDomain.get(domain) || []),
     currentPositionVerified: false,
   };
 }

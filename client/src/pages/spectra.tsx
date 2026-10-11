@@ -127,11 +127,26 @@ interface AcquisitionResponse {
     discoveryQueriesFailed?: number;
     summary: string;
     verificationStatus: string;
+    publicAccountStatus?: string;
+    publicAccountRecordCount?: number;
+    publicMastodonStatus?: string;
+    publicMastodonReason?: string;
+    publicMastodonRecordCount?: number;
+    publicWikimediaStatus?: string;
+    publicWikimediaRecordCount?: number;
+    publicNewsStatus?: string;
+    publicNewsArticleLeads?: number;
+    publicNewsRecordCount?: number;
   };
   locationObservations?: GPSPoint[];
-  candidateLocations?: LocationCandidate[];
+  candidateLocations?: SpectraLocationCandidate[];
   publicPlace?: { sources: Array<{ url: string; title: string; status: string }>; diagnostics: { selected: number; retrieved: number; supported: number; outcome: string; retrieval?: SpectraRetrievalSummary; distinctRetrievedUrls?: number; duplicateRetrievedUrls?: number } };
 }
+
+type SpectraLocationCandidate = LocationCandidate & {
+  sourceUrls?: string[];
+  publishedAt?: string | null;
+};
 
 const FIRST_PROMPT = 'What is it that you want to locate?';
 const DETAILS_PROMPT = 'What information can you give me about the target?';
@@ -176,7 +191,7 @@ export default function SpectraPage() {
   const [publicPlaceMode, setPublicPlaceMode] = useState(false);
   const [placeSources, setPlaceSources] = useState<Array<{ url: string; title: string; status: string }>>([]);
   const [observations, setObservations] = useState<GPSPoint[]>([]);
-  const [candidateLocations, setCandidateLocations] = useState<LocationCandidate[]>([]);
+  const [candidateLocations, setCandidateLocations] = useState<SpectraLocationCandidate[]>([]);
   const [directEvidence, setDirectEvidence] = useState<GPSPoint[]>([]);
   const [confidence, setConfidence] = useState<number | null>(null);
   const [sourceCount, setSourceCount] = useState(0);
@@ -326,15 +341,18 @@ export default function SpectraPage() {
     detailsValue: string,
     extraEvidence: GPSPoint[] = directEvidence,
     sessionOverride?: string,
+    silentRefresh = false,
   ) => {
     if (publicPlaceMode) extraEvidence = [];
     const requestId = ++requestRef.current;
-    setPhase('acquiring');
-    setFeedNotice(null);
-    setPipelineNotices([]);
-    setPlaceSources([]);
-    setLastError(null);
-    setAcquisitionStage('Resolving supplied location context…');
+    if (!silentRefresh) {
+      setPhase('acquiring');
+      setFeedNotice(null);
+      setPipelineNotices([]);
+      setPlaceSources([]);
+      setLastError(null);
+      setAcquisitionStage('Resolving supplied location context…');
+    }
 
     // Put evidence already in hand on the map immediately. Deep discovery may
     // take substantially longer, but the viewer should never lose verified
@@ -366,7 +384,7 @@ export default function SpectraPage() {
     // its slower response must never replace the final map candidates.
     let previewOpen = true;
     const previewRegionPromise = (async () => {
-      if (publicPlaceMode) return;
+      if (publicPlaceMode || silentRefresh) return;
       for (const locationText of [detailsValue, targetValue]) {
         if (!previewOpen || requestId !== requestRef.current) return;
         if (!locationText.trim()) continue;
@@ -503,6 +521,18 @@ export default function SpectraPage() {
         ...spectraObservationNotices(points, payload.acquisition?.liveLocationStatus),
         ...(payload.persistenceAvailable === false ? ['This acquisition could not be saved. Its displayed results are not durably archived.'] : []),
         ...(payload.evidenceArchive ? [`${payload.evidenceArchive.stored} source records retained; ${payload.evidenceArchive.omitted} records omitted by archive limits or validation.`] : []),
+        ...(payload.acquisition?.publicAccountStatus && payload.acquisition.publicAccountStatus !== 'not_supplied'
+          ? [`Public Bluesky profile: ${payload.acquisition.publicAccountStatus.replace(/_/g, ' ')}; ${payload.acquisition.publicAccountRecordCount ?? 0} public account records collected. Profile ownership remains unverified.`]
+          : []),
+        ...(payload.acquisition?.publicMastodonStatus && payload.acquisition.publicMastodonStatus !== 'not_supplied'
+          ? [`Public Mastodon profile: ${payload.acquisition.publicMastodonStatus.replace(/_/g, ' ')}${payload.acquisition.publicMastodonReason ? ` (${payload.acquisition.publicMastodonReason.replace(/_/g, ' ')})` : ''}; ${payload.acquisition.publicMastodonRecordCount ?? 0} public account records collected. Profile ownership remains unverified.`]
+          : []),
+        ...(payload.acquisition?.publicWikimediaStatus && payload.acquisition.publicWikimediaStatus !== 'not_supplied'
+          ? [`Wikimedia Commons file: ${payload.acquisition.publicWikimediaStatus}; ${payload.acquisition.publicWikimediaRecordCount ?? 0} file metadata records collected. Image subject, scene and capture time remain unverified.`]
+          : []),
+        ...(payload.acquisition?.publicNewsStatus && payload.acquisition.publicNewsStatus !== 'not_applicable'
+          ? [`Public news: ${payload.acquisition.publicNewsStatus}; ${payload.acquisition.publicNewsRecordCount ?? 0} retrieved article records from ${payload.acquisition.publicNewsArticleLeads ?? 0} leads. Article identity remains unverified.`]
+          : []),
       ]);
       setPlaceSources(payload.publicPlace?.sources || []);
       if (typeof payload.sessionId === 'string' && payload.sessionId.trim()) {
@@ -528,20 +558,44 @@ export default function SpectraPage() {
           ? `My best available regional estimate for ${resolvedTarget} is ${regionalCandidates[0].label || 'the area shown on the map'}. This is an estimate; the current live position is unverified.`
           : `This pass referenced ${payload.acquisition?.sourceCount ?? 0} source group${(payload.acquisition?.sourceCount ?? 0) === 1 ? '' : 's'} for ${resolvedTarget}. This pass did not produce a mappable location estimate.`;
 
-      addMessage('spectra', responseText);
-      speakIfEnabled(responseText);
+      if (!silentRefresh) {
+        addMessage('spectra', responseText);
+        speakIfEnabled(responseText);
+      }
     } catch (error) {
       previewOpen = false;
       if (requestId !== requestRef.current) return;
       const message = error instanceof Error ? error.message : 'Target acquisition failed.';
       setLastError(message);
       setAcquisitionStage('Acquisition could not finish');
-      setPhase('error');
+      if (!silentRefresh) setPhase('error');
       const responseText = 'I could not complete that search. A request or service failed; please try again later.';
-      addMessage('spectra', responseText);
-      speakIfEnabled(responseText);
+      if (!silentRefresh) {
+        addMessage('spectra', responseText);
+        speakIfEnabled(responseText);
+      }
     }
   }, [addMessage, directEvidence, speakIfEnabled, spectraSessionId, publicPlaceMode]);
+
+  // Continue bounded public acquisition while this investigation is open.
+  // Each pass may revise the regional hypothesis; a confidence score never
+  // prevents another pass. Hidden tabs do not launch background searches.
+  useEffect(() => {
+    if (phase !== 'active' || publicPlaceMode || !target.trim() || !details.trim()) return;
+    let refreshing = false;
+    const refresh = async () => {
+      if (refreshing || document.visibilityState !== 'visible') return;
+      refreshing = true;
+      try { await acquireTarget(target, details, directEvidence, spectraSessionId || undefined, true); }
+      finally { refreshing = false; }
+    };
+    const timer = setInterval(() => { void refresh(); }, 5 * 60_000);
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void refresh();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => { clearInterval(timer); document.removeEventListener('visibilitychange', onVisible); };
+  }, [phase, publicPlaceMode, target, details, directEvidence, spectraSessionId, acquireTarget]);
 
   useEffect(() => {
     const launch = lexaraLaunchRef.current;
@@ -1011,9 +1065,20 @@ export default function SpectraPage() {
                   <summary>Public-place sources</summary>
                   {placeSources.map(source => <p key={source.url} className="mt-1">
                     <a href={source.url} target="_blank" rel="noopener noreferrer" className="underline">{source.title}</a>
-                    {' — '}{source.status.replaceAll('-', ' ')}
+                    {' — '}{source.status.replace(/-/g, ' ')}
                   </p>)}
                 </details>}
+                {candidateLocations.some(candidate => candidate.sourceUrls?.length) && (
+                  <details className="mt-2 text-xs text-slate-300">
+                    <summary>Regional estimate and supporting records</summary>
+                    {candidateLocations.map(candidate => <div key={`${candidate.latitude}:${candidate.longitude}`} className="mt-1">
+                      <span>{candidate.label}</span>
+                      {candidate.publishedAt && <span> · published {new Date(candidate.publishedAt).toLocaleDateString()}</span>}
+                      {candidate.sourceUrls?.length && !candidate.publishedAt && <span> · source date unknown</span>}
+                      {candidate.sourceUrls?.slice(0, 3).map(url => <a key={url} href={url} target="_blank" rel="noopener noreferrer" className="ml-2 underline">Source</a>)}
+                    </div>)}
+                  </details>
+                )}
                 {feedNotice && (
                   <p role="status" className="mt-1 text-xs text-amber-300" data-testid="spectra-feed-status">
                     {feedNotice}

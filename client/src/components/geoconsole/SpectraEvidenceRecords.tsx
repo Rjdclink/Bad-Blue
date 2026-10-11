@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 interface EvidenceRecord {
   id: string;
@@ -30,6 +30,7 @@ interface RecordResponse {
   success: boolean;
   persistenceAvailable: boolean;
   records: EvidenceRecord[];
+  nextCursor?: string;
   feeds?: FeedStatus[];
 }
 
@@ -55,13 +56,21 @@ export function SpectraEvidenceRecords({ sessionId, refreshKey }: { sessionId: s
   const [provider, setProvider] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [nextCursor, setNextCursor] = useState<string | undefined>();
+  const olderController = useRef<AbortController | null>(null);
+  const exhaustedOlder = useRef(false);
 
   useEffect(() => { setScope(sessionId ? 'session' : 'public'); }, [sessionId]);
 
   useEffect(() => {
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
+    olderController.current?.abort();
+    exhaustedOlder.current = false;
+    setLoadingMore(false);
     setRecords([]);
+    setNextCursor(undefined);
     setFeeds([]);
     setError('');
     setLoading(true);
@@ -77,7 +86,13 @@ export function SpectraEvidenceRecords({ sessionId, refreshKey }: { sessionId: s
         if (!response.ok || !result.success || !result.persistenceAvailable) {
           throw new Error('Saved records are temporarily unavailable.');
         }
-        setRecords(Array.isArray(result.records) ? result.records : []);
+        const firstPage = Array.isArray(result.records) ? result.records : [];
+        setRecords(previous => {
+          if (scope !== 'session' || previous.length <= firstPage.length) return firstPage;
+          const seen = new Set(firstPage.map(record => record.id));
+          return [...firstPage, ...previous.filter(record => !seen.has(record.id))].slice(0, 500);
+        });
+        setNextCursor(previous => exhaustedOlder.current ? undefined : previous || result.nextCursor);
         setFeeds(Array.isArray(result.feeds) ? result.feeds : []);
         setError('');
       } catch {
@@ -90,8 +105,34 @@ export function SpectraEvidenceRecords({ sessionId, refreshKey }: { sessionId: s
       }
     };
     void load();
-    return () => { controller.abort(); clearTimeout(timer); };
+    return () => { controller.abort(); olderController.current?.abort(); clearTimeout(timer); };
   }, [scope, sessionId, refreshKey, provider]);
+
+  const loadOlder = async () => {
+    if (!sessionId || scope !== 'session' || !nextCursor || loadingMore) return;
+    olderController.current?.abort();
+    const controller = new AbortController();
+    olderController.current = controller;
+    setLoadingMore(true);
+    try {
+      const response = await fetch(`/api/spectra/sessions/${encodeURIComponent(sessionId)}/records?before=${encodeURIComponent(nextCursor)}`,
+        { credentials: 'include', signal: controller.signal, cache: 'no-store' });
+      const result = await response.json() as RecordResponse;
+      if (!response.ok || !result.success || !result.persistenceAvailable) throw new Error('Unavailable');
+      if (controller.signal.aborted) return;
+      setRecords(previous => {
+        const seen = new Set(previous.map(record => record.id));
+        return [...previous, ...(result.records || []).filter(record => !seen.has(record.id))].slice(0, 500);
+      });
+      setNextCursor(result.nextCursor);
+      exhaustedOlder.current = !result.nextCursor;
+      setError('');
+    } catch {
+      if (!controller.signal.aborted) setError('Older records are temporarily unavailable.');
+    } finally {
+      if (!controller.signal.aborted) setLoadingMore(false);
+    }
+  };
 
   return <details className="border-b border-slate-800 px-4 py-2 text-xs text-slate-300" data-testid="spectra-evidence-records">
     <summary className="cursor-pointer font-medium text-cyan-200">Collected records{records.length ? ` (${records.length} shown)` : ''}</summary>
@@ -141,5 +182,9 @@ export function SpectraEvidenceRecords({ sessionId, refreshKey }: { sessionId: s
         </details>;
       })}
     </div>
+    {scope === 'session' && nextCursor && <button type="button" onClick={() => void loadOlder()} disabled={loadingMore}
+      className="mt-2 rounded border border-slate-700 px-2 py-1 disabled:opacity-40">
+      {loadingMore ? 'Loading…' : 'Show older records'}
+    </button>}
   </details>;
 }
