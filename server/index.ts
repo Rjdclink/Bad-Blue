@@ -907,11 +907,14 @@ startupTrace('routes_registration_completed');
       const { readFile } = await import("node:fs/promises");
       const staticSitemap = await readFile("public/sitemap.xml", "utf8");
       const staticUrls = [...staticSitemap.matchAll(/<loc>([^<]+)<\/loc>/g)].map((match) => match[1]);
-      const { isSubscriptionEntryPath } = await import("../shared/subscriptionPolicy");
-      // The source sitemap remains a complete inventory for coverage checks.
-      // Publish only account/legal entry pages; subscriber content is private.
+      const { isPublicSeoPage } = await import("./subscriptionGate");
+      // Publish only real, publicly readable SEO pages. Never advertise private
+      // app routes or tools that still redirect to the subscriber login.
       const urls = Array.from(new Set([...canonicalPaths, ...staticUrls]))
-        .filter((url) => isSubscriptionEntryPath(new URL(url).pathname))
+        .filter((url) => {
+          const parsed = new URL(url);
+          return parsed.origin === BASE_URL && isPublicSeoPage(parsed.pathname);
+        })
         .map((url) => `
   <url>
     <loc>${url}</loc>
