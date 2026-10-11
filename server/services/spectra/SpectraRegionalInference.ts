@@ -29,6 +29,12 @@ export interface ProvisionalRegionalCity {
   sourceUrls: string[];
   publishedAt: string | null;
   independentSourceCount: number;
+  supportingClaims: Array<{
+    sourceUrl: string;
+    statement: string;
+    publishedAt: string | null;
+    identityStatus: 'name_mention_unverified';
+  }>;
   currentPositionVerified: false;
 }
 
@@ -124,15 +130,20 @@ export function inferProvisionalRegionalCities(
       const region = extractCityStateHint(clause);
       if (!region) continue;
       const key = `${region.city.toLowerCase()}|${region.state}`;
-      const prior = matches.get(key) || {
+      const prior: ProvisionalRegionalCity & { publishers: Set<string> } = matches.get(key) || {
         city: region.city, state: region.state, sourceUrls: [], publishedAt: null,
         independentSourceCount: 0, currentPositionVerified: false as const,
+        supportingClaims: [],
         publishers: new Set<string>(),
       };
       if (!prior.publishers.has(publisher)) {
         prior.publishers.add(publisher);
         prior.sourceUrls.push(sourceUrl!);
         prior.independentSourceCount = prior.publishers.size;
+        prior.supportingClaims.push({
+          sourceUrl: sourceUrl!, statement: statement.replace(/\s+/g, ' ').trim().slice(0, 500),
+          publishedAt, identityStatus: 'name_mention_unverified',
+        });
       }
       if (publishedAt && (!prior.publishedAt || publishedAt > prior.publishedAt)) prior.publishedAt = publishedAt;
       matches.set(key, prior);
