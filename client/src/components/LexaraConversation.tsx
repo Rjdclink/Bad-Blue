@@ -15,6 +15,7 @@ import {
 import { getLexaraLiveEnabled } from '@/components/LexaraLiveConsentModal';
 import { analyzeUserSignals } from '@shared/lexaraVoicePersona';
 import { lexaraDocumentSpeech } from '@shared/lexaraDocumentSpeech';
+import { lexaraSpeechText } from '@shared/lexaraSpeechText';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
 import { captureLexaraDeviceLocation, readLexaraDeviceLocation } from '@/lib/lexaraLocation';
@@ -1332,7 +1333,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
           }
 
           if (event === 'speech-chunk') {
-            const chunk = String(payload?.chunk || '').trim();
+            const chunk = lexaraSpeechText(String(payload?.chunk || ''));
             if (!chunk || !progressiveVoiceReady || streamedSpeechFailed) return;
             try {
               if (!streamedSpeechTurnId) {
@@ -1509,7 +1510,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         // A document-action turn owns the artifact handoff. Keep the full draft
         // visible in chat, but do not feed document bodies/markup/placeholders
         // into realtime TTS; speak only ordinary conversational responses.
-        const spokenAnswer = lexaraDocumentSpeech(answer, documentIntentRequested || Boolean(priorPendingDocument));
+        const spokenAnswer = lexaraSpeechText(lexaraDocumentSpeech(answer, documentIntentRequested || Boolean(priorPendingDocument)));
         // Ask for neutral feedback only after a completed substantive answer.
         // This is not sentiment-gated: positive, negative, and mixed experiences
         // all reach the same review page.

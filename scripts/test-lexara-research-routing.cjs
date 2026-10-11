@@ -291,7 +291,7 @@ test('malformed search URLs do not discard valid discovery results', async () =>
   const result = await mesh.discoverLegalMeshTier3('contract fixture');
   assert(result.some(item => item.url === urls[0]));
 });
-test('Lexara retains slower provider evidence after fast discovery leads in live and default modes', async () => {
+test('Lexara races first search leads while exhaustive discovery retains slower provider results', async () => {
   let liveSlowProviderFinished = false;
   const live = harness({
     env: { TAVILY_API_KEY: 'fixture', DDGS_URL: 'https://ddgs.fixture.test' },
@@ -314,11 +314,11 @@ test('Lexara retains slower provider evidence after fast discovery leads in live
     { firstUseful: true },
   );
   assert(firstUseful.some(item => item.url === urls[0]), 'fast discovery lead remains available');
-  assert(firstUseful.some(item => item.url === urls[1]), 'slower independent evidence must survive');
+  assert(!firstUseful.some(item => item.url === urls[1]), 'fast provisional leads must not block on slow providers');
   assert.equal(
     liveSlowProviderFinished,
-    true,
-    'unverified discovery leads must not cancel slower provider evidence',
+    false,
+    'live first-lead mode must finish before slower provider discovery',
   );
 
   let comprehensiveSlowProviderFinished = false;
@@ -345,6 +345,26 @@ test('Lexara retains slower provider evidence after fast discovery leads in live
   );
   assert(allResults.some(item => item.url === urls[0]));
   assert(allResults.some(item => item.url === urls[1]));
+});
+
+test('Tavily HTTP 432 plan limit prevents further calls during its cooldown', async () => {
+  let tavilyRequests = 0;
+  const h = harness({
+    env: { TAVILY_API_KEY: 'fixture' },
+    fetchResponse: async url => {
+      if (url.includes('api.tavily.com')) {
+        tavilyRequests++;
+        return { ok: false, status: 432, headers: { get: () => null }, text: async () => 'Plan Limit Exceeded' };
+      }
+      return { ok: true, json: async () => ({ results: [] }) };
+    },
+  });
+  const mesh = h.load('server/lexara/LegalProviderMesh.ts');
+  await mesh.discoverLegalMeshTier3('quota limit fixture', undefined, { firstUseful: true });
+  const firstWave = tavilyRequests;
+  assert(firstWave > 0);
+  await mesh.discoverLegalMeshTier3('quota limit another question', undefined, { firstUseful: true });
+  assert.equal(tavilyRequests, firstWave, 'quota-exhausted Tavily must not be contacted again');
 });
 
 test('production DDGS uses its independent code default without custom variables', async () => {
@@ -536,6 +556,15 @@ test('bounded live queries retain the requested fact without copying conversatio
   assert.equal(queries[0], '"Avery Morgan Example" business Iowa');
   assert.equal(queries[1], 'Avery Morgan Example business Iowa');
   assert(!queries.slice(0, 2).some(q => /Hello|answer briefly/.test(q)));
+});
+test('speech-only rendering preserves spoken content while removing Markdown punctuation', () => {
+  const speech = harness().load('shared/lexaraSpeechText.ts').lexaraSpeechText;
+  assert.equal(speech('**Important** *take notes*'), 'Important take notes');
+  assert.equal(speech('* First\n* Second'), 'First Second');
+  assert.equal(speech('5 * 4 = 20'), '5 times 4 = 20');
+  assert.equal(speech('[Read this](https://example.com)'), 'Read this');
+  assert.equal(speech('CASE_NUMBER'), 'CASE_NUMBER');
+  assert.equal(speech('*'), '');
 });
 (async () => {
   let passed = 0;

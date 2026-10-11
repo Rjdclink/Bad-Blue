@@ -130,11 +130,11 @@ if (!legalMesh.includes('async function firstUsefulParallelSearch')
   throw new Error('Lexara supplemental discovery must preserve parallel provider evidence until scoring');
 }
 if (!legalMesh.includes('firstUseful?: boolean')
-  || legalMesh.includes('Promise.any(')
-  || !legalMesh.includes('Promise.allSettled(queries.map(query => freeSearch')
+  || !legalMesh.includes('Promise.any(')
+  || !legalMesh.includes('freeSearch(query, controller.signal, true)')
   || !legalMesh.includes('const groups=options.firstUseful')
   || !background.includes('firstUseful: !deepAcquisitionRequested')) {
-  throw new Error('Lexara live background discovery must not cancel provider/query results before evidence scoring');
+  throw new Error('Lexara live discovery must race early leads and preserve evidence verification');
 }
 if (!legalMesh.includes('function independentSearchBase')
   || !legalMesh.includes('pantheon-(?:ddgs|searxng|openserp)')

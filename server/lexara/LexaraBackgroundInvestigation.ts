@@ -903,7 +903,11 @@ export async function investigateLexaraBackgroundQuestion(
       if (pass === 0) startClaudeSearch();
       if (pass + 1 >= maxPasses || Date.now() >= deadlineAt || seenUrls.size >= maxCandidates) break;
 
-      const query = broadenedQuery(subject, decision, categories, context.jurisdiction, pass);
+      // A quick first lead is not proof. If it failed verification, revisit the
+      // original query with all providers before moving to broader queries.
+      const query = pass === 0 && !deepAcquisitionRequested
+        ? initialQuery
+        : broadenedQuery(subject, decision, categories, context.jurisdiction, pass);
       context.onProgress?.({ type: 'checkpoint', pass: recursionPasses, confidence: best?.confidence || 0 });
       const [primaryOutcome, supplementalOutcome] = await Promise.allSettled([
         discoverLegalMeshTier3(query, laneSignal, {
@@ -911,14 +915,14 @@ export async function investigateLexaraBackgroundQuestion(
           jurisdiction: subject.location || context.jurisdiction,
           subject: subject.name,
           requestedFact: decision.requestedFact,
-          firstUseful: !deepAcquisitionRequested,
+          firstUseful: false,
         }),
         discoverLegalMeshSupplemental(query, [...seenUrls], laneSignal, {
           categories,
           jurisdiction: subject.location || context.jurisdiction,
           subject: subject.name,
           requestedFact: decision.requestedFact,
-          firstUseful: !deepAcquisitionRequested,
+          firstUseful: false,
         }),
       ]);
       const primary = primaryOutcome.status === 'fulfilled' ? primaryOutcome.value : [];

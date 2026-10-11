@@ -27,8 +27,8 @@ export interface LegalMeshSearchOptions {
   jurisdiction?: string;
   subject?: string;
   requestedFact?: string;
-  // Compatibility flag for live discovery. All bounded provider/query results
-  // are retained until the investigator evaluates identity and factual evidence.
+  // Live discovery takes the first useful leads. The investigator still verifies
+  // sources, and switches to comprehensive discovery when those leads are weak.
   firstUseful?: boolean;
   officialFormQuery?: boolean;
   // Native-only callers retain every source lane without buying alternate
@@ -101,6 +101,10 @@ function recordEngineFailure(engine: string, reason: string, retryAfterMs = 180_
   if (/captcha|human verification|verify you are human/i.test(reason)) {
     captchaDisabledEngines.add(engine);
     console.warn('[LEXARA Search Availability]', JSON.stringify({ engine, status: 'disabled-captcha' }));
+  } else if (/HTTP\s+432\b|plan\s+limit\s+exceeded/i.test(reason)) {
+    const retryAfterMs = 6 * 60 * 60_000;
+    engineCooldownUntil.set(engine, Math.max(engineCooldownUntil.get(engine) || 0, Date.now() + retryAfterMs));
+    console.warn('[LEXARA Search Availability]', JSON.stringify({ engine, status: 'plan-limit-cooldown', retryAfterMs }));
   } else if (/429|rate.?limit|too many|unusual traffic/i.test(reason)) {
     engineCooldownUntil.set(engine, Math.max(engineCooldownUntil.get(engine) || 0, Date.now() + Math.max(180_000, retryAfterMs)));
     console.warn('[LEXARA Search Availability]', JSON.stringify({ engine, status: 'rate-limit-cooldown', retryAfterMs: Math.max(180_000, retryAfterMs) }));
@@ -538,20 +542,31 @@ async function freeSearch(
   _firstUseful = false,
   officialFormQuery = false,
 ): Promise<LegalMeshCandidate[]> {
-  // Discovery URLs are leads, not verified answers. Preserve every bounded
-  // provider result; only the investigator's evidence gate may end research.
+  // Fast mode returns leads for prompt verification; full mode retains all
+  // bounded providers. An unverified fast lead triggers a full retry upstream.
   const controller = new AbortController();
   const relayAbort = () => controller.abort(signal?.reason);
   if (signal?.aborted) controller.abort(signal.reason);
   else signal?.addEventListener('abort', relayAbort, { once: true });
   try {
-    const outcomes = await Promise.allSettled([
+    const providers = [
       tavily(query, controller.signal, officialFormQuery ? 5_000 : 2_000),
       duckDuckGoInstantAnswer(query, controller.signal),
       searxng(query, controller.signal),
       ddgs(query, controller.signal),
       openserp(query, controller.signal),
-    ]);
+    ];
+    if (_firstUseful && !officialFormQuery) {
+      const first = await Promise.any(providers.map(async provider => {
+        const candidates = await provider;
+        if (!candidates.length) throw new Error('LEXARA_NO_SEARCH_LEADS');
+        return candidates;
+      })).catch(() => [] as LegalMeshCandidate[]);
+      if (signal?.aborted) throw signal.reason || new DOMException('Discovery cancelled', 'AbortError');
+      if (first.length) controller.abort(new Error('lexara_first_useful_provider'));
+      return first;
+    }
+    const outcomes = await Promise.allSettled(providers);
     if (signal?.aborted) throw signal.reason || new DOMException('Discovery cancelled', 'AbortError');
     const enabled = [Boolean(process.env.TAVILY_API_KEY?.trim()), true, Boolean(lexaraSearxngBase()), Boolean(lexaraDdgsBase()), Boolean(lexaraOpenserpBase())];
     console.info('[LEXARA Discovery Lanes]', JSON.stringify({ requestId: getDiscoveryDiagnostics()?.requestId, statusScope: 'promise-completion-only', results: outcomes.map((outcome, index) => ({ lane: ['tavily', 'duckduckgo-instant-answer', 'searxng', 'ddgs', 'openserp'][index], enabled: enabled[index], candidates: outcome.status === 'fulfilled' ? outcome.value.length : 0, promiseStatus: outcome.status })) }));
@@ -566,10 +581,22 @@ async function firstUsefulSearchVariants(
   queries: readonly string[],
   signal?: AbortSignal,
 ): Promise<LegalMeshCandidate[]> {
-  const outcomes = await Promise.allSettled(queries.map(query => freeSearch(query, signal)));
-  if (signal?.aborted) throw signal.reason || new DOMException('Discovery cancelled', 'AbortError');
-  return fuseRankedCandidates(outcomes.flatMap(outcome =>
-    outcome.status === 'fulfilled' ? [outcome.value] : []));
+  const controller = new AbortController();
+  const relayAbort = () => controller.abort(signal?.reason);
+  if (signal?.aborted) controller.abort(signal.reason);
+  else signal?.addEventListener('abort', relayAbort, { once: true });
+  try {
+    const first = await Promise.any(queries.map(async query => {
+      const candidates = await freeSearch(query, controller.signal, true);
+      if (!candidates.length) throw new Error('LEXARA_NO_QUERY_LEADS');
+      return candidates;
+    })).catch(() => [] as LegalMeshCandidate[]);
+    if (signal?.aborted) throw signal.reason || new DOMException('Discovery cancelled', 'AbortError');
+    return first;
+  } finally {
+    controller.abort(new Error('lexara_first_useful_query'));
+    signal?.removeEventListener('abort', relayAbort);
+  }
 }
 
 async function firstUsefulParallelSearch(

@@ -364,15 +364,15 @@ function requiresDeepClaudeForTurn(
   prompt: string,
   history: string,
   documentAction: boolean,
-  mixedLegalFact: boolean,
+  _mixedLegalFact: boolean,
   multiJurisdiction: boolean,
 ): boolean {
-  if (mixedLegalFact || multiJurisdiction) return true;
+  if (multiJurisdiction) return true;
   // Document format selection is a separate verified workflow; preserve deeper
   // reasoning for genuinely complex legal matters rather than every draft.
   if (documentAction && /\b(?:appeal|habeas|post[- ]conviction|constitutional|injunction|summary judgment|suppression|sentencing)\b/i.test(prompt)) return true;
   const text = `${prompt}\n${history}`.toLowerCase();
-  const explicitComplexity = /\b(?:complex|complicated|deep(?:ly)? analyze|thorough analysis|litigation strategy|legal strategy|appeal|appellate|post[- ]conviction|habeas|injunction|summary judgment|qualified immunity|constitutional claim|class action|multi[- ]jurisdiction|choice of law|preemption|statutory interpretation|evidentiary hearing|suppression motion|sentencing guideline|competing claims|alternative theories)\b/i.test(text);
+  const explicitComplexity = /\b(?:complex|complicated|deep(?:ly)? analyze|thorough analysis|litigation strategy|legal strategy|appeal|appellate|post[- ]conviction|habeas|injunction|summary judgment|qualified immunity|constitutional claim|class action|multi[- ]jurisdiction|choice of law|preemption|statutory interpretation|evidentiary hearing|suppression motion|sentencing guideline|competing claims|alternative theories)\b/i.test(prompt);
   if (explicitComplexity) return true;
 
   const issueSignals = text.match(/\b(?:claim|defense|charge|count|motion|remedy|jurisdiction|statute|precedent|evidence|party|cause of action)\b/g)?.length || 0;
@@ -959,7 +959,7 @@ export async function generateLexaraConversationResponse(
           systemPrompt,
           model: claudeModel,
           effort: claudeEffort,
-          maxTokens: 1_500,
+          maxTokens: claudeEffort === 'max' ? 3_000 : 1_500,
           cacheSystemPrompt: true,
           providerPolicy: 'legalwhat',
           signal: context.signal,
@@ -970,7 +970,7 @@ export async function generateLexaraConversationResponse(
           systemPrompt,
           model: claudeModel,
           effort: claudeEffort,
-          maxTokens: 1_500,
+          maxTokens: claudeEffort === 'max' ? 3_000 : 1_500,
           cacheSystemPrompt: true,
           providerPolicy: 'legalwhat',
           signal: context.signal,

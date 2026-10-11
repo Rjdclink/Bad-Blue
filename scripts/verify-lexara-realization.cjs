@@ -37,6 +37,15 @@ must(
   'LEXARA must verify and use the prewarmed realtime acoustic path before progressive media fallback',
 );
 const realtimeVoiceClient = read('client/src/lib/lexaraRealtimeVoiceClient.ts');
+const speechText = read('shared/lexaraSpeechText.ts');
+must(
+  conversation.includes("lexaraSpeechText(String(payload?.chunk || '')") &&
+    conversation.includes('lexaraSpeechText(lexaraDocumentSpeech(') &&
+    synthesis.includes('const cleanText = lexaraSpeechText(text)') &&
+    realtimeVoiceClient.includes('const cleanText = lexaraSpeechText(text)') &&
+    speechText.includes(".replace(/[\\x60*]/g, '')"),
+  'all live and recovery speech paths remove markup without altering displayed text',
+);
 const lexaraConversationOrchestrator = read('server/lexara/LexaraConversationOrchestrator.ts');
 const lexaraPantheonInvestigation = read('server/lexara/LexaraPantheonInvestigation.ts');
 const lexaraBackgroundInvestigation = read('server/lexara/LexaraBackgroundInvestigation.ts');
@@ -1009,13 +1018,14 @@ must(
 );
 must(
   lexaraLegalMesh.includes('firstUseful?: boolean') &&
-    !lexaraLegalMesh.includes('Promise.any(') &&
-    lexaraLegalMesh.includes('Promise.allSettled(queries.map(query => freeSearch') &&
+    lexaraLegalMesh.includes('Promise.any(') &&
+    lexaraLegalMesh.includes('freeSearch(query, controller.signal, true)') &&
+    lexaraBackgroundInvestigation.includes('pass === 0 && !deepAcquisitionRequested') &&
     lexaraLegalMesh.includes('const groups=options.firstUseful') &&
     lexaraBackgroundInvestigation.includes('firstUseful: !deepAcquisitionRequested') &&
     lexaraBackgroundInvestigation.includes('LIVE_TOTAL_CANDIDATES = 18') &&
     lexaraBackgroundInvestigation.includes('LIVE_TARGETS_PER_PASS = 6'),
-  'live background provider/query races retain bounded results for evidence scoring without removing optimized breadth',
+  'live discovery races for first leads and comprehensively retries when evidence is weak',
 );
 must(
   lexaraLegalMesh.includes('function independentSearchBase') &&
