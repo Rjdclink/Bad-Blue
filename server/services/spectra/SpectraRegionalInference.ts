@@ -4,7 +4,7 @@
  * Two separate source domains must independently associate the same subject
  * with the same city; ambiguous or historical references are not promoted.
  */
-import { extractCityStateHint } from '../geoconsole/city-state-geocoder';
+import { extractCityStateHint, stateCodeInPublisherHostname } from '../geoconsole/city-state-geocoder';
 import type { SpectraRetrievedEvidence } from './SpectraPublicRetrieval';
 import { publicProfileContactMatch, publicProfileNameMatch } from './SpectraPublicProfileIdentity';
 
@@ -134,6 +134,33 @@ function sourceText(value: unknown): string {
   return typeof value === 'string' ? value.slice(0, 3_000) : '';
 }
 
+/** Local reporting sometimes identifies a person across adjacent sentences:
+ * "A 45-year-old Hartley man was arrested. The arrest of Jane Doe ...".
+ * Require the exact name in the immediate follow-up and a publisher that
+ * explicitly names its state; a loose city headline alone is insufficient. */
+function localNewsResidentClaim(
+  text: string, fullName: RegExp, publisherUrl: string,
+): { city: string; state: string; statement: string } | null {
+  let hostname: string;
+  try { hostname = new URL(publisherUrl).hostname; } catch { return null; }
+  const state = stateCodeInPublisherHostname(hostname);
+  if (!state) return null;
+  const lead = /\b(?:a|an)\s+\d{1,3}-year-old\s+([A-Za-z][A-Za-z'’-]*(?:\s+[A-Za-z][A-Za-z'’-]*){0,2})\s+(?:man|woman|resident)\s+(?:was|is)\s+(?:arrested|charged|jailed)\b/gi;
+  for (const match of text.slice(0, 1_500).matchAll(lead)) {
+    const following = text.slice(match.index! + match[0].length, match.index! + match[0].length + 450);
+    const identity = /\b(?:the\s+)?(?:arrest|jailing|charges?)\s+of\s+/i.exec(following);
+    const named = identity && fullName.exec(following.slice(identity.index + identity[0].length, identity.index + identity[0].length + 140));
+    if (!named || named.index !== 0) continue;
+    const region = extractCityStateHint(`${match[1]}, ${state}`);
+    if (!region) continue;
+    return {
+      city: region.city, state: region.state,
+      statement: `${match[0]}; ${following.slice(identity.index, identity.index + identity[0].length + 100).split(/[.!?]/)[0]}`.replace(/\s+/g, ' ').trim().slice(0, 500),
+    };
+  }
+  return null;
+}
+
 /**
  * A single retrieved document can support a labeled best guess. Search titles,
  * snippets and retrieval dates do not qualify. This is deliberately separate
@@ -161,6 +188,27 @@ export function inferProvisionalRegionalCities(
     const rawDate = item.metadata?.publishedAt;
     const publishedAt = typeof rawDate === 'string' && Number.isFinite(Date.parse(rawDate))
       ? new Date(rawDate).toISOString() : null;
+    const newsClaim = publishedAt && typeof sourceUrl === 'string'
+      ? localNewsResidentClaim(text, fullName, sourceUrl) : null;
+    if (newsClaim) {
+      const key = `${newsClaim.city.toLowerCase()}|${newsClaim.state}`;
+      const prior: ProvisionalRegionalCity & { publishers: Set<string> } = matches.get(key) || {
+        city: newsClaim.city, state: newsClaim.state, sourceUrls: [], publishedAt: null,
+        independentSourceCount: 0, currentPositionVerified: false as const,
+        supportingClaims: [], publishers: new Set<string>(),
+      };
+      if (!prior.publishers.has(publisher)) {
+        prior.publishers.add(publisher);
+        prior.sourceUrls.push(sourceUrl!);
+        prior.independentSourceCount = prior.publishers.size;
+        prior.supportingClaims.push({
+          sourceUrl: sourceUrl!, statement: newsClaim.statement,
+          publishedAt, identityStatus: 'name_mention_unverified',
+        });
+      }
+      if (!prior.publishedAt || publishedAt > prior.publishedAt) prior.publishedAt = publishedAt;
+      matches.set(key, prior);
+    }
     for (const statement of text.split(/[\n;!?]|\.(?=\s)/).slice(0, 60)) {
       const named = fullName.exec(statement);
       if (!named || HISTORICAL_LANGUAGE_RE.test(statement)) continue;
