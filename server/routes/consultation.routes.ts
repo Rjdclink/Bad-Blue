@@ -14,6 +14,9 @@ import { resolveUSJurisdiction } from '../lexara/LexaraJurisdictionResolver';
 import { formatJurisdictionAuthorityForSystem, resolveJurisdictionAuthorityProfile } from '../lexara/LexaraJurisdictionAuthority';
 import { formatCitationVerificationForCorrection, verifyLegalCitationsInText } from '../lexara/LexaraCitationVerifier';
 import { resolveOfficialLegalForm, officialFormDirective } from '../lexara/OfficialLegalFormResolver';
+import { isRecordReliefRequest, recordReliefCaseState, recordReliefTopic, recordReliefLawQuery } from '../lexara/RecordReliefWorkflow';
+import { assessRecordReliefDocument } from '../lexara/RecordReliefDocument';
+import { RECORD_RELIEF_DIRECTIVE } from '../lexara/RecordReliefSources';
 import { inspectOfficialForm, fillOfficialPdf, fillOfficialDocx } from '../lexara/OfficialFormFiller';
 import { overlayFlatOfficialPdf, validateFlatFormLayout } from '../lexara/FlatOfficialFormOverlay';
 import { detectFlatFormLayout } from '../lexara/FlatFormLayoutDetector';
@@ -361,6 +364,11 @@ export function setupConsultationRoutes(app: Express): void {
     if (!state || !facts || !requestedType || !documentLabel) return res.status(400).json({ error: 'Jurisdiction, case facts, and a supported document type are required' });
     if (facts.length > 30_000 || customInstructions.length > 8_000) return res.status(413).json({ error: 'Document request is too large' });
     const latestUserRequest = [...facts.matchAll(/(?:^|\n)USER:\s*([^\n]+)/g)].at(-1)?.[1] || facts;
+    const userFacts = [...facts.matchAll(/(?:^|\n)USER:\s*([\s\S]*?)(?=\n(?:USER|LEXARA|ASSISTANT):|\nAPPLICATION-SUPPLIED|$)/g)].map(m => m[1]);
+    const reliefDocument = isRecordReliefRequest(documentLabel) || /^(?:Record Sealing|Nondisclosure|Petition to (?:Set Aside|Vacate) Conviction|Petition for Annulment)/i.test(documentLabel)
+      || recordReliefTopic(latestUserRequest, userFacts.slice(0,-1));
+    const reliefCaseState = reliefDocument ? recordReliefCaseState(userFacts.at(-1) || facts, userFacts.slice(0,-1)) : undefined;
+    if (reliefDocument && !reliefCaseState) return res.status(422).json({ error: 'The criminal case jurisdiction must be established.', missingFields: ['caseStateAndCourtSystem'], question: 'Which state was the case in, and was it in state or federal court?' });
     const localCoverSheetRequested = /\bcover\s+sheet\b/i.test(latestUserRequest)
       && /\b(?:case|court|local|filing)\b/i.test(latestUserRequest);
     const officialFormRequested = (/\bofficial\b/i.test(latestUserRequest) && /\bform\b/i.test(latestUserRequest))
@@ -373,12 +381,14 @@ export function setupConsultationRoutes(app: Express): void {
       : documentLabel;
     const requestedFormNumber = officialFormRequested ? latestUserRequest.match(/\bform\s+((?=[A-Z0-9.:-]*\d)[A-Z0-9](?:[A-Z0-9.:-]*[A-Z0-9])?)\b/i)?.[1] : undefined;
 
-    const resolvedJurisdiction = await resolveUSJurisdiction(facts, state);
-    const documentJurisdiction = resolvedJurisdiction?.display || state;
+    const caseCourtLocation = reliefDocument ? userFacts.join(' ').match(/\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2}\s+(?:County|(?:District|Circuit|Superior|Municipal) Court)\b/g)?.join(' ') || '' : '';
+    const jurisdictionFacts = reliefDocument ? [reliefCaseState, caseCourtLocation].filter(Boolean).join(' ') : facts;
+    const resolvedJurisdiction = await resolveUSJurisdiction(jurisdictionFacts, reliefCaseState || state);
+    const documentJurisdiction = reliefCaseState || resolvedJurisdiction?.display || state;
     const documentJurisdictionProfile = await resolveJurisdictionAuthorityProfile(
-      [facts, documentLabel].join('\n'),
+      [jurisdictionFacts, documentLabel].join('\n'),
       resolvedJurisdiction,
-      state,
+      reliefCaseState || state,
     ).catch(() => null);
 
     const authorityPrompt = [
@@ -397,6 +407,10 @@ export function setupConsultationRoutes(app: Express): void {
         'official prescribed form required local rules filing instructions'].filter(Boolean).join(' '),
       researchHints: documentJurisdictionProfile?.researchHints,
       preferredOfficialDomains: documentJurisdictionProfile?.preferredOfficialDomains,
+      recordReliefState: reliefDocument ? reliefCaseState : undefined,
+      disableCourtRecordPlanning: reliefDocument,
+      allowClaudePlanning: reliefDocument ? false : undefined,
+      forceResearch: reliefDocument,
     });
     const authorityAssessment = formatAuthorityResearchForSystem(authorityResearch)
       || 'No current authority was retrieved. Do not invent or claim verification of legal requirements, citations, deadlines, or official forms. Do not present this as ready to file.';
@@ -414,7 +428,9 @@ export function setupConsultationRoutes(app: Express): void {
         .map(resource => resource.host),
       ...discoveredCourtDomains,
     ])] : undefined;
-    const officialForm = resolveOfficialLegalForm(authorityResearch, formDocumentLabel, requestedFormNumber, issuingDomains);
+    const formResearch = reliefDocument && authorityResearch ? { ...authorityResearch, sources: authorityResearch.sources.filter(source =>
+      source.kind === 'primary' && source.evidenceLevel === 'document' && /expung|expunc|sealing|annul|nondisclosure|set.aside|vacat/i.test([source.title,source.excerpt].join(' '))) } : authorityResearch;
+    const officialForm = resolveOfficialLegalForm(formResearch, formDocumentLabel, requestedFormNumber, issuingDomains);
     if (requestedFormNumber) console.info('[LEXARA OfficialForm]', {
       requestedFormNumber,
       documentType: documentLabel,
@@ -424,6 +440,13 @@ export function setupConsultationRoutes(app: Express): void {
       sourceCount: authorityResearch?.sources.length || 0,
     });
     const formDirective = officialFormDirective(officialForm);
+    if (reliefDocument && !templateMode) {
+      const assessment = await assessRecordReliefDocument(documentJurisdiction, documentLabel, facts, authorityResearch, officialForm);
+      if (assessment.status !== 'appears-eligible') return res.status(422).json({
+        error: assessment.reason, recordReliefAssessment: assessment, missingFields: assessment.missingFields,
+        question: assessment.missingFields.length ? `Please provide: ${assessment.missingFields.join('; ')}.` : assessment.reason,
+      });
+    }
 
     // A state alone does not identify the local filing court. Never hand out a
     // potentially wrong mandatory form or custom-drafted substitute when the
@@ -442,7 +465,7 @@ export function setupConsultationRoutes(app: Express): void {
     if ((officialFormRequested || officialForm.requirement === 'mandatory') && !officialForm.verifiedOfficial) {
       return res.status(422).json({ error: 'The requested official form could not be verified from current court sources. No custom substitute was generated.' });
     }
-    if (officialForm.requirement === 'mandatory' || (officialFormRequested && officialForm.verifiedOfficial)) {
+    if (officialForm.requirement === 'mandatory' || ((officialFormRequested || reliefDocument) && officialForm.verifiedOfficial)) {
       return res.status(409).json({
         error: 'Lexara will use the verified official form rather than substitute a custom draft.',
         documentType: documentLabel,
@@ -451,6 +474,9 @@ export function setupConsultationRoutes(app: Express): void {
         officialFormRequired: true,
         facts,
       });
+    }
+    if (reliefDocument && !['custom_allowed','optional'].includes(officialForm.requirement)) {
+      return res.status(422).json({ error: 'Current official sources have not established that a custom petition is permitted. Please supply the court instructions or prescribed form.', missingFields: ['verifiedFormOrCustomPleadingPermission'] });
     }
     const draftingWorkloadOptions = /\b(?:motion|brief|memorandum|complaint|answer|counterclaim|petition|appeal|habeas)\b/i.test(documentLabel)
       ? { claudeWorkload: 'document-drafting' as const }
@@ -470,6 +496,7 @@ export function setupConsultationRoutes(app: Express): void {
       `JURISDICTION-FIRST AUTHORITY ASSESSMENT:\n${String(authorityAssessment || '').slice(0, 8000)}`,
       formatJurisdictionAuthorityForSystem(documentJurisdictionProfile),
       `OFFICIAL-FORM DETERMINATION:\n${formDirective}`,
+      reliefDocument ? RECORD_RELIEF_DIRECTIVE : '',
       'Use ONLY facts supplied below. Never invent names, dates, courts, case numbers, quotations, authorities, procedural posture, or requested relief.',
       'The application-supplied Lexara background evidence below contains directly retrieved facts for this same matter. Preserve relevant facts supported there without adding a re-verification placeholder merely because the drafting turn did not repeat the background search. Keep placeholders for facts absent from that evidence; factual verification does not establish legal admissibility.',
       'Return plain document text. The PDF and DOCX exporters use that text directly: do not use Markdown heading markers, asterisks for emphasis, backticks, or code fences. Use ordinary section titles and lettered or numbered paragraphs.',
@@ -567,6 +594,17 @@ export function setupConsultationRoutes(app: Express): void {
     let values = req.body?.values && typeof req.body.values === 'object' ? req.body.values : {};
     const facts = typeof req.body?.facts === 'string' ? req.body.facts.trim().slice(0, 30_000) : '';
     if (!officialForm?.verifiedOfficial || !officialForm?.url) return res.status(400).json({ error: 'A verified official form is required' });
+    const reliefUserTurns = [...facts.matchAll(/(?:^|\n)USER:\s*([\s\S]*?)(?=\n(?:USER|LEXARA|ASSISTANT):|\nAPPLICATION-SUPPLIED|$)/g)].map(m => m[1]);
+    const reliefFill = isRecordReliefRequest(String(officialForm.title || ''))
+      || recordReliefTopic(reliefUserTurns.at(-1) || facts, reliefUserTurns.slice(0,-1));
+    if (reliefFill && req.body?.templateMode !== true) {
+      const caseState = recordReliefCaseState(reliefUserTurns.at(-1) || facts, reliefUserTurns.slice(0,-1));
+      if (!caseState) return res.status(422).json({ error: 'The case jurisdiction is needed before completing this form.', missingFields: ['caseStateAndCourtSystem'] });
+      const research = await researchLegalAuthority(recordReliefLawQuery(caseState), { jurisdiction: caseState, recordReliefState: caseState,
+        disableCourtRecordPlanning: true, allowClaudePlanning: false, forceResearch: true });
+      const assessment = await assessRecordReliefDocument(caseState, String(officialForm.title || 'Record relief petition'), facts, research, officialForm);
+      if (assessment.status !== 'appears-eligible') return res.status(422).json({ error: assessment.reason, missingFields: assessment.missingFields, recordReliefAssessment: assessment });
+    }
     const inspected = await inspectOfficialForm(officialForm);
     if (req.body?.templateMode === true) {
       // A requested official blank is the original court-issued file. It needs

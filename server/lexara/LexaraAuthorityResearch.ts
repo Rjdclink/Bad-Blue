@@ -15,6 +15,7 @@ import type { LexaraSourceCategory } from './LexaraPublicSourceRegistry';
 import { planLexaraCourtRecords, searchLexaraCourtRecords, formatLexaraCourtRecordPlan, isLexaraCourtRecordLookup, type LexaraCourtRecordPlan } from './LexaraCourtRecords';
 import { lexaraCourtListenerJson } from './LexaraCourtListenerClient';
 import type { JurisdictionOfficialResource } from './LexaraJurisdictionAuthority';
+import { getRecordReliefProfile, recordReliefDomains } from './RecordReliefSources';
 
 export type LexaraAuthoritySourceKind = 'primary' | 'secondary' | 'web';
 
@@ -42,6 +43,10 @@ export interface LexaraAuthorityResearch {
 }
 
 export interface LexaraAuthorityResearchContext {
+  /** Public-law discovery only; personal record retrieval uses a separate query. */
+  recordReliefState?: string;
+  disableCourtRecordPlanning?: boolean;
+  allowClaudePlanning?: boolean;
   jurisdiction?: string;
   domainName?: string;
   researchHints?: readonly string[];
@@ -79,6 +84,14 @@ function officialFormEvidenceExcerpt(content: string): string {
     .filter(match => (match.index || 0) >= 3800)
     .slice(0, 5).map(match => content.slice(Math.max(0, (match.index || 0) - 80), (match.index || 0) + match[0].length + 160));
   return [prefix, conditions.join('\n').slice(0, 1400)].filter(Boolean).join('\n');
+}
+
+function recordReliefEvidenceExcerpt(content: string): string {
+  // Preserve qualifications beyond the navigation/preamble. An excerpt is
+  // incomplete evidence: the answer must still leave unestablished rules open.
+  const clauses = [...content.matchAll(/[^.\n]{0,100}\b(?:eligible|ineligible|shall not|may not|except|excluded|years?|completed|restitution|prescribed|petition|certificate)\b[^.\n]{0,400}/gi)]
+    .filter(match => (match.index || 0) >= 1800).slice(0, 16).map(match => match[0]);
+  return [content.slice(0, 1800), ...clauses].join('\n').slice(0, 6500);
 }
 
 function clampTail(value: string, maxLength: number): string {
@@ -181,7 +194,7 @@ async function discoverAuthoritySources(
       title: item.title.trim().slice(0,240) || 'Research source',
       url,
       kind: classifySource(url, context.preferredOfficialDomains),
-      excerpt: item.excerpt?.trim().slice(0, item.evidenceLevel === 'document' ? 3200 : 900) || undefined,
+      excerpt: item.excerpt?.trim().slice(0, item.evidenceLevel === 'document' ? context.recordReliefState ? 6500 : 3200 : 900) || undefined,
       provider:item.provider,
       recordType:item.recordType,
       evidenceLevel:item.evidenceLevel,
@@ -204,7 +217,7 @@ async function discoverAuthoritySources(
     subject:context.subject,
     requestedFact:context.requestedFact,
     officialFormQuery: formLookup,
-    allowClaudePlanning: courtPlan ? false : undefined,
+    allowClaudePlanning: courtPlan ? false : context.allowClaudePlanning,
     firstUseful: courtPlan?.lookupQuery ? true : undefined,
   };
   const discoveryQuery = formLookup
@@ -227,20 +240,23 @@ async function discoverAuthoritySources(
   }
   const courtMeshPromise = courtPlan && !recordLookup ? discoverLegalMeshTier3(discoveryQuery, signal, meshOptions) : undefined;
   const supportingAuthorities: LexaraAuthoritySource[] = [];
+  const reliefProfile = getRecordReliefProfile(context.recordReliefState || '');
+  reliefProfile?.urls.forEach(url => add({ title: `${reliefProfile.state} official criminal record relief guidance`,
+    url, provider: 'official-record-relief-directory' }));
   // Official files are discovery seeds, never cached legal conclusions. Each
   // turn still retrieves their current contents and retains normal mesh search.
   if (formLookup && /\biowa\b/i.test([context.jurisdiction, formObjective].join(' '))
     && /\b(?:small claims?|form\s*3\.1|money judgment)\b/i.test(formObjective)) {
-    add({title:'Iowa Judicial Branch Instructions for Filing a Small Claims Action for Money Judgment', url:'https://www.iowacourts.gov/browse/files/cc85952321f54914bf6ba14535b8ac9d/download', kind:'primary', provider:'official-form-directory'});
-    add({title:'Small Claims Form 3.1: Original Notice and Petition for a Money Judgment', url:'https://www.iowacourts.gov/collections/304/files/535/embedDocument', kind:'primary', provider:'official-form-directory'});
+    add({title:'Iowa Judicial Branch Instructions for Filing a Small Claims Action for Money Judgment', url:'https://www.iowacourts.gov/browse/files/cc85952321f54914bf6ba14535b8ac9d/download', provider:'official-form-directory'});
+    add({title:'Small Claims Form 3.1: Original Notice and Petition for a Money Judgment', url:'https://www.iowacourts.gov/collections/304/files/535/embedDocument', provider:'official-form-directory'});
   }
   if (formLookup && /\bking county\b/i.test(formObjective)
     && /\b(?:divorce|family|dissolution)\b/i.test(formObjective)) {
-    add({title:'King County Superior Court official forms and filing requirements', url:'https://kingcounty.gov/en/dept/dja/courts-jails-legal-system/court-forms-document-filing/forms', kind:'primary', provider:'official-form-directory'});
-    add({title:'King County Superior Court Family Case Assignment Area Designation and Case Information Cover Sheet (CICS)', url:'https://cdn.kingcounty.gov/-/media/king-county/depts/dja/forms/cics-family-pdf.pdf', kind:'primary', provider:'official-form-directory'});
+    add({title:'King County Superior Court official forms and filing requirements', url:'https://kingcounty.gov/en/dept/dja/courts-jails-legal-system/court-forms-document-filing/forms', provider:'official-form-directory'});
+    add({title:'King County Superior Court Family Case Assignment Area Designation and Case Information Cover Sheet (CICS)', url:'https://cdn.kingcounty.gov/-/media/king-county/depts/dja/forms/cics-family-pdf.pdf', provider:'official-form-directory'});
   }
 
-  if(includeLegalAuthorities && !recordLookup){
+  if(includeLegalAuthorities && !recordLookup && !reliefProfile){
     const indexQuery = [context.jurisdiction, formObjective].filter(Boolean).join(' ').slice(0, 900);
     const [courtListenerResult, govInfoResult, courtRecordResult] = await Promise.all([
       searchCourtListener(courtPlan?.lookupQuery || indexQuery, signal),
@@ -254,24 +270,49 @@ async function discoverAuthoritySources(
       || courtListenerResult.some(source => Boolean(source.excerpt?.trim())))) return sources;
   }
 
-  const mesh = await (courtMeshPromise || discoverLegalMeshTier3(discoveryQuery, signal, meshOptions));
+  // Relief gets usable official text even if a search provider is unavailable.
+  // Broaden from those primary leads through the existing provider mesh with a
+  // bounded child signal; preserve retrieved seeds when that search times out.
+  const reliefController = reliefProfile ? new AbortController() : undefined;
+  const relayReliefAbort = () => reliefController?.abort();
+  if (reliefController) {
+    if (signal?.aborted) reliefController.abort();
+    else signal?.addEventListener('abort', relayReliefAbort, { once: true });
+    const retrieved = await enrichAuthoritySourcesWithLexaraRetrieval(sources, signal, formLookup, false, true);
+    sources.splice(0, sources.length, ...retrieved);
+  }
+  let reliefTimer: ReturnType<typeof setTimeout> | undefined;
+  const mesh = reliefController
+    ? await Promise.race([
+        discoverLegalMeshTier3(discoveryQuery, reliefController.signal, meshOptions).catch(() => []),
+        new Promise<never[]>(resolve => { reliefTimer = setTimeout(() => { reliefController.abort(); resolve([]); }, 8_000); }),
+      ]).finally(() => { clearTimeout(reliefTimer); })
+    : await (courtMeshPromise || discoverLegalMeshTier3(discoveryQuery, signal, meshOptions));
   if (formLookup) {
     // Prioritize the actual form sources over unrelated federal leads while
     // retaining the other authorities as fallback context.
     const priorSources = sources.splice(0);
     seen.clear();
-    priorSources.filter(item => item.provider === 'official-form-directory').forEach(item => add(item));
+    priorSources.filter(item => /^official-(?:form|record-relief)-directory$/.test(item.provider || '')).forEach(item => add(item));
     mesh.forEach(item => add(item));
-    priorSources.filter(item => item.provider !== 'official-form-directory').forEach(item => add(item));
+    priorSources.filter(item => !/^official-(?:form|record-relief)-directory$/.test(item.provider || '')).forEach(item => add(item));
   } else {
     mesh.forEach(item => add(item));
   }
   supportingAuthorities.forEach(add);
-  if ((courtPlan && sources.some(source => source.evidenceLevel === 'document')) || legalMeshSufficient(mesh) || sources.length >= MAX_AUTHORITY_SOURCES) return sources;
+  const finish = () => { reliefController?.abort(); signal?.removeEventListener('abort', relayReliefAbort); return sources; };
+  if ((courtPlan && sources.some(source => source.evidenceLevel === 'document')) || legalMeshSufficient(mesh) || sources.length >= MAX_AUTHORITY_SOURCES) return finish();
 
-  const supplemental = await discoverLegalMeshSupplemental(discoveryQuery, [...seen], signal, meshOptions);
+  const supplementalPromise = discoverLegalMeshSupplemental(discoveryQuery, [...seen], reliefController?.signal || signal, meshOptions).catch(error => {
+    if (!reliefProfile) throw error;
+    return [];
+  });
+  const supplemental = reliefController ? await Promise.race([
+    supplementalPromise,
+    new Promise<never[]>(resolve => { reliefTimer = setTimeout(() => { reliefController.abort(); resolve([]); }, 4_000); }),
+  ]).finally(() => clearTimeout(reliefTimer)) : await supplementalPromise;
   supplemental.forEach(item => add(item));
-  return sources;
+  return finish();
 }
 
 async function enrichAuthoritySourcesWithLexaraRetrieval(
@@ -279,10 +320,12 @@ async function enrichAuthoritySourcesWithLexaraRetrieval(
   signal?: AbortSignal,
   formLookup = false,
   courtLookup = false,
+  recordRelief = false,
 ): Promise<LexaraAuthoritySource[]> {
   if (!sources.length) return sources;
   const targets = sources.filter(source => source.recordType !== 'docket' && source.recordType !== 'portal' && source.evidenceLevel !== 'document' && (!source.excerpt?.trim()
     || source.recordType === 'opinion'
+    || (recordRelief && source.kind === 'primary')
     || (courtLookup && (source.kind === 'primary' || /^https:\/\/(?:law|dockets)\.justia\.com\/(?:cases|docket)\//i.test(source.url)))
     || (formLookup && source.kind === 'primary' && /\b(?:forms?|instructions?|petition|cover\s+sheet|assignment)\b/i.test([source.title, source.excerpt].join(' ')))
     )).slice(0, 6).map(source => source.url);
@@ -305,8 +348,8 @@ async function enrichAuthoritySourcesWithLexaraRetrieval(
     if (!enrichment?.evidence?.length) return sources;
 
     const byTarget = new Map(enrichment.evidence.filter(item => item.content?.trim())
-      .map(item => [item.target, formLookup ? officialFormEvidenceExcerpt(item.content.trim()) : item.content.trim().slice(0, courtLookup ? 3000 : 900)]));
-    return sources.map(source => ({ ...source, evidenceLevel: byTarget.has(source.url) ? 'document' : source.evidenceLevel, excerpt: formLookup
+      .map(item => [item.target, recordRelief ? recordReliefEvidenceExcerpt(item.content.trim()) : formLookup ? officialFormEvidenceExcerpt(item.content.trim()) : item.content.trim().slice(0, courtLookup ? 3000 : 900)]));
+    return sources.map(source => ({ ...source, evidenceLevel: byTarget.has(source.url) ? 'document' : source.evidenceLevel, excerpt: formLookup || recordRelief
       ? [source.excerpt, byTarget.get(source.url)].filter(Boolean).join('\n') || undefined
       : byTarget.get(source.url) || source.excerpt || undefined }));
   } catch (error) {
@@ -337,7 +380,9 @@ export async function researchLegalAuthority(
   if (!shouldResearchLegalAuthority(prompt, context)) return null;
 
   const question = clampTail(context.standaloneQuery || prompt, MAX_RESEARCH_PROMPT_CHARACTERS);
-  const courtRecordPlan = context.courtRecordPlan || planLexaraCourtRecords(question, context);
+  const reliefProfile = getRecordReliefProfile(context.recordReliefState || '');
+  if (reliefProfile) context = { ...context, preferredOfficialDomains: [...recordReliefDomains(reliefProfile), ...(context.preferredOfficialDomains || [])], allowClaudePlanning: false };
+  const courtRecordPlan = context.courtRecordPlan || (context.disableCourtRecordPlanning ? undefined : planLexaraCourtRecords(question, context));
   context = { ...context, courtRecordPlan };
   const jurisdiction = context.jurisdiction || 'jurisdiction not yet established';
   const domain = context.domainName || 'relevant legal domain';
@@ -377,7 +422,7 @@ export async function researchLegalAuthority(
         ? /\b(?:instructions?|filing requirements|local rules)\b/i.test(source.title) ? 2 : 1 : 0;
       return score(b)-score(a);
     });
-    const sources = await enrichAuthoritySourcesWithLexaraRetrieval(discoveredSources, context.signal, formLookup, Boolean(courtRecordPlan));
+    const sources = await enrichAuthoritySourcesWithLexaraRetrieval(discoveredSources, context.signal, formLookup, Boolean(courtRecordPlan), Boolean(reliefProfile));
 
     void Promise.allSettled(sources.map(source => rememberLexaraDiscoveryOutcome(
       source.url,
@@ -400,7 +445,7 @@ export async function researchLegalAuthority(
       const evidence = source.evidenceLevel ? `; ${source.recordType || 'source'} ${source.evidenceLevel}` : '';
       const label = courtRecordPlan ? '' : ` ${source.title} — ${source.url}`;
       return `${index + 1}. [${source.kind.toUpperCase()}${evidence}]${label}${excerpt}`;
-    }).join('\n')).slice(0, courtRecordPlan ? 12_000 : MAX_RESEARCH_SUMMARY_CHARACTERS);
+    }).join('\n')).slice(0, courtRecordPlan || reliefProfile ? 18_000 : MAX_RESEARCH_SUMMARY_CHARACTERS);
 
     return {
       summary,

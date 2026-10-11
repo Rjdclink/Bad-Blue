@@ -1,4 +1,5 @@
 import { callClaude, callClaudeStreaming } from '../claude';
+import { recordReliefTopic, generateRecordReliefResponse } from './RecordReliefWorkflow';
 import { CURRENT_AI_MODELS, LEGAL_AI_MODELS } from '../aiHarmonyModelRegistry';
 import type { LawType as ExpertLawType } from '../../shared/legalCounselTypes';
 import { LAW_TYPE_DATA } from '../../shared/lawTypes';
@@ -56,6 +57,7 @@ export interface LexaraConversationContext {
 }
 
 export interface LexaraConversationResult {
+  recordRelief?: boolean;
   text: string;
   jurisdiction?: string;
   mappedLawType?: ExpertLawType;
@@ -63,6 +65,7 @@ export interface LexaraConversationResult {
   backgroundOnly?: boolean;
   backgroundStatus?: 'completed' | 'partial' | 'unavailable' | 'failed' | 'clarification-required' | 'consent-required';
   backgroundDocumentContext?: string;
+  recordReliefDocumentContext?: string;
   deadline?: LegalDeadlineCalculation;
 }
 
@@ -544,6 +547,9 @@ export async function generateLexaraConversationResponse(
     .filter(message => message.role === 'user')
     .slice(-8)
     .map(message => message.content || '');
+  if (recordReliefTopic(cleanPrompt, (context.previousMessages || []).filter(message => message.role === 'user').slice(-24).map(message => message.content))) {
+    return { ...await generateRecordReliefResponse(cleanPrompt, context), mappedLawType, recordRelief: true };
+  }
   // Start semantic background/mixed-intent inference immediately so its small
   // classifier call overlaps normal jurisdiction/context preparation instead of
   // extending the legal-answer latency tail.

@@ -1,0 +1,519 @@
+{
+  "checkedAt": "2026-10-11T19:13:56.924964+00:00",
+  "scope": "All 50 states; discovery-lead reachability, not a verified rules engine",
+  "states": 50,
+  "sources": [
+    {
+      "state": "Alabama",
+      "url": "https://www.alea.gov/criminal-record-expungement",
+      "finalUrl": "https://www.alea.gov/criminal-record-expungement",
+      "status": 200,
+      "contentType": "text/html; charset=utf-8",
+      "title": "Criminal Record Expungement | Alabama Law Enforcement Agency",
+      "review": "Discovery lead checked; current rule application still requires retrieval and complete case facts"
+    },
+    {
+      "state": "Alaska",
+      "url": "https://dps.alaska.gov/statewide/background-checks/",
+      "finalUrl": "https://dps.alaska.gov/statewide/background-checks/",
+      "status": 200,
+      "contentType": "text/html; charset=UTF-8",
+      "title": "Background Checks &#8211; Alaska Department of Public Safety",
+      "review": "Discovery lead checked; current rule application still requires retrieval and complete case facts"
+    },
+    {
+      "state": "Arizona",
+      "url": "https://www.azleg.gov/ars/13/00911.htm",
+      "finalUrl": "https://www.azleg.gov/ars/13/00911.htm",
+      "status": 200,
+      "contentType": "text/html",
+      "title": "13-911 - Sealing of arrest, conviction and sentencing records; requirements; fee; appeal; definition",
+      "review": "Discovery lead checked; current rule application still requires retrieval and complete case facts"
+    },
+    {
+      "state": "Arizona",
+      "url": "https://www.azcourts.gov/selfservicecenter/Criminal-Law/Sealing-records",
+      "finalUrl": "https://www.azcourts.gov/selfservicecenter/Criminal-Law/Sealing-records",
+      "status": 200,
+      "contentType": "text/html; charset=utf-8",
+      "title": "Sealing records",
+      "review": "Discovery lead checked; current rule application still requires retrieval and complete case facts"
+    },
+    {
+      "state": "Arkansas",
+      "url": "https://dps.arkansas.gov/crime-info-support/arkansas-crime-information-center/forms/criminal-history/",
+      "finalUrl": "https://dps.arkansas.gov/crime-info-support/arkansas-crime-information-center/forms/criminal-history/",
+      "status": 200,
+      "contentType": "text/html; charset=UTF-8",
+      "title": "Criminal History - Arkansas Department of Public Safety",
+      "review": "Discovery lead checked; current rule application still requires retrieval and complete case facts"
+    },
+    {
+      "state": "California",
+      "url": "https://selfhelp.courts.ca.gov/clean-your-record",
+      "finalUrl": "https://selfhelp.courts.ca.gov/clean-your-record",
+      "status": 200,
+      "contentType": "text/html; charset=UTF-8",
+      "title": "Clean your record | California Courts | Self Help Guide",
+      "review": "Discovery lead checked; current rule application still requires retrieval and complete case facts"
+    },
+    {
+      "state": "Colorado",
+      "url": "https://www.coloradojudicial.gov/self-help/seal-my-case",
+      "finalUrl": "https://www.coloradojudicial.gov/self-help/seal-my-case",
+      "status": 200,
+      "contentType": "text/html; charset=UTF-8",
+      "title": "Seal My Case | Colorado Judicial Branch",
+      "review": "Discovery lead checked; current rule application still requires retrieval and complete case facts"
+    },
+    {
+      "state": "Connecticut",
+      "url": "https://portal.ct.gov/cleanslate/clean-slate-eligibility",
+      "finalUrl": "https://portal.ct.gov/cleanslate/clean-slate-eligibility",
+      "status": 200,
+      "contentType": "text/html; charset=utf-8",
+      "title": "Are You Eligible? Clean Slate Connecticut",
+      "review": "Discovery lead checked; current rule application still requires retrieval and complete case facts"
+    },
+    {
+      "state": "Delaware",
+      "url": "https://delcode.delaware.gov/title11/c043/sc07/",
+      "finalUrl": "https://delcode.delaware.gov/title11/c043/sc07/",
+      "status": 200,
+      "contentType": "text/html",
+      "title": "Delaware Code Online",
+      "review": "Discovery lead checked; current rule application still requires retrieval and complete case facts"
+    },
+    {
+      "state": "Delaware",
+      "url": "https://courts.delaware.gov/help/expungements.aspx",
+      "finalUrl": "https://courts.delaware.gov/help/expungements.aspx",
+      "status": 200,
+      "contentType": "text/html; charset=utf-8",
+      "title": "Delaware State Courts Expungement/Pardon of Criminal Record - Help &amp; Support - Delaware Courts - State of Delaware",
+      "review": "Discovery lead checked; current rule application still requires retrieval and complete case facts"
+    },
+    {
+      "state": "Florida",
+      "url": "https://www.fdle.state.fl.us/Seal-and-Expunge-Process/Certificate-of-Eligibility-Instructions",
+      "finalUrl": "https://www.fdle.state.fl.us/Seal-and-Expunge-Process/Certificate-of-Eligibility-Instructions",
+      "status": 200,
+      "contentType": "text/html; charset=utf-8",
+      "title": "FDLE - Applying for a Certificate of Eligibility for Court-Ordered Sealing or Expungement",
+      "review": "Discovery lead checked; current rule application still requires retrieval and complete case facts"
+    },
+    {
+      "state": "Georgia",
+      "url": "https://georgia.gov/file-request-expunge-criminal-record",
+      "finalUrl": "https://georgia.gov/file-request-expunge-criminal-record",
+      "status": 200,
+      "contentType": "text/html; charset=UTF-8",
+      "title": "File Request to Expunge a Criminal Record | Georgia.gov",
+      "review": "Discovery lead checked; current rule application still requires retrieval and complete case facts"
+    },
+    {
+      "state": "Hawaii",
+      "url": "https://ag.hawaii.gov/HCJDC/EXPUNGEMENTS/",
+      "finalUrl": "https://ag.hawaii.gov/HCJDC/EXPUNGEMENTS/",
+      "status": 200,
+      "contentType": "text/html; charset=UTF-8",
+      "title": "Expungements &#8211; Hawaii Criminal Justice Data Center",
+      "review": "Discovery lead checked; current rule application still requires retrieval and complete case facts"
+    },
+    {
+      "state": "Idaho",
+      "url": "https://legislature.idaho.gov/statutesrules/idstat/Title67/T67CH30/SECT67-3004/",
+      "finalUrl": "https://legislature.idaho.gov/statutesrules/idstat/Title67/T67CH30/SECT67-3004/",
+      "status": 200,
+      "contentType": "text/html; charset=UTF-8",
+      "title": "Section 67-3004 &#8211; Idaho State Legislature",
+      "review": "Discovery lead checked; current rule application still requires retrieval and complete case facts"
+    },
+    {
+      "state": "Illinois",
+      "url": "https://www.illinoiscourts.gov/forms/approved-forms/forms-approved-forms-circuit-court/expungement-sealing/",
+      "finalUrl": "https://www.illinoiscourts.gov/forms/approved-forms/forms-approved-forms-circuit-court/expungement-sealing/",
+      "status": 200,
+      "contentType": "text/html; charset=utf-8",
+      "title": "Expungement and Sealing | Office of the Illinois Courts",
+      "review": "Discovery lead checked; current rule application still requires retrieval and complete case facts"
+    },
+    {
+      "state": "Illinois",
+      "url": "https://osad.illinois.gov/expungement.html",
+      "finalUrl": "https://osad.illinois.gov/expungement.html",
+      "status": 200,
+      "contentType": "text/html;charset=utf-8",
+      "title": "Expungement &amp; Sealing",
+      "review": "Discovery lead checked; current rule application still requires retrieval and complete case facts"
+    },
+    {
+      "state": "Indiana",
+      "url": "https://www.in.gov/isp/criminal-history-services/expunge-criminal-history/",
+      "finalUrl": "https://www.in.gov/isp/criminal-history-services/expunge-criminal-history/",
+      "status": 200,
+      "contentType": "text/html;charset=UTF-8",
+      "title": "ISP: Expunge Criminal History",
+      "review": "Discovery lead checked; current rule application still requires retrieval and complete case facts"
+    },
+    {
+      "state": "Iowa",
+      "url": "https://www.legis.iowa.gov/docs/code/901C.pdf",
+      "finalUrl": "https://www.legis.iowa.gov/docs/code/901C.pdf",
+      "status": 200,
+      "contentType": "application/pdf",
+      "title": "PDF or untitled official resource",
+      "review": "Discovery lead checked; current rule application still requires retrieval and complete case facts"
+    },
+    {
+      "state": "Kansas",
+      "url": "https://www.kslegislature.gov/b2025_26/laws/021_000_0000_chapter/021_066_0000_article/021_066_0014_section/021_066_0014_k",
+      "finalUrl": "https://www.kslegislature.gov/b2025_26/laws/021_000_0000_chapter/021_066_0000_article/021_066_0014_section/021_066_0014_k",
+      "status": 200,
+      "contentType": "text/html; charset=utf-8",
+      "title": "Kansas Statutes",
+      "review": "Discovery lead checked; current rule application still requires retrieval and complete case facts"
+    },
+    {
+      "state": "Kentucky",
+      "url": "https://www.kycourts.gov/AOC/Information-and-Technology/Pages/Expungement.aspx",
+      "status": "unavailable",
+      "detail": "HTTP Error 403: Forbidden",
+      "review": "Runtime must broaden official-source search; never infer eligibility or missing form from this failure"
+    },
+    {
+      "state": "Louisiana",
+      "url": "https://lsp.org/about/leadershipsections/support/bcii/expungements/",
+      "finalUrl": "https://lsp.org/about/leadershipsections/support/bcii/expungements/",
+      "status": 200,
+      "contentType": "text/html; charset=utf-8",
+      "title": "Expungements - Louisiana State Police",
+      "review": "Discovery lead checked; current rule application still requires retrieval and complete case facts"
+    },
+    {
+      "state": "Maine",
+      "url": "https://www.courts.maine.gov/help/criminal/sealing.html",
+      "finalUrl": "https://www.courts.maine.gov/help/criminal/sealing.html",
+      "status": 200,
+      "contentType": "text/html",
+      "title": "Sealing Your Criminal Record: State of Maine Judicial Branch",
+      "review": "Discovery lead checked; current rule application still requires retrieval and complete case facts"
+    },
+    {
+      "state": "Maryland",
+      "url": "https://www.mdcourts.gov/legalhelp/expungement",
+      "finalUrl": "https://www.mdcourts.gov/legalhelp/expungement",
+      "status": 200,
+      "contentType": "text/html; charset=UTF-8",
+      "title": "Expungement (Adult) | Maryland Courts",
+      "review": "Discovery lead checked; current rule application still requires retrieval and complete case facts"
+    },
+    {
+      "state": "Massachusetts",
+      "url": "https://www.mass.gov/info-details/find-out-if-you-can-expunge-your-criminal-record",
+      "finalUrl": "https://www.mass.gov/info-details/find-out-if-you-can-expunge-your-criminal-record",
+      "status": 200,
+      "contentType": "text/html; charset=UTF-8",
+      "title": "Find out if you can expunge your criminal record | Mass.gov",
+      "review": "Discovery lead checked; current rule application still requires retrieval and complete case facts"
+    },
+    {
+      "state": "Michigan",
+      "url": "https://www.michigan.gov/ag/initiatives/expungement-assistance",
+      "finalUrl": "https://www.michigan.gov/ag/initiatives/expungement-assistance",
+      "status": 200,
+      "contentType": "text/html; charset=utf-8",
+      "title": "Attorney General: Expungement Assistance",
+      "review": "Discovery lead checked; current rule application still requires retrieval and complete case facts"
+    },
+    {
+      "state": "Minnesota",
+      "url": "https://mncourts.gov/help-topics/criminal-expungement",
+      "finalUrl": "https://mncourts.gov/help-topics/criminal-expungement",
+      "status": 200,
+      "contentType": "text/html; charset=utf-8",
+      "title": "Criminal Expungement",
+      "review": "Discovery lead checked; current rule application still requires retrieval and complete case facts"
+    },
+    {
+      "state": "Minnesota",
+      "url": "https://www.revisor.mn.gov/statutes/cite/609A.02",
+      "finalUrl": "https://www.revisor.mn.gov/statutes/cite/609A.02",
+      "status": 200,
+      "contentType": "text/html; charset=utf-8",
+      "title": "Sec. 609A.02 MN Statutes",
+      "review": "Discovery lead checked; current rule application still requires retrieval and complete case facts"
+    },
+    {
+      "state": "Mississippi",
+      "url": "https://msdeltada.com/expungement/",
+      "finalUrl": "https://msdeltada.com/expungement/",
+      "status": 200,
+      "contentType": "text/html; charset=UTF-8",
+      "title": "Expungement - Office of the District Attorney | 4th District",
+      "review": "Discovery lead checked; current rule application still requires retrieval and complete case facts"
+    },
+    {
+      "state": "Mississippi",
+      "url": "https://courts.ms.gov/",
+      "status": "unavailable",
+      "detail": "HTTP Error 500: Internal Server Error",
+      "review": "Runtime must broaden official-source search; never infer eligibility or missing form from this failure"
+    },
+    {
+      "state": "Missouri",
+      "url": "https://revisor.mo.gov/main/OneSection.aspx?section=610.140",
+      "status": "unavailable",
+      "detail": "<urlopen error Tunnel connection failed: 403 Forbidden>",
+      "review": "Runtime must broaden official-source search; never infer eligibility or missing form from this failure"
+    },
+    {
+      "state": "Montana",
+      "url": "https://mca.legmt.gov/bills/mca/title_0460/chapter_0180/part_0110/section_0040/0460-0180-0110-0040.html",
+      "finalUrl": "https://mca.legmt.gov/bills/mca/title_0460/chapter_0180/part_0110/section_0040/0460-0180-0110-0040.html",
+      "status": 200,
+      "contentType": "text/html",
+      "title": "46-18-1104. Eligibility for misdemeanor expungement, MCA",
+      "review": "Discovery lead checked; current rule application still requires retrieval and complete case facts"
+    },
+    {
+      "state": "Montana",
+      "url": "https://www.courts.mt.gov/Forms/misexpconpage",
+      "status": "unavailable",
+      "detail": "HTTP Error 502: Bad Gateway",
+      "review": "Runtime must broaden official-source search; never infer eligibility or missing form from this failure"
+    },
+    {
+      "state": "Nebraska",
+      "url": "https://nebraskajudicial.gov/self-help/criminal-record-rehabilitation/set-aside-criminal-conviction",
+      "finalUrl": "https://nebraskajudicial.gov/self-help/criminal-record-rehabilitation/set-aside-criminal-conviction",
+      "status": 200,
+      "contentType": "text/html; charset=UTF-8",
+      "title": "Set-Aside of a Criminal Conviction | Nebraska Judicial Branch",
+      "review": "Discovery lead checked; current rule application still requires retrieval and complete case facts"
+    },
+    {
+      "state": "Nebraska",
+      "url": "https://supremecourt.nebraska.gov/self-help/criminal-record-rehabilitation/adult-record-sealing",
+      "finalUrl": "https://nebraskajudicial.gov/self-help/criminal-record-rehabilitation/adult-record-sealing",
+      "status": 200,
+      "contentType": "text/html; charset=UTF-8",
+      "title": "Adult Record Sealing | Nebraska Judicial Branch",
+      "review": "Discovery lead checked; current rule application still requires retrieval and complete case facts"
+    },
+    {
+      "state": "Nevada",
+      "url": "https://www.leg.state.nv.us/nrs/NRS-179.html",
+      "finalUrl": "https://www.leg.state.nv.us/nrs/NRS-179.html",
+      "status": 200,
+      "contentType": "text/html",
+      "title": "NRS: CHAPTER 179 - SPECIAL PROCEEDINGS OF A CRIMINAL NATURE; SEALING RECORDS OF CRIMINAL PROCEEDINGS; REWARDS; FORMS",
+      "review": "Discovery lead checked; current rule application still requires retrieval and complete case facts"
+    },
+    {
+      "state": "New Hampshire",
+      "url": "https://gc.nh.gov/rsa/html/lxii/651/651-5.htm",
+      "status": "unavailable",
+      "detail": "HTTP Error 502: Bad Gateway",
+      "review": "Runtime must broaden official-source search; never infer eligibility or missing form from this failure"
+    },
+    {
+      "state": "New Jersey",
+      "url": "https://www.njcourts.gov/self-help/expunge-record",
+      "status": "unavailable",
+      "detail": "IncompleteRead(64886 bytes read)",
+      "review": "Runtime must broaden official-source search; never infer eligibility or missing form from this failure"
+    },
+    {
+      "state": "New Mexico",
+      "url": "https://nmcourts.gov/court-administration/office-of-general-counsel/expungement/",
+      "status": "unavailable",
+      "detail": "<urlopen error [Errno 111] Connection refused>",
+      "review": "Runtime must broaden official-source search; never infer eligibility or missing form from this failure"
+    },
+    {
+      "state": "New York",
+      "url": "https://www.nysenate.gov/legislation/laws/CPL/160.57",
+      "finalUrl": "https://www.nysenate.gov/legislation/laws/CPL/160.57",
+      "status": 200,
+      "contentType": "text/html; charset=utf-8",
+      "title": "NYS Open Legislation | NYSenate.gov",
+      "review": "Discovery lead checked; current rule application still requires retrieval and complete case facts"
+    },
+    {
+      "state": "New York",
+      "url": "https://www.nysenate.gov/legislation/laws/CPL/160.59",
+      "status": "unavailable",
+      "detail": "HTTP Error 502: Bad Gateway",
+      "review": "Runtime must broaden official-source search; never infer eligibility or missing form from this failure"
+    },
+    {
+      "state": "North Carolina",
+      "url": "https://www.nccourts.gov/help-topics/court-records/expunctions",
+      "status": "unavailable",
+      "detail": "<urlopen error Tunnel connection failed: 403 Forbidden>",
+      "review": "Runtime must broaden official-source search; never infer eligibility or missing form from this failure"
+    },
+    {
+      "state": "North Dakota",
+      "url": "https://ndlegis.gov/prod/cencode/t12c60-1.pdf",
+      "status": "unavailable",
+      "detail": "<urlopen error Tunnel connection failed: 403 Forbidden>",
+      "review": "Runtime must broaden official-source search; never infer eligibility or missing form from this failure"
+    },
+    {
+      "state": "Ohio",
+      "url": "https://codes.ohio.gov/ohio-revised-code/chapter-2953",
+      "status": "unavailable",
+      "detail": "<urlopen error Tunnel connection failed: 403 Forbidden>",
+      "review": "Runtime must broaden official-source search; never infer eligibility or missing form from this failure"
+    },
+    {
+      "state": "Oklahoma",
+      "url": "https://www.oklegislature.gov/OK_Statutes/CompleteTitles/os22.pdf",
+      "status": "unavailable",
+      "detail": "<urlopen error Tunnel connection failed: 403 Forbidden>",
+      "review": "Runtime must broaden official-source search; never infer eligibility or missing form from this failure"
+    },
+    {
+      "state": "Oklahoma",
+      "url": "https://www.oklahoma.gov/osbi/services/information-services-division/disposition-services-unit/criminal-history-record-expungement.html",
+      "status": "unavailable",
+      "detail": "<urlopen error Tunnel connection failed: 403 Forbidden>",
+      "review": "Runtime must broaden official-source search; never infer eligibility or missing form from this failure"
+    },
+    {
+      "state": "Oregon",
+      "url": "https://www.oregonlegislature.gov/bills_laws/ors/ors137.html",
+      "status": "unavailable",
+      "detail": "<urlopen error Tunnel connection failed: 403 Forbidden>",
+      "review": "Runtime must broaden official-source search; never infer eligibility or missing form from this failure"
+    },
+    {
+      "state": "Pennsylvania",
+      "url": "https://www.legis.state.pa.us/WU01/LI/LI/CT/HTM/18/00.091..HTM",
+      "status": "unavailable",
+      "detail": "<urlopen error Tunnel connection failed: 403 Forbidden>",
+      "review": "Runtime must broaden official-source search; never infer eligibility or missing form from this failure"
+    },
+    {
+      "state": "Rhode Island",
+      "url": "https://riag.ri.gov/i-want/expunge-my-criminal-record-under-rhode-island-law",
+      "status": "unavailable",
+      "detail": "<urlopen error Tunnel connection failed: 403 Forbidden>",
+      "review": "Runtime must broaden official-source search; never infer eligibility or missing form from this failure"
+    },
+    {
+      "state": "South Carolina",
+      "url": "https://www.scstatehouse.gov/code/t22c005.php",
+      "status": "unavailable",
+      "detail": "<urlopen error Tunnel connection failed: 403 Forbidden>",
+      "review": "Runtime must broaden official-source search; never infer eligibility or missing form from this failure"
+    },
+    {
+      "state": "South Dakota",
+      "url": "https://ujs.sd.gov/self-help/civil-law-help/expungement/",
+      "status": "unavailable",
+      "detail": "<urlopen error Tunnel connection failed: 403 Forbidden>",
+      "review": "Runtime must broaden official-source search; never infer eligibility or missing form from this failure"
+    },
+    {
+      "state": "Tennessee",
+      "url": "https://www.tncourts.gov/node/8625292",
+      "status": "unavailable",
+      "detail": "<urlopen error Tunnel connection failed: 403 Forbidden>",
+      "review": "Runtime must broaden official-source search; never infer eligibility or missing form from this failure"
+    },
+    {
+      "state": "Tennessee",
+      "url": "https://www.tn.gov/tbi/divisions/cjis-division/diversions-expungements.html",
+      "status": "unavailable",
+      "detail": "<urlopen error Tunnel connection failed: 403 Forbidden>",
+      "review": "Runtime must broaden official-source search; never infer eligibility or missing form from this failure"
+    },
+    {
+      "state": "Texas",
+      "url": "https://tcss.legis.texas.gov/resources/CR/htm/CR.55A.htm",
+      "status": "unavailable",
+      "detail": "<urlopen error Tunnel connection failed: 403 Forbidden>",
+      "review": "Runtime must broaden official-source search; never infer eligibility or missing form from this failure"
+    },
+    {
+      "state": "Utah",
+      "url": "https://bci.utah.gov/expungements/",
+      "status": "unavailable",
+      "detail": "<urlopen error Tunnel connection failed: 403 Forbidden>",
+      "review": "Runtime must broaden official-source search; never infer eligibility or missing form from this failure"
+    },
+    {
+      "state": "Utah",
+      "url": "https://legacy.utcourts.gov/rules/view.php?rule=42&type=urcrp",
+      "status": "unavailable",
+      "detail": "<urlopen error Tunnel connection failed: 403 Forbidden>",
+      "review": "Runtime must broaden official-source search; never infer eligibility or missing form from this failure"
+    },
+    {
+      "state": "Vermont",
+      "url": "https://legislature.vermont.gov/statutes/section/13/230/07602",
+      "status": "unavailable",
+      "detail": "<urlopen error Tunnel connection failed: 403 Forbidden>",
+      "review": "Runtime must broaden official-source search; never infer eligibility or missing form from this failure"
+    },
+    {
+      "state": "Vermont",
+      "url": "https://www.vtcourts.gov/criminal/expungement",
+      "status": "unavailable",
+      "detail": "<urlopen error Tunnel connection failed: 403 Forbidden>",
+      "review": "Runtime must broaden official-source search; never infer eligibility or missing form from this failure"
+    },
+    {
+      "state": "Virginia",
+      "url": "https://vscc.virginia.gov/sealingfaqs.asp",
+      "status": "unavailable",
+      "detail": "<urlopen error Tunnel connection failed: 403 Forbidden>",
+      "review": "Runtime must broaden official-source search; never infer eligibility or missing form from this failure"
+    },
+    {
+      "state": "Virginia",
+      "url": "https://vacourts.gov/forms/circuit/crim_sealing",
+      "status": "unavailable",
+      "detail": "<urlopen error Tunnel connection failed: 403 Forbidden>",
+      "review": "Runtime must broaden official-source search; never infer eligibility or missing form from this failure"
+    },
+    {
+      "state": "Washington",
+      "url": "https://customerservices.courts.wa.gov/support/solutions/articles/72000577198-sealing-expunging-and-vacating-cases",
+      "status": "unavailable",
+      "detail": "<urlopen error Tunnel connection failed: 403 Forbidden>",
+      "review": "Runtime must broaden official-source search; never infer eligibility or missing form from this failure"
+    },
+    {
+      "state": "West Virginia",
+      "url": "https://code.wvlegislature.gov/61-11-26/",
+      "status": "unavailable",
+      "detail": "<urlopen error Tunnel connection failed: 403 Forbidden>",
+      "review": "Runtime must broaden official-source search; never infer eligibility or missing form from this failure"
+    },
+    {
+      "state": "Wisconsin",
+      "url": "https://docs.legis.wisconsin.gov/statutes/statutes/973/015",
+      "status": "unavailable",
+      "detail": "<urlopen error Tunnel connection failed: 403 Forbidden>",
+      "review": "Runtime must broaden official-source search; never infer eligibility or missing form from this failure"
+    },
+    {
+      "state": "Wyoming",
+      "url": "https://www.wyocourts.gov/legal-help-by-topic/expungements/",
+      "status": "unavailable",
+      "detail": "<urlopen error Tunnel connection failed: 403 Forbidden>",
+      "review": "Runtime must broaden official-source search; never infer eligibility or missing form from this failure"
+    },
+    {
+      "state": "Wyoming",
+      "url": "https://wyoleg.gov/statutes/compress/title07.pdf",
+      "status": "unavailable",
+      "detail": "<urlopen error Tunnel connection failed: 403 Forbidden>",
+      "review": "Runtime must broaden official-source search; never infer eligibility or missing form from this failure"
+    }
+  ]
+}

@@ -1415,6 +1415,10 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       if (verifiedBackground && !backgroundEvidenceRef.current.facts.includes(verifiedBackground)) {
         backgroundEvidenceRef.current.facts = [...backgroundEvidenceRef.current.facts, verifiedBackground].slice(-3);
       }
+      const reliefEvidence = typeof data?.recordReliefDocumentContext === 'string' ? data.recordReliefDocumentContext.trim().slice(0, 9_000) : '';
+      if (reliefEvidence && !backgroundEvidenceRef.current.facts.includes(reliefEvidence)) {
+        backgroundEvidenceRef.current.facts = [...backgroundEvidenceRef.current.facts, reliefEvidence].slice(-3);
+      }
       const priorPendingDocument = pendingDocument;
       const documentIntentRequested = data?.documentIntent?.requested === true;
       const documentFollowup = /\b(?:document|draft|form|letter|complaint|petition|motion|affidavit|declaration|pdf|docx|edit|revise|change|paragraph|section|signature|download|export|file|filing)\b/i.test(message)
@@ -1435,7 +1439,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
             .join('\n\n')
             .slice(backgroundDocumentContext ? -20_000 : -30_000);
           const facts = backgroundDocumentContext
-            ? `${conversationFacts}\n\nAPPLICATION-SUPPLIED LEXARA BACKGROUND EVIDENCE (DIRECT-SOURCE, SAME PERSON/MATTER ONLY, NOT AUTOMATICALLY ADMITTED FACTS):\n${backgroundDocumentContext}`
+            ? `${conversationFacts}\n\nAPPLICATION-SUPPLIED LEXARA BACKGROUND EVIDENCE (FOLLOW EACH ITEM’S IDENTITY/CASE MATCH STATUS; CANDIDATES ARE NOT VERIFIED USER FACTS; NOT AUTOMATICALLY ADMITTED):\n${backgroundDocumentContext}`
             : conversationFacts;
           const pendingTitle = String(data.documentIntent.documentType || 'Legal Document');
           // A newly requested document replaces the prior document task UI.
@@ -1775,8 +1779,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
           backgroundEvidenceRef.current = {
             sessionId: sessionIdRef.current,
             facts: saved.turns.map((turn: any) =>
-              typeof turn?.context?.backgroundDocumentContext === 'string'
-                ? turn.context.backgroundDocumentContext.trim().slice(0, 9_000) : '').filter(Boolean).slice(-3),
+              [turn?.context?.backgroundDocumentContext, turn?.context?.recordReliefDocumentContext].filter(value => typeof value === 'string').join('\n\n').trim().slice(0, 9_000)).filter(Boolean).slice(-3),
           };
           const latestContext = saved.turns[saved.turns.length - 1]?.context;
           setJurisdiction(typeof latestContext?.jurisdiction === 'string'
@@ -1856,10 +1859,10 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         }),
       });
       const data = await generated.json().catch(() => ({}));
-      if (generated.status === 422 && data?.needsCourtJurisdiction === true) {
+      if (generated.status === 422 && (data?.needsCourtJurisdiction === true || Array.isArray(data?.missingFields))) {
         const missing = Array.isArray(data?.missingFields) ? data.missingFields : ['courtOrCounty'];
         setPendingDocument(previous => previous ? { ...previous, missingFields: missing } : previous);
-        const question = String(data?.question || 'Which court, agency, or county will receive this filing?');
+        const question = String(data?.question || data?.error || 'Which court, agency, or county will receive this filing?');
         appendMessage('lexara', question);
         void speakLexara(question, generationRef.current).catch(() => undefined);
         return;

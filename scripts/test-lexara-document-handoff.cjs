@@ -57,6 +57,7 @@ async function run(outputs) {
     '../lexara/FlatOfficialFormOverlay': { overlayFlatOfficialPdf: async () => Buffer.from('pdf'), validateFlatFormLayout: layout => layout },
     '../lexara/FlatFormLayoutDetector': { detectFlatFormLayout: async () => ({ anchors: [], verified: false, method: 'unavailable' }) },
     '../logger': { createLogger: () => ({ info() {}, warn: (...args) => warnings.push(args) }) },
+    '../lexara/RecordReliefWorkflow': { isRecordReliefRequest: () => false, recordReliefTopic: () => false },
     '../lexara/legalDocumentRegistry': registry,
   });
   mod.setupConsultationRoutes({ get() {}, post(url, ...handlers) { routes.set(url, handlers.at(-1)); } });
