@@ -42,6 +42,13 @@ assert.equal(chooseSpectraPublicRetrievalUrls([
   record('https://a.example.org/one', 'A'),
   record('https://b.example.org/two', 'B'),
 ], 2).length, 2, 'supplement remaining slots with other pages if needed');
+const sourcePages = chooseSpectraPublicRetrievalUrls([
+  ...Array.from({ length: 8 }, (_, index) => record(`https://source${index}.example.org/page`, 'generic', 'high')),
+  record('https://www.whitepages.com/name/Example-Person', 'directory', 'low'),
+  record('https://www.instagram.com/example/', 'profile', 'low'),
+], 8);
+assert.ok(sourcePages.includes('https://www.whitepages.com/name/Example-Person'));
+assert.ok(sourcePages.includes('https://www.instagram.com/example/'));
 
 const irrelevant = [
   record('https://one.example.org/news', 'Local civic news with no named subject city.'),
