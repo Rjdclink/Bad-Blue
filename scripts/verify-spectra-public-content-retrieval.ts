@@ -34,6 +34,16 @@ assert.ok(!fallback.textExcerpt?.includes('Footer irrelevant archive'),
 assert.equal(fallback.publishedAt, undefined,
   'page retrieval without a publication date remains undated');
 
+const directory = htmlEvidence(
+  '<html><body><script type="application/ld+json">'
+  + '{"@type":"Person","name":"Unrelated Person","address":"Unrelated private address"}'
+  + '</script><main><p>Seven separate people share this surname.</p></main></body></html>',
+  'https://directory.example.org/list',
+);
+assert.ok(directory.textExcerpt?.includes('Seven separate people'));
+assert.ok(!directory.textExcerpt?.includes('Unrelated private address'),
+  'embedded JSON-LD for unrelated directory entries must not pollute visible page excerpts');
+
 const proseWithNoMain = htmlEvidence(
   '<html><body><article><h1>Public library address</h1>'
   + '<p>Seattle Central Library is at 1000 Fourth Ave, Seattle, WA 98104.</p>'
