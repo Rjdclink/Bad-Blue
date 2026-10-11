@@ -119,9 +119,13 @@ export async function resolveLexaraResearchDecisionSemantic(
   previousUserTurns: string[] = [],
   signal?: AbortSignal,
   conversationContext?: string,
+  courtRecordIdentified = false,
 ): Promise<LexaraResearchDecision> {
   const text = String(prompt || '').trim();
   const deterministic = decideLexaraResearchNeed(text, previousUserTurns);
+  // An explicit case identifier supplies the record objective without a classifier.
+  if (courtRecordIdentified && ['court-record', 'none'].includes(deterministic.requestedFact)
+    && !hasMultipleLexaraBackgroundSubjectCandidates(text)) return deterministic;
   const deterministicFactual = deterministic.intent === 'factual' || deterministic.intent === 'mixed';
   const needsSubjectReview = deterministicFactual && (
     deterministicSubjectNeedsSemanticReview(deterministic.subject)

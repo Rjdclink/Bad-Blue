@@ -42,6 +42,19 @@ export interface ClaudeOptions {
   providerPolicy?: string;
   effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max';
   cacheSystemPrompt?: boolean;
+  cacheSystemPromptPrefix?: string;
+}
+
+/** Cache stable instructions while retaining fresh evidence outside the breakpoint. */
+export function buildClaudeSystemBlocks(systemText: string, enabled: boolean, prefix?: string) {
+  if (!enabled) return systemText;
+  if (prefix !== undefined && (prefix.length < 2_048 || !systemText.startsWith(prefix))) return systemText;
+  const cached = prefix ?? systemText;
+  const remainder = systemText.slice(cached.length);
+  return [
+    { type: 'text', text: cached, cache_control: { type: 'ephemeral' } } as const,
+    ...(remainder ? [{ type: 'text' as const, text: remainder }] : []),
+  ];
 }
 
 export interface ClaudeStreamingOptions extends ClaudeOptions {
@@ -107,9 +120,7 @@ export async function callClaude(
           ? { temperature: options.temperature }
           : {}),
         ...(retryEffort ? { output_config: { effort: retryEffort } } : {}),
-        system: cacheSystemPrompt
-          ? [{ type: 'text', text: systemText, cache_control: { type: 'ephemeral' } }]
-          : systemText,
+        system: buildClaudeSystemBlocks(systemText, cacheSystemPrompt, options.cacheSystemPromptPrefix),
         messages: [
           {
             role: 'user',
@@ -506,9 +517,7 @@ export async function callClaudeStreaming(
         ? { temperature: options.temperature }
         : {}),
       ...(effectiveEffort ? { output_config: { effort: effectiveEffort } } : {}),
-      system: cacheSystemPrompt
-        ? [{ type: 'text', text: systemText, cache_control: { type: 'ephemeral' } }]
-        : systemText,
+      system: buildClaudeSystemBlocks(systemText, cacheSystemPrompt, options.cacheSystemPromptPrefix),
       messages: [{ role: 'user', content: prompt }],
     } as any, {
       signal: options.signal,
