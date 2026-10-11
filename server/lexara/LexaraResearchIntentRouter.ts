@@ -103,6 +103,8 @@ const PERSONAL_LEGAL_PROCEDURE_PATTERN = /\b(?:how\s+(?:do|can|should|would)\s+(
 export function isLexaraLegalAuthorityIntent(text: string): boolean {
   const value = String(text || '').trim();
   return CASE_CAPTION_PATTERN.test(value) || LEGAL_AUTHORITY_INTENT_PATTERN.test(value)
+    || (/\b(?:official\s+(?:source|link)|small\s+claims\s+(?:dollar\s+)?limit)\b/i.test(value)
+      && /\b(?:code|statute|court|legal|law|small\s+claims)\b/i.test(value))
     || (/\bforms?\b/i.test(value) && /\b(?:official|court|claims?|filing|local|required|petition)\b/i.test(value))
     || PERSONAL_LEGAL_PROCEDURE_PATTERN.test(value) || LOCAL_REGULATORY_LEGAL_PATTERN.test(value);
 }

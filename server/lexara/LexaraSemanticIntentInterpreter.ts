@@ -123,6 +123,10 @@ export async function resolveLexaraResearchDecisionSemantic(
 ): Promise<LexaraResearchDecision> {
   const text = String(prompt || '').trim();
   const deterministic = decideLexaraResearchNeed(text, previousUserTurns);
+  // A statute/source request already has a legal research objective. Reclassifying
+  // its code title as a person/entity triggers an unrelated background search.
+  if (deterministic.intent === 'legal' && deterministic.requestedFact === 'none'
+    && /\b(?:code\s+(?:section|chapter)|statute|official\s+(?:source|link))\b/i.test(text)) return deterministic;
   // An explicit case identifier supplies the record objective without a classifier.
   const explicitDocket = /\b(?:\d{1,2}:)?\d{2,4}-(?:cv|cr|bk|ap|mc|civ)-\d{2,7}\b/i.test(text);
   if (courtRecordIdentified && ['court-record', 'none'].includes(deterministic.requestedFact)

@@ -54,16 +54,22 @@ interface ConversationMessage {
 const NON_PERSON_SPECTRA_TARGET_RE = /^(?:(?:the|this|that|a|an|my|your)\s+)?(?:document|form|law|statute|case|court|hearing|website|page|button|map|file|letter|motion|complaint|petition|contract|calendar|(?:filing\s+)?deadline|answer|response|evidence|photo|video|address|property|vehicle|car|truck|business|company|organization|phone|device)(?:\b|$)/i;
 
 function spectraTargetFromPrompt(value: string): string | null {
-  const normalized = value.replace(/\s+/g, ' ').trim();
-  const match = normalized.match(/^(?:please\s+)?(?:show\s+me|where\s+is|where's)\s+(.+?)[?.!]*$/i);
+  const normalized = value.replace(/[’]/g, "'").replace(/\s+/g, ' ').trim();
+  // Recognize ordinary location requests locally so offering the map never
+  // waits for research or adds an AI call. Keep legal/document requests in chat.
+  const request = normalized.replace(/^(?:(?:hey\s+)?lexara[,!:]?\s+|please\s+|(?:can|could|would|will)\s+you\s+(?:please\s+)?|(?:help\s+me|i\s+(?:want|need|would\s+like)\s+(?:you\s+)?to|i(?:'m|\s+am)\s+trying\s+to)\s+)+/i, '');
+  const match = request.match(/^(?:show\s+me(?:\s+(?:where|the\s+location\s+of))?|where\s+(?:is|are)|where's|(?:find|figure)\s+out\s+where|(?:tell\s+me|do\s+you\s+know|know)\s+where(?:\s+(?:is|are))?|where\s+can\s+i\s+find|(?:find|locate|look\s+for|search\s+for)|(?:what\s+is|what's)\s+the\s+(?:location|whereabouts)\s+of)\s+(.+?)[?.!]*$/i);
   const target = match?.[1]?.trim()
+    .replace(/^(?:is|are)\s+/i, '')
     .split(/[,;]|\s+(?:(?:my|his|her|their)\s+)?(?:email|phone|mobile|cell)\b/i)[0]
+    .replace(/\s+(?:is|are)(?:\s+(?:located|living|staying|now|currently|at))?\s*[?.!]*$/i, '')
     .replace(/[?.!]+$/g, '').trim() || '';
   if (target.length < 2 || target.length > 500) return null;
   // A state/county prefix can precede the artifact name. These are legal
   // requests even when they start with the hidden location-command wording.
   if (/\b(?:official|court|local|required|prescribed|mandatory|blank|template|legal|small\s+claims|money\s+judgment)\b[\s\S]*\b(?:forms?|petition|motion|complaint|cover\s+sheet)\b|\b(?:form\s+(?=[A-Z0-9.:-]*\d)[A-Z0-9.:-]+|case[- ]assignment|foia)\b/i.test(target)) return null;
   if (NON_PERSON_SPECTRA_TARGET_RE.test(target)) return null;
+  if (/^(?:out\b|(?:a|an|the)\s+(?:lawyer|attorney|legal\s+aid)\b)|\b(?:records?|forms?|statutes?|laws?|case\s+law|legal\s+rights?|court\s+filings?|dockets?|documents?|expungement|eligible|eligibility)\b/i.test(target)) return null;
   return target;
 }
 
@@ -1086,7 +1092,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     userSpeechObservedRef.current = true;
     clearVoiceTurnBuffer();
 
-    // Hidden location commands are navigation, so their launch control must
+    // Person-location requests are navigation, so their launch control must
     // not wait for a paid legal answer or a failing research request.
     if (spectraTarget) {
       const queuedMessageId = currentPreRenderedTurnIdRef.current;
