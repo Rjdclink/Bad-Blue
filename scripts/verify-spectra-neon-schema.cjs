@@ -31,7 +31,7 @@ function fixture({ alreadyPresent = false, schema = 'public', fail = false, veri
       queries.push({ sql, values });
       if (sql.startsWith('SELECT count(*)')) {
         countQueries++;
-        return { rows: [{ table_count: alreadyPresent || (countQueries > 1 && verified) ? 5 : 0 }] };
+        return { rows: [{ table_count: alreadyPresent || (countQueries > 1 && verified) ? TABLES.length : 0 }] };
       }
       if (sql.includes('FROM pg_extension')) return { rows: schema || extensionCreated ? [{ schema_name: schema || 'extensions' }] : [] };
       if (sql.startsWith('CREATE EXTENSION')) extensionCreated = true;

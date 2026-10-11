@@ -1,11 +1,34 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { pool } from '../../db';
 import type { GPSPoint } from '../geoconsole/types';
+import {
+  prepareSpectraAcquisitionEvidenceRecords,
+  readSpectraAcquisitionEvidenceRecords,
+  writeSpectraAcquisitionEvidenceRecords,
+  type SpectraAcquisitionEvidenceRecord,
+  type SpectraAcquisitionEvidenceRecordList,
+  type SpectraEvidenceRecordOmissions,
+} from './SpectraAcquisitionRecords';
 
 export interface SpectraAcquisitionPersistenceResult {
   available: boolean;
   sessionId: string;
   investigationId?: string;
+  /** Records represented by this request, including unchanged archived versions. */
+  evidenceRecordCount?: number;
+  evidenceRecordsInserted?: number;
+  evidenceRecordsOmitted?: number;
+  evidenceRecordOmissions?: SpectraEvidenceRecordOmissions;
+}
+
+export async function loadSpectraAcquisitionEvidenceRecords(
+  userId: string,
+  sessionId: string,
+  limit = 100,
+): Promise<SpectraAcquisitionEvidenceRecordList> {
+  return readSpectraAcquisitionEvidenceRecords(
+    (sql, parameters) => pool.query(sql, parameters), userId, sessionId, limit,
+  );
 }
 
 function normalizeClue(value: string): string {
@@ -254,9 +277,11 @@ export async function persistSpectraAcquisition(input: {
   subjectLabel: string;
   clues: string[];
   observations: GPSPoint[];
+  evidenceRecords?: SpectraAcquisitionEvidenceRecord[];
   state?: Record<string, unknown>;
 }): Promise<SpectraAcquisitionPersistenceResult> {
   const sessionId = input.sessionId?.trim() || `spectra-${randomUUID()}`;
+  const evidenceRecords = prepareSpectraAcquisitionEvidenceRecords(input.evidenceRecords || []);
   const client = await pool.connect();
 
   try {
@@ -294,6 +319,8 @@ export async function persistSpectraAcquisition(input: {
          clues = EXCLUDED.clues,
          state = public.spectra_investigations.state || EXCLUDED.state,
          updated_at = now()
+       WHERE public.spectra_investigations.user_id IS NULL
+          OR public.spectra_investigations.user_id = EXCLUDED.user_id
        RETURNING id`,
       [
         input.userId,
@@ -304,6 +331,9 @@ export async function persistSpectraAcquisition(input: {
       ],
     );
     const investigationId = String(investigation.rows[0]?.id || '');
+    // A concurrent first acquisition may create this session after the locked
+    // lookup. The ownership condition on the upsert must also hold in that case.
+    if (!investigationId) throw new Error('SPECTRA session ownership mismatch');
 
     const existingSubject = existing.rows.length
       ? normalizeClue(String(existing.rows[0]?.subject_label || ''))
@@ -412,12 +442,31 @@ export async function persistSpectraAcquisition(input: {
       );
     }
 
+    const archived = await writeSpectraAcquisitionEvidenceRecords(
+      (sql, parameters) => client.query(sql, parameters),
+      { investigationId, userId: input.userId, sessionId },
+      evidenceRecords,
+    );
+
     await client.query('COMMIT');
-    return { available: true, sessionId, investigationId };
+    return {
+      available: true, sessionId, investigationId,
+      evidenceRecordCount: archived.count,
+      evidenceRecordsInserted: archived.inserted,
+      evidenceRecordsOmitted: evidenceRecords.omittedCount,
+      evidenceRecordOmissions: evidenceRecords.omissions,
+    };
   } catch (error: any) {
     await client.query('ROLLBACK').catch(() => undefined);
     if (error?.code === '42P01') {
-      return { available: false, sessionId };
+      return {
+        available: false, sessionId, evidenceRecordCount: 0, evidenceRecordsInserted: 0,
+        evidenceRecordsOmitted: evidenceRecords.omittedCount + evidenceRecords.records.length,
+        evidenceRecordOmissions: {
+          ...evidenceRecords.omissions,
+          storageUnavailable: evidenceRecords.records.length,
+        },
+      };
     }
     throw error;
   } finally {

@@ -43,13 +43,16 @@ import {
   loadSpectraSessionIdentityBindings,
   loadSpectraSessionObservations,
   persistSpectraAcquisition,
+  loadSpectraAcquisitionEvidenceRecords,
 } from '../services/spectra/SpectraAcquisitionPersistence';
+import { buildSpectraAcquisitionRecords } from '../services/spectra/SpectraAcquisitionRecords';
+import { readSpectraPublicFeedRecords } from '../services/spectra/SpectraPublicFeedStore';
 import {
   assessSpectraIdentityBinding,
   conservativeJointConfidence,
 } from '../services/spectra/SpectraIdentityBinding';
 import { acquireSpectraPlaceContext } from '../services/spectra/SpectraPlaceContext';
-import { retrieveSpectraPublicEvidence } from '../services/spectra/SpectraPublicRetrieval';
+import { retrieveSpectraPublicEvidence, type SpectraRetrievedEvidence } from '../services/spectra/SpectraPublicRetrieval';
 import { createSpectraRetrievalDiagnostics, mergeSpectraRetrievalDiagnostics } from '../services/spectra/SpectraRetrievalDiagnostics';
 import {
   mergePublicRetrievedMetadata,
@@ -70,6 +73,38 @@ import { acquirePublicPlace, isPublicPlaceTarget } from '../services/spectra/Spe
 
 const router = Router();
 router.use(isAuthenticated);
+
+// Collection is owned by the server scheduler. Reading records never initiates
+// external requests or accepts arbitrary source URLs from the browser.
+router.get('/public-records', async (req: Request, res: Response) => {
+  const parsed = z.object({
+    provider: z.string().trim().min(1).max(80).optional(),
+    limit: z.coerce.number().int().min(1).max(100).default(25),
+    after: z.string().datetime().optional(),
+  }).safeParse(req.query);
+  if (!parsed.success) return res.status(400).json({ success: false, error: 'Invalid record filters.' });
+  res.setHeader('Cache-Control', 'private, no-store');
+  try {
+    const result = await readSpectraPublicFeedRecords(parsed.data);
+    return res.status(result.persistenceAvailable ? 200 : 503).json({ success: result.persistenceAvailable, ...result });
+  } catch (error) {
+    return res.status(error instanceof RangeError ? 400 : 503).json({ success: false, error: 'Public records are unavailable.' });
+  }
+});
+
+router.get('/sessions/:sessionId/records', async (req: Request, res: Response) => {
+  const userId = getPlatformUserId(req.user as any);
+  const sessionId = String(req.params.sessionId || '').trim();
+  if (!userId) return res.status(401).json({ success: false, error: 'Authentication required.' });
+  if (!sessionId || sessionId.length > 200) return res.status(400).json({ success: false, error: 'Invalid session.' });
+  res.setHeader('Cache-Control', 'private, no-store');
+  try {
+    const result = await loadSpectraAcquisitionEvidenceRecords(userId, sessionId, 100);
+    return res.status(result.persistenceAvailable ? 200 : 503).json({ success: result.persistenceAvailable, ...result });
+  } catch {
+    return res.status(503).json({ success: false, error: 'Saved acquisition records are unavailable.' });
+  }
+});
 
 const directEvidenceSchema = z.object({
   latitude: z.number().min(-90).max(90),
@@ -314,16 +349,18 @@ async function runDiscoveryPass(
   context: { subject?: string; location?: string; useClaude?: boolean } = {},
 ): Promise<{
   results: SpectraDiscoveryResult[];
+  retrievedEvidence: SpectraRetrievedEvidence[];
   attempted: number;
   failed: number;
   claudeNotes: string[];
   retrieval: SpectraRetrievalCounts;
 }> {
   const retrieval: SpectraRetrievalCounts = { selected: 0, retrieved: 0, deadlineExpiredPasses: 0 };
+  const retrievedEvidence: SpectraRetrievedEvidence[] = [];
   const uniqueQueries = [...new Set(queries.map(query => query.replace(/\s+/g, ' ').trim()).filter(Boolean))]
     .slice(0, 6);
   if (!uniqueQueries.length) {
-    return { results: [], attempted: 0, failed: 0, claudeNotes: [], retrieval };
+    return { results: [], retrievedEvidence, attempted: 0, failed: 0, claudeNotes: [], retrieval };
   }
 
   const controller = new AbortController();
@@ -462,6 +499,7 @@ async function runDiscoveryPass(
       }
 
       retrieval.retrieved = retrieved.length;
+      retrievedEvidence.push(...retrieved);
 
       if (retrieved.length) {
         const byUrl = new Map(enrichedResults.map(result => [result.url, result]));
@@ -491,6 +529,7 @@ async function runDiscoveryPass(
 
     return {
       results: enrichedResults,
+      retrievedEvidence,
       attempted: uniqueQueries.length + (context.useClaude === false ? 0 : 1),
       failed,
       claudeNotes,
@@ -815,10 +854,12 @@ async function collectSpectraContextEvidence(input: {
 }
 
 router.post('/public-place', async (req: Request, res: Response) => withDiscoveryDiagnostics(async () => {
-  const parsed = z.object({ target: z.string().trim().min(1).max(200), details: z.string().max(12_000) }).safeParse(req.body);
+  const parsed = z.object({ target: z.string().trim().min(1).max(200), details: z.string().max(12_000), sessionId: z.string().trim().min(1).max(200).optional() }).safeParse(req.body);
   if (!parsed.success || !isPublicPlaceTarget(parsed.data.target)) {
     return res.status(400).json({ success: false, error: 'Enter the name of a supported public venue, such as a museum or library.' });
   }
+  const userId = getPlatformUserId(req.user as any);
+  if (!userId) return res.status(401).json({ success: false, error: 'Authentication required.' });
   try {
     const { target, details } = parsed.data;
     const result = await acquirePublicPlace(target, details, {
@@ -826,9 +867,27 @@ router.post('/public-place', async (req: Request, res: Response) => withDiscover
       retrieve: retrieveSpectraPublicEvidence,
       geocode: geocodeCityState,
     });
+    const persistence = await persistSpectraAcquisition({
+      userId,
+      sessionId: parsed.data.sessionId,
+      subjectLabel: target,
+      clues: [target, details],
+      observations: [],
+      evidenceRecords: result.records.map(record => ({
+        recordType: 'retrieved_document' as const,
+        provider: 'spectra-public-retrieval',
+        sourceUrl: record.sourceUrl,
+        retrievedAt: record.retrievedAt,
+        payload: { ...record },
+      })),
+      state: { publicPlaceDiagnostics: result.diagnostics, lastAcquiredAt: new Date().toISOString() },
+    }).catch(() => ({ available: false, sessionId: parsed.data.sessionId || '', evidenceRecordCount: 0, evidenceRecordsOmitted: result.records.length }));
     console.info('[SPECTRA Public Place Summary]', JSON.stringify(result.diagnostics));
     return res.json({
       success: true, target, resolvedTargetLabel: target,
+      sessionId: persistence.sessionId || undefined,
+      persistenceAvailable: persistence.available,
+      evidenceArchive: { stored: persistence.evidenceRecordCount || 0, omitted: persistence.evidenceRecordsOmitted || 0 },
       locationObservations: [], candidateLocations: result.candidates,
       publicPlace: result,
       acquisition: {
@@ -1000,6 +1059,9 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
     };
 
     let discoveryResults = firstPass.results;
+    // Preserve fetched records independently of search-result ranking/deduping.
+    // A later successful fetch of an existing search hit must reach the archive.
+    const retrievedEvidence = [...firstPass.retrievedEvidence];
     const retrievalCounts = { ...firstPass.retrieval };
     let discoveryQueriesAttempted = firstPass.attempted;
     let discoveryQueriesFailed = firstPass.failed;
@@ -1057,6 +1119,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
         useClaude: false,
       });
       discoveryQueriesAttempted += nextPass.attempted;
+      retrievedEvidence.push(...nextPass.retrievedEvidence);
       discoveryQueriesFailed += nextPass.failed;
       retrievalCounts.selected += nextPass.retrieval.selected;
       retrievalCounts.retrieved += nextPass.retrieval.retrieved;
@@ -1400,12 +1463,18 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       ...pipelineDiagnostics,
     }));
 
+    const evidenceRecords = buildSpectraAcquisitionRecords(retrievedEvidence.map(evidence => ({
+      url: evidence.url,
+      provider: 'spectra-public-retrieval',
+      metadata: mergePublicRetrievedMetadata(undefined, evidence),
+    })), contextEvidence);
     const persistence = await persistSpectraAcquisition({
       userId,
       sessionId: requestedSessionId,
       subjectLabel: resolvedTargetLabel,
       clues: [target, details],
       observations: solvedLocationObservations,
+      evidenceRecords,
       state: {
         pipelineDiagnostics,
         constraintSolverDiagnostics: constraintSolution.diagnostics,
@@ -1441,11 +1510,13 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       },
     }).catch(error => {
       console.warn('[SPECTRA] Persistence unavailable', {
-        error: error instanceof Error ? error.message : String(error),
+        code: typeof error?.code === 'string' ? error.code : 'PERSISTENCE_UNAVAILABLE',
       });
       return {
         available: false,
         sessionId: requestedSessionId || '',
+        evidenceRecordCount: 0,
+        evidenceRecordsOmitted: evidenceRecords.length,
       };
     });
 
@@ -1456,6 +1527,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       resolvedTargetLabel,
       sessionId: persistence.sessionId || requestedSessionId,
       persistenceAvailable: persistence.available,
+      evidenceArchive: { stored: persistence.evidenceRecordCount || 0, omitted: persistence.evidenceRecordsOmitted || 0 },
       acquisition: {
         identityConfidence,
         boundIdentityConfidence,

@@ -52,7 +52,17 @@ async function check(name, run) { await run(); passed++; console.log('PASS', nam
     const result = await retrieve({ fetch: async () => json() });
     assert.equal(result.evidence.length, 1);
     assert.equal(result.evidence[0].observations.length, 0);
+    assert.deepEqual(plain(result.evidence[0].structuredRecord), {});
     assert.deepEqual(result.events, [{ targetIndex: 0, reason: 'retrieved', httpStatus: 200 }]);
+  });
+  await check('actual JSON records are retained with explicit archive size omissions', async () => {
+    const body = { id: 'public-record-1', properties: { value: 12, unit: 'fixture' } };
+    const small = await retrieve({ fetch: async () => json(JSON.stringify(body)) });
+    assert.deepEqual(plain(small.evidence[0].structuredRecord), body);
+    const large = await retrieve({ fetch: async () => json(JSON.stringify({ body: 'é'.repeat(130_000) })) });
+    assert.equal(large.evidence[0].structuredRecord, undefined);
+    assert.equal(large.evidence[0].structuredRecordOmitted, true, 'measure the archive budget in UTF-8 bytes');
+    assert.equal(large.events[0].reason, 'retrieved', 'a retrieval succeeded even when its body exceeds the archive budget');
   });
   await check('HTML response keeps publication time separate from retrieval time', async () => {
     const result = await retrieve({ fetch: async () => new Response(

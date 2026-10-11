@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { BackButton } from '@/components/BackButton';
 import { SEOHead } from '@/components/SEOHead';
 import { GeoconsoleRadarDashboard } from '@/components/geoconsole';
+import { SpectraEvidenceRecords } from '@/components/geoconsole/SpectraEvidenceRecords';
 import { useVoiceMode } from '@/hooks/useVoiceMode';
 import { useVoiceSynthesis } from '@/hooks/useVoiceSynthesis';
 import { getLexaraLiveEnabled } from '@/components/LexaraLiveConsentModal';
@@ -110,6 +111,7 @@ interface AcquisitionResponse {
   resolvedTargetLabel?: string;
   sessionId?: string;
   persistenceAvailable?: boolean;
+  evidenceArchive?: { stored: number; omitted: number };
   feedDiagnostics?: SpectraFeedDiagnostics;
   acquisition?: {
     identityConfidence: number;
@@ -499,6 +501,8 @@ export default function SpectraPage() {
         ]
         : spectraPipelineNotices(payload.acquisition?.pipelineDiagnostics)),
         ...spectraObservationNotices(points, payload.acquisition?.liveLocationStatus),
+        ...(payload.persistenceAvailable === false ? ['This acquisition could not be saved. Its displayed results are not durably archived.'] : []),
+        ...(payload.evidenceArchive ? [`${payload.evidenceArchive.stored} source records retained; ${payload.evidenceArchive.omitted} records omitted by archive limits or validation.`] : []),
       ]);
       setPlaceSources(payload.publicPlace?.sources || []);
       if (typeof payload.sessionId === 'string' && payload.sessionId.trim()) {
@@ -1034,6 +1038,8 @@ export default function SpectraPage() {
               </Button>
             </div>
           </div>
+
+          <SpectraEvidenceRecords sessionId={spectraSessionId} refreshKey={phase} />
 
           <div className="flex-1 overflow-y-auto px-3 py-4 space-y-3">
             {messages.map(message => (

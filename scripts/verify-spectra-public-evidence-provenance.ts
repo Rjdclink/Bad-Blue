@@ -16,6 +16,7 @@ const evidence: SpectraRetrievedEvidence = {
   retrievedAt: '2026-10-10T02:00:00.000Z',
   title: 'Fictional public venue',
   textExcerpt: 'Venue information, not a device measurement',
+  structuredRecord: { latitude: 40.1234, longitude: -71.2345, timestamp: '2026-10-09T12:00:00.000Z' },
   observations: [{
     latitude: 40.1234,
     longitude: -71.2345,
@@ -34,6 +35,7 @@ assert.equal(merged.sourceUrl, resolved);
 assert.equal(merged.publishedAt, prior.publishedAt,
   'an undated redirect fetch must not erase the known stale publication date');
 assert.equal(merged.fetchedExcerpt, evidence.textExcerpt);
+assert.deepEqual(merged.fetchedRecord, evidence.structuredRecord, 'retain the actual parsed record for archival');
 const pageGeotags = merged.retrievedLocationEvidence as ReturnType<typeof unboundPublicGeoContext>;
 assert.equal(pageGeotags.length, 1);
 assert.equal(pageGeotags[0].kind, 'public_source_geospatial_context');
@@ -43,6 +45,7 @@ assert.equal(pageGeotags[0].currentPositionVerified, false);
 const subjectSafe = stripUnboundPublicGeoContext(merged);
 assert.ok(!('retrievedLocationEvidence' in subjectSafe),
   'unbound venue coordinates must never enter subject coordinate extraction');
+assert.ok(!('fetchedRecord' in subjectSafe), 'archived raw JSON must not leak place coordinates into subject extraction');
 assert.equal(subjectSafe.publishedAt, prior.publishedAt);
 assert.equal(subjectSafe.sourceUrl, resolved);
 assert.deepEqual(stripUnboundPublicGeoContext(null), {});

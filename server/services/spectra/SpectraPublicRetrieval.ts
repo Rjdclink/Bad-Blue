@@ -1,5 +1,6 @@
 import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
+import { Buffer } from 'node:buffer';
 import { load } from 'cheerio';
 import type { SpectraRetrievalDiagnostic, SpectraRetrievalReason } from './SpectraRetrievalDiagnostics';
 
@@ -21,6 +22,10 @@ export interface SpectraRetrievedEvidence {
   retrievedAt: string;
   publishedAt?: string;
   contentType?: string;
+  /** Complete parsed JSON source payload when it fits the archive record budget. */
+  structuredRecord?: unknown;
+  /** Explicitly distinguishes a bounded archive omission from an empty source. */
+  structuredRecordOmitted?: boolean;
   textExcerpt?: string;
   /** Visible address blocks, separate from prose and subject observations. */
   addressBlocks?: string[];
@@ -429,6 +434,9 @@ async function retrieveOne(
           const evidence = {
             url: current.toString(), requestedUrl: rawUrl,
             retrievedAt: new Date().toISOString(), contentType,
+            ...(Buffer.byteLength(text, 'utf8') <= 240_000
+              ? { structuredRecord: payload }
+              : { structuredRecordOmitted: true }),
             observations: jsonEvidence(payload, current.toString()),
           };
           reason = 'retrieved';

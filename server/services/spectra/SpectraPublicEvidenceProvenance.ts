@@ -37,6 +37,10 @@ export function mergePublicRetrievedMetadata(
     publishedAt: evidence.publishedAt ?? previous?.publishedAt,
     fetchedTitle: evidence.title ?? previous?.fetchedTitle,
     fetchedExcerpt: evidence.textExcerpt ?? previous?.fetchedExcerpt,
+    fetchedAddressBlocks: evidence.addressBlocks,
+    fetchedContentType: evidence.contentType,
+    fetchedRecord: evidence.structuredRecord,
+    fetchedRecordOmitted: evidence.structuredRecordOmitted === true,
     retrievedLocationEvidence: unboundPublicGeoContext(evidence.observations),
   };
 }
@@ -47,7 +51,14 @@ export function stripUnboundPublicGeoContext(
   if (!sourceMetadata || typeof sourceMetadata !== 'object' || Array.isArray(sourceMetadata)) {
     return {};
   }
-  const { retrievedLocationEvidence: _unboundPageCoordinates, ...subjectSafeMetadata } =
+  const {
+    retrievedLocationEvidence: _unboundPageCoordinates,
+    // Raw archived source bodies can contain arbitrary place coordinates.
+    // They are available for inspection, never implicit subject observations.
+    fetchedRecord: _archivedSourceRecord,
+    fetchedAddressBlocks: _sourceAddresses,
+    ...subjectSafeMetadata
+  } =
     sourceMetadata as Record<string, unknown>;
   return subjectSafeMetadata;
 }

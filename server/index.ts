@@ -117,6 +117,15 @@ async function gracefulShutdown(signal: string): Promise<void> {
   }, 30000);
 
   try {
+    // Stop acquisition before closing HTTP/database resources. The collector
+    // aborts outstanding public-feed requests and awaits its current cycle.
+    try {
+      const { stopSpectraPublicFeedCollector } = await import('./services/spectra/SpectraPublicFeedStore');
+      await stopSpectraPublicFeedCollector();
+    } catch {
+      console.warn('[SHUTDOWN] SPECTRA public feed collector could not stop cleanly');
+    }
+
     if (httpServer) {
       await new Promise<void>((resolve, reject) => {
         httpServer!.close((err) => {
@@ -442,6 +451,15 @@ async function waitForOverflowBootstrapReadiness(): Promise<boolean> {
 async function initializeServices(): Promise<void> {
   startupTrace('background_services_started');
   console.log('[STARTUP] Stage 3: Initializing services...');
+
+  // Feed collection uses the admitted application database and never performs
+  // schema changes at boot. Provider failures remain local to the collector.
+  try {
+    const { startSpectraPublicFeedCollector } = await import('./services/spectra/SpectraPublicFeedStore');
+    startSpectraPublicFeedCollector();
+  } catch {
+    console.warn('[STARTUP] SPECTRA public feed collector unavailable');
+  }
   
   // NOTE: Playwright browser validation has been REMOVED from server startup
   // Browser validation now happens in the People Search Worker service

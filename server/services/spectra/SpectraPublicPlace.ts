@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { SpectraRetrievedEvidence } from './SpectraPublicRetrieval';
 import { createSpectraRetrievalDiagnostics, type SpectraRetrievalDiagnostic } from './SpectraRetrievalDiagnostics';
 
@@ -31,6 +32,51 @@ export function assessPublicPlacePage(target: string, page: SpectraRetrievedEvid
   return { status: 'supported' as const, ...[...cities.values()][0] };
 }
 
+export interface SpectraPublicVenueDocument {
+  /** SHA-256 of the retained snapshot fields, not the original response bytes. */
+  recordId: string;
+  sourceUrl: string;
+  requestedUrl: string;
+  title?: string;
+  retrievedAt: string;
+  publishedAt?: string;
+  contentType?: string;
+  textExcerpt?: string;
+  addressBlocks: string[];
+  structuredRecord?: unknown;
+  structuredRecordOmitted?: boolean;
+  assessment: ReturnType<typeof assessPublicPlacePage>;
+  classification: 'public_venue_document';
+  snapshotKind: 'extracted_document' | 'structured_record';
+}
+
+function retainPublicVenueDocument(target: string, page: SpectraRetrievedEvidence): SpectraPublicVenueDocument {
+  // Preserve the retriever's bounded extracted text (8,000 characters) and
+  // visible address blocks (at most 12, each at most 600 characters). These
+  // records are document snapshots, never target-location observations.
+  const snapshot = {
+    sourceUrl: page.url,
+    title: page.title,
+    publishedAt: page.publishedAt,
+    contentType: page.contentType,
+    textExcerpt: page.textExcerpt,
+    addressBlocks: [...(page.addressBlocks || [])],
+    structuredRecord: page.structuredRecord,
+    structuredRecordOmitted: page.structuredRecordOmitted,
+    classification: 'public_venue_document' as const,
+    snapshotKind: page.structuredRecord !== undefined ? 'structured_record' as const : 'extracted_document' as const,
+  };
+  return {
+    ...snapshot,
+    // Retrieval time, redirect entry point and target-specific assessment do
+    // not change the identity of an otherwise unchanged extracted document.
+    recordId: `sha256:${createHash('sha256').update(JSON.stringify(snapshot)).digest('hex')}`,
+    requestedUrl: page.requestedUrl,
+    retrievedAt: page.retrievedAt,
+    assessment: assessPublicPlacePage(target, page),
+  };
+}
+
 interface PlaceDependencies {
   discover: (query: string, signal: AbortSignal) => Promise<Array<{ url: string }>>;
   retrieve: (urls: string[], signal: AbortSignal, onDiagnostic?: (row: SpectraRetrievalDiagnostic) => void) => Promise<SpectraRetrievedEvidence[]>;
@@ -56,11 +102,12 @@ export async function acquirePublicPlace(target: string, details: string, deps: 
   const discovered = await bounded(signal => deps.discover(`"${target}" visitor address location`, signal), 10_000, []);
   const urls = [...new Set([...suppliedUrls, ...discovered.map(item => item.url)])].slice(0, 8);
   const retrievalDiagnostics = createSpectraRetrievalDiagnostics(urls.length);
-  const pages = await bounded(signal => deps.retrieve(urls, signal, retrievalDiagnostics.record), 5_000, []);
+  const pages = (await bounded(signal => deps.retrieve(urls, signal, retrievalDiagnostics.record), 5_000, [])).slice(0, 8);
   const retrieval = retrievalDiagnostics.finish();
-  const sources = pages.map(page => ({
-    url: page.url, title: page.title || page.url, retrievedAt: page.retrievedAt,
-    publishedAt: page.publishedAt, ...assessPublicPlacePage(target, page),
+  const records = pages.map(page => retainPublicVenueDocument(target, page));
+  const sources = records.map(record => ({
+    url: record.sourceUrl, title: record.title || record.sourceUrl, retrievedAt: record.retrievedAt,
+    publishedAt: record.publishedAt, ...record.assessment,
   }));
   const supported = sources.filter(source => source.status === 'supported');
   const rejectionReasons: Record<string, number> = {};
@@ -83,7 +130,7 @@ export async function acquirePublicPlace(target: string, details: string, deps: 
   }] : [];
   const outcome = conflict ? 'conflicting-addresses' : !first ? 'no-supported-address'
     : !valid ? 'geocoding-unavailable' : 'public-place-city';
-  return { candidates, sources, diagnostics: {
+  return { candidates, sources, records, diagnostics: {
     selected: urls.length, retrieved: pages.length, supported: supported.length, outcome,
     retrieval, rejectionReasons, distinctRetrievedUrls,
     duplicateRetrievedUrls: pages.length - distinctRetrievedUrls,

@@ -10,6 +10,8 @@ const TARGET = {
 const TABLES = [
   'spectra_investigations', 'spectra_clues', 'spectra_telemetry_events',
   'spectra_location_observations', 'spectra_motion_context',
+  'spectra_public_feed_state', 'spectra_public_evidence_records',
+  'spectra_acquisition_evidence_records',
 ];
 const TABLE_SQL = TABLES.map(name => `public.${name}`).join(', ');
 
@@ -41,6 +43,7 @@ function migrationSql(directory, postgisSchema) {
     durable.slice(extension.length).replaceAll('extensions.', `${quotedSchema}.`),
     fs.readFileSync(path.join(directory, '066_spectra_foreign_key_indexes.sql'), 'utf8'),
     motion.slice(0, accessStart),
+    fs.readFileSync(path.join(directory, '069_spectra_public_evidence_records.sql'), 'utf8'),
     // Neon does not require Supabase API roles. Preserve server-only access
     // without creating roles or failing when those roles are absent.
     `REVOKE ALL ON TABLE ${TABLE_SQL} FROM PUBLIC;
@@ -62,7 +65,7 @@ async function ensureSchema(client, directory, log = console.log) {
     ['public', TABLES],
   );
   if (Number(present.rows[0]?.table_count) === TABLES.length) {
-    log('[SPECTRA Neon Schema] five runtime tables already present; no schema changes');
+    log(`[SPECTRA Neon Schema] ${TABLES.length} runtime tables already present; no schema changes`);
     return;
   }
   await client.query('BEGIN');
@@ -84,7 +87,7 @@ async function ensureSchema(client, directory, log = console.log) {
     );
     if (Number(verified.rows[0]?.table_count) !== TABLES.length) throw new Error('Spectra schema verification failed.');
     await client.query('COMMIT');
-    log('[SPECTRA Neon Schema] verified all five runtime tables; canonical observations and server-only access retained');
+    log(`[SPECTRA Neon Schema] verified all ${TABLES.length} runtime tables; canonical observations and server-only access retained`);
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
     throw error;
