@@ -936,6 +936,14 @@ startupTrace('routes_registration_completed');
   });
 
   // Static file serving AFTER dynamic routes
+  app.use((req, res, next) => {
+    // Navigation HTML must never point a returning browser at retired bundles.
+    if ((req.method === 'GET' || req.method === 'HEAD') &&
+        (!/\.[a-z0-9]{2,8}$/i.test(req.path) || /\.html$/i.test(req.path))) {
+      res.setHeader('Cache-Control', 'no-store');
+    }
+    next();
+  });
   app.use(express.static("public"));
   
   // Serve CryptoCrawl dashboard UI
