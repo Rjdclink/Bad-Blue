@@ -85,8 +85,8 @@ export default function Landing() {
         ogTitle="Affordable Legal Guidance & Legal Answers | LegalWhat"
         ogDescription="Affordable legal guidance and answers to legal questions. Ask by voice or text across 40+ legal areas, analyze files, and create documents. $19.99/month after 3 days free."
         canonicalUrl="https://legalwhat.com/"
-        ogImage="https://legalwhat.com/images/Legal%20What%20Icon.png"
-        ogImageAlt="Legal What? legal technology platform logo"
+        ogImage="https://legalwhat.com/images/legalwhat-social-preview.png"
+        ogImageAlt="LegalWhat social preview: legal guidance, research, answers, and documents"
         structuredData={structuredData}
       />
       {/* LEXARA - primary landing-page presentation */}
