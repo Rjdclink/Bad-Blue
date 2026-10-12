@@ -15,7 +15,16 @@
       "purpose": "any"
     }
   ],
-  "categories": ["legal", "productivity", "utilities"],
+  "categories": [
+    "legal",
+    "productivity",
+    "utilities"
+  ],
   "lang": "en-US",
-  "dir": "ltr"
+  "dir": "ltr",
+  "id": "/",
+  "display_override": [
+    "standalone"
+  ],
+  "prefer_related_applications": false
 }
