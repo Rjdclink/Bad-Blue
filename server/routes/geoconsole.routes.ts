@@ -2784,6 +2784,14 @@ export async function nwsLatestObservation(lat: number, lng: number): Promise<Re
       provider: 'National Weather Service',
       stationId,
       stationName: station?.properties?.name,
+      // Station coordinates locate the instrument, not any investigated person.
+      ...(Array.isArray(station?.geometry?.coordinates)
+        && Number.isFinite(station.geometry.coordinates[0])
+        && Number.isFinite(station.geometry.coordinates[1])
+        && Math.abs(station.geometry.coordinates[0]) <= 180
+        && Math.abs(station.geometry.coordinates[1]) <= 90
+          ? { longitude: station.geometry.coordinates[0], latitude: station.geometry.coordinates[1] }
+          : {}),
       observedAt: properties.timestamp,
       textDescription: properties.textDescription,
       temperatureC: properties.temperature?.value,
