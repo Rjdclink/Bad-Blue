@@ -107,7 +107,8 @@ function parseConfigs(): CameraFeedConfig[] {
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
     const seen = new Set<string>();
-    return parsed.flatMap((item: any) => {
+    // An operator-supplied directory cannot fan out to unbounded network calls.
+    return parsed.slice(0, 8).flatMap((item: any) => {
       const id = String(item?.id || '').trim();
       const provider = String(item?.provider || item?.label || id).trim();
       const urlTemplate = String(item?.urlTemplate || item?.url || '').trim();
@@ -160,6 +161,12 @@ function interpolateTemplate(
     .replaceAll('{{radiusMiles}}', encodeURIComponent(String(radiusMiles)));
 }
 
+function publicCoordinate(value: unknown): number {
+  if ((typeof value !== 'string' && typeof value !== 'number')
+    || (typeof value === 'string' && !value.trim())) return Number.NaN;
+  return Number(value);
+}
+
 function haversineMeters(lat1: number, lon1: number, lat2: number, lon2: number): number {
   const radius = 6_371_000;
   const toRad = Math.PI / 180;
@@ -203,17 +210,33 @@ export async function acquireConfiguredSpectraCameras(
       redirect: 'error',
       signal: AbortSignal.timeout(7_000),
     });
-    if (!response.ok) return [];
-
-    const raw = await response.text();
-    if (raw.length > 5_000_000) return [];
-    const payload = JSON.parse(raw);
+    if (!response.ok || !response.body
+      || Number(response.headers.get('content-length') || 0) > 5_000_000) return [];
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let length = 0;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        length += value.byteLength;
+        if (length > 5_000_000) return [];
+        chunks.push(value);
+      }
+    } finally {
+      void reader.cancel().catch(() => undefined);
+      reader.releaseLock();
+    }
+    const data = new Uint8Array(length);
+    let offset = 0;
+    for (const chunk of chunks) { data.set(chunk, offset); offset += chunk.byteLength; }
+    const payload = JSON.parse(new TextDecoder().decode(data));
     const collection = readPath(payload, config.arrayPath);
     const rows = Array.isArray(collection) ? collection : [collection];
 
     return rows.slice(0, 500).flatMap((row: any, index: number) => {
-      const lat = Number(readPath(row, config.latitudePath));
-      const lon = Number(readPath(row, config.longitudePath));
+      const lat = publicCoordinate(readPath(row, config.latitudePath));
+      const lon = publicCoordinate(readPath(row, config.longitudePath));
       if (
         !Number.isFinite(lat)
         || !Number.isFinite(lon)
@@ -223,9 +246,12 @@ export async function acquireConfiguredSpectraCameras(
       ) return [];
 
       const observedRaw = config.observedAtPath ? readPath(row, config.observedAtPath) : undefined;
-      const observedAt = observedRaw && Number.isFinite(Date.parse(String(observedRaw)))
-        ? new Date(String(observedRaw)).toISOString()
-        : undefined;
+      const observedMs = typeof observedRaw === 'string' && observedRaw.trim()
+        ? Date.parse(observedRaw) : Number.NaN;
+      const observedAt = Number.isFinite(observedMs)
+        && observedMs >= Date.UTC(1900, 0, 1)
+        && observedMs <= Date.now() + 86_400_000
+          ? new Date(observedMs).toISOString() : undefined;
       const imageUrlRaw = config.imageUrlPath ? String(readPath(row, config.imageUrlPath) || '').trim() : '';
       const videoUrlRaw = config.videoUrlPath ? String(readPath(row, config.videoUrlPath) || '').trim() : '';
       const qualityRaw = config.qualityPath ? Number(readPath(row, config.qualityPath)) : NaN;
