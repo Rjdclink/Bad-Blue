@@ -5,6 +5,7 @@ import { BackButton } from '@/components/BackButton';
 import { SEOHead } from '@/components/SEOHead';
 import { GeoconsoleRadarDashboard } from '@/components/geoconsole';
 import { SpectraEvidenceRecords } from '@/components/geoconsole/SpectraEvidenceRecords';
+import { SpectraGeographicContext, type SpectraGeographicContextEvidence } from '@/components/geoconsole/SpectraGeographicContext';
 import { useVoiceMode } from '@/hooks/useVoiceMode';
 import { useVoiceSynthesis } from '@/hooks/useVoiceSynthesis';
 import { getLexaraLiveEnabled } from '@/components/LexaraLiveConsentModal';
@@ -136,6 +137,12 @@ interface AcquisitionResponse {
     publicBlueskyImageAttemptCount?: number;
     publicBlueskyImageRecordCount?: number;
     publicBlueskyImageFailureCount?: number;
+    publicMastodonImageAttemptCount?: number;
+    publicMastodonImageRecordCount?: number;
+    publicMastodonImageFailureCount?: number;
+    publicSocialImageAttemptCount?: number;
+    publicSocialImageRecordCount?: number;
+    publicSocialImageFailureCount?: number;
     publicMastodonStatus?: string;
     publicMastodonReason?: string;
     publicMastodonRecordCount?: number;
@@ -153,6 +160,7 @@ interface AcquisitionResponse {
   };
   locationObservations?: GPSPoint[];
   candidateLocations?: SpectraLocationCandidate[];
+  contextEvidence?: SpectraGeographicContextEvidence;
   publicPlace?: { sources: Array<{ url: string; title: string; status: string }>; diagnostics: { selected: number; retrieved: number; supported: number; outcome: string; retrieval?: SpectraRetrievalSummary; distinctRetrievedUrls?: number; duplicateRetrievedUrls?: number } };
 }
 
@@ -206,6 +214,7 @@ export default function SpectraPage() {
   const [placeSources, setPlaceSources] = useState<Array<{ url: string; title: string; status: string }>>([]);
   const [observations, setObservations] = useState<GPSPoint[]>([]);
   const [candidateLocations, setCandidateLocations] = useState<SpectraLocationCandidate[]>([]);
+  const [contextEvidence, setContextEvidence] = useState<SpectraGeographicContextEvidence | null>(null);
   const [directEvidence, setDirectEvidence] = useState<GPSPoint[]>([]);
   const [confidence, setConfidence] = useState<number | null>(null);
   const [sourceCount, setSourceCount] = useState(0);
@@ -336,6 +345,7 @@ export default function SpectraPage() {
     setDetails('');
     setObservations([]);
     setCandidateLocations([]);
+    setContextEvidence(null);
     setDirectEvidence([]);
     setConfidence(null);
     setSourceCount(0);
@@ -515,6 +525,7 @@ export default function SpectraPage() {
       const canonicalLocationConfidence = payload.acquisition?.locationConfidence ?? 0;
       setObservations(points);
       setCandidateLocations(Array.isArray(payload.candidateLocations) ? payload.candidateLocations : []);
+      setContextEvidence(payload.contextEvidence?.anchor ? payload.contextEvidence : null);
       setConfidence(
         points.length > 0 || canonicalLocationConfidence > 0
           ? canonicalLocationConfidence
@@ -543,7 +554,13 @@ export default function SpectraPage() {
           ? [`Bluesky discovery: ${payload.acquisition.publicProfileCandidateCount ?? 0} possible profiles, ${payload.acquisition.publicProfileCandidatePostCount ?? 0} public posts; ${payload.acquisition.publicProfileContactMatches ?? 0} public contact matches. Account ownership remains unverified.`]
           : []),
         ...((payload.acquisition?.publicBlueskyImageAttemptCount ?? 0) > 0
-          ? [`Public Bluesky images: ${payload.acquisition?.publicBlueskyImageRecordCount ?? 0} of ${payload.acquisition?.publicBlueskyImageAttemptCount ?? 0} downloaded and inspected for metadata; ${payload.acquisition?.publicBlueskyImageFailureCount ?? 0} failed. Image bytes are not archived; an image scene does not establish a person's location.`]
+          ? [`Public Bluesky images: ${payload.acquisition?.publicBlueskyImageRecordCount ?? 0} records; ${payload.acquisition?.publicBlueskyImageAttemptCount ?? 0} image download attempts; ${payload.acquisition?.publicBlueskyImageFailureCount ?? 0} failed. No photo proves a current subject position.`]
+          : []),
+        ...((payload.acquisition?.publicMastodonImageAttemptCount ?? 0) > 0
+          ? [`Public Mastodon images: ${payload.acquisition?.publicMastodonImageRecordCount ?? 0} records; ${payload.acquisition?.publicMastodonImageAttemptCount ?? 0} download attempts; ${payload.acquisition?.publicMastodonImageFailureCount ?? 0} failed.`]
+          : []),
+        ...((payload.acquisition?.publicSocialImageAttemptCount ?? 0) > 0
+          ? [`Public Facebook/Instagram/X image links: ${payload.acquisition?.publicSocialImageRecordCount ?? 0} records; ${payload.acquisition?.publicSocialImageAttemptCount ?? 0} download attempts; ${payload.acquisition?.publicSocialImageFailureCount ?? 0} failed. Inaccessible posts are not inspected.`]
           : []),
         ...(payload.acquisition?.publicMastodonStatus && payload.acquisition.publicMastodonStatus !== 'not_supplied'
           ? [`Public Mastodon profile: ${payload.acquisition.publicMastodonStatus.replace(/_/g, ' ')}${payload.acquisition.publicMastodonReason ? ` (${payload.acquisition.publicMastodonReason.replace(/_/g, ' ')})` : ''}; ${payload.acquisition.publicMastodonRecordCount ?? 0} public account records collected. Profile ownership remains unverified.`]
@@ -1123,6 +1140,7 @@ export default function SpectraPage() {
                     {pipelineNotices.map(notice => <p key={notice} className="mt-1">{notice}</p>)}
                   </details>
                 )}
+                <SpectraGeographicContext value={contextEvidence} />
               </div>
               <Button
                 variant="ghost"
