@@ -1057,6 +1057,8 @@ export default function SpectraPage() {
           <GeoconsoleRadarDashboard
             initialData={observations}
             candidateLocations={candidateLocations}
+            publicContext={contextEvidence}
+            publicPhotoScenes={photoScenes}
             subject={target || 'SPECTRA target'}
             sessionId={spectraSessionId}
             onSessionCreated={setSpectraSessionId}
