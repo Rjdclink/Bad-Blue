@@ -822,6 +822,9 @@ interface SpectraContextEvidence {
   sourceFamilies: string[];
 }
 
+const SPECTRA_CONTEXT_CACHE_MS = 5 * 60_000;
+const spectraContextCache = new Map<string, { until: number; result: SpectraContextEvidence }>();
+
 async function collectSpectraContextEvidence(input: {
   latitude: number;
   longitude: number;
@@ -832,8 +835,19 @@ async function collectSpectraContextEvidence(input: {
   const referenceTime = input.observedAt && Number.isFinite(input.observedAt.getTime())
     ? input.observedAt
     : new Date();
-  const earthFrom = new Date(referenceTime.getTime() - 12 * 60 * 60_000);
-  const earthTo = new Date(referenceTime.getTime() + 12 * 60 * 60_000);
+  // Public geographic context is shared by locations, not by subject identity.
+  // Reuse recent results on recurring sessions instead of re-requesting every API.
+  const key = [
+    input.latitude.toFixed(3), input.longitude.toFixed(3), input.basis,
+    Math.floor(referenceTime.getTime() / 3_600_000),
+  ].join(':');
+  const cached = spectraContextCache.get(key);
+  if (cached && cached.until > Date.now()) return cached.result;
+  // Sentinel-2 does not revisit every coordinate every 24 hours. Search for
+  // the latest actual acquisition; its timestamp remains an observation date,
+  // never a current person location or live camera frame.
+  const earthFrom = new Date(referenceTime.getTime() - 21 * 86_400_000);
+  const earthTo = new Date(referenceTime.getTime());
   const weatherRelevant = Math.abs(Date.now() - referenceTime.getTime()) <= 24 * 60 * 60_000;
 
   const outcomes = await Promise.allSettled([
@@ -869,7 +883,7 @@ async function collectSpectraContextEvidence(input: {
   if (weather) sourceFamilies.push('weather');
   if (earthObservation.length) sourceFamilies.push('earth-observation');
 
-  return {
+  const result: SpectraContextEvidence = {
     anchor: {
       latitude: input.latitude,
       longitude: input.longitude,
@@ -884,6 +898,9 @@ async function collectSpectraContextEvidence(input: {
     earthObservation: earthObservation.slice(0, 20),
     sourceFamilies,
   };
+  if (spectraContextCache.size >= 32) spectraContextCache.delete(spectraContextCache.keys().next().value!);
+  spectraContextCache.set(key, { until: Date.now() + SPECTRA_CONTEXT_CACHE_MS, result });
+  return result;
 }
 
 router.post('/public-place', async (req: Request, res: Response) => withDiscoveryDiagnostics(async () => {
