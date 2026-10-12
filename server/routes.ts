@@ -5488,39 +5488,43 @@ Contact: ${foiaRequest.userEmail || userEmail}
    * }
    */
   app.post('/api/criminal-records', apiRateLimit, asyncHandler(async (req: Request, res: Response) => {
-    const { fullName, dateOfBirth, state, county } = req.body;
+    const { fullName, dateOfBirth, state, county, docketNumber, inmateNumber } = req.body;
 
     // Validation
-    if (!fullName || typeof fullName !== 'string') {
+    if (typeof fullName !== 'string' || fullName.trim().split(/\s+/).length < 2 || fullName.length > 160) {
       return res.status(400).json({
         success: false,
-        error: 'fullName is required and must be a string'
+        error: 'Provide a full name of 2 or more words, up to 160 characters'
       });
     }
 
-    // FCRA Compliance Disclaimer
-    console.log('[CriminalRecords] API Request:', {
-      fullName,
-      state,
-      timestamp: new Date().toISOString(),
-      ip: req.ip
-    });
+    if ((dateOfBirth != null && (typeof dateOfBirth !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(dateOfBirth)))
+      || (state != null && (typeof state !== 'string' || !/^[a-z]{2}$/i.test(state)))
+      || [county, docketNumber, inmateNumber].some(value => value != null && (typeof value !== 'string' || value.length > 100))) {
+      return res.status(400).json({ success: false, error: 'Invalid birth date, state, county, case number or inmate number' });
+    }
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    req.once('aborted', abort);
 
     try {
       const record = await criminalRecordsAggregator.search({
         fullName,
         dateOfBirth,
         state,
-        county
-      });
+        county,
+        docketNumber,
+        inmateNumber
+      }, controller.signal);
 
       res.json({
         success: true,
         data: record,
-        recordsDetermined: false,
-        message: record.searchStatus === 'sources_discovered'
-          ? 'Official public source portals were located by the crawler. Person-level records require verified portal-specific query adapters.'
-          : 'No official public source portal was reachable during crawler discovery.',
+        recordsDetermined: record.recordsDetermined === true,
+        coverageLimited: true,
+        message: record.caseCandidates?.length || record.custodyCandidates?.length
+          ? 'Public source records were retrieved. Possible identity matches require review; this is not a complete verified criminal history.'
+          : 'No matching record was retrieved from the available sources. See coverage for completed, incomplete and unsearched sources.',
         disclaimer: 'For permissible purposes only. Subject to Fair Credit Reporting Act (FCRA). All data should be independently verified.'
       });
     } catch (error: any) {
@@ -5530,6 +5534,8 @@ Contact: ${foiaRequest.userEmail || userEmail}
         error: 'Criminal records search failed',
         message: error.message
       });
+    } finally {
+      req.removeListener('aborted', abort);
     }
   }));
 

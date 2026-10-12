@@ -41,6 +41,7 @@ export interface LexaraBackgroundResearchResult {
   searchLeads?: string[];
   categories: string[];
   fullBackgroundReportRequested: boolean;
+  criminalRecordEvidence?: boolean;
   coverageLimited?: boolean;
   coverageNote?: string;
   endpoint:
@@ -548,6 +549,34 @@ export async function investigateLexaraBackgroundQuestion(
   }
   const subject = cleanSubject(resolved);
   const categories = backgroundCategories(prompt, decision);
+
+  // Criminal history uses deterministic record retrieval with existing providers.
+  // Keep candidate identities separate from proven facts; no extra Claude search.
+  if (subject.kind === 'person' && decision.requestedFact === 'criminal-arrest') {
+    const { criminalRecordsAggregator, formatCriminalRecordEvidence } = await import('../services/criminalRecords/CriminalRecordsAggregator');
+    const { STATE_CORRECTIONS } = await import('../services/inmateSearch/stateData');
+    const locations = [subject.location, context.jurisdiction].filter(Boolean) as string[];
+    const state = locations.map(location => Object.values(STATE_CORRECTIONS).find(item =>
+      new RegExp('(?:^|[,\\s])' + item.state + '[.,\\s]*$', 'i').test(location)
+      || new RegExp('\\b' + item.stateName + '[.,\\s]*$', 'i').test(location))?.state).find(Boolean);
+    const dateOfBirth = prompt.match(/\b(?:date of birth|birth date|dob|born)\s*[:=]?\s*(\d{4}-\d{2}-\d{2})\b/i)?.[1];
+    const docketNumber = prompt.match(/\b(?:case|docket)\s*(?:number|no\.?|#)?\s*[:#]?\s*((?:CF|CM|CR)-\d{2,4}-\d+|(?:\d{1,2}:)?\d{2,4}-cr-\d+)\b/i)?.[1];
+    const inmateNumber = prompt.match(/\b(?:BOP|inmate|register)\s*(?:number|no\.?|#)?\s*[:#]?\s*(\d{5}-\d{3})\b/i)?.[1];
+    const county = locations.map(location => location.match(/\b([A-Z][a-z]+(?: [A-Z][a-z]+)?) County\b/)?.[1]).find(Boolean);
+    const record = await criminalRecordsAggregator.search({ fullName: subject.name, state, county, dateOfBirth, docketNumber, inmateNumber }, context.signal);
+    const candidates = [...(record.caseCandidates || []), ...(record.custodyCandidates || [])];
+    return {
+      evidenceSummary: formatCriminalRecordEvidence(record),
+      criminalRecordEvidence: true,
+      sources: [...new Set(candidates.map(item => item.sourceUrl))],
+      searchLeads: (record.coverage || []).filter(item => item.status === 'manual_required').map(item => item.url),
+      categories, fullBackgroundReportRequested: false, coverageLimited: true,
+      coverageNote: record.coverageNote,
+      endpoint: candidates.length ? 'partial-evidence' : 'search-leads-only',
+      recursionPasses: 1,
+      discoveryLanes: (record.coverage || []).map(item => item.source),
+    };
+  }
 
   const initiallyAmbiguousSubject = subject.kind === 'person' && !subject.identifiable;
 
@@ -1111,6 +1140,11 @@ export function formatLexaraBackgroundResearchForSystem(
   result: LexaraBackgroundResearchResult | null,
 ): string {
   if (!result) return '';
+  if (result.criminalRecordEvidence) {
+    return `\n\nAPPLICATION-SUPPLIED CRIMINAL RECORD RESEARCH
+The records below are possible matches. Name matching, a matching court, or multiple search hits alone do not establish identity. Do not infer criminal guilt, a conviction, an active warrant, registry status or a clean history. State only what a retrieved source expressly reports, label unconfirmed identities, and keep arrests, allegations, charges and convictions distinct. Do not offer a guessed criminal history. Answer briefly and provide the relevant source link for a requested record. State unavailable coverage only as needed to explain what remains unknown.
+${result.evidenceSummary || result.coverageNote || 'The requested record was not determined.'}`;
+  }
   const coverage = result.coverageNote ? `\nCOVERAGE STATUS: ${result.coverageNote}` : '';
   const categories = result.categories.length ? `\nREQUESTED BACKGROUND CATEGORIES: ${result.categories.join(', ')}` : '';
   if (!result.evidenceSummary) {

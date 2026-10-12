@@ -1,164 +1,55 @@
-# Criminal Records Aggregator - Stage 2.1
+# Criminal public-record retrieval
 
-## Overview
-Comprehensive criminal records aggregator that searches state courts, county courts, federal PACER, sex offender registries, warrant databases, and mugshot sites. Fuses all sources into unified criminal history report.
+`POST /api/criminal-records` and Lexara's person-specific criminal-background questions share a bounded retrieval service. Existing Railway credentials are reused; no account registration or new API key is required. The retrieval path makes no Claude calls and never purchases PACER records.
 
-## Performance Targets
-- **Search Time:** <20 seconds across all sources
-- **Detection Risk:** <5% (public records, stealth scraping)
-- **Sources:** 6+ (state courts, county courts, PACER, sex offender registry, warrants)
+## Retrieved information
 
-## Architecture
+- **CourtListener/RECAP:** searches archived federal criminal dockets through the existing `COURTLISTENER_API_TOKEN` and existing read-only client/cache; retrieves available case-specific filing text. Two search pages, eight case candidates, and three filing reads at most. Names and case metadata are candidate evidence, not established criminal history.
+- **Federal Bureau of Prisons:** reads the public locator's structured custody response. Matching names remain unconfirmed; a supplied BOP number must match exactly. A supplied birth date rejects incompatible reported ages. BOP custody does not establish charges or a conviction.
+- **Oklahoma OSCN:** uses the public search form, resolves a requested county from that form, and reads up to four accessible felony/misdemeanor case pages. Counts and dispositions are associated with the matching party's row; another party's outcome is not assigned to the searched person. Complete sentence information may require the court minute.
+- **Official public pages:** uses existing Lexara search providers without model-based planning, then reads up to six accessible official pages through the existing retrieval boundary. Search snippets never become record findings. Retrieved prose is provided for review rather than converted into guessed convictions.
 
-### File Structure
-```
-server/services/criminalRecords/
-├── CriminalRecordsAggregator.ts     // Main orchestrator (120 lines)
-├── types.ts                         // Core interfaces (65 lines)
-├── index.ts                         // Entry point (3 lines)
-├── sources/
-│   ├── BaseCriminalScraper.ts       // Abstract base (28 lines)
-│   ├── StateCourtScraper.ts         // State court websites (75 lines)
-│   ├── CountyCourtScraper.ts        // County clerk sites (73 lines)
-│   ├── PACERScraper.ts              // Federal courts (68 lines)
-│   ├── SexOffenderRegistryScraper.ts // State registries (62 lines)
-│   └── WarrantDatabaseScraper.ts    // Active warrants (59 lines)
-├── fusion/
-│   └── CriminalRecordsFusion.ts     // Merge records (94 lines)
-└── cache/
-    └── CriminalRecordsCache.ts      // Cache (80 lines)
-```
+## Coverage and identity
 
-Total: ~713 lines
+`caseCandidates` and `custodyCandidates` hold retrieved source records with source URLs, retrieval dates, and explicit identity status. They are separate from the legacy arrays of established facts. The service does not claim a complete criminal history or confirmed identity from a name match.
 
-## API Usage
+`recordsDetermined` remains false and `coverageLimited` remains true. `coverage` distinguishes checked, partial, unavailable, not-configured, manual-required, and not-checked sources. `no_matches_in_checked_sources` describes a limited search, not a clear history.
 
-### Endpoint
-```
-POST /api/criminal-records
-```
+Registry status and risk score are null when undetermined. No speculative risk score, active-warrant finding, arrest, or conviction is generated from an absent result.
 
-### Request
+The shared state directory covers all 50 states and DC. Curated public entry points and notes explain limitations in selected states; a directory link does not mean a person-level search was completed. Examples:
+
+- Minnesota defendant-name searches omit pending criminal cases. The BCA offers a separate criminal-history route.
+- South Dakota PARS guest searches require a birth date and charge $20 even if no record is found. This service makes no purchase.
+- Indiana MyCase prohibits automated extraction; its approved data-access process is required.
+- NSOPW has a public browser interface but no public search API. Registry status stays not checked.
+- State DOC links and local-warrant routes are supplied as unsearched routes unless an actual record was retrieved.
+
+## Input
+
 ```json
 {
-  "fullName": "John Smith",
-  "dateOfBirth": "1985-03-15",  // optional
-  "state": "CA",                 // optional
-  "county": "Los Angeles"        // optional
+  "fullName": "Avery Morgan Example",
+  "dateOfBirth": "1985-01-01",
+  "state": "OK",
+  "county": "Example",
+  "docketNumber": "CF-2024-1234",
+  "inmateNumber": "12345-678"
 }
 ```
 
-### Response
-```json
-{
-  "success": true,
-  "data": {
-    "fullName": "John Allen Smith",
-    "dateOfBirth": "1985-03-15",
-    "charges": [{
-      "charge": "DUI - Driving Under Influence",
-      "statute": "VC 23152(a)",
-      "degree": "misdemeanor",
-      "date": "2012-06-15",
-      "disposition": "Guilty - Probation Completed",
-      "sentence": "3 years probation, DUI school, $2000 fine"
-    }],
-    "convictions": [],
-    "activeWarrants": [],
-    "sexOffenderStatus": { "registered": false },
-    "riskScore": 2.5,
-    "source": "Fused from 4 sources",
-    "confidence": 0.87,
-    "scrapedAt": "2025-12-07T03:47:00.000Z"
-  },
-  "disclaimer": "For permissible purposes only. Subject to Fair Credit Reporting Act (FCRA). All data should be independently verified."
-}
-```
+Only `fullName` is required. Request fields are bounded. Work runs only when requested; the shared deadline is 12 seconds, with provider-specific limits and cancellation. Positive candidate reports have a bounded three-minute process-local cache. Outages are not cached as negative records. Logs contain counts/statuses rather than names or birth dates.
 
-## Features
+## Source references reviewed October 12, 2026
 
-### Data Sources
-1. **State Courts** - Official state court case search websites (confidence: 0.85)
-2. **County Courts** - County clerk websites with detailed records (confidence: 0.90)
-3. **PACER** - Federal court records system (confidence: 0.95, requires credentials)
-4. **Sex Offender Registry** - National registry (confidence: 1.0 - zero false positives)
-5. **Warrant Database** - Active warrants from multiple sources (confidence: 0.80)
+- https://wiki.free.law/c/courtlistener/help/api/rest/v4/search
+- https://pacer.uscourts.gov/file-case/developer-resources
+- https://www.bop.gov/inmateloc/about_records.jsp
+- https://www.oscn.net/dockets/Search.aspx
+- https://www.nsopw.gov/faqs
+- https://mncourts.gov/access-case-records/mcro/faqs
+- https://ujspars.sd.gov/GuestSearch.aspx
+- https://www.in.gov/courts/policies/tou-mycase/
+- https://www.judyrecords.com/api
 
-### Stealth Measures
-- ✅ Public records only - all sources are public access
-- ✅ Playwright stealth mode with anti-detection
-- ✅ 90-day cache - never re-query same person
-- ✅ Human-like delays - 3-8 seconds between searches
-- ✅ No authentication (except PACER - optional)
-
-### Risk Scoring
-Risk score (0-10 scale) based on:
-- Sex offender status: 10 (maximum)
-- Active warrants: +8
-- Violent felonies: +3 each
-- Other felonies: +2 each
-- Misdemeanors: +0.5 each
-
-### Caching
-- File-based cache in `.cache/criminal-records/`
-- 90-day TTL (criminal records update slowly)
-- Cache key: SHA256 hash of `fullName-dateOfBirth-state`
-
-## Configuration
-
-### Environment Variables
-```bash
-# Optional: PACER credentials ($0.10 per page)
-PACER_USERNAME=your_username
-PACER_PASSWORD=your_password
-```
-
-### Dependencies
-Uses existing dependencies:
-- `playwright` - Browser automation with stealth
-- `chromium` - Headless browser
-
-## Legal Compliance
-
-### FCRA Compliance
-- Criminal records are permissible purpose under FCRA
-- Must be used for employment, housing, or legal purposes
-- Cannot be used for marketing/profiling
-- Disclaimer included in all responses
-
-### Public Records
-✅ All sources are public records - no privacy violation
-
-## Implementation Notes
-
-### Placeholder Implementations
-The scrapers use placeholder DOM selectors that need to be updated for production:
-- State court systems vary by jurisdiction (Odyssey, Tyler, custom systems)
-- County clerk websites have different structures
-- PACER requires authentication setup
-- Sex offender registry and warrant databases need actual selector mappings
-
-### Production Deployment
-For production use, you'll need to:
-1. Map actual DOM selectors for each jurisdiction
-2. Set up PACER account if federal records needed
-3. Add proxy rotation for high-volume usage
-4. Implement detailed error logging and monitoring
-5. Add rate limiting per source to avoid detection
-6. Test thoroughly with real data sources
-
-## Example Usage
-
-```typescript
-import { criminalRecordsAggregator } from './services/criminalRecords';
-
-const record = await criminalRecordsAggregator.search({
-  fullName: "John Smith",
-  dateOfBirth: "1985-03-15",
-  state: "CA"
-});
-
-console.log(`Risk Score: ${record.riskScore}/10`);
-console.log(`Active Warrants: ${record.activeWarrants.length}`);
-console.log(`Sex Offender: ${record.sexOffenderStatus.registered}`);
-```
+Commercial services requiring new onboarding or credentials were researched but are not added to the active retrieval path.
