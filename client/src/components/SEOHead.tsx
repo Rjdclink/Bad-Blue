@@ -126,7 +126,7 @@ export function SEOHead({
     const finalCanonical = canonicalUrl || inferredCanonical;
     const effectiveNoIndex = noIndex || isPrivateRoute(path) || (!isSubscriptionEntryPath(path) && !isPublicMarketingAppPath(path));
     const finalOgImage = ogImage || DEFAULT_SHARE_IMAGE;
-    const finalOgImageAlt = ogImageAlt || "Legal What? legal technology platform logo";
+    const finalOgImageAlt = ogImageAlt || "LegalWhat social preview: legal guidance, research, answers, and documents";
 
     document.title = title;
     setMetaTag("description", description);
