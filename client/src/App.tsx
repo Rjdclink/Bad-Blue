@@ -12,6 +12,7 @@ import { AuthLoadingSkeleton, PageSkeleton } from "@/components/ui/page-skeleton
 import { useGlobalGestureNavigation } from "@/hooks/useGlobalGestureNavigation";
 import { isPaidAccessState, isPublicMarketingAppPath, isSubscriptionEntryPath } from "@shared/subscriptionPolicy";
 import TrialAccessPage from "@/pages/trial-access";
+import { recoverPageDownload } from "@/lib/pageLoadRecovery";
 
 if (typeof window !== 'undefined') {
   console.log('[Performance] App component loading...');
@@ -65,6 +66,9 @@ function lazyWithRetry<T extends { default: React.ComponentType<any> }>(
   return lazy(() =>
     importFn().catch((error) => {
       console.error(`[LazyLoad] Failed to load ${chunkName || 'chunk'}:`, error);
+      if (recoverPageDownload(error)) {
+        return { default: () => <PageSkeleton /> } as unknown as T;
+      }
       return { default: () => <div className="p-4 text-center text-destructive">Failed to load page. <button onClick={() => window.location.reload()} className="underline">Refresh</button></div> } as unknown as T;
     })
   );

@@ -186,7 +186,11 @@ export function serveStatic(app: Express) {
   }
 
   console.log(`[serveStatic] Serving static files from: ${distPath}`);
-  app.use(express.static(distPath));
+  app.use(express.static(distPath, {
+    setHeaders(res, filePath) {
+      if (filePath.endsWith('.html')) res.setHeader('Cache-Control', 'no-store');
+    },
+  }));
 
   const indexPath = path.resolve(distPath, "index.html");
   const indexTemplate = fs.readFileSync(indexPath, "utf-8");
@@ -203,8 +207,10 @@ export function serveStatic(app: Express) {
       || pathname.startsWith('/assets/')
       || /\.[a-z0-9]{2,8}$/i.test(pathname);
     if (looksLikeStaticAsset) {
+      res.setHeader('Cache-Control', 'no-store');
       return res.status(404).type('text/plain').send('Static asset not found');
     }
+    res.setHeader('Cache-Control', 'no-store');
     return res.status(200).type('html').send(renderSeoShell(indexTemplate, pathname));
   });
 }
