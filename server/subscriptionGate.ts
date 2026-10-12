@@ -63,6 +63,8 @@ const PUBLIC_POST_APIS = new Set([
 ]);
 const PUBLIC_FILES = new Set([
   "/robots.txt", "/sitemap.xml", "/manifest.json", "/favicon.ico", "/favicon.png",
+  // Build inventory contains only generated public filenames and timestamps.
+  "/assets/browser-asset-history.json",
   "/favicon-16x16.png", "/favicon-32x32.png", "/favicon-48x48.png",
   "/apple-touch-icon.png", "/icon-192x192.png", "/icon-512x512.png",
 ]);
