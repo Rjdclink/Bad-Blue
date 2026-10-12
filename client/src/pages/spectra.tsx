@@ -5,7 +5,7 @@ import { BackButton } from '@/components/BackButton';
 import { SEOHead } from '@/components/SEOHead';
 import { GeoconsoleRadarDashboard } from '@/components/geoconsole';
 import { SpectraEvidenceRecords } from '@/components/geoconsole/SpectraEvidenceRecords';
-import { SpectraGeographicContext, type SpectraGeographicContextEvidence } from '@/components/geoconsole/SpectraGeographicContext';
+import { SpectraGeographicContext, type SpectraGeographicContextEvidence, type SpectraPhotoScene } from '@/components/geoconsole/SpectraGeographicContext';
 import { useVoiceMode } from '@/hooks/useVoiceMode';
 import { useVoiceSynthesis } from '@/hooks/useVoiceSynthesis';
 import { getLexaraLiveEnabled } from '@/components/LexaraLiveConsentModal';
@@ -161,6 +161,7 @@ interface AcquisitionResponse {
   locationObservations?: GPSPoint[];
   candidateLocations?: SpectraLocationCandidate[];
   contextEvidence?: SpectraGeographicContextEvidence;
+  mediaCaptureScenes?: SpectraPhotoScene[];
   publicPlace?: { sources: Array<{ url: string; title: string; status: string }>; diagnostics: { selected: number; retrieved: number; supported: number; outcome: string; retrieval?: SpectraRetrievalSummary; distinctRetrievedUrls?: number; duplicateRetrievedUrls?: number } };
 }
 
@@ -215,6 +216,7 @@ export default function SpectraPage() {
   const [observations, setObservations] = useState<GPSPoint[]>([]);
   const [candidateLocations, setCandidateLocations] = useState<SpectraLocationCandidate[]>([]);
   const [contextEvidence, setContextEvidence] = useState<SpectraGeographicContextEvidence | null>(null);
+  const [photoScenes, setPhotoScenes] = useState<SpectraPhotoScene[]>([]);
   const [directEvidence, setDirectEvidence] = useState<GPSPoint[]>([]);
   const [confidence, setConfidence] = useState<number | null>(null);
   const [sourceCount, setSourceCount] = useState(0);
@@ -346,6 +348,7 @@ export default function SpectraPage() {
     setObservations([]);
     setCandidateLocations([]);
     setContextEvidence(null);
+    setPhotoScenes([]);
     setDirectEvidence([]);
     setConfidence(null);
     setSourceCount(0);
@@ -526,6 +529,7 @@ export default function SpectraPage() {
       setObservations(points);
       setCandidateLocations(Array.isArray(payload.candidateLocations) ? payload.candidateLocations : []);
       setContextEvidence(payload.contextEvidence?.anchor ? payload.contextEvidence : null);
+      setPhotoScenes(Array.isArray(payload.mediaCaptureScenes) ? payload.mediaCaptureScenes : []);
       setConfidence(
         points.length > 0 || canonicalLocationConfidence > 0
           ? canonicalLocationConfidence
@@ -1140,7 +1144,7 @@ export default function SpectraPage() {
                     {pipelineNotices.map(notice => <p key={notice} className="mt-1">{notice}</p>)}
                   </details>
                 )}
-                <SpectraGeographicContext value={contextEvidence} />
+                <SpectraGeographicContext value={contextEvidence} photoScenes={photoScenes} />
               </div>
               <Button
                 variant="ghost"
