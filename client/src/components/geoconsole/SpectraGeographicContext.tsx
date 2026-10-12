@@ -23,8 +23,9 @@ export interface SpectraGeographicContextEvidence {
   geotaggedMedia: Array<{ id?: string; title?: string; provider?: string; capturedAt?: string;
     latitude: number; longitude: number; pageUrl?: string }>;
   weather?: { provider?: string; stationId?: string; stationName?: string;
+    latitude?: number; longitude?: number;
     observedAt?: string; textDescription?: string; temperatureC?: number | null };
-  earthObservation: Array<{ id?: string; provider?: string; observedAt?: string;
+  earthObservation: Array<{ id?: string; provider?: string; observedAt?: string; bbox?: number[];
     cloudCover?: number | null; platform?: string; links?: Array<{ rel?: string; href?: string }> }>;
   sourceFamilies: string[];
 }
