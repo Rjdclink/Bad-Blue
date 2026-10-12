@@ -81,14 +81,14 @@ export default function MasterPanelNavigator() {
   };
 
   return (
-    <div className="sticky top-0 z-[100] overscroll-x-contain touch-pan-y border-b bg-background/95 px-2 py-2 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-background/80">
+    <div className="sticky top-0 z-[100] overscroll-x-contain touch-pan-y border-b border-slate-700 bg-slate-950 text-slate-100 px-2 py-2 shadow-sm backdrop-blur">
       <div className="mx-auto flex w-full max-w-7xl items-center gap-2">
         <Button
           type="button"
           variant="outline"
           size="sm"
           onClick={() => move(-1)}
-          className="min-h-11 min-w-11 shrink-0 touch-manipulation gap-1.5"
+          className="min-h-11 min-w-11 shrink-0 touch-manipulation gap-1.5 border-slate-700 bg-slate-900 text-slate-100 hover:bg-slate-800"
           aria-label="Previous master panel"
         >
           <ArrowLeft className="h-4 w-4" />
@@ -108,7 +108,7 @@ export default function MasterPanelNavigator() {
             variant="outline"
             size="sm"
             onClick={() => move(1)}
-            className="min-h-11 min-w-11 touch-manipulation gap-1.5"
+            className="min-h-11 min-w-11 touch-manipulation gap-1.5 border-slate-700 bg-slate-900 text-slate-100 hover:bg-slate-800"
             aria-label="Next master panel"
           >
             <span className="hidden sm:inline">Forward</span>

@@ -1,5 +1,5 @@
 import BpsActivityTerminal from '@/components/bps-activity-terminal';
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useLocation } from "wouter";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -64,6 +64,9 @@ import { useWallet, formatAddress, getChainName, SUPPORTED_CHAINS } from "@/hook
 // Types for API responses
 interface SystemStatus {
   running: boolean;
+  lifecycle?: string;
+  lastError?: string | null;
+  control?: { manualPowerPhase?: 'OFF' | 'STARTING' | 'ON' | 'STOPPING' };
   cryptoCrawl: {
     enabled: boolean;
     gasOracle: boolean;
@@ -178,6 +181,14 @@ export default function CryptoCrawlerDashboard() {
   const [systemHealth, setSystemHealth] = useState<SystemHealth | null>(null);
   const [consoleLogs, setConsoleLogs] = useState<ConsoleLog[]>([]);
   
+  const [statusKnown, setStatusKnown] = useState(false);
+  const [controlIntent, setControlIntent] = useState<'start' | 'stop' | null>(null);
+  const controlIntentRef = useRef<'start' | 'stop' | null>(null);
+  const controlDeadline = useRef(0);
+  const [runtimeLogs, setRuntimeLogs] = useState<ConsoleLog[]>([]);
+  const [consoleError, setConsoleError] = useState<string | null>(null);
+  const consoleViewport = useRef<HTMLDivElement>(null);
+
   // Loading states
   const [loadingStatus, setLoadingStatus] = useState(false);
   const [loadingStats, setLoadingStats] = useState(false);
@@ -196,8 +207,8 @@ export default function CryptoCrawlerDashboard() {
 
   // Faucet state - Autonomous profit optimization
   const [faucetStatus, setFaucetStatus] = useState<FaucetStatus>({
-    enabled: true,  // FAUCET IS ON BY DEFAULT
-    mode: 'open',
+    enabled: false,  // Only backend evidence may mark the faucet active
+    mode: 'closed',
     profitThisSession: 0,
     profitThisHour: 0,
     profitThisDay: 0,
@@ -206,7 +217,7 @@ export default function CryptoCrawlerDashboard() {
     tradesThisHour: 0,
     tradesThisDay: 0,
     stealthLevel: 0,
-    healthScore: 100,
+    healthScore: 0,
     consecutiveFailures: 0,
     currentWindow: 0,
     totalWindows: 18,
@@ -225,64 +236,28 @@ export default function CryptoCrawlerDashboard() {
   // No redirect useEffect needed here - the route won't render if not authenticated
   // The page MUST NOT self-redirect; it shows status/errors inline
 
-  // Fetch system status
+  // Status reads are local snapshots and never start the runtime. Failed reads
+  // preserve the last observation; they must never turn uncertainty into OFF.
   const fetchStatus = useCallback(async () => {
     setLoadingStatus(true);
     try {
-      const response = await fetch('/admin/crypto/status', {
-        method: 'GET',
-        credentials: 'include',
-      });
-      if (response.ok) {
-        const data = await response.json();
-        setSystemStatus(data);
-      } else if (response.status === 401 || response.status === 403) {
-        // Authentication error - session may have expired, show warning but don't redirect
-        addConsoleLog('warn', 'Session expired or unauthorized - please re-authenticate');
-        setSystemStatus({
-          running: false,
-          cryptoCrawl: {
-            enabled: false,
-            gasOracle: false,
-            balanceMonitor: false,
-            networkHealth: false,
-          },
-          startedAt: null,
-          uptime: 0,
-        });
-      } else {
-        // Other error - set default status
-        setSystemStatus({
-          running: false,
-          cryptoCrawl: {
-            enabled: false,
-            gasOracle: false,
-            balanceMonitor: false,
-            networkHealth: false,
-          },
-          startedAt: null,
-          uptime: 0,
-        });
-        addConsoleLog('warn', `Status fetch returned ${response.status}: ${response.statusText || 'Unknown error'}`);
+      const response = await fetch('/admin/crypto/status', { credentials: 'include', cache: 'no-store' });
+      if (!response.ok) throw new Error(`Status unavailable (${response.status})`);
+      const data = await response.json() as SystemStatus;
+      setSystemStatus(data);
+      setStatusKnown(true);
+      const phase = data.control?.manualPowerPhase;
+      const intent = controlIntentRef.current;
+      if ((intent === 'start' && (data.running || data.lifecycle === 'FAILED'))
+        || (intent === 'stop' && phase === 'OFF')) {
+        controlIntentRef.current = null;
+        setControlIntent(null);
       }
+      if (phase === 'OFF') setFaucetStatus(prev => ({ ...prev, enabled: false, mode: 'closed' }));
     } catch (error) {
-      console.error('Failed to fetch status:', error);
-      addConsoleLog('error', `Network error: ${error instanceof Error ? error.message : 'Failed to connect to server'}`);
-      // Set default status on network error
-      setSystemStatus({
-        running: false,
-        cryptoCrawl: {
-          enabled: false,
-          gasOracle: false,
-          balanceMonitor: false,
-          networkHealth: false,
-        },
-        startedAt: null,
-        uptime: 0,
-      });
-    } finally {
-      setLoadingStatus(false);
-    }
+      setStatusKnown(false);
+      addConsoleLog('error', error instanceof Error ? error.message : 'Status unavailable');
+    } finally { setLoadingStatus(false); }
   }, []);
 
   // Fetch stats
@@ -394,16 +369,16 @@ export default function CryptoCrawlerDashboard() {
           ...prev,
           ...data,
           // Default to ON only if enabled is null/undefined (preserves explicit false)
-          enabled: data.enabled ?? true,
+          enabled: data.enabled === true,
         }));
         addConsoleLog('info', `[Faucet] Status: ${data.mode || 'active'}, Daily Progress: ${(data.dailyTargetProgress || 0).toFixed(1)}%`);
       } else {
-        // If endpoint doesn't exist, use optimistic defaults (faucet ON)
-        addConsoleLog('info', '[Faucet] Using optimized default settings - FAUCET ON');
+        setFaucetStatus(prev => ({ ...prev, enabled: false, mode: 'closed' }));
+        addConsoleLog('warn', 'Faucet status unavailable');
       }
     } catch (error) {
       console.error('Failed to fetch faucet status:', error);
-      // Silently continue with defaults - faucet remains ON
+      setFaucetStatus(prev => ({ ...prev, enabled: false, mode: 'closed' }));
     } finally {
       setLoadingFaucet(false);
     }
@@ -492,6 +467,9 @@ export default function CryptoCrawlerDashboard() {
 
   // Start system
   const handleStartSystem = async () => {
+    controlIntentRef.current = 'start';
+    controlDeadline.current = Date.now() + 300_000;
+    setControlIntent('start');
     setStartingSystem(true);
     addConsoleLog('info', '[CryptoCrawler] Starting system...');
     try {
@@ -511,18 +489,22 @@ export default function CryptoCrawlerDashboard() {
       }
     } catch (error: any) {
       toast({
-        title: "Failed to Start",
+        title: "Start response interrupted",
         description: error.message,
         variant: "destructive",
       });
-      addConsoleLog('error', `[CryptoCrawler] Failed to start: ${error.message}`);
+      addConsoleLog('error', `[CryptoCrawler] Start response interrupted; checking server state: ${error.message}`);
     } finally {
       setStartingSystem(false);
+      void fetchStatus();
     }
   };
 
   // Stop system
   const handleStopSystem = async () => {
+    controlIntentRef.current = 'stop';
+    controlDeadline.current = Date.now() + 300_000;
+    setControlIntent('stop');
     setStoppingSystem(true);
     addConsoleLog('info', '[CryptoCrawler] Stopping system...');
     try {
@@ -548,6 +530,7 @@ export default function CryptoCrawlerDashboard() {
       addConsoleLog('error', `[CryptoCrawler] Failed to stop: ${error.message}`);
     } finally {
       setStoppingSystem(false);
+      void fetchStatus();
     }
   };
 
@@ -621,6 +604,58 @@ export default function CryptoCrawlerDashboard() {
 
   // Initial data fetch - wrapped in try/catch, errors display inline, NEVER redirect
   const isSystemRunning = systemStatus?.running === true;
+  const phase = systemStatus?.control?.manualPowerPhase;
+  const transitioning = phase === 'STARTING' || phase === 'STOPPING';
+  const powerLabel = !statusKnown ? 'UNKNOWN' : phase || (isSystemRunning ? 'ON' : 'OFF');
+  const canObserve = (isSystemRunning || transitioning || controlIntent !== null) && !stoppingSystem;
+
+  // Reconcile an explicit command even if its HTTP response was lost. Stop
+  // remains reachable during startup. Idle OFF creates no recurring requests.
+  useEffect(() => {
+    if (!isSystemRunning && !transitioning && !controlIntent) return;
+    let disposed = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const poll = async () => {
+      if (controlIntentRef.current && Date.now() > controlDeadline.current) {
+        controlIntentRef.current = null;
+        setControlIntent(null);
+        setStatusKnown(false);
+        addConsoleLog('warn', 'Control confirmation timed out. Use Refresh status or Stop system.');
+        return;
+      }
+      await fetchStatus();
+      if (!disposed) timer = setTimeout(poll, 2000);
+    };
+    void poll();
+    return () => { disposed = true; clearTimeout(timer); };
+  }, [isSystemRunning, transitioning, controlIntent, fetchStatus]);
+
+  useEffect(() => {
+    if (!canObserve) return;
+    let disposed = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const controller = new AbortController();
+    const poll = async () => {
+      try {
+        const response = await fetch('/admin/crypto/logs?limit=100', { credentials: 'include', headers: getInternalAuthHeaders(), signal: controller.signal });
+        if (!response.ok) throw new Error(`Console unavailable (${response.status})`);
+        const data = await response.json();
+        if (!data.available) throw new Error(data.reason || 'Runtime logs unavailable');
+        if (!disposed) {
+          setRuntimeLogs(data.logs.map((row: any) => ({ timestamp: new Date(row.timestamp).getTime(), level: row.level, message: `${row.component ? `[${row.component}] ` : ''}${row.message}${row.data?.chain ? ` · ${row.data.chain}` : ''}${row.data?.error ? ` · ${String(row.data.error).slice(0, 240)}` : ''}` })));
+          setConsoleError(null);
+        }
+      } catch (error) {
+        if (!disposed) setConsoleError(error instanceof Error ? error.message : 'Console connection interrupted');
+      } finally { if (!disposed) timer = setTimeout(poll, 3000); }
+    };
+    void poll();
+    return () => { disposed = true; clearTimeout(timer); controller.abort(); };
+  }, [canObserve]);
+
+  useEffect(() => {
+    if (consoleViewport.current) consoleViewport.current.scrollTop = 0;
+  }, [runtimeLogs, consoleLogs]);
 
   // One local status read on opening the dashboard; it does not start providers.
   useEffect(() => { void fetchStatus(); }, [fetchStatus]);
@@ -630,12 +665,10 @@ export default function CryptoCrawlerDashboard() {
     void fetchStats();
     void fetchFaucetStatus();
     void fetchHealth();
-    const statusInterval = setInterval(fetchStatus, 10000);
     const statsInterval = setInterval(fetchStats, 30000);
     const faucetInterval = setInterval(fetchFaucetStatus, 20000);
     const healthInterval = setInterval(fetchHealth, 15000);
     return () => {
-      clearInterval(statusInterval);
       clearInterval(statsInterval);
       clearInterval(faucetInterval);
       clearInterval(healthInterval);
@@ -665,7 +698,7 @@ export default function CryptoCrawlerDashboard() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-orange-900/10 to-gray-900">
+    <div className="min-h-screen w-full min-w-0 overflow-x-hidden bg-slate-950 text-slate-100">
       <SEOHead
         title="CryptoCrawler - Command Dashboard"
         description="Full access to CryptoCrawler control panel with Monte Carlo simulations and trading operations"
@@ -673,8 +706,8 @@ export default function CryptoCrawlerDashboard() {
 
       {/* Header */}
       <header className="border-b border-orange-500/20 bg-black/40 backdrop-blur-sm">
-        <div className="container mx-auto px-4 py-4">
-          <div className="flex items-center justify-between">
+        <div className="mx-auto w-full max-w-7xl min-w-0 px-4 py-4">
+          <div className="flex flex-wrap items-center justify-between gap-4">
             <div className="flex items-center gap-3">
               {/* Back Button */}
               <Button
@@ -694,13 +727,13 @@ export default function CryptoCrawlerDashboard() {
                 <p className="text-sm text-orange-300">Zero-Capital Flash Loan Arbitrage</p>
               </div>
             </div>
-            <div className="flex items-center gap-4">
+            <div className="flex min-w-0 flex-wrap items-center gap-3">
               {/* System Control - canonical CryptoCrawler lifecycle authority */}
               <div className="flex items-center gap-3">
                 <div className="flex items-center gap-2 rounded-md border border-white/10 bg-white/5 px-3 py-2">
                   <div>
                     <p className="text-xs font-medium text-white">Master Power</p>
-                    <p className="text-[11px] text-gray-400">{isSystemRunning ? 'ON' : 'OFF'}</p>
+                    <p className="text-[11px] text-gray-400">{powerLabel}</p>
                   </div>
                   <Switch
                     aria-label="CryptoCrawler master power"
@@ -710,35 +743,15 @@ export default function CryptoCrawlerDashboard() {
                     className="data-[state=checked]:bg-green-500"
                   />
                 </div>
-                {isSystemRunning ? (
-                  <Button 
-                    onClick={handleStopSystem}
-                    disabled={stoppingSystem || startingSystem}
-                    variant="destructive"
-                    size="sm"
-                  >
-                    {stoppingSystem ? (
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    ) : (
-                      <StopCircle className="w-4 h-4 mr-2" />
-                    )}
-                    Stop System
-                  </Button>
-                ) : (
-                  <Button 
-                    onClick={handleStartSystem}
-                    disabled={startingSystem || stoppingSystem}
-                    className="bg-green-600 hover:bg-green-700"
-                    size="sm"
-                  >
-                    {startingSystem ? (
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    ) : (
-                      <Power className="w-4 h-4 mr-2" />
-                    )}
-                    Start System
-                  </Button>
-                )}
+                <Button onClick={handleStartSystem}
+                  disabled={!statusKnown || isSystemRunning || startingSystem || stoppingSystem || controlIntent !== null || transitioning}
+                  className="bg-emerald-600 hover:bg-emerald-700" size="sm">
+                  <Power className="mr-2 h-4 w-4" />{startingSystem || controlIntent === 'start' ? 'Starting…' : 'Start System'}
+                </Button>
+                <Button onClick={handleStopSystem} disabled={stoppingSystem || controlIntent === 'stop'} variant="destructive" size="sm">
+                  <StopCircle className="mr-2 h-4 w-4" />{stoppingSystem || controlIntent === 'stop' ? 'Stopping…' : 'Stop System'}
+                </Button>
+                <Button onClick={() => void fetchStatus()} disabled={loadingStatus} variant="outline" size="sm">Refresh status</Button>
               </div>
               
               {/* MetaMask Wallet Connection */}
@@ -787,7 +800,7 @@ export default function CryptoCrawlerDashboard() {
                 }
               >
                 <Activity className="w-3 h-3 mr-1" />
-                {loadingStatus ? 'LOADING...' : isSystemRunning ? 'RUNNING' : 'STOPPED'}
+                {!statusKnown ? 'STATUS UNKNOWN' : transitioning ? powerLabel : isSystemRunning ? 'RUNNING' : 'STOPPED'}
               </Badge>
               <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-orange-500/20 border border-orange-500/30">
                 <Shield className="w-4 h-4 text-orange-400" />
@@ -799,8 +812,22 @@ export default function CryptoCrawlerDashboard() {
       </header>
 
       {/* Main Content */}
-      <main className="container mx-auto px-4 py-8">
-        <BpsActivityTerminal running={isSystemRunning && !stoppingSystem} />
+      <main className="mx-auto w-full max-w-7xl min-w-0 px-3 py-5 sm:px-6">
+        <div className="mb-6 grid min-w-0 grid-cols-2 items-stretch gap-3" aria-label="Live system activity">
+          <section className="min-w-0 overflow-hidden rounded-lg border border-slate-700 bg-slate-900 p-3">
+            <h2 className="mb-2 text-sm font-semibold text-white">System Console</h2>
+            <p className="mb-3 text-xs text-slate-400">{consoleError || (canObserve ? 'Live runtime events · newest first' : 'System off — polling stopped.')}</p>
+            <div ref={consoleViewport} className="h-64 overflow-auto break-words rounded bg-slate-950 p-2 font-mono text-[10px] sm:text-xs" role="log" aria-label="System console events">
+              {[...consoleLogs, ...runtimeLogs].sort((a, b) => b.timestamp - a.timestamp).slice(0, 150).map((log, index) => (
+                <p key={`${log.timestamp}-${index}`} className={`mb-2 ${log.level === 'error' ? 'text-red-300' : log.level === 'warn' ? 'text-amber-300' : 'text-emerald-300'}`}>
+                  [{new Date(log.timestamp).toLocaleTimeString()}] {log.message}
+                </p>
+              ))}
+              {!consoleLogs.length && !runtimeLogs.length && <p className="text-slate-400">No runtime events received.</p>}
+            </div>
+          </section>
+          <BpsActivityTerminal running={isSystemRunning && !stoppingSystem} />
+        </div>
         {/* Error Banner - Non-blocking, dashboard stays visible */}
         {hasError && errorMessage && (
           <Card className="mb-6 bg-red-900/20 border border-red-500/30">
@@ -888,7 +915,7 @@ export default function CryptoCrawlerDashboard() {
 
         {/* Tabs */}
         <Tabs defaultValue="faucet" className="space-y-6">
-          <TabsList className="bg-gray-800/50 border border-white/10">
+          <TabsList className="flex h-auto w-full justify-start overflow-x-auto bg-slate-900 border border-white/10">
             <TabsTrigger value="faucet" className="data-[state=active]:bg-green-500/20" onClick={fetchFaucetStatus}>
               <Droplets className="w-4 h-4 mr-2" />
               Faucet
@@ -909,10 +936,6 @@ export default function CryptoCrawlerDashboard() {
               <Clock className="w-4 h-4 mr-2" />
               History
             </TabsTrigger>
-            <TabsTrigger value="console" className="data-[state=active]:bg-orange-500/20">
-              <Terminal className="w-4 h-4 mr-2" />
-              Console
-            </TabsTrigger>
             <TabsTrigger value="governance" className="data-[state=active]:bg-purple-500/20">
               <Shield className="w-4 h-4 mr-2" />
               Governance
@@ -930,11 +953,11 @@ export default function CryptoCrawlerDashboard() {
                       <Droplets className="w-5 h-5 text-green-400" />
                       Autonomous Profit Faucet
                     </CardTitle>
-                    <Badge className={faucetStatus.enabled 
+                    <Badge className={(isSystemRunning && faucetStatus.enabled)
                       ? 'bg-green-500/20 text-green-300 border-green-500/30 animate-pulse' 
                       : 'bg-red-500/20 text-red-300 border-red-500/30'
                     }>
-                      {faucetStatus.enabled ? '🟢 ACTIVE' : '🔴 OFF'}
+                      {(isSystemRunning && faucetStatus.enabled) ? '🟢 ACTIVE' : '🔴 OFF'}
                     </Badge>
                   </div>
                   <CardDescription className="text-gray-400">
@@ -947,18 +970,18 @@ export default function CryptoCrawlerDashboard() {
                     <div className="p-4 rounded-lg bg-gradient-to-r from-green-900/30 to-emerald-900/30 border border-green-500/30">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-3">
-                          <div className={`p-2 rounded-full ${faucetStatus.enabled ? 'bg-green-500/20' : 'bg-gray-500/20'}`}>
-                            <Power className={`w-6 h-6 ${faucetStatus.enabled ? 'text-green-400' : 'text-gray-400'}`} />
+                          <div className={`p-2 rounded-full ${(isSystemRunning && faucetStatus.enabled) ? 'bg-green-500/20' : 'bg-gray-500/20'}`}>
+                            <Power className={`w-6 h-6 ${(isSystemRunning && faucetStatus.enabled) ? 'text-green-400' : 'text-gray-400'}`} />
                           </div>
                           <div>
                             <p className="text-white font-medium">Faucet Power</p>
                             <p className="text-sm text-gray-400">
-                              {faucetStatus.enabled ? 'Automatically generating profit' : 'Faucet is OFF'}
+                              {(isSystemRunning && faucetStatus.enabled) ? 'Automatically generating profit' : 'Faucet is OFF'}
                             </p>
                           </div>
                         </div>
                         <Switch
-                          checked={faucetStatus.enabled}
+                          checked={(isSystemRunning && faucetStatus.enabled)}
                           onCheckedChange={handleToggleFaucet}
                           disabled={togglingFaucet}
                           className="data-[state=checked]:bg-green-500"
@@ -1155,7 +1178,7 @@ export default function CryptoCrawlerDashboard() {
             </div>
 
             {/* Faucet Info Banner */}
-            {faucetStatus.enabled && (
+            {(isSystemRunning && faucetStatus.enabled) && (
               <Card className="mt-6 bg-green-900/20 border border-green-500/30">
                 <CardContent className="pt-6">
                   <div className="flex items-start gap-4">
@@ -1545,35 +1568,6 @@ export default function CryptoCrawlerDashboard() {
             </Card>
           </TabsContent>
 
-          {/* Console Tab */}
-          <TabsContent value="console">
-            <Card className="bg-gray-800/50 border-white/10">
-              <CardHeader>
-                <CardTitle className="text-white flex items-center gap-2">
-                  <Terminal className="w-5 h-5" />
-                  System Console
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="bg-black/50 rounded-lg p-4 font-mono text-sm h-96 overflow-auto">
-                  {consoleLogs.length > 0 ? (
-                    consoleLogs.map((log, i) => (
-                      <p key={i} className={
-                        log.level === 'error' ? 'text-red-400' :
-                        log.level === 'warn' ? 'text-yellow-400' :
-                        'text-green-400'
-                      }>
-                        [{new Date(log.timestamp).toLocaleTimeString()}] {log.message}
-                      </p>
-                    ))
-                  ) : (
-                    <p className="text-gray-500">Console initialized. Waiting for events...</p>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
           {/* Governance Tab - Stage Governor Control */}
           <TabsContent value="governance">
             <StageGovernorPanel />
@@ -1581,7 +1575,7 @@ export default function CryptoCrawlerDashboard() {
         </Tabs>
 
         {/* System Warning */}
-        {!isSystemRunning && (
+        {statusKnown && !isSystemRunning && !transitioning && (
           <Card className="mt-8 bg-yellow-900/20 border border-yellow-500/30">
             <CardContent className="pt-6">
               <div className="flex items-start gap-4">
