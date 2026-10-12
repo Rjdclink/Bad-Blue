@@ -24,6 +24,13 @@ interface PipelineInput {
   solvedObservations: number;
   fusedCandidates: number;
   regionalCandidates: number;
+  regional?: {
+    sourcesEvaluated: number; corroboratedClues: number; provisionalClues: number;
+    directoryClues: number; profileClues: number;
+    phoneSupplied: boolean; phoneOriginAvailable: boolean; phoneOriginRecords: number;
+    suppliedClues: number; geocodeAttempts: number; geocodeMatches: number; geocodeFailures: number;
+    mappedBy: string;
+  };
 }
 
 const count = (value: number) => Number.isFinite(value)
@@ -77,6 +84,22 @@ export function buildSpectraPipelineDiagnostics(input: PipelineInput) {
       candidates: count(input.fusedCandidates),
     },
     regionalCandidates: count(input.regionalCandidates),
+    regional: input.regional ? {
+      sourcesEvaluated: count(input.regional.sourcesEvaluated),
+      corroboratedClues: count(input.regional.corroboratedClues),
+      provisionalClues: count(input.regional.provisionalClues),
+      directoryClues: count(input.regional.directoryClues),
+      profileClues: count(input.regional.profileClues),
+      phoneSupplied: input.regional.phoneSupplied === true,
+      phoneOriginAvailable: input.regional.phoneOriginAvailable === true,
+      phoneOriginRecords: count(input.regional.phoneOriginRecords),
+      suppliedClues: count(input.regional.suppliedClues),
+      geocodeAttempts: count(input.regional.geocodeAttempts),
+      geocodeMatches: count(input.regional.geocodeMatches),
+      geocodeFailures: count(input.regional.geocodeFailures),
+      mappedBy: ['corroborated', 'public-document', 'public-profile', 'phone-assignment', 'supplied-clue'].includes(input.regional.mappedBy)
+        ? input.regional.mappedBy : 'none',
+    } : undefined,
     outcome: input.solvedObservations > 0 ? 'location-observations' as const
       : input.regionalCandidates > 0 ? 'regional-context' as const
       : 'no-mappable-evidence' as const,
