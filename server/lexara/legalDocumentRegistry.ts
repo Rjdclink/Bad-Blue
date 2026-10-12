@@ -118,12 +118,19 @@ export function inferLegalDocumentNeed(text: string): LegalDocumentType | null {
   const value = normalize(String(text || ''));
   if (!value || /\b(?:do not|don t|dont|never|no longer|not trying to)\s+(?:want|need|plan|intend|file|prepare|draft|create)\b/.test(value)) return null;
   if (/^(?:what is|what are|explain|define|tell me about|what does|why do|how does)\b/.test(value)) return null;
-  if (!/\b(?:i need|i want|i have to|i must|i was|ive been|i got|i received|help me|how do i|what should i|trying to|need to|want to|we need|we want)\b/.test(value)) return null;
+  if (!/\b(?:i need|i want|i have to|i must|i was|ive been|i got|i received|help me|how do i|what should i|trying to|need to|want to|we need|we want|please prepare|please draft|please write|prepare|draft|write|create|generate)\b/.test(value)) return null;
 
   if (/\b(?:i was|ive been|i got|i received)\s+(?:just\s+)?served\s+(?:with\s+)?(?:a\s+)?(?:complaint|lawsuit|summons)\b|\b(?:respond|reply|defend)\s+(?:to\s+)?(?:the\s+|a\s+)?(?:complaint|lawsuit|summons)\b/.test(value)) return 'Answer';
   if (/\b(?:appeal|challenge)\s+(?:the\s+|a\s+)?(?:court\s+)?(?:judgment|final order|court ruling)\b|\b(?:court\s+)?(?:judgment|final order)\b.{0,65}\bappeal\b/.test(value)) return 'Notice of Appeal';
   if (/\b(?:landlord|property manager)\b.{0,110}\b(?:kept|withheld|wont return|hasnt returned|refuses to return)\b.{0,80}\b(?:security deposit|deposit)\b|\b(?:get|recover)\s+(?:my\s+)?(?:security\s+)?deposit\s+back\b/.test(value)) return 'Demand Letter';
   if (/\b(?:discovery|interrogatories|documents requested|request for production)\b.{0,100}\b(?:refused|withheld|ignored|not provided|wont provide|failed to provide)\b|\b(?:compel|force)\b.{0,70}\b(?:discovery|documents|interrogatories)\b/.test(value)) return 'Motion to Compel';
+  // Infer the instrument from the requested act, while leaving final suitability
+  // to the court-specific authority and form checks in the generation route.
+  if (/\b(?:notari[sz]ed|before a notary|sworn before a notary)\b/.test(value)
+    && /\b(?:statement|account|facts|testimony|evidence|court|agency)\b/.test(value)) return 'Affidavit';
+  if (/\b(?:court|judge|hearing|case|agency|tribunal)\b/.test(value)
+    && /\b(?:written statement|statement of facts|my account|what i saw|witness statement|personal knowledge|under penalty of perjury)\b/.test(value)
+    && /\b(?:give|submit|file|prepare|write|tell|explain|provide|need|want)\b/.test(value)) return 'Declaration';
   return null;
 }
 
@@ -159,6 +166,17 @@ export function validateLegalDocumentDraft(
     if (canonicalTokens.length && !canonicalTokens.some(token => normalizedHead.includes(token))) {
       return { valid: false, reason: 'draft does not resemble the requested document type' };
     }
+  }
+
+  if (requestedType === 'Declaration' && (!/under (?:the )?penalt(?:y|ies) of perjury/i.test(trimmed)
+    || !/\b(?:date|dated|executed)\b/i.test(trimmed)
+    || !/\b(?:signature|signed|sign)\b/i.test(trimmed))) {
+    return { valid: false, reason: 'declaration lacks the perjury statement, date, or signer line' };
+  }
+  if (requestedType === 'Affidavit' && (!/\b(?:sworn|affirmed|oath)\b/i.test(trimmed)
+    || !/\b(?:notary|officer authorized to administer oaths)\b/i.test(trimmed)
+    || !/\b(?:signature|signed|sign)\b/i.test(trimmed))) {
+    return { valid: false, reason: 'affidavit lacks an oath, notary/jurat, or signer line' };
   }
 
   if (templateMode && !/\[[A-Z0-9 _/.-]{3,}\]/.test(trimmed)) {

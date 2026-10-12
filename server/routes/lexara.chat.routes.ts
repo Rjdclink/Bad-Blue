@@ -275,7 +275,7 @@ function detectDocumentIntent(prompt: string, previousMessages: LexaraConversati
     && !/\b(?:want|need)\s+to\s+(?:know|understand|learn)\b/.test(p);
   const explicit = genericDocumentRequest || /\b(draft|prepare|create|generate|write|download|downloadable|export|pdf|docx|word document)\b/.test(p);
   const currentType = resolveLegalDocumentType(prompt);
-  const candidateInference = explicit ? null : inferLegalDocumentNeed(prompt);
+  const candidateInference = currentType ? null : inferLegalDocumentNeed(prompt);
   const inferredType = !currentType || (candidateInference === 'Answer' && currentType === 'Complaint') ? candidateInference : null;
   const currentAction = /\b(need|want|make|give|provide|prepare|draft|create|generate|write|download|export|file|filing|submit|serve|send)\b/.test(p);
   const referentialFollowup = /\b(it|that|one|document|form|template|blank|pdf|docx)\b/.test(p);

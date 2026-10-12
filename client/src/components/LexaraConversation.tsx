@@ -1463,6 +1463,17 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
           pendingActionRef.current = { kind: 'document', label: pendingTitle };
         }
       }
+      if (!documentIntentRequested && priorPendingDocument?.missingFields?.length && documentFollowup) {
+        // Carry the answer to a missing-field question into the next draft.
+        // Without this, a short reply such as a court name is never supplied
+        // to the document generator when the user presses Download again.
+        setPendingDocument(previous => previous ? {
+          ...previous,
+          facts: [previous.facts, `USER: ${message}`].join('\n\n').slice(-30_000),
+          state: String(data?.jurisdiction || previous.state),
+          missingFields: undefined,
+        } : previous);
+      }
       // Model/research work is complete before TTS begins. A barge-in during
       // answer playback is a new turn, not an "analysis still running" check-in.
       analysisActiveRef.current = false;
