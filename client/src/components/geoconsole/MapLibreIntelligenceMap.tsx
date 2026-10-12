@@ -18,6 +18,7 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 import type { GeoFrame } from '@/hooks/useGeoRuntime';
 import type { LocationCandidate } from '@shared/geoconsoleTypes';
 import RasterIntelligenceMap from './RasterIntelligenceMap';
+import { spectraStreetLayers } from './spectraMapPolicy';
 import { mapDeadline, PLACE_LABELS, SATELLITE_FALLBACK, satelliteBasemap, satelliteStyle } from './mapBasemap';
 
 export type IntelligenceMapMode = 'satellite' | 'hybrid' | 'street' | 'dark';
@@ -43,6 +44,8 @@ export interface IntelligenceMapProps {
   futurecast: GeoFrame[];
   candidateLocations?: LocationCandidate[];
   displayTime?: Date;
+  /** Restrict Spectra to streets without changing other GeoConsole consumers. */
+  streetMapOnly?: boolean;
   mapMode: IntelligenceMapMode;
   layers: IntelligenceLayerState;
   isLive: boolean;
@@ -311,7 +314,7 @@ function firstVectorSourceId(map: MapLibreMap): string | null {
   return vector?.[0] || null;
 }
 
-function addRuntimeLayers(map: MapLibreMap) {
+function addRuntimeLayers(map: MapLibreMap, streetMapOnly = false) {
   if (!map.getSource('spectra-trail')) {
     map.addSource('spectra-trail', {
       type: 'geojson',
@@ -575,6 +578,9 @@ function addRuntimeLayers(map: MapLibreMap) {
     });
   }
 
+  // Evidence above remains available; excluded providers are never installed.
+  if (streetMapOnly) return;
+
   if (!map.getSource('spectra-satellite')) {
     map.addSource('spectra-satellite', {
       type: 'raster',
@@ -743,12 +749,15 @@ export const MapLibreIntelligenceMap: React.FC<IntelligenceMapProps> = ({
   futurecast,
   candidateLocations = [],
   displayTime,
-  mapMode,
-  layers,
+  mapMode: requestedMapMode,
+  layers: requestedLayers,
+  streetMapOnly = false,
   isLive,
   lockOnTarget,
   onUserInteraction,
 }) => {
+  const mapMode = streetMapOnly ? 'street' : requestedMapMode;
+  const layers = useMemo(() => streetMapOnly ? spectraStreetLayers(requestedLayers) : requestedLayers, [streetMapOnly, requestedLayers]);
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const [ready, setReady] = useState(false);
@@ -786,9 +795,9 @@ export const MapLibreIntelligenceMap: React.FC<IntelligenceMapProps> = ({
   }, []);
 
   const initializeRuntimeLayers = useCallback((map: MapLibreMap) => {
-    addRuntimeLayers(map);
+    addRuntimeLayers(map, streetMapOnly);
     setReady(true);
-  }, []);
+  }, [streetMapOnly]);
 
   const markProviderState = useCallback((
     key: keyof MapProviderStatus,
@@ -1372,6 +1381,7 @@ export const MapLibreIntelligenceMap: React.FC<IntelligenceMapProps> = ({
       {rendererUnavailable && <RasterIntelligenceMap
         currentFrame={currentFrame} trail={trail} futurecast={futurecast}
         candidateLocations={candidateLocations} displayTime={displayTime}
+        streetMapOnly={streetMapOnly}
         mapMode={mapMode} layers={layers} isLive={isLive}
         lockOnTarget={lockOnTarget} onUserInteraction={onUserInteraction}
       />}

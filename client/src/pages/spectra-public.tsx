@@ -6,18 +6,16 @@
  * acquisition, telemetry and saved records retain their server-side access
  * checks; no public handler receives an investigation session identifier.
  */
-import { useState } from 'react';
 import { SEOHead } from '@/components/SEOHead';
 import MapLibreIntelligenceMap, {
   type IntelligenceLayerState,
-  type IntelligenceMapMode,
 } from '@/components/geoconsole/MapLibreIntelligenceMap';
 import type { GeoFrame } from '@/hooks/useGeoRuntime';
 
 const NO_OBSERVATIONS: GeoFrame[] = [];
 
 const PUBLIC_LAYERS: IntelligenceLayerState = {
-  satellite: true,
+  satellite: false,
   earthObservation: false,
   trail: false,
   heatmap: false,
@@ -32,8 +30,6 @@ const PUBLIC_LAYERS: IntelligenceLayerState = {
 };
 
 export default function SpectraPublicPage() {
-  const [mapMode, setMapMode] = useState<IntelligenceMapMode>('street');
-
   return (
     <main className="flex h-[100dvh] min-h-[420px] flex-col bg-slate-950 text-white">
       <SEOHead
@@ -45,23 +41,7 @@ export default function SpectraPublicPage() {
           <h1 className="text-base font-semibold tracking-wide text-cyan-300">SPECTRA</h1>
           <p className="text-xs text-slate-400">General map explorer</p>
         </div>
-        <div className="flex flex-wrap gap-1" aria-label="Map style">
-          {(['street', 'satellite', 'hybrid', 'dark'] as IntelligenceMapMode[]).map(mode => (
-            <button
-              key={mode}
-              type="button"
-              onClick={() => setMapMode(mode)}
-              aria-pressed={mapMode === mode}
-              className={`rounded-md border px-3 py-2 text-xs capitalize focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 ${
-                mapMode === mode
-                  ? 'border-cyan-400 bg-cyan-500/20 text-cyan-200'
-                  : 'border-slate-700 bg-slate-900 text-slate-300 hover:border-slate-500'
-              }`}
-            >
-              {mode}
-            </button>
-          ))}
-        </div>
+        <span className="text-xs text-slate-400">Street map</span>
       </header>
       <section
         className="relative min-h-0 flex-1"
@@ -71,7 +51,8 @@ export default function SpectraPublicPage() {
           currentFrame={null}
           trail={NO_OBSERVATIONS}
           futurecast={NO_OBSERVATIONS}
-          mapMode={mapMode}
+          streetMapOnly
+          mapMode="street"
           layers={PUBLIC_LAYERS}
           isLive={false}
           lockOnTarget={false}
