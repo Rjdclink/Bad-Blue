@@ -892,14 +892,28 @@ async function collectSpectraContextEvidence(input: {
       basis: input.basis,
     },
     places: places.slice(0, 80),
-    cameras: [...trafficLand, ...arcGis, ...externalCameras].slice(0, 160),
+    cameras: (() => {
+      const seen = new Set<string>();
+      return [...trafficLand, ...arcGis, ...externalCameras].filter(camera => {
+        if (!camera || camera.status?.disabled === true
+          || !Number.isFinite(camera.latitude) || !Number.isFinite(camera.longitude)
+          || Math.abs(camera.latitude) > 90 || Math.abs(camera.longitude) > 180) return false;
+        const key = String(camera.provider || '') + ':' + String(camera.id || '');
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      }).slice(0, 160);
+    })(),
     geotaggedMedia: [...wikimedia, ...flickr].slice(0, 120),
     weather,
     earthObservation: earthObservation.slice(0, 20),
     sourceFamilies,
   };
   if (spectraContextCache.size >= 32) spectraContextCache.delete(spectraContextCache.keys().next().value!);
-  spectraContextCache.set(key, { until: Date.now() + SPECTRA_CONTEXT_CACHE_MS, result });
+  spectraContextCache.set(key, {
+    until: Date.now() + (result.sourceFamilies.length ? SPECTRA_CONTEXT_CACHE_MS : 60_000),
+    result,
+  });
   return result;
 }
 
