@@ -1,5 +1,19 @@
 import type { ReactNode } from 'react';
 
+export interface SpectraPhotoScene {
+  imageUrl: string;
+  sourcePostUrl: string;
+  sourcePlatform: string;
+  contentSha256: string;
+  capturedAt: string | null;
+  captureGps: { latitude: number; longitude: number } | null;
+  recencyWeight: number;
+  ageDays: number | null;
+  priorityBand: 'recent_scene' | 'historical_scene' | 'undated_scene' | 'no_geotag';
+  currentPositionVerified: false;
+  subjectPresenceVerified: false;
+}
+
 export interface SpectraGeographicContextEvidence {
   anchor?: { latitude: number; longitude: number; basis: 'timestamped_observation' | 'regional_candidate';
     observedAt?: string };
@@ -44,25 +58,50 @@ function Section({ title, count, children }: { title: string; count: number; chi
 
 /** Public geographic context describes cameras, weather stations, scenes and satellite acquisitions.
  * It never identifies who was present at the place or implies current subject location. */
-export function SpectraGeographicContext({ value }: { value: SpectraGeographicContextEvidence | null }) {
-  if (!value?.anchor) return null;
-  const cameras = value.cameras || [];
-  const media = value.geotaggedMedia || [];
-  const satellite = value.earthObservation || [];
-  const weather = value.weather;
+export function SpectraGeographicContext({ value, photoScenes = [] }: {
+  value: SpectraGeographicContextEvidence | null; photoScenes?: SpectraPhotoScene[];
+}) {
+  if (!value?.anchor && !photoScenes.length) return null;
+  const cameras = value?.cameras || [];
+  const media = value?.geotaggedMedia || [];
+  const satellite = value?.earthObservation || [];
+  const weather = value?.weather;
   return <details className="mt-2 text-xs text-slate-300" data-testid="spectra-geographic-context">
     <summary className="cursor-pointer font-medium">
       Public geographic context · {cameras.length} cameras · {satellite.length} satellite records
-      {weather ? ' · weather available' : ' · weather unavailable'}
+      {weather ? ' · weather available' : ' · weather unavailable'} · {photoScenes.length} inspected photo scenes
     </summary>
     <p className="mt-1 text-amber-200">
       These records describe an area, public cameras, media capture scenes and satellite acquisitions.
       They are not sightings or measurements of the investigated person.
     </p>
     <p className="mt-1 text-slate-400">
-      Anchor: {value.anchor.basis === 'regional_candidate' ? 'provisional regional estimate' : 'dated location observation'}.
-      Nearby places indexed: {value.places?.length || 0}. Absence of context is not evidence of absence.
+      {value?.anchor
+        ? value.anchor.basis === 'regional_candidate'
+          ? 'Context anchor: provisional regional estimate.'
+          : 'Context anchor: dated location observation.'
+        : 'No regional context anchor available.'}
+      {' '}Nearby places indexed: {value?.places?.length || 0}.
     </p>
+    <Section title="Photograph capture scenes (not a person's location)" count={photoScenes.length}>
+      <div className="mt-2 max-h-44 space-y-2 overflow-auto">
+        {photoScenes.length === 0 && <p>No images with inspectable source metadata were returned.</p>}
+        {photoScenes.slice(0, 24).map(scene => <p key={scene.contentSha256}>
+          <strong>{scene.sourcePlatform}</strong> · {scene.priorityBand.replace(/_/g, ' ')}
+          {scene.capturedAt ? ' · captured ' + timestamp(scene.capturedAt)
+            : ' · original capture time unknown'}
+          {scene.captureGps
+            ? ' · GPS capture coordinates available'
+            : ' · capture GPS absent'}
+          {' · '}<a href={scene.sourcePostUrl} target="_blank" rel="noopener noreferrer"
+            className="underline">Public post</a>
+        </p>)}
+      </div>
+      <p className="mt-1 text-slate-400">
+        Dated and geotagged photo scenes are shown first. Recency weight describes a
+        photograph's age, not evidence that a person visited or currently occupies its capture site.
+      </p>
+    </Section>
     <Section title="Public cameras" count={cameras.length}>
       <div className="mt-2 max-h-44 space-y-2 overflow-auto">
         {cameras.length === 0 && <p>No camera records were returned by configured or available feeds.</p>}
