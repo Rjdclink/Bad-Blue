@@ -34,6 +34,9 @@ export interface LegalMeshSearchOptions {
   // Native-only callers retain every source lane without buying alternate
   // query suggestions. Existing callers keep the conditional planner.
   allowClaudePlanning?: boolean;
+  // A caller with its own bounded query waves must retain its contact clues
+  // and source objectives instead of expanding the same subject again.
+  queryAlreadyPlanned?: boolean;
 }
 
 const clean = (v: unknown) => {
@@ -629,11 +632,11 @@ export async function discoverLegalMeshTier3(
   signal?: AbortSignal,
   options: LegalMeshSearchOptions = {},
 ): Promise<LegalMeshCandidate[]> {
-  const learnedPatterns=await Promise.race([
+  const learnedPatterns=options.queryAlreadyPlanned ? [] : await Promise.race([
     getLexaraLearnedQueryPatterns(options.categories||[],options.jurisdiction,1),
     new Promise<string[]>(resolve=>setTimeout(()=>resolve([]),75)),
   ]);
-  const variants=options.officialFormQuery ? [query, `${query} site:.gov`] : buildLexaraSourceQueries({
+  const variants=options.queryAlreadyPlanned ? [query] : options.officialFormQuery ? [query, `${query} site:.gov`] : buildLexaraSourceQueries({
     query,
     subject:options.subject,
     requestedFact:options.requestedFact,
@@ -642,7 +645,7 @@ export async function discoverLegalMeshTier3(
   });
   // Stored patterns contain prior user wording, not reusable templates. Reuse
   // only curated source-family hints so names/instructions cannot cross turns.
-  if(!options.officialFormQuery && learnedPatterns[0]) {
+  if(!options.queryAlreadyPlanned && !options.officialFormQuery && learnedPatterns[0]) {
     const hint = getLexaraSourceQueryHints(options.categories || []).find(value => learnedPatterns[0].includes(value));
     if (hint) variants.push(`${query} ${hint}`);
   }

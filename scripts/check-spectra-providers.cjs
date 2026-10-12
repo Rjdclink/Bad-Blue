@@ -51,7 +51,7 @@ async function runProviderChecks({ env = process.env, fetchImpl = fetch, emit = 
     });
   }
   await Promise.all([
-    independent('ddgs', 'DDGS_URL', 4479, '/health', '/search/text', {}, { query: QUERY, max_results: 3, safesearch: 'off', backend: 'yahoo' }),
+    independent('ddgs', 'DDGS_URL', 4479, '/health', '/search/text', {}, { query: QUERY, max_results: 3, safesearch: 'off', backend: key(env, ['LEXARA_DDGS_BACKEND']) || 'yahoo' }),
     independent('searxng', 'SEARXNG_URL', 8080, '/healthz', '/search', { q: QUERY, format: 'json', engines: 'google cse,brave,bing', safesearch: '0' }),
     independent('openserp', 'OPENSERP_URL', 7000, '/health', '/mega/search', { text: QUERY, limit: '3', mode: 'balanced', engines: 'baidu' }),
     (async () => {

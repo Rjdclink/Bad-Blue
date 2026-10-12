@@ -238,7 +238,11 @@ test('Spectra native discovery does not buy query planning and retains supplemen
     callClaudeWebSearch: async () => { webSearchCalls++; return { content: '', sources: [] }; },
     retrieveSpectraPublicEvidence: async () => { retrievalCalls++; return []; },
   });
-  const result = await exports.runDiscoveryPass(['fictional fixture subject contact'], { useClaude: false });
+  const plannedQueries = ['"Morgan Vale" "202-555-0100"', '"Morgan Vale" address'];
+  const result = await exports.runDiscoveryPass(plannedQueries, { subject: 'Morgan Vale', useClaude: false });
+  const nativeQueries = h.calls.http.filter(call => call.url.includes('ddgs.fixture.test'))
+    .map(call => JSON.parse(call.init.body).query);
+  assert.deepEqual(nativeQueries.sort(), [...plannedQueries].sort(), 'retain contact clues and search each planned query once');
   assert.equal(webSearchCalls, 0);
   assert.equal(h.calls.queryPlanning.length, 0, 'native-only mode must reach the nested planner');
   assert(result.results.some(item => item.url === urls[0]));

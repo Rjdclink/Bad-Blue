@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const { runProviderChecks } = require('./check-spectra-providers.cjs');
 (async () => {
   const calls = [], logs = [];
-  const env = { TAVILY_API_KEY: 'DO_NOT_LOG', SERPAPI_KEY: ' ', SERPAPI_API_KEY: 'DO_NOT_LOG', SCRAPINGBEE_API_KEY: 'DO_NOT_LOG' };
+  const env = { TAVILY_API_KEY: 'DO_NOT_LOG', SERPAPI_KEY: ' ', SERPAPI_API_KEY: 'DO_NOT_LOG', SCRAPINGBEE_API_KEY: 'DO_NOT_LOG', LEXARA_DDGS_BACKEND: 'yahoo,grokipedia' };
   const fetchImpl = async (raw, init) => {
     const url = new URL(raw); calls.push({ url, init });
     if (url.hostname.includes('openserp')) return new Response('DO_NOT_LOG', { status: 503 });
@@ -20,6 +20,7 @@ const { runProviderChecks } = require('./check-spectra-providers.cjs');
   assert.equal(results.find(x => x.provider === 'serpapi').status, 'upstream-error');
   assert.equal(results.find(x => x.provider === 'scrapingbee').status, 'http-401');
   assert.equal(calls.find(x => x.url.hostname === 'serpapi.com').url.searchParams.get('api_key'), 'DO_NOT_LOG');
+  assert.equal(JSON.parse(calls.find(x => x.url.hostname.includes('ddgs') && x.url.pathname === '/search/text').init.body).backend, env.LEXARA_DDGS_BACKEND);
   assert(calls.every(x => x.init.signal instanceof AbortSignal));
   assert(!JSON.stringify(logs).includes('DO_NOT_LOG'));
   const missing = await runProviderChecks({ env: { DDGS_URL: 'invalid-url' }, fetchImpl: async () => new Response('', { status: 503 }), emit: () => {} });
