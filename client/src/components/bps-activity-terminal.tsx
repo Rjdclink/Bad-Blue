@@ -37,9 +37,9 @@ export default function BpsActivityTerminal({ running = false }: { running?: boo
   }, [snapshot, follow]);
 
   return (
-    <section className="mb-6 rounded-lg border border-orange-500/30 bg-black/70 p-4" aria-label="BPS reduction activity">
+    <section className="min-w-0 overflow-hidden rounded-lg border border-slate-700 bg-slate-900 p-3" aria-label="BPS reduction activity">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <h2 className="font-semibold text-white">BPS reduction terminal</h2>
+        <h2 className="text-sm font-semibold text-white">BPS reduction terminal</h2>
         <button type="button" onClick={() => setFollow(value => !value)} aria-pressed={follow}
           className="rounded border border-white/20 px-3 py-1 text-xs text-gray-200">
           {follow ? 'Pause scrolling' : 'Follow latest'}
@@ -49,7 +49,7 @@ export default function BpsActivityTerminal({ running = false }: { running?: boo
         {!running ? 'System off — polling stopped.' : error ? 'Connection interrupted — showing last received activity.' : !snapshot ? 'Loading measured activity…' : snapshot.running ? 'Live measured quote comparisons' : 'System off — waiting for measured activity.'}
         {' '}Latest {snapshot?.capacity ?? 300} measurements. +5 BPS goal. Quotes are not completed trades.
       </p>
-      <div ref={viewport} className="h-56 overflow-auto font-mono text-xs" tabIndex={0} role="region" aria-label="Scrolling BPS measurements">
+      <div ref={viewport} className="h-64 overflow-auto font-mono text-[10px] sm:text-xs" tabIndex={0} role="region" aria-label="Scrolling BPS measurements">
         <table className="w-full min-w-[480px] text-left">
           <thead className="sticky top-0 bg-gray-950 text-gray-400">
             <tr><th className="p-2">Time / Asset</th><th className="p-2 text-right">Starting BPS</th><th className="p-2 text-right">Measured BPS</th><th className="p-2">Result</th></tr>
