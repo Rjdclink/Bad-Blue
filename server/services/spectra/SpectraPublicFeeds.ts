@@ -207,14 +207,18 @@ function withSignal<T>(pending: Promise<T>, signal: AbortSignal): Promise<T> {
   });
 }
 
-async function readJson(response: Response, budget: { remaining: number }, signal: AbortSignal): Promise<Record<string, unknown>> {
+async function readJson(response: Response, budget: { remaining: number }, signal: AbortSignal, provider?: string): Promise<Record<string, unknown>> {
   const declaredLength = Number(response.headers.get('content-length'));
   if (Number.isFinite(declaredLength) && (declaredLength > MAX_BODY_BYTES || declaredLength > budget.remaining)) {
     void response.body?.cancel().catch(() => undefined);
     throw new FeedError('body_too_large');
   }
   const contentType = response.headers.get('content-type')?.split(';')[0].trim().toLowerCase();
-  if (contentType && !/^application\/(?:[a-z0-9.-]+\+)?json$/.test(contentType)) {
+  // The fixed EONET v3 events endpoint serves JSON with an RSS MIME label.
+  // Accept that observed upstream mismatch only for EONET; the bounded body
+  // must still parse as JSON and satisfy its event schema below.
+  const mislabeledEonet = provider === 'nasa-eonet' && contentType === 'application/rss+xml';
+  if (contentType && !/^application\/(?:[a-z0-9.-]+\+)?json$/.test(contentType) && !mislabeledEonet) {
     void response.body?.cancel().catch(() => undefined);
     throw new FeedError('unsupported_content_type');
   }
@@ -295,7 +299,7 @@ export async function collectSpectraPublicFeed(provider: string, options: Spectr
         result.etag = response.headers.get('etag') ?? undefined;
         result.lastModified = response.headers.get('last-modified') ?? undefined;
       }
-      const payload = await readJson(response, budget, controller.signal);
+      const payload = await readJson(response, budget, controller.signal, provider);
       const values = provider === 'nasa-eonet' ? payload.events : payload.features;
       if (!Array.isArray(values) || provider !== 'nasa-eonet' && payload.type !== 'FeatureCollection') throw new FeedError('invalid_payload');
       acceptedPages++;

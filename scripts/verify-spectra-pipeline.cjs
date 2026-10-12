@@ -115,6 +115,10 @@ const empty = {
       activeBatchOutcomes: [{ status: 'rejected', reason: marker }],
       normalizedObservations: 2, rejectedObservations: 2,
       qualityIssues: [{ code: 'invalid_timestamp', message: marker }, { code: marker }],
+      regional: { sourcesEvaluated: 17, corroboratedClues: 0, provisionalClues: 0,
+        directoryClues: 0, profileClues: 0, phoneSupplied: true, phoneOriginAvailable: false,
+        phoneOriginRecords: 0, suppliedClues: 2, geocodeAttempts: 2, geocodeMatches: 0,
+        geocodeFailures: 2, mappedBy: marker },
     });
     assert.equal(report.publicRetrieval.notRetrieved, 2);
     assert.equal(report.telemetry.normalizationFailed, 1);
@@ -122,6 +126,9 @@ const empty = {
     assert.equal(report.observations.qualityIssues.other, 1);
     assert.equal(report.coordinateFusion.executed, false);
     assert.equal(report.outcome, 'no-mappable-evidence');
+    assert.equal(report.regional.sourcesEvaluated, 17);
+    assert.equal(report.regional.geocodeFailures, 2);
+    assert.equal(report.regional.mappedBy, 'none');
     assert(!JSON.stringify(report).includes(marker));
     const text = client.spectraPipelineNotices(report).join(' ');
     assert.match(text, /1 of 3/); assert.match(text, /data processing failed/);

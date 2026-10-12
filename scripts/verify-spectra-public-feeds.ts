@@ -58,7 +58,7 @@ function alert(id = 'test-alert') {
       { date: '2026-10-09T12:30:00Z', type: 'Polygon', coordinates: [[[20, 30], [21, 30], [21, 31], [20, 30]]] },
     ],
   };
-  const result = await collectSpectraPublicFeed('nasa-eonet', { fetchImpl: fixtureFetch({ events: [raw] }) });
+  const result = await collectSpectraPublicFeed('nasa-eonet', { fetchImpl: async () => json({ events: [raw] }, { 'content-type': 'application/rss+xml; charset=utf-8' }) });
   assert.equal(result.status, 'ok');
   assert.deepEqual(result.records[0].rawRecord, raw);
   assert.deepEqual(result.records[0].geometry, { type: 'GeometryCollection', geometries: raw.geometry });

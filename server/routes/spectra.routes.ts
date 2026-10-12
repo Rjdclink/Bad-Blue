@@ -209,7 +209,8 @@ function extractDeviceRef(value: string): string | undefined {
 function normalizeTargetIntent(value: string): string {
   const cleaned = value
     .trim()
-    .replace(/^(?:please\s+)?(?:i\s+(?:need|want)\s+(?:you\s+)?to\s+)?(?:find|locate|track|look\s+for)\s+/i, '')
+    .replace(/^(?:(?:hey\s+)?spectra[,!:]?\s+|please\s+|(?:can|could|would|will)\s+you\s+(?:please\s+)?|(?:help\s+me|i\s+(?:want|need|would\s+like)\s+(?:you\s+)?to|i(?:'m|\s+am)\s+trying\s+to)\s+)+/i, '')
+    .replace(/^(?:show\s+me(?:\s+(?:where|the\s+location\s+of))?|where\s+(?:is|are)|where's|(?:find|figure)\s+out\s+where|(?:tell\s+me|do\s+you\s+know|know)\s+where(?:\s+(?:is|are))?|where\s+can\s+i\s+find|(?:find|locate|track|look\s+for|search\s+for)|(?:what\s+is|what's)\s+the\s+(?:location|whereabouts)\s+of)\s+/i, '')
     .replace(/^(?:i(?:'m|\s+am)\s+looking\s+for)\s+/i, '')
     .replace(/^(?:where\s+is|where's)\s+/i, '')
     .replace(/[?.!]+$/g, '')
@@ -1571,6 +1572,26 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       publishedAt?: string | null;
       supportingClaims?: Array<{ sourceUrl: string; statement: string; publishedAt: string | null; identityStatus: 'name_mention_unverified' | 'public_contact_match_unverified' }>;
     }> = [];
+    const regionalDiagnostics = {
+      sourcesEvaluated: 0, corroboratedClues: 0, provisionalClues: 0,
+      directoryClues: 0, profileClues: 0,
+      phoneSupplied: Boolean(phone), phoneOriginAvailable: Boolean(phoneOrigin.origin),
+      phoneOriginRecords: phoneOrigin.records.length,
+      suppliedClues: 0, geocodeAttempts: 0, geocodeMatches: 0, geocodeFailures: 0,
+      mappedBy: 'none' as 'none' | 'corroborated' | 'public-document' | 'public-profile' | 'phone-assignment' | 'supplied-clue',
+    };
+    const resolveRegionalClue = async (clue: string, freeform = false) => {
+      regionalDiagnostics.geocodeAttempts++;
+      try {
+        const result = await (freeform ? geocodeBestLocation(clue) : geocodeCityState(clue));
+        if (result) regionalDiagnostics.geocodeMatches++;
+        else regionalDiagnostics.geocodeFailures++;
+        return result;
+      } catch (error) {
+        regionalDiagnostics.geocodeFailures++;
+        throw error;
+      }
+    };
 
     // Regional hints are useful when precise timestamped coordinates are not
     // available, but they never enter the motion timeline or masquerade as a
@@ -1588,19 +1609,25 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       // Keep explicit geographic context as the first authority. If none
       // exists, independently corroborated public references can support a
       // broad city estimate, never a live position or individual street fix.
+      const regionalSources = fetchedCitySources();
+      regionalDiagnostics.sourcesEvaluated = regionalSources.length;
+      regionalDiagnostics.suppliedClues = locationInputs.length;
       const corroboratedCity = inferCorroboratedRegionalCity(
         resolvedName || resolvedSubjectName,
-        fetchedCitySources(),
+        regionalSources,
       );
       const provisionalCities = inferProvisionalRegionalCities(
         resolvedName || resolvedSubjectName,
-        fetchedCitySources(),
+        regionalSources,
       );
       const directoryCities = inferPublicDirectoryCities(
         resolvedName || resolvedSubjectName,
-        fetchedCitySources(),
+        regionalSources,
         { phone, email },
       );
+      regionalDiagnostics.corroboratedClues = corroboratedCity ? 1 : 0;
+      regionalDiagnostics.provisionalClues = provisionalCities.length;
+      regionalDiagnostics.directoryClues = directoryCities.length;
       const profileCities = inferPublicContactProfileCities(
         resolvedName,
         [...publicProfileCandidates.records, ...publicMastodonCandidates.records,
@@ -1608,16 +1635,18 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
           ...publicMastodon.records.filter(record => record.title === 'Public Mastodon profile')],
         { email, phone },
       );
+      regionalDiagnostics.profileClues = profileCities.length;
       let region = null;
       let cityCorroborationUsed = false;
       // An independently reported city must not be silently overridden by
       // a search clue supplied by the user (often a historical location).
       if (!region && corroboratedCity) {
         try {
-          region = await geocodeCityState(
+          region = await resolveRegionalClue(
             `${corroboratedCity.city}, ${corroboratedCity.state}`,
           );
           cityCorroborationUsed = Boolean(region);
+          if (region) regionalDiagnostics.mappedBy = 'corroborated';
           if (region) candidateLocations.push({
             latitude: region.latitude,
             longitude: region.longitude,
@@ -1639,9 +1668,9 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
         if (corroboratedCity && provisional.city.toLowerCase() === corroboratedCity.city.toLowerCase()
           && provisional.state === corroboratedCity.state) continue;
         try {
-          const candidate = await geocodeCityState(`${provisional.city}, ${provisional.state}`);
+          const candidate = await resolveRegionalClue(`${provisional.city}, ${provisional.state}`);
           if (!candidate) continue;
-          if (!region) region = candidate;
+          if (!region) { region = candidate; regionalDiagnostics.mappedBy = 'public-document'; }
           candidateLocations.push({
             latitude: candidate.latitude,
             longitude: candidate.longitude,
@@ -1664,9 +1693,9 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
           || provisionalCities.some(city => city.city.toLowerCase() === profileCity.city.toLowerCase()
             && city.state === profileCity.state)) continue;
         try {
-          const candidate = await geocodeCityState(`${profileCity.city}, ${profileCity.state}`);
+          const candidate = await resolveRegionalClue(`${profileCity.city}, ${profileCity.state}`);
           if (!candidate) continue;
-          if (!region) region = candidate;
+          if (!region) { region = candidate; regionalDiagnostics.mappedBy = 'public-profile'; }
           candidateLocations.push({
             latitude: candidate.latitude, longitude: candidate.longitude,
             label: `${profileCity.city}, ${profileCity.state} (public profile city; account ownership and current city unverified)`,
@@ -1684,9 +1713,10 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       if (!region && phoneOrigin.origin) {
         try {
           const origin = phoneOrigin.origin;
-          const assignment = await geocodeCityState(`${origin.city}, ${origin.state}`);
+          const assignment = await resolveRegionalClue(`${origin.city}, ${origin.state}`);
           if (assignment) {
             region = assignment;
+            regionalDiagnostics.mappedBy = 'phone-assignment';
             candidateLocations.push({
               latitude: assignment.latitude, longitude: assignment.longitude,
               label: `${origin.city}, ${origin.state} (phone number assignment area; residence unknown)`,
@@ -1704,8 +1734,8 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       if (!region) {
         for (const locationInput of locationInputs) {
           try {
-            region = await geocodeBestLocation(locationInput);
-            if (region) break;
+            region = await resolveRegionalClue(locationInput, true);
+            if (region) { regionalDiagnostics.mappedBy = 'supplied-clue'; break; }
           } catch {
             // One provider or parsing failure must not cancel other clues.
           }
@@ -1856,6 +1886,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       solvedObservations: solvedLocationObservations.length,
       fusedCandidates: fusedLocationEvidence.length,
       regionalCandidates: candidateLocations.length,
+      regional: regionalDiagnostics,
     });
     console.info('[SPECTRA Pipeline Summary]', JSON.stringify({
       requestId: getDiscoveryDiagnostics()?.requestId,
