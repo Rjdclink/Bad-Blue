@@ -1501,6 +1501,13 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       identityStatus: 'Photo capture scene; account and subject association unverified',
     })));
 
+    const mediaCaptureScenes = prioritizeSpectraPublicMediaScenes([
+      ...publicBlueskyImages.records,
+      ...publicMastodonImages.records,
+      ...publicSocialImages.records,
+      ...retrievedEvidence.filter(record => record.title === 'Public Web image bytes inspected'),
+    ]);
+
     if (
       discoveryResults.length === 0
       && backgroundSources.length === 0
