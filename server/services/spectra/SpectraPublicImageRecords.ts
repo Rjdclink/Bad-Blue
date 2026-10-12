@@ -226,7 +226,8 @@ async function collect(leads: ImageLead[], options: {
   let attempted = 0, failed = 0, cached = 0;
   const unique = [...new Map(leads.map(lead => [lead.url, lead])).values()].slice(0, MAX_IMAGES_PER_PLATFORM);
   const run = async (lead: ImageLead) => {
-    const prior = cache.get(lead.url);
+    // Mocked fetches are independent fixtures; cache only genuine public HTTP results.
+    const prior = options.fetchImpl ? undefined : cache.get(lead.url);
     if (prior && prior.expiresAt > Date.now()) {
       cached++;
       return prior.record;
@@ -248,8 +249,10 @@ async function collect(leads: ImageLead[], options: {
         publishedAt: lead.post.publishedAt, alt: lead.alt,
       });
       if (!record) { failed++; return null; }
-      if (cache.size >= CACHE_LIMIT) cache.delete(cache.keys().next().value!);
-      cache.set(lead.url, { expiresAt: Date.now() + CACHE_MS, record });
+      if (!options.fetchImpl) {
+        if (cache.size >= CACHE_LIMIT) cache.delete(cache.keys().next().value!);
+        cache.set(lead.url, { expiresAt: Date.now() + CACHE_MS, record });
+      }
       return record;
     } catch {
       failed++;
