@@ -19,6 +19,7 @@ import {
 import { useGeoRuntime, type GeoFrame } from '@/hooks/useGeoRuntime';
 import type { GPSPoint, LocationCandidate } from '@shared/geoconsoleTypes';
 import MapLibreIntelligenceMap from './MapLibreIntelligenceMap';
+import type { SpectraGeographicContextEvidence, SpectraPhotoScene } from './SpectraGeographicContext';
 
 // ============================================================================
 // TYPES
@@ -27,6 +28,8 @@ import MapLibreIntelligenceMap from './MapLibreIntelligenceMap';
 interface GeoconsoleProps {
   initialData?: GPSPoint[];
   candidateLocations?: LocationCandidate[];
+  publicContext?: SpectraGeographicContextEvidence | null;
+  publicPhotoScenes?: SpectraPhotoScene[];
   onProcess?: (data: GPSPoint[]) => Promise<void>;
   /**
    * Optional nav mode provided by the parent "People Finder" GeoConsole tabs.
@@ -93,6 +96,8 @@ const haversineDistance = (lat1: number, lon1: number, lat2: number, lon2: numbe
 export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({
   initialData = EMPTY_GPS_POINTS,
   candidateLocations = [],
+  publicContext,
+  publicPhotoScenes,
   onProcess: _onProcess,
   navMode,
   spectraShell = false,
@@ -601,6 +606,8 @@ export const GeoconsoleRadarDashboard: React.FC<GeoconsoleProps> = ({
             trail={renderData.trail}
             futurecast={renderData.futurecast}
             candidateLocations={candidateLocations}
+            publicContext={publicContext}
+            publicPhotoScenes={publicPhotoScenes}
             displayTime={timelineContextTime}
             streetMapOnly={spectraShell}
             mapMode={spectraShell ? 'street' : mapMode}
