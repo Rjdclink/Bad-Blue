@@ -360,6 +360,7 @@ export function setupConsultationRoutes(app: Express): void {
         || (packetItemTitle ? 'Custom Document' : null);
     const documentLabel = packetItemTitle || rawRequestedType || requestedType || '';
     const templateMode = req.body?.templateMode === true;
+    const swornStatement = requestedType === 'Affidavit' || requestedType === 'Declaration';
     const customInstructions = typeof req.body?.instructions === 'string' ? req.body.instructions.trim() : '';
     if (!state || !facts || !requestedType || !documentLabel) return res.status(400).json({ error: 'Jurisdiction, case facts, and a supported document type are required' });
     if (facts.length > 30_000 || customInstructions.length > 8_000) return res.status(413).json({ error: 'Document request is too large' });
@@ -397,6 +398,7 @@ export function setupConsultationRoutes(app: Express): void {
       'Identify the controlling court/agency and local rules when the facts establish them. Prefer official government/court sources. Do not invent a form number, URL, rule, requirement, or filing instruction.',
       'If a mandatory official form applies, do not substitute a custom document. State the official form identity/source and the factual fields still needed to complete it.',
       'If facts required for a complete document are missing, identify only those missing facts instead of pretending the document is complete.',
+      swornStatement ? 'For an affidavit or declaration, identify the court or agency, the legal purpose, any prescribed form, the controlling oath or penalty-of-perjury wording, signing and notarization requirements, and only statutes or rules that actually govern this instrument. Distinguish federal law from state law. Do not assume a federal unsworn declaration is accepted by a state court.' : '',
       `CASE FACTS:\n${facts}`,
     ].join('\n\n');
     const authorityResearch = await researchLegalAuthority(authorityPrompt, {
@@ -404,7 +406,8 @@ export function setupConsultationRoutes(app: Express): void {
       standaloneQuery: [documentJurisdiction, documentJurisdictionProfile?.county,
         documentJurisdictionProfile?.explicitCourt, formDocumentLabel,
         officialFormRequested ? latestUserRequest.replace(/\b(?:give me|keep it blank|answer briefly)\b/gi, '').slice(0, 220) : '',
-        'official prescribed form required local rules filing instructions'].filter(Boolean).join(' '),
+        'official prescribed form required local rules filing instructions',
+        swornStatement ? 'affidavit declaration oath jurat notary penalty of perjury applicable statute rule' : ''].filter(Boolean).join(' '),
       researchHints: documentJurisdictionProfile?.researchHints,
       preferredOfficialDomains: documentJurisdictionProfile?.preferredOfficialDomains,
       recordReliefState: reliefDocument ? reliefCaseState : undefined,
@@ -451,7 +454,7 @@ export function setupConsultationRoutes(app: Express): void {
     // A state alone does not identify the local filing court. Never hand out a
     // potentially wrong mandatory form or custom-drafted substitute when the
     // exact court/venue is still needed to determine its local requirements.
-    const courtFiling = /\b(?:motion|complaint|answer|counterclaim|petition|appeal|brief|summons|subpoena|proposed order)\b/i.test(documentLabel);
+    const courtFiling = /\b(?:motion|complaint|answer|counterclaim|petition|appeal|brief|summons|subpoena|proposed order|affidavit|declaration)\b/i.test(documentLabel);
     if (!templateMode && courtFiling && documentJurisdictionProfile?.needsCourtClarification === true) {
       return res.status(422).json({
         error: 'The filing court or venue must be established before selecting a local form.',
@@ -460,6 +463,10 @@ export function setupConsultationRoutes(app: Express): void {
         question: 'Which court, agency, or county will receive this filing?',
         jurisdiction: documentJurisdiction,
       });
+    }
+
+    if (swornStatement && !templateMode && !(authorityResearch?.sources || []).some(source => source.kind === 'primary' && source.evidenceLevel === 'document')) {
+      return res.status(422).json({ error: 'I could not verify the governing court or agency requirements for this sworn statement. Please provide the receiving court or agency and its instructions.', missingFields: ['receivingCourtOrAgencyAndInstructions'], question: 'Which court or agency needs this statement? If you have its instructions or form, please share them.' });
     }
 
     if ((officialFormRequested || officialForm.requirement === 'mandatory') && !officialForm.verifiedOfficial) {
@@ -503,6 +510,7 @@ export function setupConsultationRoutes(app: Express): void {
       'Where a required fact is unknown, insert a conspicuous bracketed placeholder such as [COURT NAME NEEDED].',
       templateMode ? 'The user explicitly requested a blank/template document. Preserve unknown facts as bracketed placeholders and do not turn the draft into a questionnaire.' : '',
       'Use conventional legal-document structure appropriate to the requested document, with a caption placeholder when court filing format is applicable.',
+      swornStatement ? `SWORN STATEMENT REQUIREMENTS: Draft a ${documentLabel}, not a generic pleading. State the witness/affiant identity and personal knowledge, then numbered first-hand facts and relevant exhibits. Use the governing court or agency form and its exact statutory oath/affirmation language when verified by official sources. A declaration needs the applicable penalty-of-perjury statement, place/date if required, and declarant signature line; an affidavit needs the affiant signature plus a jurat with oath and notary/authorized officer signature and commission details where applicable. Do not forge a signature, notarization, or completed oath. Cite only statutes and rules that actually control this statement, supported by the supplied authority assessment; a factual statement may require no legal citations. If jurisdiction or purpose is uncertain, use a conspicuous [FIELD NEEDED] placeholder.` : '',
       'Do not claim the document is ready to file; local court rules, citations, deadlines, signatures, service, and filing requirements require human verification.',
       customInstructions ? `Additional user instructions: ${customInstructions}` : '',
       `CASE FACTS:\n${facts}`,
@@ -571,6 +579,14 @@ export function setupConsultationRoutes(app: Express): void {
         error: error instanceof Error ? error.message : String(error),
         documentType: requestedType,
       });
+    }
+
+    if (swornStatement && !templateMode) {
+      const missing = finalDocument.match(/\[([A-Z][A-Z0-9 _/.-]*?(?:NEEDED|UNKNOWN|REQUIRED|TO BE PROVIDED))\]/);
+      if (missing) {
+        const field = missing[1].toLowerCase().replace(/[_-]+/g, ' ').trim();
+        return res.status(422).json({ error: `The ${documentLabel.toLowerCase()} still needs ${field}.`, missingFields: [field], question: `What should I enter for ${field} in your ${documentLabel.toLowerCase()}?` });
+      }
     }
 
     return res.json({
