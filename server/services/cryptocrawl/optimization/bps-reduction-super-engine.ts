@@ -117,6 +117,7 @@ interface EdgeLifeState {
 interface OpportunityPlanState {
   predictedNetBps: number | null;
   tacticKeys: string[];
+  realizedRecorded: boolean;
 }
 
 const tacticOutcome = new Map<string, TacticOutcomeState>();
@@ -358,7 +359,9 @@ function updateRealizedGovernor(candidate: MeasuredCandidate): void {
   const realized = finite(candidate.canonicalBps.realizedNetBps);
   if (realized === null) return;
   const plan = opportunityPlans.get(candidate.opportunityId);
-  if (!plan || plan.predictedNetBps === null) return;
+  if (!plan || plan.predictedNetBps === null || plan.realizedRecorded) return;
+  // Registry status updates can repeat the same settlement. Learn once per plan.
+  plan.realizedRecorded = true;
   const error = Math.abs(realized - plan.predictedNetBps);
   const denominator = Math.max(1, Math.abs(plan.predictedNetBps));
   const accuracy = clamp(1 - error / denominator, 0, 1);
@@ -474,10 +477,19 @@ export function buildBpsReductionSuperPlan(
     syntheticEconomicsAllowed: false,
   };
 
-  opportunityPlans.set(candidate.opportunityId, {
-    predictedNetBps: candidate.canonicalBps.netBps,
-    tacticKeys: [...research.activeTacticKeys],
-  });
+  // Update predictions until settlement, then retain the settlement marker.
+  // Rebuilding advice must not turn one settled trade into many learning samples.
+  if (!opportunityPlans.get(candidate.opportunityId)?.realizedRecorded) {
+    opportunityPlans.set(candidate.opportunityId, {
+      predictedNetBps: candidate.canonicalBps.netBps,
+      tacticKeys: [...new Set(research.activeTacticKeys)],
+      realizedRecorded: false,
+    });
+    if (opportunityPlans.size > MAX_LEDGER_ROWS) {
+      const oldest = opportunityPlans.keys().next().value;
+      if (oldest !== undefined) opportunityPlans.delete(oldest);
+    }
+  }
   return result;
 }
 

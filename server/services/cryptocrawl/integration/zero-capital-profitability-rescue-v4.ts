@@ -12,7 +12,7 @@ import {
   selectMeasuredProviderPairAllocation,
 } from '../execution/adapters/dual-flash-loan-provider-mesh.js';
 import {
-  peekResidentExactQuote,
+  peekResidentExactQuoteEvidence,
   quoteConfiguredZeroCapitalRoute,
   type ConfiguredZeroCapitalRoute,
   type QuotedZeroCapitalRoute,
@@ -330,7 +330,11 @@ function compatibleRoutesForOpportunity(
 
 function providerFresh(evidence: FlashLoanProviderEconomics, now = Date.now()): boolean {
   const maxAgeMs = bounded(process.env.ZERO_CAPITAL_PROVIDER_EVIDENCE_MAX_AGE_MS, 5_000, 500, 30_000);
-  return evidence.executableEvidenceComplete && now - evidence.observedAt <= maxAgeMs;
+  return evidence.executableEvidenceComplete
+    && Number.isFinite(evidence.observedAt)
+    && evidence.observedAt > 0
+    && evidence.observedAt <= now
+    && now - evidence.observedAt <= maxAgeMs;
 }
 
 function providerSafeBorrowAmount(evidence: FlashLoanProviderEconomics): bigint {
@@ -406,27 +410,22 @@ function clearsStrictProfitability(candidate: QuotedZeroCapitalRoute): boolean {
   return candidate.netProfit > 0n && candidate.executablePositive === true;
 }
 
+// Use the same exact BPS objective as the outer APE merger. Absolute-profit
+// ordering here can select a lower-BPS quote which the outer merger then discards.
 function quoteBetter(current: QuotedZeroCapitalRoute | null, candidate: QuotedZeroCapitalRoute): QuotedZeroCapitalRoute {
-  if (!current) return candidate;
-  const candidateProfitable = clearsStrictProfitability(candidate);
-  const currentProfitable = clearsStrictProfitability(current);
-  if (candidateProfitable !== currentProfitable) return candidateProfitable ? candidate : current;
-  if (candidateProfitable && currentProfitable) {
-    if (candidate.netProfit !== current.netProfit) return candidate.netProfit > current.netProfit ? candidate : current;
-    if (candidate.netProfitBps !== current.netProfitBps) return candidate.netProfitBps > current.netProfitBps ? candidate : current;
-    return candidate.quoteLatencyMs < current.quoteLatencyMs ? candidate : current;
-  }
-  if (candidate.netProfitBps !== current.netProfitBps) return candidate.netProfitBps > current.netProfitBps ? candidate : current;
+  if (candidate.amountIn <= 0n || !Number.isFinite(candidate.netProfitBps)) return current ?? candidate;
+  if (!current || current.amountIn <= 0n) return candidate;
+  const candidateRatio = candidate.netProfit * current.amountIn;
+  const currentRatio = current.netProfit * candidate.amountIn;
+  if (candidateRatio !== currentRatio) return candidateRatio > currentRatio ? candidate : current;
   if (candidate.netProfit !== current.netProfit) return candidate.netProfit > current.netProfit ? candidate : current;
   return candidate.quoteLatencyMs < current.quoteLatencyMs ? candidate : current;
 }
 
 function strictImprovement(original: ZeroCapitalOpportunity, candidate: QuotedZeroCapitalRoute): boolean {
+  if (original.flashLoanAmount <= 0n || candidate.amountIn <= 0n) return false;
   if (!Number.isFinite(candidate.netProfitBps) || !Number.isFinite(original.netProfitBps)) return false;
-  if (original.expectedProfit <= 0n) return candidate.netProfitBps > original.netProfitBps;
-  if (!clearsStrictProfitability(candidate)) return false;
-  if (candidate.netProfit !== original.expectedProfit) return candidate.netProfit > original.expectedProfit;
-  return candidate.netProfitBps > original.netProfitBps;
+  return candidate.netProfit * original.flashLoanAmount > original.expectedProfit * candidate.amountIn;
 }
 
 function blockTimestamp(opportunity: ZeroCapitalOpportunity): number {
@@ -654,11 +653,12 @@ export async function runZeroCapitalProfitabilityRescueV4(
     opportunity: ZeroCapitalOpportunity,
     quote: QuotedZeroCapitalRoute,
     inheritCurrentFreshness: boolean,
+    evidenceExpiresAt: number,
   ): ZeroCapitalOpportunity => {
     const refined = fromQuotedRoute(quote, blockTimestamp(opportunity));
     if (!inheritCurrentFreshness) return refined;
     refined.timestamp = opportunity.timestamp;
-    refined.expiresAt = Math.min(opportunity.expiresAt, refined.expiresAt);
+    refined.expiresAt = Math.min(opportunity.expiresAt, evidenceExpiresAt, refined.expiresAt);
     if (opportunity.inputAssetUsdPrice !== undefined) refined.inputAssetUsdPrice = opportunity.inputAssetUsdPrice;
     residentFreshnessInherited += 1;
     return refined;
@@ -675,7 +675,8 @@ export async function runZeroCapitalProfitabilityRescueV4(
     const defect = buildApeDefectVector(opportunity);
     const intendedAmount = opportunity.flashLoanAmount;
     const primaryRoute = routes[0];
-    const residentInitial = peekResidentExactQuote(primaryRoute.id, intendedAmount);
+    const residentEvidence = peekResidentExactQuoteEvidence(primaryRoute.id, intendedAmount);
+    const residentInitial = residentEvidence?.quote ?? null;
     const residentMatchesIntended = residentInitial !== null;
     if (residentMatchesIntended) residentInitialQuoteHits += 1;
     else residentInitialQuoteMisses += 1;
@@ -717,6 +718,7 @@ export async function runZeroCapitalProfitabilityRescueV4(
 
     let best: QuotedZeroCapitalRoute | null = null;
     let bestInheritsCurrentFreshness = false;
+    let bestEvidenceExpiresAt = Number.POSITIVE_INFINITY;
     let initialRouteFailed = initialResult.quote === null;
     if (initialResult.timedOut) routeQuoteTimeouts += 1;
     else if (initialResult.failed) routeQuoteFailures += 1;
@@ -744,12 +746,16 @@ export async function runZeroCapitalProfitabilityRescueV4(
       plan: FundingPlan | null,
       inheritsCurrentFreshness = false,
     ): boolean => {
-      if (!quote || !plan) return false;
+      if (!quote || !plan || quote.amountIn <= 0n) return false;
+      if (inheritsCurrentFreshness && (!residentEvidence || residentEvidence.expiresAt <= Date.now())) return false;
       const adjusted = adjustForFundingPlan(quote, plan);
+      // An expired cached incumbent must not suppress a fresh measured alternative.
+      if (bestInheritsCurrentFreshness && bestEvidenceExpiresAt <= Date.now()) best = null;
       const selected = quoteBetter(best, adjusted);
       if (selected === adjusted) {
         best = adjusted;
         bestInheritsCurrentFreshness = inheritsCurrentFreshness;
+        bestEvidenceExpiresAt = inheritsCurrentFreshness ? residentEvidence!.expiresAt : Number.POSITIVE_INFINITY;
       }
       if (plan.kind === 'single') singleProviderPlansUsed += 1;
       else dualProviderPlansUsed += 1;
@@ -760,7 +766,7 @@ export async function runZeroCapitalProfitabilityRescueV4(
 
     recordOutcome(primaryRoute, initialResult.quote, intendedFundingPlan, initialResult.elapsedMs);
     if (consider(initialResult.quote, intendedFundingPlan, Boolean(residentMatchesIntended))) {
-      const refined = deriveFromQuote(opportunity, best!, bestInheritsCurrentFreshness);
+      const refined = deriveFromQuote(opportunity, best!, bestInheritsCurrentFreshness, bestEvidenceExpiresAt);
       if (refined.expiresAt > refined.timestamp && refined.expiresAt > Date.now() && strictImprovement(opportunity, best!)) {
         strictPositiveObservations += 1;
         positiveContinuationIterations += 1;
@@ -843,7 +849,7 @@ export async function runZeroCapitalProfitabilityRescueV4(
         }
         if (!consider(result.quote, target.plan, false)) continue;
 
-        const refined = deriveFromQuote(opportunity, best!, bestInheritsCurrentFreshness);
+        const refined = deriveFromQuote(opportunity, best!, bestInheritsCurrentFreshness, bestEvidenceExpiresAt);
         if (refined.expiresAt <= refined.timestamp || refined.expiresAt <= Date.now()) {
           invalidFreshRefinement += 1;
           break;
@@ -861,7 +867,7 @@ export async function runZeroCapitalProfitabilityRescueV4(
       return opportunity;
     }
 
-    const refined = deriveFromQuote(opportunity, best, bestInheritsCurrentFreshness);
+    const refined = deriveFromQuote(opportunity, best, bestInheritsCurrentFreshness, bestEvidenceExpiresAt);
     if (refined.expiresAt <= refined.timestamp || refined.expiresAt <= Date.now()) {
       invalidFreshRefinement += 1;
       return opportunity;
@@ -880,7 +886,8 @@ export async function runZeroCapitalProfitabilityRescueV4(
       if (deadlineReached(deadlineAt)) break;
       anytimeRefinementIterations += 1;
       const next = await refineOnce(current);
-      if (next === current || next.netProfitBps <= current.netProfitBps) break;
+      if (next === current || next.flashLoanAmount <= 0n
+        || next.expectedProfit * current.flashLoanAmount <= current.expectedProfit * next.flashLoanAmount) break;
       if (input.onImprovement) {
         streamingImprovementCallbacks += 1;
         input.onImprovement(root, current, next);
@@ -941,6 +948,12 @@ export async function runZeroCapitalProfitabilityRescueV4(
     targetedQuoteAttempts, networkQuoteAttempts, hedgedWaveWidth: waveWidth, hedgedWaves, hedgedOutstandingAbandoned,
     strictPositiveObservations, positiveContinuationIterations,
     minimumOutputProfitUsd: ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD,
+    optimizationGoalBps: 5,
+    optimizationGoalIsAdmissionRequirement: false,
+    optimizationObjective: 'highest_exact_net_bps',
+    candidatesAtOptimizationGoal: output.filter(candidate => candidate.flashLoanAmount > 0n
+      && candidate.expiresAt > Date.now()
+      && candidate.expectedProfit * 10_000n >= candidate.flashLoanAmount * 5n).length,
     strictPositiveAcceptanceThresholdIsNotApeStop: true,
     candidateRescueSerial: false, quoteStormBudget42Removed: true,
     crossCandidateWinnerStops: 0, fullCandidateBatchBarrier: false,
