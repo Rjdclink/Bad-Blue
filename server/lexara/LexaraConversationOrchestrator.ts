@@ -936,7 +936,12 @@ export async function generateLexaraConversationResponse(
       : '')
     + '\n\nFINAL REPLY RULE: Give a brief, direct answer in plain language: 1-3 sentences and at most 60 words, excluding source URLs. Put the answer first, include only indispensable uncertainty or one necessary question, then stop. Research may be extensive; do not reproduce the research packet, case background, duplicate filings, or internal checklist. Include relevant court-record links when supplied and permitted by the presentation rules above. Keep any stricter workflow limit. Expand only if the user explicitly asks for a detailed explanation or one additional sentence is essential to avoid a materially misleading answer; full document drafting belongs in the document workflow.';
   const userPrompt = `${history ? `CONVERSATION SO FAR:\n${history}\n\n` : ''}CURRENT USER TURN:\n${cleanPrompt}`;
-  const claudeModel = backgroundResearchRequested && !mixedLegalFactNeed
+  const criminalBackgroundOnly = backgroundInvestigation?.criminalRecordEvidence === true && !mixedLegalFactNeed;
+  const conciseCriminalAnswer = criminalBackgroundOnly
+    && !/\b(?:detailed|comprehensive|full\b.*\breport|all records|every case)\b/i.test(cleanPrompt);
+  const claudeModel = criminalBackgroundOnly
+    ? LEGAL_AI_MODELS.claudeFast
+    : backgroundResearchRequested && !mixedLegalFactNeed
     ? context.allowClaudeOpus === true ? CURRENT_AI_MODELS.claudeBalanced : LEGAL_AI_MODELS.claudeFast
     : context.allowClaudeOpus !== true
       ? LEGAL_AI_MODELS.claudeFast
@@ -960,15 +965,18 @@ export async function generateLexaraConversationResponse(
   // still blocks document text from the real-time speech channel.
 
   const unverifiedBackgroundOnly = backgroundResearchRequested && !mixedLegalFactNeed
-    && !backgroundInvestigation?.evidenceSummary;
+    && (!backgroundInvestigation?.evidenceSummary
+      || (criminalBackgroundOnly && !backgroundInvestigation.sources.length));
   const unverifiedSubject = resolvedBackgroundSubject?.name || researchDecision.subject || 'this subject';
   const unverifiedObjective = researchDecision.requestedFact === 'court-record'
     ? `court records involving ${unverifiedSubject}`
+    : researchDecision.requestedFact === 'criminal-arrest'
+      ? `a criminal record for ${unverifiedSubject}`
     : researchDecision.requestedFact === 'business'
       ? `which business ${unverifiedSubject} operates`
       : `the requested information about ${unverifiedSubject}`;
   let text = unverifiedBackgroundOnly
-    ? `I couldn't verify ${unverifiedObjective} from the completed sources.`
+    ? `I couldn't verify ${unverifiedObjective} from the ${criminalBackgroundOnly ? 'available' : 'completed'} sources.`
     : '';
   const claudeStartedAt = Date.now();
   try {
@@ -978,7 +986,7 @@ export async function generateLexaraConversationResponse(
           systemPrompt,
           model: claudeModel,
           effort: claudeEffort,
-          maxTokens: claudeEffort === 'max' ? 3_000 : 1_500,
+          maxTokens: conciseCriminalAnswer ? 384 : claudeEffort === 'max' ? 3_000 : 1_500,
           cacheSystemPrompt: true,
           cacheSystemPromptPrefix,
           providerPolicy: 'legalwhat',
@@ -990,7 +998,7 @@ export async function generateLexaraConversationResponse(
           systemPrompt,
           model: claudeModel,
           effort: claudeEffort,
-          maxTokens: claudeEffort === 'max' ? 3_000 : 1_500,
+          maxTokens: conciseCriminalAnswer ? 384 : claudeEffort === 'max' ? 3_000 : 1_500,
           cacheSystemPrompt: true,
           cacheSystemPromptPrefix,
           providerPolicy: 'legalwhat',
