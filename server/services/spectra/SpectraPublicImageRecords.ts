@@ -103,8 +103,12 @@ function decimalGps(tag: any, ref: string | undefined): number | null {
   if (typeof raw === 'number' && Number.isFinite(raw)) number = raw;
   else if (typeof raw === 'string' && /^-?\d{1,3}(?:\.\d+)?$/.test(raw.trim())) number = Number(raw);
   else if (Array.isArray(tag?.value)) {
+    // ExifReader stores GPS degrees/minutes/seconds as three [numerator, denominator] pairs.
     const parts = tag.value.map((part: any): number => {
       if (typeof part === 'number') return part;
+      if (Array.isArray(part) && part.length === 2 && Number(part[1]) !== 0) {
+        return Number(part[0]) / Number(part[1]);
+      }
       if (part && typeof part === 'object' && typeof part.numerator === 'number'
         && typeof part.denominator === 'number' && part.denominator !== 0) {
         return part.numerator / part.denominator;
@@ -189,7 +193,9 @@ export async function inspectSpectraPublicImageResponse(
   const exif: Record<string, string> = {};
   let gps: { latitude: number; longitude: number } | undefined;
   try {
-    const tags = await ExifReader.load(bytes, { expanded: false } as any) as any;
+    const tags = await ExifReader.load(bytes, {
+      expanded: false, decompress: { maxDecompressedSize: 2_000_000 },
+    } as any) as any;
     for (const key of ['DateTimeOriginal', 'OffsetTimeOriginal', 'DateTimeDigitized',
       'DateTime', 'GPSLatitude', 'GPSLongitude', 'GPSLatitudeRef', 'GPSLongitudeRef',
       'GPSDateStamp', 'GPSTimeStamp', 'Make', 'Model']) {
@@ -230,7 +236,13 @@ async function collect(leads: ImageLead[], options: {
     const prior = options.fetchImpl ? undefined : cache.get(lead.url);
     if (prior && prior.expiresAt > Date.now()) {
       cached++;
-      return prior.record;
+      return {
+        ...prior.record, publishedAt: lead.post.publishedAt, textExcerpt: lead.alt,
+        structuredRecord: {
+          ...(prior.record.structuredRecord as Record<string, unknown>),
+          sourcePostUrl: lead.post.url,
+        },
+      };
     }
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
