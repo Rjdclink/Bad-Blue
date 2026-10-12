@@ -319,27 +319,24 @@ export default function CryptoCrawlerV2Dashboard() {
   // INITIALIZATION - Step 4: API calls (guarded)
   // ============================================================================
 
+  const isSystemRunning = systemStatus?.running === true;
+
+  // One local status read on opening the dashboard; it does not start providers.
+  useEffect(() => { void fetchStatus(); }, [fetchStatus]);
+
   useEffect(() => {
-    const init = async () => {
-      addConsoleLog('info', '[CryptoCrawler V2] Initializing...');
-      await Promise.allSettled([fetchStatus(), fetchStats(), fetchFaucetStatus()]);
-      addConsoleLog('info', '[CryptoCrawler V2] Dashboard ready');
-    };
-    init();
-    
-    // Step 5: Background polling (last)
+    if (!isSystemRunning || stoppingSystem) return;
+    void fetchStats();
+    void fetchFaucetStatus();
     const statusInterval = setInterval(fetchStatus, 10000);
     const statsInterval = setInterval(fetchStats, 30000);
     const faucetInterval = setInterval(fetchFaucetStatus, 20000);
-    
     return () => {
       clearInterval(statusInterval);
       clearInterval(statsInterval);
       clearInterval(faucetInterval);
     };
-  }, [fetchStatus, fetchStats, fetchFaucetStatus, addConsoleLog]);
-
-  const isSystemRunning = systemStatus?.running || false;
+  }, [isSystemRunning, stoppingSystem, fetchStatus, fetchStats, fetchFaucetStatus]);
 
   // ============================================================================
   // RENDER - Steps 1-3: Static UI, Local state, Core logic
@@ -407,7 +404,7 @@ export default function CryptoCrawlerV2Dashboard() {
 
       {/* Main Content */}
       <main className="container mx-auto px-4 py-8">
-        <BpsActivityTerminal />
+        <BpsActivityTerminal running={isSystemRunning && !stoppingSystem} />
         {/* Stats Overview */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
           <Card className="bg-gray-800/50 border-white/10">

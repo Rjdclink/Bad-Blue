@@ -4,12 +4,13 @@ import { getInternalAuthHeaders } from '@/lib/queryClient';
 
 const formatBps = (value: number) => `${value > 0 ? '+' : ''}${value.toFixed(6).replace(/\.?0+$/, '')} BPS`;
 
-export default function BpsActivityTerminal() {
+export default function BpsActivityTerminal({ running = false }: { running?: boolean }) {
   const [snapshot, setSnapshot] = useState<BpsActivitySnapshot | null>(null);
   const [error, setError] = useState(false);
   const [follow, setFollow] = useState(true);
   const viewport = useRef<HTMLDivElement>(null);
   useEffect(() => {
+    if (!running) return;
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const controller = new AbortController();
@@ -21,6 +22,7 @@ export default function BpsActivityTerminal() {
         if (!response.ok) throw new Error('BPS activity unavailable');
         const data = await response.json() as BpsActivitySnapshot;
         if (!stopped) { setSnapshot(data); setError(false); }
+        if (!data.running) stopped = true;
       } catch {
         if (!stopped) setError(true);
       } finally {
@@ -29,7 +31,7 @@ export default function BpsActivityTerminal() {
     };
     void poll();
     return () => { stopped = true; clearTimeout(timer); controller.abort(); };
-  }, []);
+  }, [running]);
   useEffect(() => {
     if (follow && viewport.current) viewport.current.scrollTop = viewport.current.scrollHeight;
   }, [snapshot, follow]);
@@ -44,7 +46,7 @@ export default function BpsActivityTerminal() {
         </button>
       </div>
       <p className="mb-3 text-xs text-gray-400">
-        {error ? 'Connection interrupted — showing last received activity.' : !snapshot ? 'Loading measured activity…' : snapshot.running ? 'Live measured quote comparisons' : 'System off — waiting for measured activity.'}
+        {!running ? 'System off — polling stopped.' : error ? 'Connection interrupted — showing last received activity.' : !snapshot ? 'Loading measured activity…' : snapshot.running ? 'Live measured quote comparisons' : 'System off — waiting for measured activity.'}
         {' '}Latest {snapshot?.capacity ?? 300} measurements. +5 BPS goal. Quotes are not completed trades.
       </p>
       <div ref={viewport} className="h-56 overflow-auto font-mono text-xs" tabIndex={0} role="region" aria-label="Scrolling BPS measurements">
