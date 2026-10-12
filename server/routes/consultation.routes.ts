@@ -582,7 +582,8 @@ export function setupConsultationRoutes(app: Express): void {
     }
 
     if (swornStatement && !templateMode) {
-      const missing = finalDocument.match(/\[([A-Z][A-Z0-9 _/.-]*?(?:NEEDED|UNKNOWN|REQUIRED|TO BE PROVIDED))\]/);
+      const missing = [...finalDocument.matchAll(/\[([A-Z][A-Z0-9 _/.-]*?(?:NEEDED|UNKNOWN|REQUIRED|TO BE PROVIDED))\]/g)]
+        .find(match => !/\b(?:signature|notary|commission|date of signing|signing date)\b/i.test(match[1]));
       if (missing) {
         const field = missing[1].toLowerCase().replace(/[_-]+/g, ' ').trim();
         return res.status(422).json({ error: `The ${documentLabel.toLowerCase()} still needs ${field}.`, missingFields: [field], question: `What should I enter for ${field} in your ${documentLabel.toLowerCase()}?` });
