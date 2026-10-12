@@ -121,6 +121,10 @@ export function buildSpectraAcquisitionRecords(
         textExcerpt,
         structuredRecord,
         structuredRecordOmitted: structuredRecordOmitted || undefined,
+        publicImageUrls: Array.isArray(metadata.fetchedPublicImageUrls)
+          ? metadata.fetchedPublicImageUrls.filter((value): value is string =>
+              typeof value === 'string' && value.startsWith('https://')).slice(0, 2)
+          : undefined,
         contentType: textValue(metadata.fetchedContentType) || textValue(metadata.contentType),
         publishedAt: sourcePublishedAt,
         addressBlocks,
