@@ -11,6 +11,7 @@ import { lazy, Suspense, useEffect, useState, Component, ErrorInfo, ReactNode } 
 import { AuthLoadingSkeleton, PageSkeleton } from "@/components/ui/page-skeleton";
 import { useGlobalGestureNavigation } from "@/hooks/useGlobalGestureNavigation";
 import { isPaidAccessState, isPublicMarketingAppPath, isSubscriptionEntryPath } from "@shared/subscriptionPolicy";
+import MasterPanelNavigator from "@/components/MasterPanelNavigator";
 import TrialAccessPage from "@/pages/trial-access";
 import { recoverPageDownload } from "@/lib/pageLoadRecovery";
 
@@ -308,6 +309,7 @@ function Router() {
   return (
     <Suspense fallback={<PageLoader />}>
       <>
+        {isMasterSession && <MasterPanelNavigator />}
         <Switch>
           <Route path="/" component={Landing} />
           <Route path="/landing" component={Landing} />

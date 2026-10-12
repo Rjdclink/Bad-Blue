@@ -17,10 +17,10 @@ export interface MasterPanelDefinition {
  */
 export const MASTER_PANELS: MasterPanelDefinition[] = [
   { label: 'LegalWhat', path: '/lexara-consent' },
+  { label: 'CryptoCrawler Command', path: '/cryptocrawler-dashboard' },
   { label: 'Administrator', path: '/administrator', aliases: ['/admin'] },
   { label: 'Platform Dashboard', path: '/dashboard', aliases: ['/home', '/badblue'] },
   { label: 'CryptoCrawler V2', path: '/cryptocrawler-v2', aliases: ['/cryptocrawler'] },
-  { label: 'CryptoCrawler Command', path: '/cryptocrawler-dashboard' },
   { label: 'Monte Carlo / Orchestrator', path: '/orchestrator-console' },
   { label: 'Computational Reactor / Control Room', path: '/control-room' },
   { label: 'PANTHEON', path: '/pantheon' },
@@ -44,7 +44,8 @@ function pathOnly(location: string): string {
 function findPanelIndex(location: string): number {
   const current = pathOnly(location);
   return MASTER_PANELS.findIndex(panel =>
-    panel.path === current || panel.aliases?.includes(current),
+    panel.path === current || panel.aliases?.includes(current)
+      || (panel.path === '/lexara-consent' && current.startsWith('/lexara-consent/')),
   );
 }
 

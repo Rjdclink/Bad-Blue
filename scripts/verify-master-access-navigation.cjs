@@ -20,6 +20,9 @@ const appRoutes = new Set([...app.matchAll(/<Route\s+path="([^"]+)"/g)].map(matc
 const panelPaths = [...navigator.matchAll(/\{\s*label:\s*'[^']+',\s*path:\s*'([^']+)'/g)].map(match => match[1]);
 const panelSet = new Set(panelPaths);
 
+assert(app.includes('{isMasterSession && <MasterPanelNavigator />}'), "Master navigation must actually render in the app shell");
+assert(app.indexOf('{isMasterSession && <MasterPanelNavigator />}') < app.indexOf('<Switch>'), "Master arrows must render above page content");
+assert(panelPaths[1] === "/cryptocrawler-dashboard", "Forward from Lexara must open CryptoCrawler; Back must return to Lexara");
 assert(panelPaths.length === panelSet.size, "Master panel navigator contains duplicate canonical paths");
 assert(panelPaths[0] === "/lexara-consent", "Master traversal must start on LegalWhat LEXARA consent");
 assert(navigator.includes("% MASTER_PANELS.length"), "Master panel Back/Forward traversal must wrap around");
