@@ -118,7 +118,7 @@ export function inferLegalDocumentNeed(text: string): LegalDocumentType | null {
   const value = normalize(String(text || ''));
   if (!value || /\b(?:do not|don t|dont|never|no longer|not trying to)\s+(?:want|need|plan|intend|file|prepare|draft|create)\b/.test(value)) return null;
   if (/^(?:what is|what are|explain|define|tell me about|what does|why do|how does)\b/.test(value)) return null;
-  if (!/\b(?:i need|i want|i have to|i must|i was|ive been|i got|i received|help me|how do i|what should i|trying to|need to|want to|we need|we want)\b/.test(value)) return null;
+  if (!/\b(?:i need|i want|i have to|i must|i was|ive been|i got|i received|help me|how do i|what should i|trying to|need to|want to|we need|we want|please prepare|please draft|please write|prepare|draft|write|create|generate)\b/.test(value)) return null;
 
   if (/\b(?:i was|ive been|i got|i received)\s+(?:just\s+)?served\s+(?:with\s+)?(?:a\s+)?(?:complaint|lawsuit|summons)\b|\b(?:respond|reply|defend)\s+(?:to\s+)?(?:the\s+|a\s+)?(?:complaint|lawsuit|summons)\b/.test(value)) return 'Answer';
   if (/\b(?:appeal|challenge)\s+(?:the\s+|a\s+)?(?:court\s+)?(?:judgment|final order|court ruling)\b|\b(?:court\s+)?(?:judgment|final order)\b.{0,65}\bappeal\b/.test(value)) return 'Notice of Appeal';
