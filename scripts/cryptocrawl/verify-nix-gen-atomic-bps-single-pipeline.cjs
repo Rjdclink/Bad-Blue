@@ -54,7 +54,7 @@ assert.doesNotMatch(activeRescue, /passWinnerFound/);
 
 // Stage-One objects enter resident zero-I/O APE first; no duplicate remote work is added there.
 assert.match(gateway, /primeApeResidentRouting\(input\.opportunities\)/);
-assert.match(gateway, /runZeroCapitalAtomicBpsEngine\(\{ \.\.\.input, opportunities: input\.opportunities \}\)/);
+assert.match(gateway, /runZeroCapitalAtomicBpsEngine\(\{\s*\.\.\.input, opportunities: input\.opportunities, fromQuotedRoute: boundFromQuotedRoute,\s*\}\)/);
 assert.match(residentApe, /routeQuotesCreatedByApe: 0/);
 assert.match(residentApe, /rpcCallsCreatedByApe: 0/);
 assert.match(residentApe, /apiCallsCreatedByApe: 0/);

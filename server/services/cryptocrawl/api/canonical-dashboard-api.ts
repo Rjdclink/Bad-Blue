@@ -1,3 +1,4 @@
+import { getBpsActivitySnapshot } from '../integration/bps-activity.js';
 import express from 'express';
 import { WebSocket, WebSocketServer } from 'ws';
 import { canonicalOpportunityState, type CanonicalOpportunitySnapshot } from '../intelligence/canonical-opportunity-state.js';
@@ -11,6 +12,12 @@ import {
 } from '../runtime/manual-power-state.js';
 
 const router = express.Router();
+// Mounted behind the existing cryptoAuthMiddleware in server/routes.ts.
+router.get('/bps-activity', (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ ...getBpsActivitySnapshot(), running: isCryptoCrawlerMasterPowerOn() });
+});
+
 const wss = new WebSocketServer({ noServer: true });
 const dashboardIntervals = new Set<ReturnType<typeof setInterval>>();
 

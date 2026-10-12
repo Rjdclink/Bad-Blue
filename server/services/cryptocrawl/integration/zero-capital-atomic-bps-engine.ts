@@ -1,3 +1,4 @@
+import { recordBpsActivity } from './bps-activity.js';
 import logger from '../../../logger.js';
 import type { providers } from 'ethers';
 import type { SupportedChain, ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
@@ -6,7 +7,7 @@ import {
   resetFlashLoanDemandHints,
 } from '../execution/adapters/flash-loan-demand-hint.js';
 import {
-  peekResidentBestBpsQuote,
+  peekResidentBestBpsQuoteEvidence,
   type ConfiguredZeroCapitalRoute,
   type QuotedZeroCapitalRoute,
 } from '../execution/adapters/onchain-route-quoter.js';
@@ -17,6 +18,7 @@ import {
   primeApeResidentRouting,
 } from './atomic-profitability-resident-routing.js';
 import {
+  compareApeEconomicPriority,
   isApeMeasuredAdmitted,
   rankApeEconomicPriority,
   summarizeApeMeasuredAdmission,
@@ -108,7 +110,8 @@ function residentBestBpsOverlay(
 ): ZeroCapitalOpportunity {
   const route = routeForOpportunity(input.configuredRoutes, opportunity);
   if (!route) return opportunity;
-  const resident = peekResidentBestBpsQuote(route.id);
+  const evidence = peekResidentBestBpsQuoteEvidence(route.id);
+  const resident = evidence?.quote;
   if (!resident || resident.chain !== opportunity.chain) return opportunity;
   const currentBps = exactNetBps(opportunity);
   if (!Number.isFinite(resident.netProfitBps)) return opportunity;
@@ -124,7 +127,7 @@ function residentBestBpsOverlay(
   const refined = input.fromQuotedRoute(resident, originalBlockTimestamp(opportunity));
   if (refined.id !== opportunity.id) return opportunity;
   refined.timestamp = opportunity.timestamp;
-  refined.expiresAt = opportunity.expiresAt;
+  refined.expiresAt = Math.min(opportunity.expiresAt, evidence!.expiresAt, refined.expiresAt);
   if (refined.expiresAt <= Date.now()) return opportunity;
   if (opportunity.inputAssetUsdPrice !== undefined) refined.inputAssetUsdPrice = opportunity.inputAssetUsdPrice;
   return refined;
@@ -252,6 +255,7 @@ export function runZeroCapitalAtomicBpsEngine(
 
     const refined = residentBestBpsOverlay(input, opportunity);
     if (refined !== opportunity) {
+      recordBpsActivity(opportunity, { profit: refined.expectedProfit, amount: refined.flashLoanAmount }, 'resident');
       residentBestBpsSizeOverlays += 1;
       refinedById.set(opportunity.id, refined);
     }
@@ -277,6 +281,8 @@ export function runZeroCapitalAtomicBpsEngine(
   }
 
   const output = ordered.map(opportunity => refinedById.get(opportunity.id) ?? opportunity);
+  // An overlay can change the economic winner; rank the measured results again.
+  output.sort((left, right) => compareApeEconomicPriority(left, right));
   const returnBoundaryAt = Date.now();
   const elapsedMsBeforeReturn = Number(process.hrtime.bigint() - startedAtNs) / 1_000_000;
   const telemetrySnapshot = {
@@ -353,6 +359,7 @@ export function runZeroCapitalAtomicBpsEngine(
       residentSizeEvidenceReadOnly: true,
       upstreamSizeSweepRepeatedByApe: false,
       overlayInheritsStageOneFreshness: true,
+      overlayCappedByResidentEvidenceExpiry: true,
       providerDemandHintResidentOnly: true,
       providerDemandHintAuthority: false,
       crossThreadTransfer: false,

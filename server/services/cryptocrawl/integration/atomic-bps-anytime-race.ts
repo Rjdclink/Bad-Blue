@@ -62,6 +62,9 @@ export async function runAtomicBpsAnytimeRace<T>(input: {
 }): Promise<AtomicBpsAnytimeRaceResult<T>> {
   const startedAt = Date.now();
   if (input.tasks.length === 0 || input.deadlineAt <= startedAt) {
+    // Tasks have already started: observe rejections even when the deadline
+    // prevents consuming their results. Otherwise a late failure can crash Node.
+    for (const task of input.tasks) void task.catch(() => undefined);
     return {
       best: null,
       completed: 0,

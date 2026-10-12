@@ -1,3 +1,4 @@
+import BpsActivityTerminal from '@/components/bps-activity-terminal';
 import { useState, useEffect, useCallback } from "react";
 import { useLocation } from "wouter";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -619,50 +620,27 @@ export default function CryptoCrawlerDashboard() {
   };
 
   // Initial data fetch - wrapped in try/catch, errors display inline, NEVER redirect
-  useEffect(() => {
-    const initializeDashboard = async () => {
-      const results = await Promise.allSettled([
-        fetchStatus(),
-        fetchStats(),
-        fetchHealth(),
-        fetchFaucetStatus()
-      ]);
-      
-      const rejected = results.filter(r => r.status === 'rejected');
-      if (rejected.length > 0) {
-        // Show error inline, do NOT redirect
-        setHasError(true);
-        // Aggregate error messages if multiple
-        const errorMessages = rejected.map(r => 
-          (r as PromiseRejectedResult).reason instanceof Error 
-            ? (r as PromiseRejectedResult).reason.message 
-            : String((r as PromiseRejectedResult).reason)
-        );
-        setErrorMessage(errorMessages.join('; ') || 'Failed to initialize dashboard');
-        addConsoleLog('error', `[CryptoCrawler] Initialization error: ${errorMessages.join('; ')}`);
-      } else {
-        addConsoleLog('info', '[CryptoCrawler] Dashboard initialized');
-        addConsoleLog('info', '[Faucet] 🟢 Autonomous profit faucet is ACTIVE');
-      }
-    };
+  const isSystemRunning = systemStatus?.running === true;
 
-    initializeDashboard();
-    
-    // Set up polling for real-time updates
+  // One local status read on opening the dashboard; it does not start providers.
+  useEffect(() => { void fetchStatus(); }, [fetchStatus]);
+
+  useEffect(() => {
+    if (!isSystemRunning || stoppingSystem) return;
+    void fetchStats();
+    void fetchFaucetStatus();
+    void fetchHealth();
     const statusInterval = setInterval(fetchStatus, 10000);
     const statsInterval = setInterval(fetchStats, 30000);
-    const healthInterval = setInterval(fetchHealth, 15000);
     const faucetInterval = setInterval(fetchFaucetStatus, 20000);
-    
+    const healthInterval = setInterval(fetchHealth, 15000);
     return () => {
       clearInterval(statusInterval);
       clearInterval(statsInterval);
-      clearInterval(healthInterval);
       clearInterval(faucetInterval);
+      clearInterval(healthInterval);
     };
-  }, [fetchStatus, fetchStats, fetchHealth, fetchFaucetStatus]);
-
-  const isSystemRunning = systemStatus?.running || false;
+  }, [isSystemRunning, stoppingSystem, fetchStatus, fetchStats, fetchFaucetStatus, fetchHealth]);
 
   const handleMasterPowerChange = (enabled: boolean) => {
     if (startingSystem || stoppingSystem || enabled === isSystemRunning) return;
@@ -822,6 +800,7 @@ export default function CryptoCrawlerDashboard() {
 
       {/* Main Content */}
       <main className="container mx-auto px-4 py-8">
+        <BpsActivityTerminal running={isSystemRunning && !stoppingSystem} />
         {/* Error Banner - Non-blocking, dashboard stays visible */}
         {hasError && errorMessage && (
           <Card className="mb-6 bg-red-900/20 border border-red-500/30">

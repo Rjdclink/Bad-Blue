@@ -735,12 +735,10 @@ function routeNotionalCandidates(route: ConfiguredZeroCapitalRoute): number[] {
 function bestBpsQuote(observed: readonly QuotedZeroCapitalRoute[]): QuotedZeroCapitalRoute | null {
   let best: QuotedZeroCapitalRoute | null = null;
   for (const quote of observed) {
-    if (!Number.isFinite(quote.netProfitBps)) continue;
-    if (!best || quote.netProfitBps > best.netProfitBps) {
-      best = quote;
-      continue;
-    }
-    if (quote.netProfitBps === best.netProfitBps && quote.netProfit > best.netProfit) best = quote;
+    if (!Number.isFinite(quote.netProfitBps) || quote.amountIn <= 0n) continue;
+    // Display BPS is rounded. Compare signed base-unit ratios before tie-breaking.
+    const comparison = best ? quote.netProfit * best.amountIn - best.netProfit * quote.amountIn : 1n;
+    if (!best || comparison > 0n || (comparison === 0n && quote.netProfit > best.netProfit)) best = quote;
   }
   return best;
 }
