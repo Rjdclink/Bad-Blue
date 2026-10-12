@@ -304,6 +304,9 @@ function buildDiscoveryQueries(args: {
 
   const firstPass = [
     [quotedName, quotedPhone].filter(Boolean).join(' '),
+    // Broaden to a name/address search once without replacing the contact-
+    // bearing queries or repeatedly buying the same generic expansion.
+    quotedName ? `${quotedName} address` : '',
     email ? `"${email}"` : '',
     email && quotedName ? `${quotedName} "${email}"` : '',
     phoneDigits.length >= 7 ? `"${phoneDigits}"` : '',
@@ -416,6 +419,7 @@ async function runDiscoveryPass(
         jurisdiction: context.location,
         subject: context.subject,
         requestedFact: 'contact-address',
+        queryAlreadyPlanned: true,
         allowClaudePlanning: context.useClaude !== false,
       })
     ));
