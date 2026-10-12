@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { spectraStreetLayers } from './spectraMapPolicy';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import type { IntelligenceMapProps } from './MapLibreIntelligenceMap';
@@ -10,7 +11,12 @@ const DARK = 'https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png';
 const TERRAIN = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}';
 
 /** A rendering fallback only: evidence, confidence and controls retain the same authority. */
-export default function RasterIntelligenceMap(props: IntelligenceMapProps) {
+export default function RasterIntelligenceMap(requestedProps: IntelligenceMapProps) {
+  const props = useMemo(() => requestedProps.streetMapOnly ? {
+    ...requestedProps,
+    mapMode: 'street' as const,
+    layers: spectraStreetLayers(requestedProps.layers),
+  } : requestedProps, [requestedProps]);
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
   const evidenceRef = useRef<L.LayerGroup | null>(null);

@@ -117,6 +117,50 @@ test('Raster provider fallback releases the failed provider credit',()=>{
 });
 test('Raster outages terminate with honest unavailable state',()=>{mount(Raster);tick(10000);assert.match(tiles[1].url,/arcgisonline/);tick(10000);assert.match(tiles[2].url,/openstreetmap/);tick(10000);assert.match(JSON.stringify(view.toJSON()),/temporarily unavailable/);tick(10000);assert.equal(tiles.length,3);unmount();});
 test('Three raster errors advance provider and clear old listeners',()=>{mount(Raster);const old=tiles[0];act(()=>{old.emit('tileerror');old.emit('tileerror');old.emit('tileerror');});assert.equal(old.events.size,0);assert.match(tiles[1].options.attribution,/Esri/);assert.equal(tiles[1].options.zIndex,0);unmount();});
+const streetOnly = {...base, streetMapOnly:true, layers:Object.fromEntries(Object.keys(base.layers).map(key=>[key,true]))};
+const excludedSources=['spectra-satellite','spectra-place-labels','spectra-earth-observation','spectra-terrain-dem','spectra-weather-radar','spectra-buildings-source'];
+test('Spectra overrides every alternate style and installs evidence only',()=>{
+  for(const mapMode of ['satellite','hybrid','dark','street']){
+    mount(Gpu,{...streetOnly,mapMode});const m=gpuMaps.at(-1);
+    assert.equal(m.options.style,'https://tiles.openfreemap.org/styles/liberty');
+    assert.equal(m.options.pitch,0);emit(m,'style.load');
+    for(const id of excludedSources)assert.equal(m.getSource(id),undefined,id);
+    for(const id of ['spectra-candidate-area','spectra-candidate-points','spectra-observation-points','spectra-trail-line','spectra-futurecast-points','spectra-uncertainty-fill'])assert.ok(m.getLayer(id),id);
+    for(const id of ['spectra-observation-points','spectra-trail-line','spectra-futurecast-points','spectra-uncertainty-fill'])assert.equal(m.getLayer(id).layout.visibility,'visible',id);
+    assert.equal(m.terrain,null);tick(15000);assert.equal(rasterMaps.length,0);unmount();
+  }
+});
+test('Spectra ignores later attempts to select an alternate map mode',()=>{
+  mount(Gpu,streetOnly);const m=gpuMaps[0];emit(m,'style.load');
+  act(()=>view.update(React.createElement(Gpu,{...streetOnly,mapMode:'dark'})));
+  assert.equal(m.loaded,true);tick(15000);assert.equal(rasterMaps.length,0);unmount();
+});
+test('Spectra restores only evidence after a style reload',()=>{
+  mount(Gpu,streetOnly);const m=gpuMaps[0];emit(m,'style.load');
+  act(()=>m.setStyle(m.options.style));emit(m,'style.load');
+  for(const id of excludedSources)assert.equal(m.getSource(id),undefined,id);
+  assert.ok(m.getLayer('spectra-candidate-area'));unmount();
+});
+test('Spectra WebGL failure opens only street raster tiles',()=>{
+  throwGpu=true;mount(Gpu,streetOnly);assert.equal(rasterMaps.length,1);
+  assert.equal(tiles.length,1);assert.match(tiles[0].url,/tile.openstreetmap.org/);unmount();
+});
+test('Spectra stalled startup and lost context both recover to street raster',()=>{
+  mount(Gpu,streetOnly);tick(10000);assert.match(tiles[0].url,/tile.openstreetmap.org/);unmount();
+  mount(Gpu,streetOnly);const m=gpuMaps.at(-1);emit(m,'style.load');
+  act(()=>m.canvas.emit('webglcontextlost',{preventDefault(){}}));tick(10000);
+  assert.match(tiles.at(-1).url,/tile.openstreetmap.org/);unmount();
+});
+test('Spectra raster rejects alternate providers even with every layer requested',()=>{
+  mount(Raster,streetOnly);assert.equal(tiles.length,1);assert.match(tiles[0].url,/tile.openstreetmap.org/);
+  assert.equal(tiles[0].options.maxNativeZoom,19);act(()=>tiles[0].emit('tileload'));
+  tick(15000);assert.match(JSON.stringify(view.toJSON()),/Street map/);
+  assert.doesNotMatch(JSON.stringify(view.toJSON()),/3D unavailable/);unmount();
+});
+test('Spectra raster outage terminates without requesting an excluded provider',()=>{
+  mount(Raster,streetOnly);tick(10000);assert.equal(tiles.length,1);
+  assert.match(JSON.stringify(view.toJSON()),/temporarily unavailable/);tick(15000);assert.equal(tiles.length,1);unmount();
+});
 console.log(`${pass} lifecycle tests passed`);
 clock.uninstall();
 })().catch(e=>{console.error(e);process.exitCode=1;}).finally(()=>{
