@@ -983,11 +983,14 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       ? loadSpectraSessionIdentityBindings(userId, requestedSessionId).catch(() => [])
       : Promise.resolve([]);
 
+    // The selected target owns identity. Conversation details may contain the
+    // assistant's "Open SPECTRA" launch text or unrelated earlier subjects.
+    // They must not replace that target in either discovery or background work.
     const semanticSubject = resolveLexaraBackgroundSubject(
-      [target, details].filter(Boolean).join('. '),
+      resolvedTargetLabel,
       [],
-    );
-    const resolvedSubjectName = semanticSubject?.name || resolvedName || resolvedTargetLabel;
+    ) || { name: resolvedTargetLabel, kind: 'person' as const, identifiable: Boolean(phone || email) };
+    const resolvedSubjectName = resolvedName || semanticSubject.name || resolvedTargetLabel;
     // The discovery mesh treats jurisdiction as a place. Contact details are
     // search clues, not a jurisdiction; passing them there polluted every
     // generated query in the live name/phone/email test.
