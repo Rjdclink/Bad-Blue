@@ -2311,6 +2311,12 @@ function cameraAttributeString(
   return undefined;
 }
 
+function cameraPositionNumber(value: unknown): number {
+  if ((typeof value !== 'number' && typeof value !== 'string')
+    || (typeof value === 'string' && !value.trim())) return Number.NaN;
+  return Number(value);
+}
+
 function cameraAttributeNumber(
   attributes: Record<string, unknown>,
   patterns: RegExp[],
@@ -2358,7 +2364,13 @@ export async function trafficLandCameras(
       || longitude < -180 || longitude > 180
     ) return [];
 
-    const updatedAt = Number(row?.updatedAt);
+    const updatedRaw = row?.updatedAt;
+    const updatedNumber = typeof updatedRaw === 'number' || typeof updatedRaw === 'string'
+      ? Number(updatedRaw) : NaN;
+    const updatedAt = Number.isFinite(updatedNumber)
+      ? updatedNumber < 100_000_000_000 ? updatedNumber * 1000 : updatedNumber : NaN;
+    const observedAt = Number.isFinite(updatedAt) && updatedAt >= Date.UTC(1900, 0, 1)
+      && updatedAt <= Date.now() + 86_400_000 ? new Date(updatedAt).toISOString() : undefined;
     return [{
       id: String(row?.publicId || `${latitude},${longitude}`),
       name: String(row?.name || 'Traffic camera'),
@@ -2366,7 +2378,7 @@ export async function trafficLandCameras(
       longitude,
       provider: String(row?.providerFullName || row?.provider || 'TrafficLand'),
       imageUrl: String(row?.content?.hugeJpeg || row?.content?.fullJpeg || row?.content?.halfJpeg || '') || undefined,
-      observedAt: Number.isFinite(updatedAt) ? new Date(updatedAt).toISOString() : undefined,
+      observedAt,
       status: {
         disabled: row?.status?.isDisabled === true,
         qualityWarning: row?.status?.hasQualityWarning === true,
@@ -2419,10 +2431,10 @@ export async function arcGisCameras(
       const attributes = feature?.attributes && typeof feature.attributes === 'object'
         ? feature.attributes as Record<string, unknown>
         : {};
-      const latitude = Number(
+      const latitude = cameraPositionNumber(
         cameraAttributeNumber(attributes, [/^latitude$/i, /^lat$/i]) ?? feature?.geometry?.y
       );
-      const longitude = Number(
+      const longitude = cameraPositionNumber(
         cameraAttributeNumber(attributes, [/^longitude$/i, /^lon$/i, /^lng$/i]) ?? feature?.geometry?.x
       );
       if (
@@ -2563,8 +2575,8 @@ export async function wikimediaNearbyMedia(
 
   return pages.flatMap((page: any) => {
     const coordinate = Array.isArray(page?.coordinates) ? page.coordinates[0] : null;
-    const latitude = Number(coordinate?.lat);
-    const longitude = Number(coordinate?.lon);
+    const latitude = cameraPositionNumber(coordinate?.lat);
+    const longitude = cameraPositionNumber(coordinate?.lon);
     if (
       !Number.isFinite(latitude) || !Number.isFinite(longitude)
       || latitude < -90 || latitude > 90
@@ -2627,8 +2639,8 @@ export async function flickrNearbyMedia(
   const payload: any = await response.json();
   const photos = Array.isArray(payload?.photos?.photo) ? payload.photos.photo : [];
   return photos.flatMap((photo: any) => {
-    const latitude = Number(photo?.latitude);
-    const longitude = Number(photo?.longitude);
+    const latitude = cameraPositionNumber(photo?.latitude);
+    const longitude = cameraPositionNumber(photo?.longitude);
     if (
       !Number.isFinite(latitude) || !Number.isFinite(longitude)
       || latitude < -90 || latitude > 90
@@ -2735,10 +2747,13 @@ export async function nwsLatestObservation(lat: number, lng: number): Promise<Re
     'User-Agent': 'LegalWhat-SPECTRA/1.0',
   };
 
+  // Three NWS calls share one deadline: each individual 6s timeout previously
+  // allowed 18s of work after the Spectra context request had already expired.
+  const signal = AbortSignal.timeout(7_000);
   try {
     const pointResponse = await fetch(`https://api.weather.gov/points/${lat},${lng}`, {
       headers,
-      signal: AbortSignal.timeout(6_000),
+      signal,
     });
     if (!pointResponse.ok) return null;
     const point: any = await pointResponse.json();
@@ -2747,7 +2762,7 @@ export async function nwsLatestObservation(lat: number, lng: number): Promise<Re
 
     const stationResponse = await fetch(`${stationsUrl}?limit=1`, {
       headers,
-      signal: AbortSignal.timeout(6_000),
+      signal,
     });
     if (!stationResponse.ok) return null;
     const stationPayload: any = await stationResponse.json();
@@ -2759,7 +2774,7 @@ export async function nwsLatestObservation(lat: number, lng: number): Promise<Re
       `https://api.weather.gov/stations/${encodeURIComponent(stationId)}/observations/latest`,
       {
         headers,
-        signal: AbortSignal.timeout(6_000),
+        signal,
       },
     );
     if (!observationResponse.ok) return null;
@@ -2789,6 +2804,8 @@ export async function copernicusItems(
   from: Date,
   to: Date,
 ): Promise<Array<Record<string, unknown>>> {
+  if (![lat, lng, from.getTime(), to.getTime()].every(Number.isFinite)
+    || Math.abs(lat) > 90 || Math.abs(lng) > 180 || from > to) return [];
   const delta = 0.05;
   const endpoint = new URL('https://stac.dataspace.copernicus.eu/v1/search');
   const body = {
