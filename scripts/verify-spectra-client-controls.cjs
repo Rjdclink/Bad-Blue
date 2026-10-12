@@ -147,6 +147,40 @@ assert.equal(names.extractLikelyName(
 ), 'Jane Mary Doe');
 assert.equal(names.extractLikelyName('Jane Mary Doe'), 'Jane Mary Doe');
 
+// A launch reply is navigation text, not a new identity. Exercise the actual
+// acquisition resolution with assistant history and a partly lowercase name,
+// which caused live discovery to search for "Open SPECTRA" instead of the user.
+const subjectModule = read('server/lexara/LexaraBackgroundSubject.ts')
+  .replace(/^export /gm, '');
+const targetHelpers = route.slice(route.indexOf('function normalizeTargetIntent'),
+  route.indexOf('\nfunction discoverySourceKey'));
+const targetResolution = route.slice(route.indexOf('  const normalizedTarget = normalizeTargetIntent(target);'),
+  route.indexOf('\n  try {', route.indexOf('  const normalizedTarget = normalizeTargetIntent(target);')));
+const semanticResolution = route.slice(route.indexOf('    const semanticSubject = resolveLexaraBackgroundSubject('),
+  route.indexOf('    // The discovery mesh treats jurisdiction'));
+const subjectFixture = (target, details) => execute(`
+  ${subjectModule}
+  const extractPhoneNumber = () => undefined;
+  const extractDeviceRef = () => undefined;
+  const extractCityStateHint = () => null;
+  const target = ${JSON.stringify(target)}, details = ${JSON.stringify(details)};
+  ${targetHelpers}
+  ${targetResolution}
+  ${semanticResolution}
+  globalThis.subject = resolvedSubjectName;
+  globalThis.backgroundSubject = semanticSubject.name;
+`);
+for (const target of ['Show me Morgan vale?', 'Can you find Jane Mary Doe?']) {
+  const expected = target.includes('Morgan') ? 'Morgan vale' : 'Jane Mary Doe';
+  const fixture = subjectFixture(target,
+    `LEXARA conversation context:\nLEXARA: Open SPECTRA to locate ${expected}.`);
+  assert.equal(fixture.subject, expected, 'assistant launch text cannot replace the discovery subject');
+  assert.equal(fixture.backgroundSubject, expected, 'background research must retain the same target');
+}
+const conflictingHistory = subjectFixture('Morgan vale',
+  'Prior subject: Avery Example. LEXARA: Open SPECTRA to locate Morgan vale.');
+assert.equal(conflictingHistory.subject, 'Morgan vale', 'an earlier conversation subject cannot override the target');
+
 // A gap must never be bridged when preparing observations for Futurecast.
 const runtime = read('client/src/hooks/useGeoRuntime.ts');
 const tailSource = runtime.slice(runtime.indexOf('const continuousTail ='),
