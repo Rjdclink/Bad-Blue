@@ -2172,6 +2172,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       },
       locationObservations,
       candidateLocations,
+      mediaCaptureScenes,
       contextEvidence,
       liveLocationAssessment,
       identityBindingAssessment,
