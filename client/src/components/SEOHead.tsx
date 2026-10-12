@@ -27,7 +27,7 @@ interface SEOHeadProps {
 
 const BASE_URL = "https://legalwhat.com";
 const SITE_NAME = "Legal What?";
-const DEFAULT_SHARE_IMAGE = `${BASE_URL}/images/Legal%20What%20Icon.png`;
+const DEFAULT_SHARE_IMAGE = `${BASE_URL}/images/legalwhat-social-preview.png`;
 
 const PRIVATE_ROUTES = new Set([
   "/login",
@@ -161,10 +161,11 @@ export function SEOHead({
     setMetaTag("og:locale", "en_US", true);
     setMetaTag("og:image", finalOgImage, true);
     setMetaTag("og:image:alt", finalOgImageAlt, true);
-    removeMetaTag("og:image:width", true);
-    removeMetaTag("og:image:height", true);
+    setMetaTag("og:image:type", "image/png", true);
+    setMetaTag("og:image:width", "1200", true);
+    setMetaTag("og:image:height", "630", true);
 
-    setMetaTag("twitter:card", "summary");
+    setMetaTag("twitter:card", "summary_large_image");
     setMetaTag("twitter:title", ogTitle || title);
     setMetaTag("twitter:description", ogDescription || description);
     setMetaTag("twitter:image", finalOgImage);
