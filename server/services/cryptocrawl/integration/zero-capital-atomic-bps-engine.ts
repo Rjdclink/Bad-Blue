@@ -1,3 +1,4 @@
+import { recordBpsActivity } from './bps-activity.js';
 import logger from '../../../logger.js';
 import type { providers } from 'ethers';
 import type { SupportedChain, ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
@@ -254,6 +255,7 @@ export function runZeroCapitalAtomicBpsEngine(
 
     const refined = residentBestBpsOverlay(input, opportunity);
     if (refined !== opportunity) {
+      recordBpsActivity(opportunity, { profit: refined.expectedProfit, amount: refined.flashLoanAmount }, 'resident');
       residentBestBpsSizeOverlays += 1;
       refinedById.set(opportunity.id, refined);
     }

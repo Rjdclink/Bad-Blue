@@ -2,6 +2,8 @@ import type { providers } from 'ethers';
 import logger from '../../../logger.js';
 import { DEFAULT_GAS_LIMIT, SUPPORTED_CHAINS } from '../bridge/chain-config.js';
 import { livePriceMesh } from '../bridge/live-price-mesh.js';
+import { expectedExecutionGasPriceWei, gasUsdToTokenBaseUnits } from './configured-zero-capital-gas-economics.js';
+import { getGasSponsorManager } from '../strategies/gas-sponsorship.js';
 import { gasOracle } from '../bridge/gas-oracle.js';
 import type { ChainId } from '../bridge/types.js';
 import type { GasFundingDecision, GasFundingMode } from '../capital-free/dynamic-gas-funding-engine.js';
@@ -147,6 +149,7 @@ function resolveFundingContext(
 function sponsorCostProvenZero(funding: DynamicGasFundingContext): boolean {
   return typeof funding === 'object'
     && funding.mode === 'sponsored'
+    && funding.paymentSource === 'provider_sponsored'
     && funding.sponsorOperatorMonetaryCostProvenZero === true
     && funding.providerBillingLiability === false;
 }
@@ -212,14 +215,6 @@ function stableBaseUnits(usd: number, decimals: number): string {
   return ((microUsd + divisor - 1n) / divisor).toString();
 }
 
-function gasUsdToBaseUnits(usd: number, decimals: number): string {
-  const normalizedDecimals = Math.max(0, Math.min(36, Math.trunc(decimals)));
-  const microUsd = BigInt(Math.max(0, Math.ceil(usd * 1_000_000)));
-  if (normalizedDecimals === 6) return microUsd.toString();
-  if (normalizedDecimals > 6) return (microUsd * (10n ** BigInt(normalizedDecimals - 6))).toString();
-  const divisor = 10n ** BigInt(6 - normalizedDecimals);
-  return ((microUsd + divisor - 1n) / divisor).toString();
-}
 
 function protocolLeg(
   protocol: DynamicProtocol,
@@ -492,12 +487,30 @@ async function enrichMeasuredGasCost(
     : configuredSafetyMultiplier;
   let gasCostUsd: number;
 
-  if (chain === 'ethereum' || chain === 'optimism') {
+  if (fundingMode === 'sponsored') {
+    // User gaslessness is not operator costlessness. Include the actual
+    // sponsor tariff and ERC-4337 overhead on every supported chain.
+    const sponsor = getGasSponsorManager();
+    const network = await provider.getNetwork();
+    const nativeSymbol = chain === 'polygon' ? 'POL' : chain === 'bsc' ? 'BNB' : chain === 'avalanche' ? 'AVAX' : 'ETH';
+    const [quote, prices] = await Promise.all([
+      sponsor.getGasPriceQuote(network.chainId),
+      livePriceMesh.getLiveSymbolPrices([nativeSymbol]),
+    ]);
+    const nativeUsd = prices.get(nativeSymbol);
+    if (quote.maxFeePerGasWei <= 0n || !Number.isFinite(nativeUsd) || Number(nativeUsd) <= 0) {
+      throw new Error(`Measured ${chain} sponsor gas economics unavailable`);
+    }
+    const units = estimatedGasUnits + sponsor.getStageOneOverheadGasUnits();
+    const tariff = 1 + Math.max(0, sponsor.getBillingSurchargeBps()) / 10_000;
+    const reserve = chain === 'optimism' ? Math.max(1.75, safetyMultiplier) : safetyMultiplier;
+    gasCostUsd = Number(quote.maxFeePerGasWei) * units / 1e18 * Number(nativeUsd) * tariff * reserve;
+  } else if (chain === 'ethereum' || chain === 'optimism') {
     const [feeData, prices] = await Promise.all([
       provider.getFeeData(),
       livePriceMesh.getLiveSymbolPrices(['ETH']),
     ]);
-    const gasPriceWei = feeData.maxFeePerGas ?? feeData.gasPrice;
+    const gasPriceWei = expectedExecutionGasPriceWei(feeData);
     const ethUsd = prices.get('ETH');
     const gasPrice = gasPriceWei ? Number(gasPriceWei.toString()) : Number.NaN;
     if (!Number.isFinite(gasPrice) || gasPrice <= 0 || !Number.isFinite(ethUsd) || !ethUsd || ethUsd <= 0) {
@@ -514,12 +527,14 @@ async function enrichMeasuredGasCost(
     gasCostUsd = gas.usdCost * (estimatedGasUnits / DEFAULT_GAS_LIMIT) * safetyMultiplier;
   }
 
+  if (!Number.isFinite(gasCostUsd) || gasCostUsd <= 0) throw new Error(`Measured ${chain} gas conversion unavailable`);
+  const inputPrices = await livePriceMesh.getLiveSymbolPrices([...new Set(routes.map(route => route.inputAssetSymbol))]);
   return {
     gasCostUsd,
-    gasCostAuthority: sponsoredBillingLiability(funding) ? 'measured_sponsored_billing_proxy' : 'measured_native_gas',
+    gasCostAuthority: fundingMode === 'sponsored' ? 'measured_sponsored_billing_proxy' : 'measured_native_gas',
     routes: routes.map(route => ({
       ...route,
-      estimatedGasCostInInputToken: gasUsdToBaseUnits(gasCostUsd, route.inputTokenDecimals),
+      estimatedGasCostInInputToken: gasUsdToTokenBaseUnits(gasCostUsd, Number(inputPrices.get(route.inputAssetSymbol)), route.inputTokenDecimals),
     })),
   };
 }

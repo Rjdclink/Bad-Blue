@@ -156,8 +156,11 @@ function compositeReceiverConfigured(chain: SupportedChain): boolean {
 export async function runFairZeroCapitalProfitabilityRescue(
   input: FairZeroCapitalProfitabilityRescueInput,
 ): Promise<ZeroCapitalOpportunity[]> {
+  const boundFromQuotedRoute = input.fromQuotedRoute.bind(zeroCapitalEngine);
   primeApeResidentRouting(input.opportunities);
-  const residentFastPath = runZeroCapitalAtomicBpsEngine({ ...input, opportunities: input.opportunities });
+  const residentFastPath = runZeroCapitalAtomicBpsEngine({
+    ...input, opportunities: input.opportunities, fromQuotedRoute: boundFromQuotedRoute,
+  });
   for (const candidate of residentFastPath) observeApeProfitableSnapshot(candidate);
 
   const activeRescueCandidates = residentFastPath.filter(stillNeedsMeasuredRescue);
@@ -165,7 +168,6 @@ export async function runFairZeroCapitalProfitabilityRescue(
   const initialStructuralFirstCandidates = activeRescueCandidates.filter(apeStructuralFirstCandidate);
   const rootsById = new Map(residentFastPath.map(opportunity => [opportunity.id, opportunity]));
   const generationById = new Map(residentFastPath.map(opportunity => [opportunity.id, getApeCandidateGeneration(opportunity)]));
-  const boundFromQuotedRoute = input.fromQuotedRoute.bind(zeroCapitalEngine);
   const compositeConfigured = compositeReceiverConfigured(input.chain);
 
   // Resident price plane: start missing-symbol work without awaiting it. Route-split

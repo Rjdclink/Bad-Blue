@@ -251,15 +251,46 @@ export function apePrefersRouteAlternatives(plan: ApeProfitabilityToolboxPlan | 
  * impact pressure explores smaller sizes first. A bounded wave is only a latency
  * control: unresolved candidate ownership continues into later evidence generations.
  */
+export function buildApeCostDilutionProbe(
+  opportunity: ZeroCapitalOpportunity,
+  fundingCeiling: bigint,
+): bigint | null {
+  const amount = opportunity.flashLoanAmount;
+  const gas = opportunity.estimatedGasCostInInputToken;
+  const relay = opportunity.relayFeeInInputToken;
+  const premium = opportunity.flashLoanFeeInInputToken;
+  const gross = opportunity.grossProfit;
+  if (amount <= 0n || fundingCeiling <= amount || gross === undefined || gross <= 0n
+    || gas === undefined || relay === undefined || premium === undefined
+    || gas < 0n || relay < 0n || premium < 0n) return null;
+  const fixedCost = gas + relay;
+  // +5 BPS is a search goal only. Proportional gross edge is a sizing hypothesis,
+  // never credited profit: the caller must re-quote price impact and all fees.
+  const netVariableEdge = (gross - premium) * 10_000n;
+  if (fixedCost <= 0n || netVariableEdge <= 0n) return null;
+  const goalSurplus = netVariableEdge - amount * 5n;
+  // When +5 is unreachable even before fixed costs, still probe beyond break-even.
+  // Do not turn the optional goal into a veto of smaller positive outcomes.
+  const variableSurplus = goalSurplus > 0n ? goalSurplus : netVariableEdge;
+  const numerator = fixedCost * amount * 10_000n;
+  const required = goalSurplus > 0n
+    ? (numerator + variableSurplus - 1n) / variableSurplus
+    : numerator / variableSurplus + 1n;
+  const bounded = required < fundingCeiling ? required : fundingCeiling;
+  return bounded > amount ? bounded : null;
+}
+
 export function buildApeTargetAmounts(input: {
   intended: bigint;
   fundingCeiling: bigint;
   providerCapacityBoundaries: readonly bigint[];
   plan: ApeProfitabilityToolboxPlan | null;
+  opportunity?: ZeroCapitalOpportunity;
 }): bigint[] {
   const { intended, fundingCeiling, providerCapacityBoundaries, plan } = input;
   if (intended <= 0n || fundingCeiling <= 0n) return [];
   const clamped = intended < fundingCeiling ? intended : fundingCeiling;
+  const costDilutionProbe = input.opportunity ? buildApeCostDilutionProbe(input.opportunity, fundingCeiling) : null;
   const values: bigint[] = [clamped];
 
   for (const capacity of providerCapacityBoundaries) {
@@ -292,6 +323,11 @@ export function buildApeTargetAmounts(input: {
   }
 
   const bounded = uniqueBounded(values, fundingCeiling);
+  // Reserve an early bounded probe before broad capacity-boundary exploration.
+  // Keep the original intended size first; measured quotes still choose the winner.
+  if (costDilutionProbe !== null && driver !== 'slippage_impact' && driver !== 'latency_decay') {
+    return uniqueBounded([clamped, costDilutionProbe, ...bounded], fundingCeiling);
+  }
   if (driver === 'gas' || driver === 'relay' || driver === 'bridge') {
     return bounded.sort((left, right) => left === right ? 0 : left > right ? -1 : 1);
   }

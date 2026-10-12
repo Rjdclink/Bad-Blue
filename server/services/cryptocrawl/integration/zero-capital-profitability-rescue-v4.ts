@@ -1,3 +1,4 @@
+import { recordBpsActivity } from './bps-activity.js';
 import logger from '../../../logger.js';
 import type { providers } from 'ethers';
 import type { SupportedChain, ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
@@ -289,6 +290,19 @@ function alignRouteCostBasisToStageOne(
   route: ConfiguredZeroCapitalRoute,
   opportunity: ZeroCapitalOpportunity,
 ): ConfiguredZeroCapitalRoute {
+  const seedRoute = opportunity.id === route.id || opportunity.id.startsWith(`${route.id}-`);
+  const conservativeCost = (configured: string, observed: bigint | undefined): string => {
+    const cost = BigInt(configured);
+    if (cost < 0n || (observed !== undefined && observed < 0n)) throw new Error('Negative route cost');
+    if (observed === undefined) return configured;
+    // Alternative templates can carry zero seeds, not measured free gas. Keep
+    // the observed floor, but never erase an alternative's higher known cost.
+    return (cost > observed ? cost : observed).toString();
+  };
+  if (!seedRoute) return { ...route,
+    estimatedGasCostInInputToken: conservativeCost(route.estimatedGasCostInInputToken, opportunity.estimatedGasCostInInputToken),
+    relayFeeInInputToken: conservativeCost(route.relayFeeInInputToken, opportunity.relayFeeInInputToken),
+  };
   return {
     ...route,
     estimatedGasCostInInputToken: opportunity.estimatedGasCostInInputToken !== undefined
@@ -751,6 +765,7 @@ export async function runZeroCapitalProfitabilityRescueV4(
       const adjusted = adjustForFundingPlan(quote, plan);
       // An expired cached incumbent must not suppress a fresh measured alternative.
       if (bestInheritsCurrentFreshness && bestEvidenceExpiresAt <= Date.now()) best = null;
+      recordBpsActivity(opportunity, { profit: adjusted.netProfit, amount: adjusted.amountIn }, 'requote');
       const selected = quoteBetter(best, adjusted);
       if (selected === adjusted) {
         best = adjusted;
@@ -781,6 +796,7 @@ export async function runZeroCapitalProfitabilityRescueV4(
         .map(item => item.availableLiquidity ?? 0n)
         .filter(value => value > 0n),
       plan: toolboxPlan,
+      opportunity,
     });
     const targetAmount = amounts[0] ?? (intendedAmount < fundingCeiling ? intendedAmount : fundingCeiling);
     const seen = new Set<string>([`${primaryRoute.id}:${intendedAmount.toString()}`]);

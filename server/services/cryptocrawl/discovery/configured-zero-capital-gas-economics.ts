@@ -52,7 +52,7 @@ function ceilDiv(numerator: bigint, denominator: bigint): bigint {
   return (numerator + denominator - 1n) / denominator;
 }
 
-function gasUsdToTokenBaseUnits(gasUsd: number, tokenUsd: number, decimals: number): string {
+export function gasUsdToTokenBaseUnits(gasUsd: number, tokenUsd: number, decimals: number): string {
   if (!Number.isFinite(gasUsd) || gasUsd <= 0) throw new Error('Measured gas USD cost must be positive');
   if (!Number.isFinite(tokenUsd) || tokenUsd <= 0) throw new Error('Live input-token USD price must be positive');
   const normalizedDecimals = Math.max(0, Math.min(36, Math.trunc(decimals)));

@@ -46,9 +46,11 @@ check('unknown canonical economics stay unknown', () => {
   for (const v of [null, undefined, '', ' ', false, true, NaN, Infinity]) assert.equal(admission.finite(v), null);
   assert.equal(admission.finite(0), 0);
 });
+const activity = load('integration/bps-activity.ts');
 let resident = null;
 const atomic = load('integration/zero-capital-atomic-bps-engine.ts', {
   '../../../logger.js': log,
+  './bps-activity.js': activity,
   '../execution/adapters/onchain-route-quoter.js': { peekResidentBestBpsQuoteEvidence: () => resident },
   '../execution/adapters/flash-loan-demand-hint.js': { resetFlashLoanDemandHints() {}, observeFlashLoanDemandHint() {} },
   './atomic-profitability-resident-routing.js': { hasApeResidentPlacement: () => true, orderApeResidentOpportunities: x => [...x], getApeResidentPlacement: () => null },
@@ -73,14 +75,17 @@ let networkQuotes = 0;
 let feeObservedAt = now;
 let residentExact = null;
 let profitableQuotes = true;
+let quoteModel = null;
+let availableLiquidity = 10000000n;
 const toolbox = load('integration/ape-profitability-toolbox.ts', {}, []);
 const telemetry = { logicalRequests: 0, residentHits: 0, physicalMeasurementStarts: 0, singleflightJoins: 0 };
 const v4 = load('integration/zero-capital-profitability-rescue-v4.ts', {
   '../../../logger.js': log,
+  './bps-activity.js': activity,
   '../execution/adapters/flash-loan-provider-economics.js': {
     calculateMeasuredFlashLoanFee: () => 0n,
     getFlashLoanProviderMeasurementTelemetry: () => telemetry,
-    measureFlashLoanProviders: async () => [{ provider: 'balancer_v2', observedAt: feeObservedAt, executableEvidenceComplete: true, availableLiquidity: 10000000n }],
+    measureFlashLoanProviders: async () => [{ provider: 'balancer_v2', observedAt: feeObservedAt, executableEvidenceComplete: true, availableLiquidity }],
   },
   '../execution/adapters/dual-flash-loan-provider-mesh.js': { selectMeasuredDualFlashLoanAllocation: () => null, selectMeasuredProviderPairAllocation: () => null },
   '../execution/adapters/onchain-route-quoter.js': {
@@ -88,6 +93,7 @@ const v4 = load('integration/zero-capital-profitability-rescue-v4.ts', {
     quoteConfiguredZeroCapitalRoute: async r => {
       networkQuotes++;
       const amount = BigInt(r.amountIn);
+      if (quoteModel) return quoteModel(amount);
       // A small quote earns +6 BPS; the larger-dollar result earns only +2 BPS.
       return quote(amount, profitableQuotes ? (amount <= 1000000n ? amount * 6n / 10000n : amount * 2n / 10000n) : -amount / 1000n);
     },
@@ -95,7 +101,7 @@ const v4 = load('integration/zero-capital-profitability-rescue-v4.ts', {
   './ape-profitability-toolbox.js': { ...toolbox, buildApeProfitabilityToolboxPlan: () => null },
   './ape-hypergraph-intelligence.js': { buildApeDefectVector: () => ({ structuralEdgeDefect: false }), recordApeRouteOutcome() {}, selectPersistentRouteFrontier: ({ routes }) => routes },
   './zero-capital-profit-output-floor.js': { ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD: Number.MIN_VALUE },
-}, ['quoteBetter', 'strictImprovement', 'providerFresh']);
+}, ['quoteBetter', 'strictImprovement', 'providerFresh', 'alignRouteCostBasisToStageOne']);
 check('V4 uses exact BPS rather than absolute profit', () => {
   const highBps = quote(1000000n, 600n);
   const highDollars = quote(10000000n, 2000n);
@@ -131,7 +137,62 @@ check('repeated settlement updates count once in BPS learning', () => {
   superEngine.updateRealizedGovernor(candidate);
   assert.equal(superEngine.tacticState('resize').realizedSamples, 1);
 });
+const gasEconomics = load('discovery/configured-zero-capital-gas-economics.ts');
+const bn = n => ({ gt: other => n > other, toString: () => String(n) });
+check('native gas screen uses expected price before maximum fee ceiling', () => {
+  assert.equal(gasEconomics.expectedExecutionGasPriceWei({ gasPrice: bn(12), maxFeePerGas: bn(100) }), 12n);
+  assert.equal(gasEconomics.expectedExecutionGasPriceWei({ lastBaseFeePerGas: bn(10), maxPriorityFeePerGas: bn(2), maxFeePerGas: bn(100) }), 12n);
+  assert.equal(gasEconomics.expectedExecutionGasPriceWei({}), 0n);
+});
+check('gas conversion values input tokens and rounds costs up', () => {
+  assert.equal(gasEconomics.gasUsdToTokenBaseUnits(3, 0.5, 6), '6000000');
+  assert.equal(gasEconomics.gasUsdToTokenBaseUnits(0.000001, 3, 6), '1');
+  assert.throws(() => gasEconomics.gasUsdToTokenBaseUnits(3, NaN, 6));
+});
+check('alternative routes retain higher costs and zero templates cannot erase gas', () => {
+  assert.equal(v4.alignRouteCostBasisToStageOne({ ...route, id: 'alternative', estimatedGasCostInInputToken: '3000' }, source).estimatedGasCostInInputToken, '3000');
+  assert.equal(v4.alignRouteCostBasisToStageOne({ ...route, id: 'alternative', estimatedGasCostInInputToken: '0' }, source).estimatedGasCostInInputToken, '1000');
+});
+let tokenPrice = 0.5;
+const dynamicGas = load('discovery/dynamic-zero-capital-routes.ts', {
+  '../bridge/chain-config.js': { DEFAULT_GAS_LIMIT: 500000 },
+  './configured-zero-capital-gas-economics.js': gasEconomics,
+  '../bridge/live-price-mesh.js': { livePriceMesh: { getLiveSymbolPrices: async () => new Map([['ETH', 2000], ['USDC', tokenPrice]]) } },
+  '../strategies/gas-sponsorship.js': { getGasSponsorManager: () => ({
+    getGasPriceQuote: async () => ({ maxFeePerGasWei: 2000000000n }),
+    getStageOneOverheadGasUnits: () => 100000,
+    getBillingSurchargeBps: () => 1000,
+  }) },
+}, ['enrichMeasuredGasCost']);
 async function main() {
+  const gasProvider = { getFeeData: async () => ({ gasPrice: bn(1000000000), maxFeePerGas: bn(100000000000) }), getNetwork: async () => ({ chainId: 1 }) };
+  const nativeGas = await dynamicGas.enrichMeasuredGasCost('ethereum', gasProvider, [route], 'native');
+  const sponsoredGas = await dynamicGas.enrichMeasuredGasCost('ethereum', gasProvider, [route], 'sponsored');
+  check('dynamic native and sponsored screens use distinct complete gas economics', () => {
+    assert.equal(nativeGas.gasCostUsd, 3.5);
+    assert.equal(nativeGas.routes[0].estimatedGasCostInInputToken, '7000000');
+    assert.ok(Math.abs(sponsoredGas.gasCostUsd - 8.25) < 1e-9);
+    assert.equal(sponsoredGas.gasCostAuthority, 'measured_sponsored_billing_proxy');
+  });
+  tokenPrice = NaN;
+  await assert.rejects(dynamicGas.enrichMeasuredGasCost('ethereum', gasProvider, [route], 'native'), /Live input-token/);
+  tokenPrice = 0.5;
+  check('unknown token valuation cannot produce a gas-free positive quote', () => {});
+
+  const stoppedAtFastPath = new Error('test boundary after bound callback');
+  let boundCallbackResult;
+  const gateway = load('integration/zero-capital-profitability-rescue-fair.ts', {
+    '../core/zero-capital-engine.js': { zeroCapitalEngine: { expectedSlippageBps: () => 42 } },
+    './atomic-profitability-resident-routing.js': { primeApeResidentRouting() {} },
+    './zero-capital-atomic-bps-engine.js': { runZeroCapitalAtomicBpsEngine(input) {
+      boundCallbackResult = input.fromQuotedRoute({}, 0);
+      throw stoppedAtFastPath;
+    } },
+  });
+  await assert.rejects(gateway.runFairZeroCapitalProfitabilityRescue({ opportunities: [],
+    fromQuotedRoute() { return this.expectedSlippageBps(); },
+  }), error => error === stoppedAtFastPath);
+  check('gateway binds engine method before resident fast-path invocation', () => assert.equal(boundCallbackResult, 42));
   const input = { chain: 'ethereum', provider: {}, opportunities: [source], configuredRoutes: [route], fromQuotedRoute: fromQuote, maxRefinements: 1 };
   const out = await v4.runZeroCapitalProfitabilityRescueV4(input);
   check('active actuator requotes without advisory plan and recovers -5 to +6 BPS', () => {
@@ -150,6 +211,43 @@ async function main() {
   feeObservedAt = Date.now() + 100000;
   const future = await v4.runZeroCapitalProfitabilityRescueV4(input);
   check('invalid provider economics prevent an actuator promotion', () => assert.equal(future[0], source));
+  // Uniswap V2 constant-product arithmetic, using synthetic reserves, two 0.3%
+  // pool fees, and a separately deducted $3 gas cost. No live market claims.
+  // https://github.com/Uniswap/v2-periphery/blob/master/contracts/libraries/UniswapV2Library.sol
+  const amountOut = (amount, reserveIn, reserveOut) => amount * 997n * reserveOut / (reserveIn * 1000n + amount * 997n);
+  quoteModel = amount => {
+    const eth = amountOut(amount, 10n ** 12n, 500n * 10n ** 18n);
+    const usd = amountOut(eth, 500n * 10n ** 18n, 1012n * 10n ** 9n);
+    const gross = usd - amount;
+    return { ...quote(amount, gross - 3000000n), grossProfit: gross, estimatedGasCostInInputToken: 3000000n, flashLoanFeeInInputToken: 0n };
+  };
+  availableLiquidity = 100000000000n;
+  feeObservedAt = Date.now();
+  const measuredSeed = quoteModel(600000000n);
+  const modelSource = { ...source, ...fromQuote(measuredSeed), estimatedGasCostInInputToken: 3000000n,
+    relayFeeInInputToken: 0n, flashLoanFeeInInputToken: 0n, estimatedExecutionCostInInputToken: 3000000n };
+  const beforeProfit = modelSource.expectedProfit;
+  const probe = toolbox.buildApeCostDilutionProbe(modelSource, 80000000000n);
+  const curveResult = await v4.runZeroCapitalProfitabilityRescueV4({ ...input, opportunities: [modelSource] });
+  check('two-pool fee/impact/gas model improves negative net BPS past +5', () => {
+    assert.ok(modelSource.netProfitBps < 0 && modelSource.netProfitBps > -10);
+    assert.ok(curveResult[0].netProfitBps >= 5);
+    assert.equal(curveResult[0].expectedProfit, quoteModel(curveResult[0].flashLoanAmount).netProfit);
+    assert.equal(modelSource.expectedProfit, beforeProfit);
+    assert.ok(probe > modelSource.flashLoanAmount);
+    console.log(`  simulated pool result ${modelSource.netProfitBps} -> ${curveResult[0].netProfitBps} BPS`);
+  });
+  check('size hypothesis is bounded and cannot become credited profit', () => {
+    assert.equal(toolbox.buildApeCostDilutionProbe(modelSource, 650000000n), 650000000n);
+    assert.equal(toolbox.buildApeCostDilutionProbe({ ...source, grossProfit: 400n, flashLoanFeeInInputToken: 0n }, 10000000n), 2500001n);
+    assert.equal(toolbox.buildApeCostDilutionProbe({ ...modelSource, grossProfit: -1n }, availableLiquidity), null);
+    assert.equal(toolbox.buildApeCostDilutionProbe({ ...modelSource, estimatedGasCostInInputToken: undefined }, availableLiquidity), null);
+    const amounts = toolbox.buildApeTargetAmounts({ intended: modelSource.flashLoanAmount, fundingCeiling: 80000000000n,
+      providerCapacityBoundaries: [80000000000n], plan: null, opportunity: modelSource });
+    assert.equal(amounts[0], modelSource.flashLoanAmount);
+    assert.equal(amounts[1], probe);
+  });
+  quoteModel = null;
   const floor = load('integration/zero-capital-profit-output-floor.ts');
   check('+5 BPS is optional: smaller positive results remain eligible', () => {
     assert.equal(floor.clearsStrictPositiveOutputThreshold({ ...source, expectedProfit: 1n, netProfitBps: 0.01 }), true);
@@ -165,6 +263,18 @@ async function main() {
   check('deadline-expired probes do not produce unhandled rejections', () => assert.equal(unhandled, 0));
   const result = await race.runAtomicBpsAnytimeRace({ tasks: [Promise.resolve(2), Promise.resolve(6)], deadlineAt: Date.now() + 100, acceptable: x => x > 0, better: (a, b) => Math.max(a ?? -Infinity, b) });
   check('already-arrived better BPS wins the anytime race', () => assert.equal(result.best, 6));
+  check('terminal retains measured attempts with bounded immutable snapshots', () => {
+    const isolated = load('integration/bps-activity.ts');
+    for (let i = 0; i < 350; i++) isolated.recordBpsActivity(source, { profit: 600n, amount: 1000000n }, 'requote');
+    const snapshot = isolated.getBpsActivitySnapshot();
+    assert.equal(snapshot.rows.length, 300);
+    assert.equal(snapshot.rows[0].sequence, 51);
+    assert.equal(snapshot.rows[0].beforeBps, -5);
+    assert.equal(snapshot.rows[0].afterBps, 6);
+    assert.equal(snapshot.rows[0].asset, 'USDC');
+    snapshot.rows[0].afterBps = 999;
+    assert.equal(isolated.getBpsActivitySnapshot().rows[0].afterBps, 6);
+  });
   console.log(`BPS behavior: ${checks} checks passed; all transports mocked; CryptoCrawler never started.`);
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

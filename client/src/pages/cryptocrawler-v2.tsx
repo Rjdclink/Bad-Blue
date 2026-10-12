@@ -1,3 +1,4 @@
+import BpsActivityTerminal from '@/components/bps-activity-terminal';
 /**
  * CryptoCrawler Dashboard V2 - Clean Page Implementation
  * 
@@ -406,6 +407,7 @@ export default function CryptoCrawlerV2Dashboard() {
 
       {/* Main Content */}
       <main className="container mx-auto px-4 py-8">
+        <BpsActivityTerminal />
         {/* Stats Overview */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
           <Card className="bg-gray-800/50 border-white/10">

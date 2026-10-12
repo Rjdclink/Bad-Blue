@@ -1,3 +1,4 @@
+import BpsActivityTerminal from '@/components/bps-activity-terminal';
 import { useState, useEffect, useCallback } from "react";
 import { useLocation } from "wouter";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -822,6 +823,7 @@ export default function CryptoCrawlerDashboard() {
 
       {/* Main Content */}
       <main className="container mx-auto px-4 py-8">
+        <BpsActivityTerminal />
         {/* Error Banner - Non-blocking, dashboard stays visible */}
         {hasError && errorMessage && (
           <Card className="mb-6 bg-red-900/20 border border-red-500/30">
