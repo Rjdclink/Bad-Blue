@@ -3,6 +3,7 @@ import { isIP } from 'node:net';
 import { Buffer } from 'node:buffer';
 import { load } from 'cheerio';
 import type { SpectraRetrievalDiagnostic, SpectraRetrievalReason } from './SpectraRetrievalDiagnostics';
+import { inspectSpectraPublicImageResponse, spectraSocialPageImageLeads } from './SpectraPublicImageRecords';
 
 export interface SpectraRetrievedObservation {
   latitude: number;
@@ -26,6 +27,8 @@ export interface SpectraRetrievedEvidence {
   structuredRecord?: unknown;
   /** Explicitly distinguishes a bounded archive omission from an empty source. */
   structuredRecordOmitted?: boolean;
+  /** Image media URLs discovered in fetched public social post HTML, not assumed downloaded. */
+  publicImageUrls?: string[];
   textExcerpt?: string;
   /** Visible address blocks, separate from prose and subject observations. */
   addressBlocks?: string[];
@@ -148,9 +151,13 @@ export function htmlEvidence(raw: string, sourceUrl: string): {
   textExcerpt?: string;
   publishedAt?: string;
   addressBlocks?: string[];
+  publicImageUrls?: string[];
   observations: SpectraRetrievedObservation[];
 } {
   const $ = load(raw.slice(0, MAX_TEXT));
+  const ogImages = $('meta[property="og:image"], meta[name="twitter:image"], meta[name="twitter:image:src"]')
+    .map((_i, element) => $(element).attr('content') || '').get();
+  const publicImageUrls = spectraSocialPageImageLeads(sourceUrl, ogImages);
   $('script:not([type="application/ld+json"]),style,noscript,svg,canvas').remove();
   const title = $('title').first().text().trim().slice(0, 300) || undefined;
   // A venue or article may appear after many thousands of navigation
@@ -322,7 +329,9 @@ export function htmlEvidence(raw: string, sourceUrl: string): {
     }
   });
 
-  return { title, textExcerpt, publishedAt, addressBlocks: [...new Set(addressBlocks)].slice(0, 12), observations: dedupeObservations(observations) };
+  return { title, textExcerpt, publishedAt, addressBlocks: [...new Set(addressBlocks)].slice(0, 12),
+    publicImageUrls: publicImageUrls.length ? publicImageUrls : undefined,
+    observations: dedupeObservations(observations) };
 }
 
 function jsonEvidence(payload: any, sourceUrl: string): SpectraRetrievedObservation[] {
@@ -425,6 +434,18 @@ async function retrieveOne(
         }
         const contentType = response.headers.get('content-type') || '';
 
+        // Binary image responses are inspected in the existing bounded retrieval
+        // request; the evidence archive receives metadata/hash, never raw pixels.
+        if (/^image\/(?:jpeg|png|webp)\b/i.test(contentType)) {
+          const image = await inspectSpectraPublicImageResponse(response, {
+            url: current.toString(), sourcePostUrl: current.toString(),
+            platform: 'Web', maxBytes: MAX_RESPONSE_BYTES,
+          });
+          if (!image) throw new RetrievalFailure('invalid_response');
+          reason = 'retrieved';
+          return { ...image, requestedUrl: rawUrl };
+        }
+
         if (/json/i.test(contentType)) {
           const text = await response.text();
           if (text.length > MAX_RESPONSE_BYTES) throw new RetrievalFailure('response_too_large');
@@ -454,6 +475,7 @@ async function retrieveOne(
             retrievedAt: new Date().toISOString(), contentType,
             title: extracted.title, textExcerpt: extracted.textExcerpt,
             addressBlocks: extracted.addressBlocks, publishedAt: extracted.publishedAt,
+            publicImageUrls: extracted.publicImageUrls,
             observations: extracted.observations,
           };
           reason = 'retrieved';
