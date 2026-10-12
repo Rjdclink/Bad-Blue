@@ -80,6 +80,7 @@ import { collectSpectraPublicWikimediaRecords } from '../services/spectra/Spectr
 import { publicProfileContactMatch, publicProfileNameMatch } from '../services/spectra/SpectraPublicProfileIdentity';
 import { publicProfileLeads } from '../services/spectra/SpectraPublicProfileLeads';
 import { collectSpectraPublicBlueskyImages, collectSpectraPublicMastodonImages, collectSpectraPublicSocialPageImages } from '../services/spectra/SpectraPublicImageRecords';
+import { prioritizeSpectraPublicMediaScenes } from '../services/spectra/SpectraPublicMediaPriority';
 import { shouldRunSpectraClaudeBackground } from '../services/spectra/SpectraClaudeBudget';
 
 const router = Router();
