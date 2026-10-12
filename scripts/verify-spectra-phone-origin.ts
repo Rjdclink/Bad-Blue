@@ -10,6 +10,18 @@ const table = '712-209 7 Estherville IA SWITCH 6570 CELLCO PARTNERSHIP DBA VERIZ
 assert.equal(parsePhoneOrigin(table, '712-209', '8', url)?.city, 'Estherville');
 assert.equal(parsePhoneOrigin(table, '712-209', '8', url)?.currentPositionVerified, false);
 assert.equal(parsePhoneOrigin(table, '712-209', '5', url), null);
+const prefixOnly = '712-209 A Estherville IA SWITCH 6570 CELLCO PARTNERSHIP DBA VERIZON WIRELESS - IA';
+assert.equal(parsePhoneOrigin(prefixOnly, '712-209', '3', url)?.city, 'Estherville',
+  'an A-only table still supplies prefix assignment geography');
+assert.equal(parsePhoneOrigin(prefixOnly, '712-209', '3', url)?.block, 'A');
+assert.equal(parsePhoneOrigin(prefixOnly, '712-209', '3', url)?.assignmentScope, 'prefix');
+assert.equal(parsePhoneOrigin(prefixOnly, '712-209', '3', url)?.currentPositionVerified, false);
+assert.equal(parsePhoneOrigin(prefixOnly + ' ' + table, '712-209', '8', url)?.assignmentScope,
+  'thousand-number-block', 'an exact numbered block retains precedence');
+assert.equal(parsePhoneOrigin(prefixOnly + ' ' + table, '712-209', '5', url), null,
+  'do not substitute a prefix row for an absent pooled block');
+assert.equal(parsePhoneOrigin(prefixOnly, '712-208', '3', url), null,
+  'another prefix cannot supply the missing assignment');
 const collected = await collectSpectraPhoneOrigin('712-209-8254', async targets => [{
   url, requestedUrl: targets[0], retrievedAt: new Date().toISOString(),
   textExcerpt: table, observations: [],
