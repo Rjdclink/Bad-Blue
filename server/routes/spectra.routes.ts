@@ -396,8 +396,9 @@ function discoveryResultFromCandidate(candidate: LegalMeshCandidate): SpectraDis
 
 async function runDiscoveryPass(
   queries: string[],
-  context: { subject?: string; location?: string; useClaude?: boolean } = {},
+  context: { subject?: string; location?: string; useClaude?: boolean; allowPaidSearch?: boolean } = {},
   attemptedQueries: Set<string> = new Set<string>(),
+  attemptedRetrievalUrls: Set<string> = new Set<string>(),
 ): Promise<{
   results: SpectraDiscoveryResult[];
   retrievedEvidence: SpectraRetrievedEvidence[];
@@ -408,7 +409,9 @@ async function runDiscoveryPass(
 }> {
   const retrieval: SpectraRetrievalCounts = { selected: 0, retrieved: 0, deadlineExpiredPasses: 0 };
   const retrievedEvidence: SpectraRetrievedEvidence[] = [];
-  const uniqueQueries = takeUnseenSpectraQueries(queries, attemptedQueries, 6);
+  // Each planned query fans out across several HTTP providers. Preserve a
+  // representative source mix without turning one user search into 48 calls.
+  const uniqueQueries = takeUnseenSpectraQueries(queries, attemptedQueries, 3);
   if (!uniqueQueries.length) {
     return { results: [], retrievedEvidence, attempted: 0, failed: 0, claudeNotes: [], retrieval };
   }
@@ -494,6 +497,7 @@ async function runDiscoveryPass(
           subject: context.subject,
           requestedFact: 'contact-address',
           allowClaudePlanning: context.useClaude !== false,
+          allowPaidSearch: context.allowPaidSearch === true,
         },
       ).catch(() => []);
       results.push(...supplemental.map(discoveryResultFromCandidate));
@@ -524,7 +528,12 @@ async function runDiscoveryPass(
     let enrichedResults = dedupeDiscoveryResults(results);
     // More independent public publishers are better evidence than repeated
     // results from one popular website. Fetch those underlying pages first.
-    const retrievalTargets = chooseSpectraPublicRetrievalUrls(enrichedResults, 8);
+    // One request must never refetch the same publication on subsequent
+    // discovery waves, including prior 403/timeout selections. Fill slots from
+    // alternative publishers instead of simply revisiting old URLs.
+    const retrievalTargets = chooseSpectraPublicRetrievalUrls(enrichedResults, 16)
+      .filter(url => !attemptedRetrievalUrls.has(url)).slice(0, 8);
+    for (const url of retrievalTargets) attemptedRetrievalUrls.add(url);
     retrieval.selected = retrievalTargets.length;
 
     if (retrievalTargets.length) {
@@ -1081,8 +1090,16 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
     });
     const sourceWaves = buildSpectraDiscoveryWaves(resolvedTargetLabel, details);
     const waveQueries = sourceWaves.flatMap(wave => wave.targets.map(source => source.query));
+    // Within the narrower budget, reserve the third initial query for a
+    // public social/photo source family rather than spending every slot on
+    // similar address/phone expansions.
+    const mediaWaveQueries = sourceWaves.flatMap(wave => wave.targets)
+      .filter(item => item.clueKinds.includes('social') || item.clueKinds.includes('media'))
+      .map(item => item.query);
     const initialQueries = [...new Set([
-      ...discoveryQueries.firstPass,
+      ...discoveryQueries.firstPass.slice(0, 2),
+      ...mediaWaveQueries.slice(0, 1),
+      ...discoveryQueries.firstPass.slice(2),
       ...waveQueries.slice(0, 4),
     ])];
 
@@ -1103,6 +1120,9 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
           // truncated request followed by the same search again.
           claudeResearchMaxTokens: 2_048,
           claudeRetryTruncatedOutput: false,
+          // SerpApi/ScrapingBee are opt-in for this evidence-heavy endpoint.
+          // Native, keyless and source-direct retrieval remain active.
+          allowPaidSearch: process.env.SPECTRA_PAID_SEARCH_ENABLED === 'true',
           signal: discoverySignal(AbortSignal.timeout(backgroundBudgetMs)),
         },
       ),
@@ -1111,13 +1131,15 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
     );
 
     const attemptedDiscoveryQueries = new Set<string>();
+    const attemptedRetrievalUrls = new Set<string>();
     const firstPassPromise = runDiscoveryPass(initialQueries, {
       subject: resolvedSubjectName,
       location: discoveryJurisdiction,
       // The native-first background lane owns the paid fallback. Avoid
       // duplicate Claude searches for this same subject in parallel.
       useClaude: false,
-    }, attemptedDiscoveryQueries);
+      allowPaidSearch: process.env.SPECTRA_PAID_SEARCH_ENABLED === 'true',
+    }, attemptedDiscoveryQueries, attemptedRetrievalUrls);
     const activeAcquisitionPromise = acquireSpectraActiveTelemetry({
       deviceRef,
       sessionId: requestedSessionId,
@@ -1507,7 +1529,8 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
         subject: resolvedSubjectName,
         location: discoveryJurisdiction,
         useClaude: false,
-      }, attemptedDiscoveryQueries);
+        allowPaidSearch: process.env.SPECTRA_PAID_SEARCH_ENABLED === 'true',
+      }, attemptedDiscoveryQueries, attemptedRetrievalUrls);
       discoveryQueriesAttempted += nextPass.attempted;
       retrievedEvidence.push(...nextPass.retrievedEvidence);
       searchRetrievedEvidence.push(...nextPass.retrievedEvidence);
