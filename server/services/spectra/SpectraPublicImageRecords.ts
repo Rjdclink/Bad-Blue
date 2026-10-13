@@ -172,8 +172,14 @@ export async function inspectSpectraPublicImageResponse(
       const value = rawExifValue(tags?.[key]);
       if (value !== undefined) exif[key] = value;
     }
-    const lat = decimalGps(tags?.GPSLatitude, exif.GPSLatitudeRef);
-    const lon = decimalGps(tags?.GPSLongitude, exif.GPSLongitudeRef);
+    for (const [name, allowed] of [['GPSLatitudeRef', ['N', 'S']], ['GPSLongitudeRef', ['E', 'W']]] as const) {
+      const raw = tags?.[name]?.value;
+      const value = Array.isArray(raw) ? raw[0] : raw;
+      if (typeof value === 'string' && (allowed as readonly string[]).includes(value.toUpperCase())) exif[name] = value.toUpperCase();
+      else delete exif[name];
+    }
+    const lat = exif.GPSLatitudeRef ? decimalGps(tags?.GPSLatitude, exif.GPSLatitudeRef) : null;
+    const lon = exif.GPSLongitudeRef ? decimalGps(tags?.GPSLongitude, exif.GPSLongitudeRef) : null;
     if (lat !== null && lon !== null && Math.abs(lat) <= 90 && Math.abs(lon) <= 180) {
       gps = { latitude: lat, longitude: lon };
     }

@@ -1,3 +1,4 @@
+import { TavilyBudget } from './TavilyBudget';
 import { beginDiscoveryAttempt, discoveryErrorType, getDiscoveryDiagnostics, markDiscoveryPartial } from './DiscoveryDiagnostics';
 import {
   buildLexaraSourceQueries,
@@ -76,8 +77,8 @@ const laneFailures = new Map<string, number>();
 
 const discoveryError = (code: string) => Object.assign(new Error('Discovery request unavailable'), { code });
 
-function skippedProvider(lane: string): LegalMeshCandidate[] {
-  beginDiscoveryAttempt(lane)('skipped', discoveryError('DISCOVERY_UNAVAILABLE'));
+function skippedProvider(lane: string, code = 'DISCOVERY_UNAVAILABLE'): LegalMeshCandidate[] {
+  beginDiscoveryAttempt(lane)('skipped', discoveryError(code));
   return [];
 }
 
@@ -104,7 +105,7 @@ function recordEngineFailure(engine: string, reason: string, retryAfterMs = 180_
   if (/captcha|human verification|verify you are human/i.test(reason)) {
     captchaDisabledEngines.add(engine);
     console.warn('[LEXARA Search Availability]', JSON.stringify({ engine, status: 'disabled-captcha' }));
-  } else if (/HTTP\s+432\b|plan\s+limit\s+exceeded/i.test(reason)) {
+  } else if (/HTTP\s+43[23]\b|plan\s+limit\s+exceeded/i.test(reason)) {
     const retryAfterMs = 6 * 60 * 60_000;
     engineCooldownUntil.set(engine, Math.max(engineCooldownUntil.get(engine) || 0, Date.now() + retryAfterMs));
     console.warn('[LEXARA Search Availability]', JSON.stringify({ engine, status: 'plan-limit-cooldown', retryAfterMs }));
@@ -145,6 +146,10 @@ function discoveryRows(payload: any, key = 'results'): any[] {
   return payload[key];
 }
 
+const tavilyBudget = new TavilyBudget(async (key, signal) => readDiscoveryJson(
+  await fetch('https://api.tavily.com/usage', { signal, headers: { accept: 'application/json', authorization: `Bearer ${key}` } }), 'tavily',
+));
+
 async function withTimeout<T>(
   lane: string,
   timeoutMs: number,
@@ -153,7 +158,7 @@ async function withTimeout<T>(
 ): Promise<T | null> {
   const finish = beginDiscoveryAttempt(lane);
   if (signal?.aborted) { finish('cancelled'); return null; }
-  if (!engineAvailable(lane)) { finish('skipped', discoveryError('DISCOVERY_UNAVAILABLE')); return null; }
+  if (!engineAvailable(lane)) { finish('skipped', discoveryError(captchaDisabledEngines.has(lane) ? 'DISCOVERY_DISABLED' : 'DISCOVERY_COOLDOWN')); return null; }
   // Queue admission and HTTP share one elapsed-time budget. Keep the bounded
   // queue and outage cooldowns without adding a second deadline to live turns.
   const deadline = Date.now() + Math.max(250, timeoutMs);
@@ -167,7 +172,7 @@ async function withTimeout<T>(
     while ((laneInFlight.get(lane) || 0) >= 2) {
       waitedForAdmission = true;
       if (signal?.aborted) { finish('cancelled'); return null; }
-      if (!engineAvailable(lane)) { finish('skipped', discoveryError('DISCOVERY_UNAVAILABLE')); return null; }
+      if (!engineAvailable(lane)) { finish('skipped', discoveryError(captchaDisabledEngines.has(lane) ? 'DISCOVERY_DISABLED' : 'DISCOVERY_COOLDOWN')); return null; }
       if (Date.now() >= queueDeadline) { finish('skipped', discoveryError('DISCOVERY_QUEUE_TIMEOUT')); return null; }
       await new Promise(resolve => setTimeout(resolve, 25));
     }
@@ -175,7 +180,7 @@ async function withTimeout<T>(
     laneQueued.set(lane, Math.max(0, (laneQueued.get(lane) || 1) - 1));
   }
   if (signal?.aborted) { finish('cancelled'); return null; }
-  if (!engineAvailable(lane)) { finish('skipped', discoveryError('DISCOVERY_UNAVAILABLE')); return null; }
+  if (!engineAvailable(lane)) { finish('skipped', discoveryError(captchaDisabledEngines.has(lane) ? 'DISCOVERY_DISABLED' : 'DISCOVERY_COOLDOWN')); return null; }
   if (Date.now() >= deadline) { finish('skipped', discoveryError('DISCOVERY_QUEUE_TIMEOUT')); return null; }
   laneInFlight.set(lane, (laneInFlight.get(lane) || 0) + 1);
   finish.dispatch();
@@ -195,7 +200,7 @@ async function withTimeout<T>(
     if (!controller.signal.aborted) laneFailures.delete(lane);
     return controller.signal.aborted ? null : result;
   } catch (error) {
-    if (!controller.signal.aborted && discoveryErrorType(error) === 'provider-unavailable') {
+    if (!controller.signal.aborted && ['provider-unavailable', 'quota-exhausted', 'budget-unavailable', 'local-rate-limit'].includes(discoveryErrorType(error))) {
       finish('skipped', error); return null;
     }
     recordEngineFailure(lane, error instanceof Error ? error.message : String(error));
@@ -296,7 +301,7 @@ function diversify(items: LegalMeshCandidate[], limit = 16): LegalMeshCandidate[
 
 async function tavily(query: string, signal?: AbortSignal, budgetMs = 2_000): Promise<LegalMeshCandidate[]> {
   const key = process.env.TAVILY_API_KEY?.trim();
-  if (!key) return [];
+  if (!key) return skippedProvider('tavily', 'DISCOVERY_NOT_CONFIGURED');
   // Keep the actual objective and venue; research-hint prefixes can otherwise
   // consume the query limit before the user's question is reached.
   const objective = query.match(/\bQuestion(?:\/facts)?:\s*([\s\S]*)/i)?.[1];
@@ -304,11 +309,17 @@ async function tavily(query: string, signal?: AbortSignal, budgetMs = 2_000): Pr
   const searchQuery = (objective ? [venue, objective].filter(Boolean).join(' ') : query)
     .replace(/\s+/g, ' ').trim().slice(0, 399);
   const result = await withTimeout('tavily', budgetMs, signal, async requestSignal => {
+    const admission = await tavilyBudget.reserve(key, requestSignal);
+    if (admission !== 'allowed') throw discoveryError({
+      'quota-exhausted': 'DISCOVERY_QUOTA_EXHAUSTED',
+      'budget-unavailable': 'DISCOVERY_BUDGET_UNAVAILABLE',
+      'rate-limit': 'DISCOVERY_LOCAL_RATE_LIMIT',
+    }[admission]);
     const r = await fetch('https://api.tavily.com/search', {
       method: 'POST', signal: requestSignal,
       headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
       // Tavily accepts search queries under 400 characters, not full legal prompts.
-      body: JSON.stringify({ query: searchQuery, search_depth: 'basic', max_results: 10, include_answer: false, include_raw_content: false }),
+      body: JSON.stringify({ query: searchQuery, search_depth: 'basic', auto_parameters: false, max_results: 10, include_answer: false, include_raw_content: false }),
     });
     const j:any = await readDiscoveryJson(r, 'tavily');
     return discoveryRows(j).flatMap((x:any) => {
@@ -353,7 +364,7 @@ function lexaraSearxngBase(): string {
 
 async function searxng(query: string, signal?: AbortSignal): Promise<LegalMeshCandidate[]> {
   const base = lexaraSearxngBase();
-  if (!base) return [];
+  if (!base) return skippedProvider('searxng', 'DISCOVERY_NOT_CONFIGURED');
   const engines = ['google cse', 'brave', 'bing'].filter(engineAvailable);
   if (!engines.length) return skippedProvider('searxng');
   const result = await withTimeout('searxng', 2_200, signal, async requestSignal => {
@@ -389,7 +400,7 @@ function lexaraDdgsBase(): string {
 
 async function ddgsBackend(query: string, backend: string, budgetMs: number, signal?: AbortSignal): Promise<LegalMeshCandidate[]> {
   const base = lexaraDdgsBase();
-  if (!base) return [];
+  if (!base) return skippedProvider('ddgsBackend', 'DISCOVERY_NOT_CONFIGURED');
   const result = await withTimeout('ddgsBackend', budgetMs, signal, async requestSignal => {
     const activeBackend = backend.split(',').filter(engineAvailable).join(',');
     if (!activeBackend) throw discoveryError('DISCOVERY_UNAVAILABLE');
@@ -409,7 +420,7 @@ async function ddgsBackend(query: string, backend: string, budgetMs: number, sig
 }
 
 async function ddgs(query: string, signal?: AbortSignal): Promise<LegalMeshCandidate[]> {
-  if (!lexaraDdgsBase()) return [];
+  if (!lexaraDdgsBase()) return skippedProvider('ddgsBackend', 'DISCOVERY_NOT_CONFIGURED');
   // Installed DDGS rejects Bing and silently substitutes auto. Allow only
   // supported backends so an invalid name cannot reopen excluded engines.
   const supported = new Set(['brave', 'google', 'grokipedia', 'mojeek', 'startpage', 'wikipedia', 'yahoo']);
@@ -429,7 +440,7 @@ function lexaraOpenserpBase(): string {
 
 async function openserp(query: string, signal?: AbortSignal): Promise<LegalMeshCandidate[]> {
   const base = lexaraOpenserpBase();
-  if (!base) return [];
+  if (!base) return skippedProvider('openserp', 'DISCOVERY_NOT_CONFIGURED');
   const engines = ['baidu'].filter(engineAvailable);
   if (!engines.length) return skippedProvider('openserp');
   const result = await withTimeout('openserp', 3_000, signal, async requestSignal => {
@@ -463,7 +474,7 @@ async function openserp(query: string, signal?: AbortSignal): Promise<LegalMeshC
 
 async function serpApi(query: string, existingUrls: readonly string[], signal?: AbortSignal): Promise<LegalMeshCandidate[]> {
   const key=process.env.SERPAPI_KEY?.trim() || process.env.SERPAPI_API_KEY?.trim();
-  if(!key) return [];
+  if(!key) return skippedProvider('serpApi', 'DISCOVERY_NOT_CONFIGURED');
   const seen=new Set(existingUrls);
   const result=await withTimeout('serpApi', 2_500,signal,async requestSignal=>{
     const endpoint=new URL('https://serpapi.com/search.json');
@@ -487,7 +498,7 @@ async function serpApi(query: string, existingUrls: readonly string[], signal?: 
 }
 
 async function scrapingBee(query: string, existingUrls: readonly string[], signal?: AbortSignal): Promise<LegalMeshCandidate[]> {
-  const key=process.env.SCRAPINGBEE_API_KEY?.trim(); if(!key) return [];
+  const key=process.env.SCRAPINGBEE_API_KEY?.trim(); if(!key) return skippedProvider('scrapingBee', 'DISCOVERY_NOT_CONFIGURED');
   const seen=new Set(existingUrls);
   const result=await withTimeout('scrapingBee', 2_500,signal,async requestSignal=>{
     const endpoint=new URL('https://app.scrapingbee.com/api/v1/google');

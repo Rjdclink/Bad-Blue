@@ -25,6 +25,9 @@ export function discoveryErrorType(error: unknown): string {
     seen.add(current);
     const code = String(current.code || '');
     const local: Record<string, string> = {
+      DISCOVERY_NOT_CONFIGURED: 'not-configured', DISCOVERY_DISABLED: 'disabled', DISCOVERY_COOLDOWN: 'cooldown',
+      DISCOVERY_QUOTA_EXHAUSTED: 'quota-exhausted', DISCOVERY_BUDGET_UNAVAILABLE: 'budget-unavailable',
+      DISCOVERY_LOCAL_RATE_LIMIT: 'local-rate-limit',
       DISCOVERY_QUEUE_FULL: 'queue-capacity', DISCOVERY_QUEUE_TIMEOUT: 'queue-timeout',
       DISCOVERY_UNAVAILABLE: 'provider-unavailable', DISCOVERY_PROVIDER_ERROR: 'upstream-error',
     };

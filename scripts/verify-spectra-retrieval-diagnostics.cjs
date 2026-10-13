@@ -48,6 +48,32 @@ let passed = 0;
 async function check(name, run) { await run(); passed++; console.log('PASS', name); }
 
 (async () => {
+  await check('plain text variants retain bounded content without inventing observations', async () => {
+    for (const type of ['text/plain', 'text/csv', 'text/markdown']) {
+      const result = await retrieve({ fetch: async () => new Response('public fixture', { headers: { 'content-type': type + '; charset=utf-8' } }) });
+      assert.equal(result.evidence[0].textExcerpt, 'public fixture'); assert.equal(result.evidence[0].observations.length, 0);
+    }
+  });
+  await check('UTF-8 byte overflow cancels a streaming response', async () => {
+    let cancelled = false;
+    const result = await retrieve({ fetch: async () => new Response(new ReadableStream({
+      pull(c) { c.enqueue(new TextEncoder().encode('é'.repeat(100_000))); }, cancel() { cancelled = true; },
+    }), { headers: { 'content-type': 'text/plain' } }) });
+    assert.equal(result.events[0].reason, 'response_too_large'); assert.equal(cancelled, true);
+  });
+  await check('JSON MIME essence and BOM are accepted; misleading MIME rejected', async () => {
+    const good = await retrieve({ fetch: async () => json('\uFEFF{}', 200, { 'content-type': 'Application/Geo+JSON; charset=utf-8' }) });
+    assert.equal(good.events[0].reason, 'retrieved');
+    const bad = await retrieve({ fetch: async () => json('{}', 200, { 'content-type': 'text/html-fake' }) });
+    assert.equal(bad.events[0].reason, 'unsupported_content_type');
+  });
+  await check('unsupported response categories are sanitized', async () => {
+    const events = d.createSpectraRetrievalDiagnostics(2);
+    events.record({ targetIndex: 0, reason: 'unsupported_content_type', unsupportedContentKind: 'pdf' });
+    events.record({ targetIndex: 1, reason: 'unsupported_content_type', unsupportedContentKind: marker });
+    const result = d.mergeSpectraRetrievalDiagnostics([events.finish()]);
+    assert.equal(result.unsupportedContentKinds.pdf, 1); assert(!JSON.stringify(result).includes(marker));
+  });
   await check('retrieved empty JSON is distinct from accepted location evidence', async () => {
     const result = await retrieve({ fetch: async () => json() });
     assert.equal(result.evidence.length, 1);
@@ -95,7 +121,7 @@ async function check(name, run) { await run(); passed++; console.log('PASS', nam
   });
   await check('unsupported images remain unsupported and report that explicitly', async () => {
     const result = await retrieve({ fetch: async () => new Response(marker, {
-      headers: { 'content-type': 'image/jpeg' },
+      headers: { 'content-type': 'image/gif' },
     }) });
     assert.equal(result.events[0].reason, 'unsupported_content_type');
     assert.equal(result.evidence.length, 0);

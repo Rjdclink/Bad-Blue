@@ -35,6 +35,7 @@ function pass(overrides = {}) {
     mergePublicRetrievedMetadata: (_prior, value) => ({ retrieved: true, publishedAt: value.publishedAt }),
     retrieveSpectraPublicEvidence: async () => [],
     ...retrievalDiagnostics,
+    ...load('server/services/spectra/SpectraDiscoveryDedup.ts'),
     ...overrides,
   };
   vm.runInNewContext(compile(settle + '\n' + discovery + '\nthis.run = runDiscoveryPass;'), scope);
@@ -55,6 +56,16 @@ const empty = {
   solvedObservations: 0, fusedCandidates: 0, regionalCandidates: 0,
 };
 (async () => {
+  await check('collector family and reasons are bounded and measurements explicit', async () => {
+    const report = diagnostics.buildSpectraPipelineDiagnostics({ ...empty, activeAttempts: [
+      { status: 'skipped', normalizerKind: 'android-managed-lost-mode', reasonCode: 'not-configured', measurementCount: 0 },
+      { status: 'failed', normalizerKind: 'PRIVATE', reasonCode: 'PRIVATE', reason: 'PRIVATE', measurementCount: 0 },
+    ] });
+    assert.equal(report.telemetry.collectors[0].family, 'android-managed-lost-mode');
+    assert.equal(report.telemetry.collectors[0].reasons['not-configured'], 1);
+    assert(!JSON.stringify(report).includes('PRIVATE'));
+    assert(client.spectraPipelineNotices(report).some(value => value.includes('Android managed device')));
+  });
   await check('expired discovery does not pre-cancel reading a selected page', () => timed(async clock => {
     let sourceSignal, retrievalSignal;
     const run = pass({

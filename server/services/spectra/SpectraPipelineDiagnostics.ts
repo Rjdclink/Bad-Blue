@@ -12,7 +12,7 @@ interface PipelineInput {
   discoveryResults: number;
   retrieval: SpectraRetrievalCounts;
   configuredCollectors: number;
-  activeAttempts: ReadonlyArray<{ status: string }>;
+  activeAttempts: ReadonlyArray<{ status: string; normalizerKind?: string; reasonCode?: string; measurementCount?: number }>;
   activeBatchOutcomes: ReadonlyArray<{ status: string }>;
   activeObservations: number;
   suppliedObservations: number;
@@ -49,6 +49,18 @@ export function buildSpectraPipelineDiagnostics(input: PipelineInput) {
     const code = issueCodes.has(issue.code) ? issue.code : 'other';
     issues[code] = (issues[code] || 0) + 1;
   }
+  const collectors = new Map<string, { family: string; fulfilled: number; failed: number; skipped: number; measurements: number; reasons: Record<string, number> }>();
+  for (const row of input.activeAttempts) {
+    const family = ['android-managed-lost-mode', 'apple-managed-lost-mode', 'cisco-spaces-location'].includes(row.normalizerKind || '') ? row.normalizerKind! : 'other';
+    const entry = collectors.get(family) || { family, fulfilled: 0, failed: 0, skipped: 0, measurements: 0, reasons: {} };
+    if (row.status === 'fulfilled' || row.status === 'failed' || row.status === 'skipped') entry[row.status]++;
+    entry.measurements += count(row.measurementCount || 0);
+    if (row.reasonCode) {
+      const code = ['not-configured', 'missing-device', 'request-failed'].includes(row.reasonCode) ? row.reasonCode : 'other';
+      entry.reasons[code] = (entry.reasons[code] || 0) + 1;
+    }
+    collectors.set(family, entry);
+  }
   return {
     scope: 'evidence-pipeline' as const,
     discoveryResults: count(input.discoveryResults),
@@ -63,6 +75,7 @@ export function buildSpectraPipelineDiagnostics(input: PipelineInput) {
         ? mergeSpectraRetrievalDiagnostics([input.retrieval.diagnostics]) : undefined,
     },
     telemetry: {
+      collectors: [...collectors.values()],
       configuredCollectors: count(input.configuredCollectors),
       fulfilled: input.activeAttempts.filter(row => row.status === 'fulfilled').length,
       failed: input.activeAttempts.filter(row => row.status === 'failed').length,

@@ -1,3 +1,4 @@
+import { unsupportedSpectraContentKind } from './SpectraRetrievalDiagnostics';
 import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 import { Buffer } from 'node:buffer';
@@ -43,6 +44,27 @@ const REQUEST_TIMEOUT_MS = 2_200;
 
 class RetrievalFailure extends Error {
   constructor(readonly reason: SpectraRetrievalReason) { super(reason); }
+}
+
+/** Bound decompressed bytes while reading instead of buffering an unlimited body. */
+async function readBoundedText(response: Response): Promise<string> {
+  if (!response.body) return '';
+  const reader = response.body.getReader();
+  const chunks: Buffer[] = [];
+  let size = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > MAX_RESPONSE_BYTES) throw new RetrievalFailure('response_too_large');
+      chunks.push(Buffer.from(value));
+    }
+    return Buffer.concat(chunks, size).toString('utf8').replace(/^\uFEFF/, '');
+  } finally {
+    void reader.cancel().catch(() => undefined);
+    reader.releaseLock();
+  }
 }
 
 function isPrivateIpv4(address: string): boolean {
@@ -388,6 +410,7 @@ async function retrieveOne(
 ): Promise<SpectraRetrievedEvidence | null> {
   let reason: SpectraRetrievalReason = 'network_error';
   let httpStatus: number | undefined;
+  let unsupportedContentKind: SpectraRetrievalDiagnostic['unsupportedContentKind'];
   let timedOut = false;
   try {
     if (parentSignal?.aborted) throw new RetrievalFailure('cancelled');
@@ -404,8 +427,9 @@ async function retrieveOne(
         controller.abort(new Error('SPECTRA retrieval timeout'));
       }, REQUEST_TIMEOUT_MS);
 
+      let response: Response | undefined;
       try {
-        const response = await fetch(current, {
+        response = await fetch(current, {
           method: 'GET',
           redirect: 'manual',
           signal: controller.signal,
@@ -432,11 +456,11 @@ async function retrieveOne(
         if (Number.isFinite(contentLength) && contentLength > MAX_RESPONSE_BYTES) {
           throw new RetrievalFailure('response_too_large');
         }
-        const contentType = response.headers.get('content-type') || '';
+        const contentType = (response.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
 
         // Binary image responses are inspected in the existing bounded retrieval
         // request; the evidence archive receives metadata/hash, never raw pixels.
-        if (/^image\/(?:jpeg|png|webp)\b/i.test(contentType)) {
+        if (['image/jpeg', 'image/png', 'image/webp'].includes(contentType)) {
           const image = await inspectSpectraPublicImageResponse(response, {
             url: current.toString(), sourcePostUrl: current.toString(),
             platform: 'Web', maxBytes: MAX_RESPONSE_BYTES,
@@ -446,9 +470,8 @@ async function retrieveOne(
           return { ...image, requestedUrl: rawUrl };
         }
 
-        if (/json/i.test(contentType)) {
-          const text = await response.text();
-          if (text.length > MAX_RESPONSE_BYTES) throw new RetrievalFailure('response_too_large');
+        if (contentType === 'application/json' || contentType === 'text/json' || /^application\/[a-z0-9!#$&^_.+-]+\+json$/.test(contentType)) {
+          const text = await readBoundedText(response);
           let payload: unknown;
           try { payload = JSON.parse(text); }
           catch { throw new RetrievalFailure('invalid_response'); }
@@ -464,9 +487,8 @@ async function retrieveOne(
           return evidence;
         }
 
-        if (/html|xhtml/i.test(contentType)) {
-          const text = await response.text();
-          if (text.length > MAX_RESPONSE_BYTES) throw new RetrievalFailure('response_too_large');
+        if (contentType === 'text/html' || contentType === 'application/xhtml+xml') {
+          const text = await readBoundedText(response);
           let extracted: ReturnType<typeof htmlEvidence>;
           try { extracted = htmlEvidence(text, current.toString()); }
           catch { throw new RetrievalFailure('invalid_response'); }
@@ -481,8 +503,17 @@ async function retrieveOne(
           reason = 'retrieved';
           return evidence;
         }
+        if (['text/plain', 'text/csv', 'text/markdown'].includes(contentType)) {
+          const text = await readBoundedText(response);
+          reason = 'retrieved';
+          return { url: current.toString(), requestedUrl: rawUrl,
+            retrievedAt: new Date().toISOString(), contentType,
+            textExcerpt: text.slice(0, MAX_TEXT), observations: [] };
+        }
+        unsupportedContentKind = unsupportedSpectraContentKind(contentType);
         throw new RetrievalFailure('unsupported_content_type');
       } finally {
+        if (response?.body && !response.body.locked) void response.body.cancel().catch(() => undefined);
         clearTimeout(timer);
         parentSignal?.removeEventListener('abort', relayAbort);
       }
@@ -494,7 +525,7 @@ async function retrieveOne(
     return null;
   } finally {
     // Reporting must not alter retrieval results or expose an exception message.
-    try { report?.({ reason, httpStatus }); } catch { /* diagnostic observer only */ }
+    try { report?.({ reason, httpStatus, ...(unsupportedContentKind ? { unsupportedContentKind } : {}) }); } catch { /* diagnostic observer only */ }
   }
 }
 

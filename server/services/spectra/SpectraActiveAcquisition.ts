@@ -31,6 +31,7 @@ export interface SpectraActiveAcquisitionAttempt {
   normalizerKind: string;
   measurementCount: number;
   reason?: string;
+  reasonCode?: 'not-configured' | 'missing-device' | 'request-failed';
 }
 
 export interface SpectraActiveAcquisitionResult {
@@ -476,6 +477,7 @@ export async function acquireSpectraActiveTelemetry(
           status: 'skipped',
           normalizerKind: 'android-managed-lost-mode',
           measurementCount: 0,
+          reasonCode: 'not-configured',
           reason: 'Android managed-location provider is not configured.',
         },
         {
@@ -484,6 +486,7 @@ export async function acquireSpectraActiveTelemetry(
           status: 'skipped',
           normalizerKind: 'apple-managed-lost-mode',
           measurementCount: 0,
+          reasonCode: 'not-configured',
           reason: 'Apple supervised-device location provider is not configured.',
         },
         {
@@ -492,6 +495,7 @@ export async function acquireSpectraActiveTelemetry(
           status: 'skipped',
           normalizerKind: 'cisco-spaces-location',
           measurementCount: 0,
+          reasonCode: 'not-configured',
           reason: 'Cisco Spaces device-location provider is not configured.',
         },
       ],
@@ -509,6 +513,7 @@ export async function acquireSpectraActiveTelemetry(
             status: 'skipped' as const,
             normalizerKind: config.normalizerKind,
             measurementCount: 0,
+            reasonCode: 'missing-device' as const,
             reason: 'Required managed-device identifier was not supplied.',
           },
         };
@@ -535,6 +540,7 @@ export async function acquireSpectraActiveTelemetry(
             status: 'failed' as const,
             normalizerKind: config.normalizerKind,
             measurementCount: 0,
+            reasonCode: 'request-failed' as const,
             reason: error instanceof Error ? error.message : String(error),
           },
         };
