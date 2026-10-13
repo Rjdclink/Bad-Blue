@@ -28,14 +28,14 @@ script fetches only six listed, publicly accessible institutional pages through
 the production SPECTRA public retrieval function, logs requested URL, final
 redirected URL, retrieval timestamp, source publication timestamp if available,
 postal-city candidate, and abstention reason. It does not accept a personal
-name, private location, credentials, provider endpoint or phone number.
+name, personal coordinates, credentials, provider endpoint or phone number.
 
 Pass conditions are conservative: require two **different publishers** with
 the venue name and unambiguous matching city/state postal addresses;
 otherwise report `abstained`. Wrong-city predictions fail the run. A run
 without a single supported prediction is `inconclusive`, not a pass. Direct
 venue-address claims, public residence assertions, employer/office addresses,
-user search clues, and authenticated opted-in device observations remain
+user search clues, and timestamped device observations remain
 different evidence classes.
 
 Negative controls: removing one publisher must cause abstention; pairing
@@ -54,15 +54,14 @@ it, nor that the present HTML excerpt includes a uniquely parsable postal
 city. Do not report site-pair success rates until an actual recorded live
 benchmark run is available.
 
-Real-world **person-current-city accuracy remains unverified**. To validate
-that separately, the system owner must onboard an authorized opt-in source
-(e.g. a managed Android/Apple MDM or Cisco Spaces device-location provider,
-or a consented equivalent) with the corresponding `SPECTRA_*` endpoint and
-credential configuration, documented lawful authority, consent, timestamped
-device-to-subject binding, revocation and independently established *current*
-city ground truth. As checked in the Bad-Blue **production** service
-configuration on **2026-10-10**, there were no variable names beginning
-`SPECTRA_`; web citations cannot substitute for an authorized provider.
+Real-world **person-current-city accuracy remains unverified**. A separate
+evaluation needs an actual device telemetry feed (for example, Android/Apple
+MDM or Cisco Spaces), the relevant `SPECTRA_*` endpoint and credentials,
+timestamped measurements, a validated device-to-subject association, and
+independently established *current* city ground truth. As checked in the
+Bad-Blue **production** service configuration on **2026-10-10**, there were
+no variable names beginning `SPECTRA_`. Web citations cannot replace
+measured provider telemetry.
 
 This benchmark cannot validate real-world person-location accuracy or sub-city
 positioning, and must never be represented as doing so.
