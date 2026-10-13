@@ -108,7 +108,7 @@ async function ensureSubscriptionPlan(supabase: any, squarePlanVariationId: stri
     .from("plans")
     .insert({
       name: "LegalWhat Subscription",
-      price: 2599,
+      price: 1999,
       currency: "USD",
       interval: "monthly",
       square_plan_id: squarePlanVariationId,
