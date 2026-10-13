@@ -1,5 +1,6 @@
 import { withoutSpectraTimestamps } from '../../shared/spectraTimestampClues';
 import { Router, type Request, type Response } from 'express';
+import { createHash } from 'node:crypto';
 import { getDiscoveryDiagnostics, withDiscoveryDiagnostics, discoveryRequestLifetime, discoverySignal, throwIfDiscoveryCancelled } from '../lexara/DiscoveryDiagnostics';
 import { z } from 'zod';
 import { isAuthenticated } from '../auth';
@@ -94,6 +95,15 @@ import { shouldRunSpectraClaudeBackground } from '../services/spectra/SpectraCla
 import { takeUnseenSpectraQueries } from '../services/spectra/SpectraDiscoveryDedup';
 
 const router = Router();
+
+// A five-minute page poll is not permission to buy another full investigation.
+// Keep only a bounded, tenant+session+input-scoped successful response in RAM.
+// A manual search bypasses the cache, and a new deploy naturally clears it.
+const SPECTRA_REFRESH_REUSE_MS = 30 * 60_000;
+const spectraRecentAcquisitions = new Map<string, { until: number; result: Record<string, any> }>();
+function spectraRecentAcquisitionKey(userId: string, sessionId: string, target: string, details: string, origin: string): string {
+  return createHash('sha256').update(JSON.stringify([userId, sessionId, target, details, origin])).digest('hex');
+}
 router.use(isAuthenticated);
 router.use((req, res, next) => {
   if (req.method === 'POST' && ['/acquire', '/public-place'].includes(req.path)) {
@@ -1039,6 +1049,18 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
   const userId = getPlatformUserId(req.user as any);
   if (!userId) {
     return res.status(401).json({ success: false, error: 'Authentication required.' });
+  }
+  const refreshKey = requestedSessionId && directEvidence.length === 0
+    ? spectraRecentAcquisitionKey(userId, requestedSessionId, target, details, originSessionId || '')
+    : null;
+  if (refreshOnly && refreshKey) {
+    const prior = spectraRecentAcquisitions.get(refreshKey);
+    if (prior && prior.until > Date.now()) {
+      console.info('[SPECTRA Refresh] reused recent session evidence without provider requests');
+      return res.json({ ...prior.result, acquisition: {
+        ...prior.result.acquisition, reusedRecentEvidence: true,
+      } });
+    }
   }
   const normalizedTarget = normalizeTargetIntent(target);
   const combinedTargetText = [normalizedTarget, details].filter(Boolean).join(' ');
@@ -2190,7 +2212,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       };
     });
 
-    return res.json({
+    const responseBody = {
       success: true,
       target,
       details,
@@ -2287,7 +2309,15 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
         socialMediaPresence: report.socialMediaPresence || [],
         employmentAndEducation: report.employmentAndEducation || [],
       },
-    });
+    };
+    if (persistence.available && responseBody.sessionId && directEvidence.length === 0) {
+      const key = spectraRecentAcquisitionKey(userId, responseBody.sessionId, target, details, originSessionId || '');
+      if (spectraRecentAcquisitions.size >= 32) {
+        spectraRecentAcquisitions.delete(spectraRecentAcquisitions.keys().next().value!);
+      }
+      spectraRecentAcquisitions.set(key, { until: Date.now() + SPECTRA_REFRESH_REUSE_MS, result: responseBody });
+    }
+    return res.json(responseBody);
   } catch (error) {
     const restoreFailed = error instanceof SpectraRestoreError;
     console.error('[SPECTRA] Acquisition failed', { code: restoreFailed ? 'SESSION_RESTORE_UNAVAILABLE' : 'ACQUISITION_FAILED' });
