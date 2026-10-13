@@ -82,7 +82,7 @@ async function check(name, run) { await run(); passed++; console.log('PASS', nam
     }
   });
   await check('unsupported MIME labels are bounded and survive diagnostic aggregation', async () => {
-    for (const [type, kind] of [['application/pdf', 'pdf'], ['text/xml', 'xml'], ['image/gif', 'image'], ['application/x-private-fixture', 'other']]) {
+    for (const [type, kind] of [['text/xml', 'xml'], ['image/gif', 'image'], ['application/x-private-fixture', 'other']]) {
       const result = await retrieve({ fetch: async () => new Response(marker, { headers: { 'content-type': type } }) });
       assert.equal(result.events[0].unsupportedContentKind, kind);
       const tracker = d.createSpectraRetrievalDiagnostics(1); tracker.record(result.events[0]);
@@ -90,6 +90,31 @@ async function check(name, run) { await run(); passed++; console.log('PASS', nam
       assert.equal(summary.unsupportedContentKinds[kind], 1);
       assert(client.spectraRetrievalNotices(summary).join(' ').includes(kind + ': 1'));
     }
+  });
+  await check('public PDF text is extracted locally with no identity or position inference', async () => {
+    const { PDFDocument, StandardFonts } = require('pdf-lib');
+    const document = await PDFDocument.create();
+    const page = document.addPage([612, 792]);
+    page.drawText('Public fixture archive entry', {
+      x: 24, y: 700, size: 14,
+      font: await document.embedFont(StandardFonts.Helvetica),
+    });
+    const bytes = await document.save();
+    const response = () => new Response(bytes, { headers: { 'content-type': 'application/pdf' } });
+    const result = await retrieve({ fetch: async () => response() });
+    assert.equal(result.evidence.length, 1);
+    assert.match(result.evidence[0].textExcerpt || '', /Public fixture archive entry/);
+    assert.equal(result.evidence[0].contentType, 'application/pdf');
+    assert.deepEqual(result.evidence[0].observations, []);
+    assert.equal(result.events[0].reason, 'retrieved');
+  });
+  await check('malformed PDF is not archived or counted as a retrieved source', async () => {
+    const result = await retrieve({ fetch: async () => new Response(marker, {
+      headers: { 'content-type': 'application/pdf' },
+    }) });
+    assert.equal(result.evidence.length, 0);
+    assert.equal(result.events[0].reason, 'invalid_response');
+    assert.equal(result.events[0].unsupportedContentKind, undefined);
   });
   await check('malformed URL and existing URL-policy rejection stay distinct', async () => {
     const invalid = await retrieve({}, ['not-a-url']);
