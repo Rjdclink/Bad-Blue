@@ -81,6 +81,7 @@ import { publicProfileContactMatch, publicProfileNameMatch } from '../services/s
 import { publicProfileLeads } from '../services/spectra/SpectraPublicProfileLeads';
 import { collectSpectraPublicBlueskyImages, collectSpectraPublicMastodonImages, collectSpectraPublicSocialPageImages } from '../services/spectra/SpectraPublicImageRecords';
 import { prioritizeSpectraPublicMediaScenes } from '../services/spectra/SpectraPublicMediaPriority';
+import { collectSpectraEarthSearchScenes } from '../services/spectra/SpectraPublicSatelliteRecords';
 import { shouldRunSpectraClaudeBackground } from '../services/spectra/SpectraClaudeBudget';
 
 const router = Router();
@@ -849,7 +850,10 @@ async function collectSpectraContextEvidence(input: {
   // never a current person location or live camera frame.
   const earthFrom = new Date(referenceTime.getTime() - 21 * 86_400_000);
   const earthTo = new Date(referenceTime.getTime());
-  const weatherRelevant = Math.abs(Date.now() - referenceTime.getTime()) <= 24 * 60 * 60_000;
+  // Local weather observations only add evidence around an actual dated
+  // measurement. A city/name/phone-based regional hint is not a weather sample.
+  const weatherRelevant = input.basis === 'timestamped_observation'
+    && Math.abs(Date.now() - referenceTime.getTime()) <= 24 * 60 * 60_000;
 
   const outcomes = await Promise.allSettled([
     acquireSpectraPlaceContext(input.latitude, input.longitude, 2_000),
@@ -862,6 +866,7 @@ async function collectSpectraContextEvidence(input: {
       ? nwsLatestObservation(input.latitude, input.longitude)
       : Promise.resolve(null),
     copernicusItems(input.latitude, input.longitude, earthFrom, earthTo),
+    collectSpectraEarthSearchScenes(input.latitude, input.longitude, earthFrom, earthTo),
   ]);
 
   const places = outcomes[0].status === 'fulfilled' ? outcomes[0].value : [];
@@ -873,7 +878,23 @@ async function collectSpectraContextEvidence(input: {
   const weather = outcomes[6].status === 'fulfilled' && outcomes[6].value
     ? outcomes[6].value
     : undefined;
-  const earthObservation = outcomes[7].status === 'fulfilled' ? outcomes[7].value : [];
+  const copernicus = outcomes[7].status === 'fulfilled' ? outcomes[7].value : [];
+  const earthSearch = outcomes[8].status === 'fulfilled' ? outcomes[8].value : [];
+  // Two independent catalogues can index the exact same Sentinel overpass.
+  // Treat equal platform/minute as one acquisition, not two confirmations.
+  const acquired = new Map<string, Record<string, unknown>>();
+  for (const item of [...copernicus, ...earthSearch.map(scene => ({ ...scene }))]) {
+    const observedMs = Date.parse(String(item.observedAt || ''));
+    if (!Number.isFinite(observedMs)) continue;
+    const family = /landsat/i.test(String(item.collection || '')) ? 'landsat'
+      : /sentinel/i.test(String(item.collection || '')) ? 'sentinel' : String(item.collection || 'other');
+    const platform = String(item.platform || family).toLowerCase().replace(/[^a-z0-9]/g, '');
+    const key = platform + ':' + Math.floor(observedMs / 60_000);
+    if (!acquired.has(key)) acquired.set(key, item);
+  }
+  const earthObservation = [...acquired.values()]
+    .sort((a, b) => Date.parse(String(b.observedAt)) - Date.parse(String(a.observedAt)))
+    .slice(0, 20);
 
   const sourceFamilies: string[] = [];
   if (places.length) sourceFamilies.push('place-context');
@@ -1907,7 +1928,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
           observedAt: canonicalLatest.point.timestamp,
           basis: 'timestamped_observation' as const,
         }
-      : candidateLocations[0]
+      : candidateLocations[0] && candidateLocations[0].confidence >= 0.1
         ? {
             latitude: candidateLocations[0].latitude,
             longitude: candidateLocations[0].longitude,
