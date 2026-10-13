@@ -99,8 +99,10 @@ export async function inspectSpectraVisualScene(
   const controller = new AbortController();
   const abort = () => controller.abort();
   requestSignal?.addEventListener('abort', abort, { once: true });
+  if (requestSignal?.aborted) abort();
   const timer = setTimeout(abort, 6_000);
   timer.unref?.();
+  let releaseWait: (() => void) | undefined;
   try {
     const analyze: AnalyzeImage = options.analyzer || (async (image, type, signal) => {
       const { callClaudeMediaExtraction, isClaudeAvailable } = await import('../../claude');
@@ -110,8 +112,20 @@ export async function inspectSpectraVisualScene(
       });
       return result.content;
     });
-    const output = await analyze(bytes, mimeType, controller.signal);
-    if (controller.signal.aborted) return null;
+    // An upstream model wrapper may ignore AbortSignal. Do not let that keep
+    // the acquisition response waiting after a request disconnect or timeout.
+    const cancelled = new Promise<null>(resolve => {
+      const stop = () => resolve(null);
+      releaseWait = () => controller.signal.removeEventListener('abort', stop);
+      if (controller.signal.aborted) stop();
+      else controller.signal.addEventListener('abort', stop, { once: true });
+    });
+    const output = await Promise.race([
+      Promise.resolve().then(() => analyze(bytes, mimeType, controller.signal))
+        .catch(() => null),
+      cancelled,
+    ]);
+    if (controller.signal.aborted || output === null) return null;
     return parseSpectraVisualSceneAssessment(
       output, createHash('sha256').update(bytes).digest('hex'),
     );
@@ -119,6 +133,7 @@ export async function inspectSpectraVisualScene(
     return null;
   } finally {
     clearTimeout(timer);
+    releaseWait?.();
     requestSignal?.removeEventListener('abort', abort);
   }
 }
