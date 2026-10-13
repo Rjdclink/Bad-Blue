@@ -351,17 +351,7 @@ export async function collectSpectraPublicMastodonImages(
     }
     if (leads.length >= MAX_IMAGES_PER_PLATFORM) break;
   }
-  // Preserve first-seen order inside a platform, but rotate across platforms.
-  // Four Facebook images must not suppress Instagram and X entirely.
-  const leads: ImageLead[] = [];
-  for (let index = 0; index < MAX_IMAGES_PER_PLATFORM
-    && leads.length < MAX_SOCIAL_IMAGES_TOTAL; index++) {
-    for (const platform of platforms) {
-      if (byPlatform[platform][index]) leads.push(byPlatform[platform][index]);
-      if (leads.length >= MAX_SOCIAL_IMAGES_TOTAL) break;
-    }
-  }
-  return collect(leads, options, MAX_SOCIAL_IMAGES_TOTAL);
+  return collect(leads, options);
 }
 
 export async function collectSpectraPublicSocialPageImages(
@@ -383,7 +373,16 @@ export async function collectSpectraPublicSocialPageImages(
       seen.add(url);
       byPlatform[platform].push({ url, post, platform });
     }
-    if (leads.length >= MAX_IMAGES_PER_PLATFORM) break;
   }
-  return collect(leads, options);
+  // Share the bounded budget fairly between the independent social families.
+  // Keep the first-seen post/photo order within each platform.
+  const leads: ImageLead[] = [];
+  for (let index = 0; index < MAX_IMAGES_PER_PLATFORM
+    && leads.length < MAX_SOCIAL_IMAGES_TOTAL; index++) {
+    for (const platform of platforms) {
+      if (byPlatform[platform][index]) leads.push(byPlatform[platform][index]);
+      if (leads.length >= MAX_SOCIAL_IMAGES_TOTAL) break;
+    }
+  }
+  return collect(leads, options, MAX_SOCIAL_IMAGES_TOTAL);
 }

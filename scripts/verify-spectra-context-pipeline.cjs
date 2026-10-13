@@ -2,11 +2,24 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const ts = require('typescript');
+const esbuild = require('esbuild');
 
 const read = file => fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
 const route = read('server/routes/spectra.routes.ts');
 const retrieval = read('server/services/spectra/SpectraPublicRetrieval.ts');
 const images = read('server/services/spectra/SpectraPublicImageRecords.ts');
+// TypeScript transpileModule alone does not reject same-scope duplicate lexical
+// declarations. Run the real bundler's parser on the source modules too.
+for (const file of [
+  'server/services/spectra/SpectraPublicImageRecords.ts',
+  'server/services/spectra/SpectraVisualSceneAnalysis.ts',
+  'server/services/spectra/SpectraXPostMedia.ts',
+]) {
+  assert.doesNotThrow(
+    () => esbuild.transformSync(read(file), { loader: 'ts', target: 'es2022', format: 'esm' }),
+    file + ' must be accepted by the production bundler',
+  );
+}
 const cameras = read('server/services/spectra/SpectraCameraDirectoryAdapters.ts');
 const geo = read('server/routes/geoconsole.routes.ts');
 const page = read('client/src/pages/spectra.tsx');
