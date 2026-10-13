@@ -129,6 +129,24 @@ const check = async (name, work) => { reset(); await work(); passed++; savedInfo
     assert.equal(fixture.queries.length, 1); assert.match(fixture.queries[0].sql, /LIMIT 1000 FOR UPDATE SKIP LOCKED/);
     assert(!fixture.queries[0].sql.includes('spectra_acquisition_evidence_records'));
   });
+  await check('idle cycles register feed metadata once and do not repeatedly prune', async () => {
+    fixture.handler = async () => ({ rows: [] }); // no provider is due
+    const signal = new AbortController().signal;
+    await t.runCollectionCycle(signal);
+    await t.runCollectionCycle(signal);
+    const registration = fixture.queries.filter(q =>
+      q.sql.includes('INSERT INTO public.spectra_public_feed_state'));
+    const pruning = fixture.queries.filter(q =>
+      q.sql.includes('DELETE FROM public.spectra_public_evidence_records'));
+    const claims = fixture.queries.filter(q =>
+      q.sql.includes('RETURNING provider, lease_token'));
+    assert.equal(registration.length, 1, 'source registration is not an idle-poll write');
+    assert.match(registration[0].sql, /IS DISTINCT FROM/,
+      'unchanged provider configuration must not be updated');
+    assert.equal(pruning.length, 1, 'hourly retention is not a 30-second scan');
+    assert.equal(claims.length, 4, 'due-feed claims remain checked every cycle');
+    assert.equal(fixture.connectCount, 0, 'idle polls must not open a transaction');
+  });
   await check('disabled startup makes no requests; shutdown aborts active work and releases its lease', async () => {
     process.env.NO_INTERVALS = 'true'; store.startSpectraPublicFeedCollector(); await store.stopSpectraPublicFeedCollector();
     assert.equal(fixture.queries.length, 0); delete process.env.NO_INTERVALS;
