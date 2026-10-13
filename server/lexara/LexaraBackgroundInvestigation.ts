@@ -518,6 +518,7 @@ export async function investigateLexaraBackgroundQuestion(
       subject: decision.subject,
       requestedFact: decision.requestedFact,
       firstUseful: true,
+      allowPaidSearch: context.allowPaidSearch,
     }).catch(() => [] as LegalMeshCandidate[]);
     const targets = uniqueCandidates(nativeCandidates).slice(0, LIVE_TARGETS_PER_PASS);
     const retrieval = targets.length
@@ -641,6 +642,7 @@ export async function investigateLexaraBackgroundQuestion(
       subject: subject.name,
       requestedFact: decision.requestedFact,
       firstUseful: !deepAcquisitionRequested,
+      allowPaidSearch: context.allowPaidSearch,
     }).catch(error => {
       console.warn('[LEXARA Background] native discovery failed; preserving other Lexara lanes', {
         error: error instanceof Error ? error.message : String(error),
@@ -947,6 +949,7 @@ export async function investigateLexaraBackgroundQuestion(
           subject: subject.name,
           requestedFact: decision.requestedFact,
           firstUseful: false,
+          allowPaidSearch: context.allowPaidSearch,
         }),
         discoverLegalMeshSupplemental(query, [...seenUrls], laneSignal, {
           categories,
