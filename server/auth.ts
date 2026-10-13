@@ -27,7 +27,6 @@ import {
   getLocalSessionMaxAgeSeconds,
   registerLocalUserHttp,
   verifyLocalSessionToken,
-  purgeLocalTestUsersBeforeHttp,
   probeLocalAuthStoreHttp,
   getLocalUserByIdHttp,
   type StatelessLocalSession,
@@ -602,23 +601,6 @@ export async function setupAuth(app: Express) {
     return finish();
   });
 
-  const purgeCutoff = String(process.env.PURGE_LOCAL_TEST_USERS_BEFORE || "").trim();
-  if (purgeCutoff) {
-    try {
-      const removed = await purgeLocalTestUsersBeforeHttp(purgeCutoff);
-      console.info("[AUTH] Authorized pre-cutoff local test signup cleanup complete", {
-        removed,
-        cutoff: purgeCutoff,
-      });
-    } catch (error) {
-      // Cleanup is maintenance-only and must not take the public application
-      // offline. The cutoff keeps any later retry bounded to the same old users.
-      console.error("[AUTH] Authorized local test signup cleanup failed", {
-        cutoff: purgeCutoff,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
 }
 
 export const isIdentityAuthenticated: RequestHandler = async (req, res, next) => {
