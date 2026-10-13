@@ -1,3 +1,4 @@
+import { captureCryptoCrawlerWorkGuard, isCryptoCrawlerMasterPowerOn } from '../runtime/manual-power-state.js';
 import logger from '../../../logger.js';
 import type { ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
 import { measuredCandidateRegistry, type MeasuredCandidate } from '../discovery/measured-candidate-registry.js';
@@ -331,7 +332,9 @@ class CanonicalExecutionScheduler {
   }
 
   private async dispatchMeasuredTopologies(): Promise<{ dispatched: boolean; submitted: boolean }> {
+    const guard = captureCryptoCrawlerWorkGuard();
     try {
+      guard();
       const routed = routeRecentMeasuredOpportunities(1024);
       const ordered = orderSettlementCapableMeasuredDecisionsWithNixGen(routed, 6, Date.now()).decisions;
       const candidates = ordered.filter(decision => decision.admitted && (
@@ -372,7 +375,8 @@ class CanonicalExecutionScheduler {
               await operatorTradingStrategy.releaseReservation(reservationId);
               continue;
             }
-            const result = await executeCanonicalZeroCapitalOpportunity(zeroCapitalOpportunity);
+            guard();
+          const result = await executeCanonicalZeroCapitalOpportunity(zeroCapitalOpportunity);
             if (!result.submitted || !result.transactionHash) {
               await operatorTradingStrategy.releaseReservation(reservationId);
               logger.info('[ExecutionScheduler] ZERO_CAPITAL_ATOMIC deferred before submission', {
@@ -411,7 +415,8 @@ class CanonicalExecutionScheduler {
           }
 
           if (decision.topology === 'DEX_ATOMIC' || decision.topology === 'LIQUIDATION') {
-            const results = await measuredTopologyExecutionAdapter.dispatch([decision]);
+            guard();
+          const results = await measuredTopologyExecutionAdapter.dispatch([decision]);
             const result = results.find(item => item.opportunityId === decision.opportunityId);
             anyDispatched = this.applyMeasuredTopologyResults(results) || anyDispatched;
             if (!result?.transactionHash) { await operatorTradingStrategy.releaseReservation(reservationId); continue; }
@@ -421,6 +426,7 @@ class CanonicalExecutionScheduler {
             return { dispatched: true, submitted: true };
           }
 
+          guard();
           const results = await fundingCrossChainExecutionAdapter.dispatch([decision]);
           const result = results.find(item => item.opportunityId === decision.opportunityId);
           anyDispatched = this.applyFundingCrossChainResults(results) || anyDispatched;
@@ -484,6 +490,8 @@ class CanonicalExecutionScheduler {
   }
 
   private async runDispatch(): Promise<void> {
+    if (!this.started || !isCryptoCrawlerMasterPowerOn()) { this.setIdle('not_started'); return; }
+    const guard = captureCryptoCrawlerWorkGuard();
     const lifecycleMaintenance = this.maintainLifecycleLanes();
 
     if (!isLiveExecutionPosture()) { this.setIdle('live_execution_posture_disabled'); return; }
@@ -496,13 +504,15 @@ class CanonicalExecutionScheduler {
     const governanceAllowed = endToEndLatencyHarness.measureSync('governance_risk', 'compute', { backend: 'stage_manager', worker: executionResourceScheduler.getOwnerId() }, () => stageManager.canExecuteTrades());
     if (!governanceAllowed) { this.setIdle('governance_stage_blocked'); return; }
     const operatorState = await this.loadOperatorState();
+    guard();
     if (!operatorState || !operatorState.executionAllowed) return;
 
     const freshCexFastLaneAvailable = currentCandidates().length > 0;
     let measured: { dispatched: boolean; submitted: boolean } = { dispatched: false, submitted: false };
-    let refreshedOperatorState = operatorState;
+    let refreshedOperatorState: OperatorTradingStrategyState | null = operatorState;
     const dispatchKalshiFallback = async (): Promise<boolean> => {
-      const outcome = await dispatchKalshiAfterCexMiss({ lifecycleMaintenance });
+      guard();
+          const outcome = await dispatchKalshiAfterCexMiss({ lifecycleMaintenance });
       if (!outcome.submitted) return false;
       this.attempts++;
       this.lastDispatchAt = Date.now();
@@ -525,7 +535,8 @@ class CanonicalExecutionScheduler {
       refreshedOperatorState = await this.loadOperatorState();
       if (!refreshedOperatorState || !refreshedOperatorState.executionAllowed) return;
 
-      const eventDispatch = await dispatchBestKalshiEventCandidate();
+      guard();
+          const eventDispatch = await dispatchBestKalshiEventCandidate();
       if (eventDispatch.attempted && eventDispatch.submitted && eventDispatch.result) {
         this.attempts++;
         this.lastDispatchAt = Date.now();
@@ -577,7 +588,8 @@ class CanonicalExecutionScheduler {
         this.lastIdleReason = null;
         this.lastDispatchAt = Date.now();
         logger.info('[ExecutionScheduler] Resource-qualified canonical parent selected under operator strategy', { component: 'CanonicalExecutionScheduler', opportunityId: candidate.opportunityId, symbol: candidate.symbol, buyVenue: candidate.plan.buyVenue, sellVenue: candidate.plan.sellVenue, netProfitUsd: candidate.plan.netProfitUsd, probabilityOfProfitableExecution: candidate.assessment?.probabilityOfProfitableExecution, terminalCalibrationFactor: terminalCalibrationFactor(candidate), leaseId: lease.leaseId, resources: lease.resources, stage: stageManager.getCurrentStage(), localDate: reservation.state.localDate, remainingTrades: reservation.state.remainingTrades, realizedProfitUsd: reservation.state.realizedProfitUsd, stopProfitUsd: reservation.state.stopProfitUsd });
-        const result = await executeVerifiedArbitragePlan(candidate.plan, { opportunityId: candidate.opportunityId, source: 'master_pipeline', chain: candidate.plan.bridge?.from, observedSlippageBps: candidate.plan.expectedSlippageBps ?? undefined });
+        guard();
+          const result = await executeVerifiedArbitragePlan(candidate.plan, { opportunityId: candidate.opportunityId, source: 'master_pipeline', chain: candidate.plan.bridge?.from, observedSlippageBps: candidate.plan.expectedSlippageBps ?? undefined });
         concreteSubmission = cexHasConcreteSubmission(result);
         if (concreteSubmission) {
           this.lastOperatorState = await operatorTradingStrategy.markSubmitted(reservationId);

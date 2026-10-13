@@ -5,6 +5,7 @@ import { ethers } from 'ethers';
 import logger from '../../../logger.js';
 import { getCryptocrawlGovernance } from '../governance/index.js';
 import { fetchJsonWithRetry } from '../utils/resilient-http.js';
+import { assertDiscoveryWorkActive, awaitDiscoveryWork, discoveryAbortSignal, discoveryProvider, runDiscoveryWork } from '../runtime/discovery-work-context.js';
 
 // ============================================================================
 // TYPES & INTERFACES
@@ -439,11 +440,14 @@ export class MultiProviderRpcManager {
   private readonly discoverConfiguredProviders: boolean;
   private readonly websocketRecoveryTimers = new Map<string, NodeJS.Timeout>();
   private subscriptionSequence = 0;
+  private readonly recoveryTasks = new Map<string, Promise<void>>();
 
   constructor(options: MultiProviderRpcManagerOptions = {}) {
     this.cooldownMs = options.cooldownMs ?? 15000;
     this.operationTimeoutMs = options.operationTimeoutMs ?? 12000;
-    this.httpProviderFactory = options.httpProviderFactory || (url => new ethers.providers.JsonRpcProvider(url));
+    this.httpProviderFactory = options.httpProviderFactory || (url => new ethers.providers.JsonRpcProvider({
+      url, timeout: this.operationTimeoutMs, throttleLimit: 1,
+    }));
     this.websocketProviderFactory = options.websocketProviderFactory || (url => new ethers.providers.WebSocketProvider(url));
     this.discoverConfiguredProviders = options.discoverConfiguredProviders ?? true;
   }
@@ -453,7 +457,7 @@ export class MultiProviderRpcManager {
     for (const chain of chains) {
       if (this.initializedChains.has(chain)) continue;
       const definitions = this.discoverConfiguredProviders ? configuredRpcCandidates(chain) : [];
-      const candidates = definitions.map(definition => ({
+      const candidates: RpcCandidate[] = definitions.map(definition => ({
         ...definition,
         httpProvider: this.httpProviderFactory(definition.httpUrl),
         state: 'connecting' as RpcProviderState,
@@ -476,6 +480,8 @@ export class MultiProviderRpcManager {
   }
 
   private async ensureInitialized(chain: SupportedChain): Promise<void> {
+    assertDiscoveryWorkActive();
+    if (this.shuttingDown) throw new Error('RPC manager is shutting down');
     if (!this.initializedChains.has(chain)) await this.initialize([chain]);
   }
 
@@ -517,14 +523,20 @@ export class MultiProviderRpcManager {
   }
 
   private async probeCandidate(candidate: RpcCandidate): Promise<void> {
+    assertDiscoveryWorkActive();
+    if (this.shuttingDown) return;
     candidate.state = 'connecting';
     const startedAt = Date.now();
     try {
       const network = await this.withTimeout(candidate.httpProvider.getNetwork(), this.operationTimeoutMs, 'RPC network probe timed out');
+      assertDiscoveryWorkActive();
+      if (this.shuttingDown) return;
       if (network.chainId !== CHAIN_IDS[candidate.chain]) {
         throw new Error(`RPC chain identity mismatch: expected ${CHAIN_IDS[candidate.chain]}, received ${network.chainId}`);
       }
       await this.withTimeout(candidate.httpProvider.getBlockNumber(), this.operationTimeoutMs, 'RPC block probe timed out');
+      assertDiscoveryWorkActive();
+      if (this.shuttingDown) return;
       candidate.latencyMs = Date.now() - startedAt;
       candidate.consecutiveFailures = 0;
       candidate.consecutiveSuccesses += 1;
@@ -533,6 +545,11 @@ export class MultiProviderRpcManager {
       candidate.lastError = undefined;
       candidate.lastObservedAt = Date.now();
     } catch (error) {
+      if (this.shuttingDown) return;
+      if (discoveryAbortSignal()?.aborted) {
+        candidate.state = 'degraded';
+        return;
+      }
       this.recordFailure(candidate, error);
     }
   }
@@ -570,6 +587,7 @@ export class MultiProviderRpcManager {
       .filter(candidate => candidate.capabilities.has(capability) && !excluded.has(candidate.provider))
       .filter(candidate => (candidate.state === 'healthy' || candidate.state === 'degraded') && candidate.cooldownUntil <= now)
       .sort((left, right) => {
+        if (left.state !== right.state) return left.state === 'healthy' ? -1 : 1;
         if (left.priority !== right.priority) return right.priority - left.priority;
         return (left.latencyMs ?? Number.MAX_SAFE_INTEGER) - (right.latencyMs ?? Number.MAX_SAFE_INTEGER);
       });
@@ -591,10 +609,21 @@ export class MultiProviderRpcManager {
   }
 
   private async recoverCooldownCandidates(chain: SupportedChain, capability: RpcCapability): Promise<void> {
+    assertDiscoveryWorkActive();
+    if (this.shuttingDown) throw new Error('RPC manager is shutting down');
+    // Recovery is not a prerequisite for using an already healthy transport.
+    if (this.eligibleCandidates(chain, capability).some(candidate => candidate.state === 'healthy')) return;
+    const key = `${chain}:${capability}`;
+    const existing = this.recoveryTasks.get(key);
+    if (existing) return awaitDiscoveryWork(() => existing);
     const now = Date.now();
     const candidates = (this.candidates.get(chain) || [])
       .filter(candidate => candidate.capabilities.has(capability) && ['degraded', 'cooldown'].includes(candidate.state) && candidate.cooldownUntil <= now);
-    await Promise.all(candidates.map(candidate => this.probeCandidate(candidate)));
+    const task = Promise.all(candidates.map(candidate => this.probeCandidate(candidate))).then(() => undefined).finally(() => {
+      if (this.recoveryTasks.get(key) === task) this.recoveryTasks.delete(key);
+    });
+    this.recoveryTasks.set(key, task);
+    await awaitDiscoveryWork(() => task);
   }
 
   async getProvider(chain: SupportedChain, capability: RpcCapability = 'json_rpc'): Promise<ManagedRpcProvider> {
@@ -615,25 +644,33 @@ export class MultiProviderRpcManager {
     chain: SupportedChain,
     capability: RpcCapability,
     operation: (provider: ethers.providers.JsonRpcProvider) => Promise<T>,
+    attempted = new Set<string>(),
   ): Promise<{ result: T; provenance: RpcProvenance }> {
     await this.ensureInitialized(chain);
     await this.recoverCooldownCandidates(chain, capability);
-    const attempted = new Set<string>();
     const candidates = [...(this.candidates.get(chain) || [])]
       .filter(candidate => candidate.capabilities.has(capability))
       .sort((left, right) => right.priority - left.priority);
     let lastError: unknown;
 
     for (let attempt = 0; attempt < candidates.length; attempt++) {
+      assertDiscoveryWorkActive();
+      if (this.shuttingDown) throw new Error('RPC manager is shutting down');
       const candidate = this.eligibleCandidates(chain, capability, attempted)[0];
       if (!candidate) break;
       attempted.add(candidate.provider);
       const startedAt = Date.now();
       try {
-        const result = await this.withTimeout(operation(candidate.httpProvider), this.operationTimeoutMs, 'RPC operation timed out');
+        const result = await awaitDiscoveryWork(() => this.withTimeout(
+          operation(discoveryProvider(candidate.httpProvider)), this.operationTimeoutMs, 'RPC operation timed out',
+        ));
+        assertDiscoveryWorkActive();
+        if (this.shuttingDown) throw new Error('RPC manager is shutting down');
         this.recordSuccess(candidate, Date.now() - startedAt);
         return { result, provenance: this.toManagedProvider(candidate, 'http').provenance };
       } catch (error) {
+        assertDiscoveryWorkActive();
+        if (this.shuttingDown) throw new Error('RPC manager is shutting down');
         lastError = error;
         const failureClass = classifyRpcOperationError(error, capability);
         if (failureClass === 'application') {
@@ -654,6 +691,34 @@ export class MultiProviderRpcManager {
     }
 
     throw new Error(`RPC ${capability} operation failed for ${chain}: ${lastError instanceof Error ? lastError.message : String(lastError || 'no healthy provider')}`);
+  }
+
+  /** Two independent read transports share one caller deadline and retry set.
+   * This is never used for transaction submission or other write operations. */
+  async executeRead<T>(
+    chain: SupportedChain,
+    capability: 'contract_calls' | 'blocks' | 'gas' | 'logs' | 'network',
+    operation: (provider: ethers.providers.JsonRpcProvider) => Promise<T>,
+    timeoutMs: number,
+  ): Promise<{ result: T; provenance: RpcProvenance }> {
+    return runDiscoveryWork(`RPC ${chain} ${capability} read`, timeoutMs, async () => {
+      const attempted = new Set<string>();
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const fallback = async () => {
+        // Hedge a slow primary without doubling the cost of every fast RPC.
+        await awaitDiscoveryWork(() => new Promise<void>(resolve => {
+          timer = setTimeout(resolve, Math.max(1, Math.min(75, Math.floor(timeoutMs / 4))));
+        }));
+        return this.execute(chain, capability, operation, attempted);
+      };
+      try {
+        return await Promise.any([
+          this.execute(chain, capability, operation, attempted), fallback(),
+        ]);
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+    });
   }
 
   private toManagedProvider(candidate: RpcCandidate, transport: RpcTransport): ManagedRpcProvider {
@@ -1128,7 +1193,7 @@ export class AdvancedRateLimiter {
     logger.warn('Rate limiter recorded error', {
       component: 'AdvancedRateLimiter',
       isRateLimit,
-      errorCount,
+      errorCount: this.errorCount,
       adaptiveMultiplier: this.adaptiveMultiplier
     });
   }

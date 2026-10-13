@@ -1,3 +1,4 @@
+import { captureCryptoCrawlerWorkGuard } from '../runtime/manual-power-state.js';
 import logger from '../../../logger.js';
 import {
   registerGhostWalletBorrowerMandate,
@@ -156,13 +157,19 @@ async function mapBounded<T>(items: readonly T[], concurrency: number, work: (it
 
 class GhostWalletBorrowerDemandMesh {
   private running = false;
+  private generation = 0;
   private readonly states = new Map<string, FeedState>();
 
   async start(): Promise<void> {
     if (this.running) return;
+    const guard = captureCryptoCrawlerWorkGuard();
+    const generation = this.generation;
+    guard();
     this.running = true;
     ghostWalletIntermediaryBootstrap.start();
     await ghostWalletUniswapXDemand.start();
+    guard();
+    if (generation !== this.generation) throw new Error('Ghost startup cancelled');
     const feeds = configuredFeeds();
     for (const feed of feeds) {
       const state: FeedState = {
@@ -198,6 +205,7 @@ class GhostWalletBorrowerDemandMesh {
   }
 
   stop(): void {
+    this.generation++;
     this.running = false;
     ghostWalletIntermediaryBootstrap.stop();
     ghostWalletUniswapXDemand.stop();

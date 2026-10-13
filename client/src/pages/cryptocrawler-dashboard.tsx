@@ -66,6 +66,7 @@ interface SystemStatus {
   running: boolean;
   lifecycle?: string;
   lastError?: string | null;
+  readiness?: { ready: boolean; missing: string[] };
   control?: { manualPowerPhase?: 'OFF' | 'STARTING' | 'ON' | 'STOPPING' };
   cryptoCrawl: {
     enabled: boolean;
@@ -248,7 +249,7 @@ export default function CryptoCrawlerDashboard() {
       setStatusKnown(true);
       const phase = data.control?.manualPowerPhase;
       const intent = controlIntentRef.current;
-      if ((intent === 'start' && (data.running || data.lifecycle === 'FAILED'))
+      if ((intent === 'start' && (data.running || data.lifecycle === 'FAILED' || data.lifecycle === 'DEGRADED'))
         || (intent === 'stop' && phase === 'OFF')) {
         controlIntentRef.current = null;
         setControlIntent(null);
@@ -606,13 +607,13 @@ export default function CryptoCrawlerDashboard() {
   const isSystemRunning = systemStatus?.running === true;
   const phase = systemStatus?.control?.manualPowerPhase;
   const transitioning = phase === 'STARTING' || phase === 'STOPPING';
-  const powerLabel = !statusKnown ? 'UNKNOWN' : phase || (isSystemRunning ? 'ON' : 'OFF');
-  const canObserve = (isSystemRunning || transitioning || controlIntent !== null) && !stoppingSystem;
+  const powerLabel = !statusKnown ? 'UNKNOWN' : systemStatus?.lifecycle === 'DEGRADED' ? 'DEGRADED' : phase || (isSystemRunning ? 'ON' : 'OFF');
+  const canObserve = (isSystemRunning || phase === 'ON' || transitioning || controlIntent !== null) && !stoppingSystem;
 
   // Reconcile an explicit command even if its HTTP response was lost. Stop
   // remains reachable during startup. Idle OFF creates no recurring requests.
   useEffect(() => {
-    if (!isSystemRunning && !transitioning && !controlIntent) return;
+    if (!isSystemRunning && phase !== 'ON' && !transitioning && !controlIntent) return;
     let disposed = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const poll = async () => {
@@ -628,7 +629,7 @@ export default function CryptoCrawlerDashboard() {
     };
     void poll();
     return () => { disposed = true; clearTimeout(timer); };
-  }, [isSystemRunning, transitioning, controlIntent, fetchStatus]);
+  }, [isSystemRunning, phase, transitioning, controlIntent, fetchStatus]);
 
   useEffect(() => {
     if (!canObserve) return;
@@ -800,7 +801,7 @@ export default function CryptoCrawlerDashboard() {
                 }
               >
                 <Activity className="w-3 h-3 mr-1" />
-                {!statusKnown ? 'STATUS UNKNOWN' : transitioning ? powerLabel : isSystemRunning ? 'RUNNING' : 'STOPPED'}
+                {!statusKnown ? 'STATUS UNKNOWN' : transitioning ? powerLabel : isSystemRunning ? 'RUNNING' : systemStatus?.lifecycle === 'DEGRADED' ? 'DEGRADED' : 'STOPPED'}
               </Badge>
               <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-orange-500/20 border border-orange-500/30">
                 <Shield className="w-4 h-4 text-orange-400" />
@@ -813,6 +814,11 @@ export default function CryptoCrawlerDashboard() {
 
       {/* Main Content */}
       <main className="mx-auto w-full max-w-7xl min-w-0 px-3 py-5 sm:px-6">
+        {systemStatus?.lifecycle === 'DEGRADED' && (
+          <div role="alert" className="mb-4 rounded border border-amber-500/50 bg-amber-950 p-3 text-sm text-amber-100">
+            CryptoCrawler is not fully ready. {systemStatus.lastError || `Components needing attention: ${systemStatus.readiness?.missing.join(', ') || 'unknown'}.`} Use Stop to finish cleanup before restarting.
+          </div>
+        )}
         <div className="mb-6 grid min-w-0 grid-cols-2 items-stretch gap-3" aria-label="Live system activity">
           <section className="min-w-0 overflow-hidden rounded-lg border border-slate-700 bg-slate-900 p-3">
             <h2 className="mb-2 text-sm font-semibold text-white">System Console</h2>

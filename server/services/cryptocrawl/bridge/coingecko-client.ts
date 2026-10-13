@@ -1,10 +1,50 @@
 import { FALLBACK_PRICES } from './chain-config';
 import { fetchJsonWithRetry } from '../utils/resilient-http';
+import { isCryptoCrawlerMarketDataAllowed, onCryptoCrawlerManualPowerPhaseChange } from '../runtime/manual-power-state.js';
 
 type SymbolPriceMap = Map<string, number>;
 type LivePriceProvider = 'coinmarketcap-keyless' | 'dexscreener' | 'defillama' | 'coinlore' | 'coingecko';
 
+export interface LiveUsdPriceObservation {
+  priceUsd: number;
+  /** Provider's market update time, never the local download time. */
+  observedAt: number;
+  acquiredAt: number;
+}
+
+// Preserve the public numeric normalizers while carrying schema-specific source
+// timestamps with each exact result object. Undated providers remain available
+// for display/benchmark consensus, but cannot certify fresh execution economics.
+const marketTimes = new WeakMap<Record<string, number>, Record<string, number>>();
+function marketTimestamp(value: unknown): number | null {
+  const numeric = typeof value === 'number' ? value : NaN;
+  const timestamp = Number.isFinite(numeric) ? numeric * 1000 : typeof value === 'string' ? Date.parse(value) : NaN;
+  return Number.isFinite(timestamp) && timestamp > 0 && timestamp <= Date.now() ? timestamp : null;
+}
+
+export function selectDatedPriceEvidence(
+  coinIds: readonly string[], evidence: ReadonlyArray<{ prices: Record<string, number> }>, acquiredAt: number,
+): Record<string, LiveUsdPriceObservation> {
+  const configured = Number(process.env.ZERO_CAPITAL_USD_MARKET_MAX_AGE_MS || 120_000);
+  const maxAge = Number.isFinite(configured) ? Math.max(1000, Math.min(300_000, configured)) : 120_000;
+  const now = Date.now();
+  const result: Record<string, LiveUsdPriceObservation> = {};
+  for (const id of coinIds) {
+    const dated = evidence.flatMap(({ prices }) => {
+      const observedAt = marketTimes.get(prices)?.[id];
+      const priceUsd = positivePrice(prices[id]);
+      return observedAt && observedAt <= now && now - observedAt < maxAge && priceUsd !== null ? [{priceUsd, observedAt}] : [];
+    });
+    if (!dated.length) continue;
+    const priceUsd = mergeLivePriceEvidence([id], dated.map(item => ({[id]:item.priceUsd})))[id];
+    result[id] = {priceUsd, observedAt: Math.min(...dated.map(item => item.observedAt)), acquiredAt};
+  }
+  return result;
+}
+
 interface PriceFetchResult {
+  executionEvidenceByCoinId: Record<string, LiveUsdPriceObservation>;
+  observedAt: number;
   pricesByCoinId: Record<string, number>;
   canonicalProviderByCoinId: Record<string, LivePriceProvider>;
 }
@@ -185,6 +225,7 @@ export function normalizeCoinMarketCapQuotes(
         ? Object.values(data as Record<string, unknown>)
         : [];
   const byCmcId = new Map<number, number>();
+  const timesById = new Map<number, number>();
   for (const row of rows) {
     if (!row || typeof row !== 'object') continue;
     const record = row as { id?: unknown; quote?: unknown };
@@ -196,11 +237,19 @@ export function normalizeCoinMarketCapQuotes(
         ? (quote as Record<string, unknown>).USD || Object.values(quote as Record<string, unknown>)[0]
         : null;
     const price = Number((usdQuote as { price?: unknown } | null)?.price);
-    if (Number.isInteger(cmcId) && Number.isFinite(price) && price > 0) byCmcId.set(cmcId, price);
+    if (Number.isInteger(cmcId) && Number.isFinite(price) && price > 0) {
+      byCmcId.set(cmcId, price);
+      const timestamp = marketTimestamp((usdQuote as { last_updated?: unknown } | null)?.last_updated);
+      if (timestamp !== null) timesById.set(cmcId, timestamp);
+    }
   }
 
   const normalized: Record<string, number> = {};
+  const times: Record<string, number> = {};
+  marketTimes.set(normalized, times);
   for (const entry of requested) {
+    const timestamp = timesById.get(entry.cmcId);
+    if (timestamp !== undefined) times[entry.coinId] = timestamp;
     const price = byCmcId.get(entry.cmcId);
     if (typeof price === 'number' && Number.isFinite(price) && price > 0) normalized[entry.coinId] = price;
   }
@@ -253,10 +302,14 @@ export function normalizeDefiLlamaPrices(
   if (!coins || typeof coins !== 'object') return {};
   const entries = Object.entries(coins as Record<string, unknown>);
   const normalized: Record<string, number> = {};
+  const times: Record<string, number> = {};
+  marketTimes.set(normalized, times);
   for (const request of requested) {
     const match = entries.find(([key]) => key.toLowerCase() === request.key.toLowerCase());
     const price = positivePrice((match?.[1] as { price?: unknown } | undefined)?.price);
     if (price !== null) normalized[request.coinId] = price;
+    const timestamp = marketTimestamp((match?.[1] as { timestamp?: unknown } | undefined)?.timestamp);
+    if (timestamp !== null) times[request.coinId] = timestamp;
   }
   return normalized;
 }
@@ -287,6 +340,18 @@ export function normalizeCoinLorePrices(
 }
 
 class CoinGeckoPriceClient {
+  private lifecycle = new AbortController();
+
+  constructor() {
+    if (!isCryptoCrawlerMarketDataAllowed()) this.lifecycle.abort();
+    onCryptoCrawlerManualPowerPhaseChange(() => {
+      if (!isCryptoCrawlerMarketDataAllowed()) {
+        this.lifecycle.abort();
+        this.cache.clear();
+        this.inFlight.clear();
+      } else if (this.lifecycle.signal.aborted) this.lifecycle = new AbortController();
+    });
+  }
   private cache = new Map<string, CachedPriceEntry>();
   private inFlight = new Map<string, Promise<PriceFetchResult>>();
   private providerState = new Map<LivePriceProvider, ProviderRuntimeState>();
@@ -336,6 +401,8 @@ class CoinGeckoPriceClient {
   }
 
   private async acquireProviderToken(provider: LivePriceProvider): Promise<boolean> {
+    const signal = this.lifecycle.signal;
+    if (!isCryptoCrawlerMarketDataAllowed() || signal.aborted) return false;
     const state = this.getProviderState(provider);
     const telemetry = this.getProviderTelemetry(provider);
     const config = PROVIDER_CONFIG[provider];
@@ -355,6 +422,7 @@ class CoinGeckoPriceClient {
     await previousQueue.catch(() => undefined);
     try {
       while (true) {
+        if (!isCryptoCrawlerMarketDataAllowed() || signal.aborted) return false;
         const now = Date.now();
         const elapsedSeconds = Math.max(0, now - state.lastRefillAt) / 1000;
         state.tokens = Math.min(config.capacity, state.tokens + elapsedSeconds * config.refillPerSecond);
@@ -402,20 +470,22 @@ class CoinGeckoPriceClient {
     url: string,
     options: { timeoutMs: number; batchSize?: number },
   ): Promise<T | null> {
+    const signal = this.lifecycle.signal;
     const allowed = await this.acquireProviderToken(provider);
-    if (!allowed) return null;
+    if (!allowed || signal.aborted) return null;
     const telemetry = this.getProviderTelemetry(provider);
     telemetry.requestsSent += 1;
     if ((options.batchSize || 0) > 1) telemetry.batchedRequests += 1;
     try {
       const payload = await fetchJsonWithRetry<T>(url, {
-        init: { headers: { accept: 'application/json' } },
+        init: { headers: { accept: 'application/json' }, signal },
         maxRetries: 0,
         timeoutMs: options.timeoutMs,
       });
       this.recordProviderSuccess(provider);
       return payload;
     } catch (error) {
+      if (signal.aborted) return null;
       this.recordProviderFailure(provider, error);
       return null;
     }
@@ -423,30 +493,36 @@ class CoinGeckoPriceClient {
 
   private async fetchCoinGeckoByCoinIds(coinIds: string[], vsCurrency: string): Promise<Record<string, number>> {
     if (coinIds.length === 0) return {};
+    const signal = this.lifecycle.signal;
     const allowed = await this.acquireProviderToken('coingecko');
-    if (!allowed) return {};
+    if (!allowed || signal.aborted) return {};
     const telemetry = this.getProviderTelemetry('coingecko');
     telemetry.requestsSent += 1;
     if (coinIds.length > 1) telemetry.batchedRequests += 1;
     try {
       const idsQuery = coinIds.join(',');
-      const url = `https://api.coingecko.com/api/v3/simple/price?ids=${encodeURIComponent(idsQuery)}&vs_currencies=${encodeURIComponent(vsCurrency)}`;
+      const url = `https://api.coingecko.com/api/v3/simple/price?ids=${encodeURIComponent(idsQuery)}&vs_currencies=${encodeURIComponent(vsCurrency)}&include_last_updated_at=true`;
       const headers: HeadersInit = { accept: 'application/json' };
       const apiKey = process.env.COINGECKO_API_KEY?.trim();
       if (apiKey) headers['x-cg-demo-api-key'] = apiKey;
       const payload = await fetchJsonWithRetry<Record<string, { [currency: string]: number }>>(url, {
-        init: { headers },
+        init: { headers, signal },
         maxRetries: 0,
         timeoutMs: 8_000,
       });
       this.recordProviderSuccess('coingecko');
       const normalized: Record<string, number> = {};
+      const times: Record<string, number> = {};
+      marketTimes.set(normalized, times);
       for (const coinId of coinIds) {
+        const timestamp = marketTimestamp(payload[coinId]?.last_updated_at);
+        if (timestamp !== null) times[coinId] = timestamp;
         const value = payload[coinId]?.[vsCurrency];
         if (typeof value === 'number' && Number.isFinite(value) && value > 0) normalized[coinId] = value;
       }
       return normalized;
     } catch (error) {
+      if (signal.aborted) return {};
       this.recordProviderFailure('coingecko', error);
       return {};
     }
@@ -595,8 +671,8 @@ class CoinGeckoPriceClient {
     const tracked = PRIMARY_PROVIDERS.map(provider => this.fetchPrimaryProvider(provider, coinIds, vsCurrency)
       .then(prices => {
         evidence.push({ provider, prices });
-        const merged = mergeLivePriceEvidence(coinIds, evidence.map(entry => entry.prices));
-        if (!completeResolved && coinIds.every(coinId => positivePrice(merged[coinId]) !== null)) {
+        const dated = selectDatedPriceEvidence(coinIds, evidence, Date.now());
+        if (!completeResolved && coinIds.every(coinId => dated[coinId] !== undefined)) {
           completeResolved = true;
           resolveComplete();
         }
@@ -630,22 +706,27 @@ class CoinGeckoPriceClient {
   }
 
   private async fetchLivePriceMesh(coinIds: string[], vsCurrency: string): Promise<PriceFetchResult> {
+    const observedAt = Date.now();
+    const signal = this.lifecycle.signal;
     const allEvidence: Array<{ provider: LivePriceProvider; prices: Record<string, number> }> = [];
 
     const passOne = await this.runPrimaryPass(coinIds, vsCurrency);
+    signal.throwIfAborted();
     allEvidence.push(...passOne.evidence);
     let merged = mergeLivePriceEvidence(coinIds, allEvidence.map(entry => entry.prices));
-    let missing = coinIds.filter(coinId => positivePrice(merged[coinId]) === null);
+    let missing = coinIds.filter(coinId => !selectDatedPriceEvidence(coinIds, allEvidence, observedAt)[coinId]);
 
     if (missing.length > 0) {
       const passTwo = await this.runPrimaryPass(missing, vsCurrency);
+      signal.throwIfAborted();
       allEvidence.push(...passTwo.evidence);
       merged = mergeLivePriceEvidence(coinIds, allEvidence.map(entry => entry.prices));
-      missing = coinIds.filter(coinId => positivePrice(merged[coinId]) === null);
+      missing = coinIds.filter(coinId => !selectDatedPriceEvidence(coinIds, allEvidence, observedAt)[coinId]);
     }
 
     if (missing.length > 0) {
       const emergency = await this.fetchCoinGeckoByCoinIds(missing, vsCurrency);
+      signal.throwIfAborted();
       allEvidence.push({ provider: 'coingecko', prices: emergency });
       merged = mergeLivePriceEvidence(coinIds, allEvidence.map(entry => entry.prices));
     }
@@ -653,7 +734,7 @@ class CoinGeckoPriceClient {
     const canonicalProviderByCoinId = this.selectCanonicalProviders(coinIds, merged, allEvidence);
     this.recordCanonicalEvidence(canonicalProviderByCoinId);
     this.maybeLogTelemetry();
-    return { pricesByCoinId: merged, canonicalProviderByCoinId };
+    return { pricesByCoinId: merged, canonicalProviderByCoinId, observedAt, executionEvidenceByCoinId: selectDatedPriceEvidence(coinIds, allEvidence, observedAt) };
   }
 
   private recordAttributedTelemetry(
@@ -697,43 +778,47 @@ class CoinGeckoPriceClient {
     coinIds: string[],
     vsCurrency: string = 'usd',
     cacheClass: 'standard' | 'live' = 'standard',
-  ): Promise<Record<string, number>> {
-    if (coinIds.length === 0) return {};
+  ): Promise<PriceFetchResult> {
+    if (coinIds.length === 0) return { pricesByCoinId: {}, canonicalProviderByCoinId: {}, observedAt: Date.now(), executionEvidenceByCoinId: {} };
+    if (!isCryptoCrawlerMarketDataAllowed()) throw new Error('CRYPTOCRAWLER_MASTER_POWER_OFF');
+    const signal = this.lifecycle.signal;
 
     const dedupedIds = [...new Set(coinIds)].sort();
     const cacheKey = this.buildCacheKey(dedupedIds, vsCurrency, cacheClass);
     const cached = this.cache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) {
       this.recordAttributedTelemetry(cached.canonicalProviderByCoinId, 'cacheHits');
-      return cached.pricesByCoinId;
+      return cached;
     }
 
     const inflight = this.inFlight.get(cacheKey);
     if (inflight) {
       const result = await inflight;
       this.recordAttributedTelemetry(result.canonicalProviderByCoinId, 'coalescedRequests');
-      return result.pricesByCoinId;
+      return result;
     }
 
     const requestPromise = (async () => {
       const result = await this.fetchLivePriceMesh(dedupedIds, vsCurrency);
+      signal.throwIfAborted();
       if (Object.keys(result.pricesByCoinId).length === 0) throw new Error('No live price provider returned usable market evidence');
-      const complete = dedupedIds.every(coinId => result.pricesByCoinId[coinId] !== undefined);
+      const complete = dedupedIds.every(coinId => cacheClass === 'live'
+        ? result.executionEvidenceByCoinId[coinId] !== undefined
+        : result.pricesByCoinId[coinId] !== undefined);
       if (complete) {
         const ttlMs = cacheClass === 'live' ? DEFAULT_LIVE_CACHE_TTL_MS : DEFAULT_CACHE_TTL_MS;
         this.cache.set(cacheKey, {
-          expiresAt: Date.now() + ttlMs,
-          pricesByCoinId: result.pricesByCoinId,
-          canonicalProviderByCoinId: result.canonicalProviderByCoinId,
+          ...result,
+          expiresAt: result.observedAt + ttlMs,
         });
       }
       return result;
     })().finally(() => {
-      this.inFlight.delete(cacheKey);
+      if (this.inFlight.get(cacheKey) === requestPromise) this.inFlight.delete(cacheKey);
     });
 
     this.inFlight.set(cacheKey, requestPromise);
-    return (await requestPromise).pricesByCoinId;
+    return await requestPromise;
   }
 
   async getSymbolPrices(
@@ -747,7 +832,7 @@ class CoinGeckoPriceClient {
 
     const result = new Map<string, number>();
     try {
-      const pricesByCoinId = await this.fetchByCoinIds(coinIds, 'usd', 'standard');
+      const { pricesByCoinId } = await this.fetchByCoinIds(coinIds, 'usd', 'standard');
       for (const symbol of normalizedSymbols) {
         const coinId = SYMBOL_TO_COIN_ID[symbol];
         const livePrice = coinId ? pricesByCoinId[coinId] : undefined;
@@ -767,16 +852,21 @@ class CoinGeckoPriceClient {
   }
 
   async getLiveSymbolPrices(symbols: string[]): Promise<SymbolPriceMap> {
+    const evidence = await this.getLiveSymbolPriceEvidence(symbols);
+    return new Map([...evidence].map(([symbol, value]) => [symbol, value.priceUsd]));
+  }
+
+  async getLiveSymbolPriceEvidence(symbols: string[]): Promise<Map<string, LiveUsdPriceObservation>> {
     const normalizedSymbols = [...new Set(symbols.map(symbol => symbol.toUpperCase()))];
     const coinIds = normalizedSymbols
       .map(symbol => SYMBOL_TO_COIN_ID[symbol])
       .filter((coinId): coinId is string => Boolean(coinId));
-    const pricesByCoinId = await this.fetchByCoinIds(coinIds, 'usd', 'live');
-    const result = new Map<string, number>();
+    const { executionEvidenceByCoinId } = await this.fetchByCoinIds(coinIds, 'usd', 'live');
+    const result = new Map<string, LiveUsdPriceObservation>();
     for (const symbol of normalizedSymbols) {
       const coinId = SYMBOL_TO_COIN_ID[symbol];
-      const livePrice = coinId ? pricesByCoinId[coinId] : undefined;
-      if (typeof livePrice === 'number' && Number.isFinite(livePrice) && livePrice > 0) result.set(symbol, livePrice);
+      const observation = coinId ? executionEvidenceByCoinId[coinId] : undefined;
+      if (observation) result.set(symbol, observation);
     }
     return result;
   }

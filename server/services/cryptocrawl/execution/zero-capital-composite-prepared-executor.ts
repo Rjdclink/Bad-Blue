@@ -1,3 +1,5 @@
+import { validatePreparedNativeFeeBudget } from './prepared-native-fee-budget.js';
+import { sponsoredBilledGasCostWei } from '../strategies/gas-sponsorship.js';
 import { BigNumber, Contract, ethers, type Wallet, type providers } from 'ethers';
 import type { GasFundingDecision } from '../capital-free/dynamic-gas-funding-engine.js';
 import type { ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
@@ -13,12 +15,13 @@ const COMPOSITE_EVENT = new ethers.utils.Interface([
 
 export interface CompositePreparedRuntime {
   gasSponsor: {
+    getBillingSurchargeBps: () => number;
     execute: (input: {
       wallet: Wallet;
       chainId: number;
       calls: Array<{ to: string; data: string; value?: BigNumber }>;
       timeoutMs: number;
-    }) => Promise<{ transactionHash: string }>;
+    }) => Promise<{ transactionHash: string; actualGasCostWei?: bigint }>;
   };
 }
 
@@ -187,9 +190,13 @@ export async function executeCompositePreparedWithinCanonicalExecutor(input: {
       receipt = await provider.getTransactionReceipt(transactionHash);
       if (!receipt) receipt = await provider.waitForTransaction(transactionHash, 1, 15_000);
       sponsoredExecution = true;
-      if (receipt?.effectiveGasPrice) nativeFeeWei = BigInt(receipt.gasUsed.toString()) * BigInt(receipt.effectiveGasPrice.toString());
+      nativeFeeWei = sponsoredBilledGasCostWei(sponsored, input.runtime.gasSponsor.getBillingSurchargeBps());
     } else {
       const native = await executeSystemOwnedNativeTransaction({
+        validateFeeReservation: maximumWei => validatePreparedNativeFeeBudget({
+          chain: opportunity.chain, inputAssetSymbol: opportunity.inputAssetSymbol,
+          inputTokenDecimals: opportunity.inputTokenDecimals, budgetInInputToken: selection.estimatedGasCostInInputToken, maximumWei,
+        }),
         chain: opportunity.chain,
         wallet,
         provider,

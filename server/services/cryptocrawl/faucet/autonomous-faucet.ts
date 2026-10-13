@@ -1,3 +1,4 @@
+import { captureCryptoCrawlerWorkGuard } from '../runtime/manual-power-state.js';
 // Canonical CryptoCrawler lifecycle compatibility facade.
 //
 // Historical versions of this file implemented a second trading state machine with
@@ -196,6 +197,8 @@ function realizedProfitSince(cutoff: number): number {
 export class AutonomousCryptoFaucet {
   private readonly faucetId = `canonical-facade-${randomUUID()}`;
   private active = false;
+  private generation = 0;
+  private starting: Promise<void> | null = null;
   private heartbeat: NodeJS.Timeout | null = null;
   private startedAt = 0;
   private lastLoopIterationAt = 0;
@@ -207,19 +210,31 @@ export class AutonomousCryptoFaucet {
 
   async runAutonomousLoop(): Promise<void> {
     if (this.active) return;
-    ensureCanonicalCryptoCrawlerRuntimeWiring();
-    await ensureCryptoCrawlerCoreRuntime();
-    this.active = true;
-    this.startedAt = Date.now();
-    this.lastModeChange = this.startedAt;
-    this.lastLoopIterationAt = this.startedAt;
-    this.heartbeat = setInterval(() => {
-      this.lastLoopIterationAt = Date.now();
-    }, 5_000);
-    this.heartbeat.unref?.();
+    if (this.starting) return this.starting;
+    const guard = captureCryptoCrawlerWorkGuard();
+    guard();
+    const generation = this.generation;
+    const starting = (async () => {
+      ensureCanonicalCryptoCrawlerRuntimeWiring();
+      await ensureCryptoCrawlerCoreRuntime();
+      guard();
+      if (generation !== this.generation) throw new Error('Faucet startup cancelled');
+      this.active = true;
+      this.startedAt = Date.now();
+      this.lastModeChange = this.startedAt;
+      this.lastLoopIterationAt = this.startedAt;
+      this.heartbeat = setInterval(() => {
+        this.lastLoopIterationAt = Date.now();
+      }, 5_000);
+      this.heartbeat.unref?.();
+    })();
+    this.starting = starting;
+    try { await starting; } finally { if (this.starting === starting) this.starting = null; }
   }
 
   stop(): void {
+    this.generation++;
+    this.starting = null;
     this.active = false;
     this.lastModeChange = Date.now();
     if (this.heartbeat) clearInterval(this.heartbeat);

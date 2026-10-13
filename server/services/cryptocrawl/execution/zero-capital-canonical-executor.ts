@@ -58,12 +58,13 @@ type CanonicalRuntimeContext = {
   providers: Map<SupportedChain, providers.JsonRpcProvider>;
   executionWallets: Map<SupportedChain, Wallet>;
   gasSponsor: {
+    getBillingSurchargeBps: () => number;
     execute: (input: {
       wallet: Wallet;
       chainId: number;
       calls: Array<{ to: string; data: string; value?: import('ethers').BigNumber }>;
       timeoutMs: number;
-    }) => Promise<{ transactionHash: string }>;
+    }) => Promise<{ transactionHash: string; actualGasCostWei?: bigint }>;
   };
 };
 

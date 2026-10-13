@@ -1,3 +1,5 @@
+import { cryptoCrawlerWorkSignal, isCryptoCrawlerMarketDataAllowed, onCryptoCrawlerManualPowerPhaseChange } from '../runtime/manual-power-state.js';
+import { getCachedOkxExecutionRestBaseUrl } from './okx-region-authority.js';
 import WebSocket from 'ws';
 import logger from '../../../logger.js';
 import { omniAntennaLayer } from '../../computationalBeam/omniAntennaLayer.js';
@@ -138,8 +140,9 @@ export function getCoinbaseAdvancedPublicWebSocketEndpoint(): string {
 export function getOkxPublicWebSocketEndpoint(): string {
   const explicit = configuredWebSocket('OKX_PUBLIC_WS_URL');
   if (explicit) return explicit;
-  const restBase = (process.env.OKX_API_BASE_URL || 'https://us.okx.com').trim().toLowerCase();
+  const restBase = (getCachedOkxExecutionRestBaseUrl() || process.env.OKX_API_BASE_URL || 'https://us.okx.com').trim().toLowerCase();
   if (restBase.includes('us.okx.com')) return 'wss://wsus.okx.com:8443/ws/v5/public';
+  if (restBase.includes('eea.okx.com')) return 'wss://wseea.okx.com:8443/ws/v5/public';
   return 'wss://ws.okx.com:8443/ws/v5/public';
 }
 
@@ -223,7 +226,7 @@ function rawDecimal(value: unknown): { text?: string; exact: boolean } {
 
 function normalizeLevels(raw: unknown, allowZeroQuantity = false): StreamOrderBookLevel[] {
   if (!Array.isArray(raw)) return [];
-  return raw.map(level => {
+  return raw.map((level): (Omit<StreamOrderBookLevel, 'price' | 'quantity'> & { price: number | null; quantity: number | null }) => {
     if (Array.isArray(level)) {
       const rawPrice = rawDecimal(level[0]);
       const rawQuantity = rawDecimal(level[1]);
@@ -504,8 +507,15 @@ class CexOrderBookStreamManager {
     connectionErrors: 0,
   };
 
+  constructor() {
+    onCryptoCrawlerManualPowerPhaseChange(phase => {
+      if (phase === 'OFF' || phase === 'STOPPING') this.stop();
+    });
+  }
+
   async getQuote(venue: CexStreamVenue, symbolInput: string, maxAgeMs = this.staleMs()): Promise<StreamOrderBookQuote | null> {
-    if (!this.enabled()) return null;
+    if (!this.enabled() || !isCryptoCrawlerMarketDataAllowed()) return null;
+    const power = cryptoCrawlerWorkSignal();
     const requestedCanonical = canonicalCompactSymbol(symbolInput);
     if (!requestedCanonical) return null;
 
@@ -518,7 +528,7 @@ class CexOrderBookStreamManager {
         this.identityInFlight.set(identityKey, pending);
       }
       const identity = await pending.catch(() => null);
-      if (!identity) return null;
+      if (!identity || power.aborted) return null;
       state = this.ensureStream(venue, identity);
     }
 
@@ -558,7 +568,7 @@ class CexOrderBookStreamManager {
       connection.stopped = true;
       if (connection.reconnectTimer) clearTimeout(connection.reconnectTimer);
       if (connection.heartbeatTimer) clearInterval(connection.heartbeatTimer);
-      connection.socket?.close();
+      connection.socket?.terminate();
     }
     this.connections.clear();
     this.standbyConnections.clear();
@@ -689,7 +699,7 @@ class CexOrderBookStreamManager {
   }
 
   private connect(connection: VenueConnectionState): void {
-    if (connection.stopped) return;
+    if (connection.stopped || !isCryptoCrawlerMarketDataAllowed()) return;
     const endpoint = connection.venue === 'coinbase'
       ? getCoinbaseAdvancedPublicWebSocketEndpoint()
       : connection.venue === 'kraken'
@@ -703,6 +713,7 @@ class CexOrderBookStreamManager {
     connection.socket = socket;
 
     socket.once('open', () => {
+      if (connection.stopped || !isCryptoCrawlerMarketDataAllowed()) { socket.terminate(); return; }
       this.stats.connectionsOpened += 1;
       if (connection.reconnectAttempts > 0) this.stats.reconnects += 1;
       connection.reconnectAttempts = 0;
@@ -734,6 +745,7 @@ class CexOrderBookStreamManager {
     });
 
     socket.on('message', data => {
+      if (connection.stopped || !isCryptoCrawlerMarketDataAllowed()) return;
       if (connection.lane === 'primary') this.stats.framesReceived += 1;
       else this.stats.standbyFramesReceived += 1;
       connection.lastMessageAt = Date.now();
@@ -876,7 +888,7 @@ class CexOrderBookStreamManager {
   }
 
   private scheduleReconnect(connection: VenueConnectionState): void {
-    if (connection.stopped || connection.reconnectTimer) return;
+    if (connection.stopped || !isCryptoCrawlerMarketDataAllowed() || connection.reconnectTimer) return;
     connection.reconnectAttempts += 1;
     const exponential = Math.min(30_000, DEFAULT_RECONNECT_DELAY_MS * 2 ** Math.min(connection.reconnectAttempts - 1, 5));
     const jitter = 0.8 + Math.random() * 0.4;
@@ -909,6 +921,7 @@ class CexOrderBookStreamManager {
   }
 
   private send(socket: WebSocket, payload: Record<string, unknown>, venue: CexStreamVenue, operation: string): void {
+    if (!isCryptoCrawlerMarketDataAllowed()) return;
     try {
       socket.send(JSON.stringify(payload));
     } catch (error) {

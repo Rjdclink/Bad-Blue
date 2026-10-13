@@ -22,8 +22,14 @@ const CIRCUIT_FAILURE_THRESHOLD = Math.max(3, Number.isFinite(configuredCircuitF
 const CIRCUIT_COOLDOWN_MS = Math.max(1_000, Number.isFinite(configuredCircuitCooldownMs) ? configuredCircuitCooldownMs : 10_000);
 const circuitStates = new Map<string, HttpCircuitState>();
 
-function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
+function sleep(ms: number, signal?: AbortSignal | null): Promise<void> {
+  signal?.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    const finish = () => { signal?.removeEventListener('abort', abort); resolve(); };
+    const timer = setTimeout(finish, ms);
+    const abort = () => { clearTimeout(timer); signal?.removeEventListener('abort', abort); reject(signal?.reason); };
+    signal?.addEventListener('abort', abort, { once: true });
+  });
 }
 
 function requestOrigin(url: string): string | null {
@@ -132,23 +138,28 @@ export async function fetchJsonWithRetry<T>(
   } = options;
 
   const retryableSet = new Set(retryableStatusCodes);
+  const callerSignal = init?.signal;
+  callerSignal?.throwIfAborted();
   assertCircuitAvailable(url);
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    callerSignal?.throwIfAborted();
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    const signal = callerSignal ? AbortSignal.any([callerSignal, controller.signal]) : controller.signal;
+    let retryDelayMs: number;
 
     try {
       const response = await fetch(url, {
         ...init,
-        signal: controller.signal,
+        signal,
       });
 
-      clearTimeout(timeout);
-
       if (response.ok) {
+        const payload = await response.json() as T;
+        signal.throwIfAborted();
         recordCircuitSuccess(url);
-        return await response.json() as T;
+        return payload;
       }
 
       const retryable = retryableSet.has(response.status);
@@ -159,20 +170,23 @@ export async function fetchJsonWithRetry<T>(
       }
 
       const retryAfterMs = parseRetryAfterMs(response.headers.get('retry-after'));
-      const delayMs = retryAfterMs ?? calculateBackoffDelayMs(attempt, baseDelayMs, maxDelayMs, jitterRatio);
-      await sleep(delayMs);
+      await response.body?.cancel();
+      retryDelayMs = Math.min(maxDelayMs, retryAfterMs ?? calculateBackoffDelayMs(attempt, baseDelayMs, maxDelayMs, jitterRatio));
     } catch (error) {
-      clearTimeout(timeout);
-
+      // An operator/caller cancellation is not a provider failure or retry request.
+      callerSignal?.throwIfAborted();
       const retryable = shouldRetryError(error);
       if (!retryable || attempt === maxRetries) {
         if (retryable) recordCircuitFailure(url);
         throw error;
       }
 
-      const delayMs = calculateBackoffDelayMs(attempt, baseDelayMs, maxDelayMs, jitterRatio);
-      await sleep(delayMs);
+      retryDelayMs = calculateBackoffDelayMs(attempt, baseDelayMs, maxDelayMs, jitterRatio);
+    } finally {
+      // The deadline covers body consumption, not only response headers.
+      clearTimeout(timeout);
     }
+    await sleep(retryDelayMs, callerSignal);
   }
 
   throw new Error('Retry loop exhausted unexpectedly');

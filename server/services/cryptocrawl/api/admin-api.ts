@@ -1,3 +1,6 @@
+import { getCanonicalZeroCapitalDiscoverySnapshot } from '../discovery/zero-capital-canonical-discovery.js';
+import { multiTopologyDiscoveryController } from '../discovery/multi-topology-discovery-controller.js';
+import { getCryptoCrawlerCoreRuntimeStatus } from '../runtime/core-runtime.js';
 import express from 'express';
 import {pipeline} from '../integration/master-pipeline';
 import { gasOracle, balanceMonitor, networkHealth } from '../bridge';
@@ -12,6 +15,8 @@ import {
   activateCanonicalCryptoCrawlerRuntimeWiring,
   deactivateCanonicalCryptoCrawlerRuntimeWiring,
   getCanonicalCryptoCrawlerActivationState,
+  getCanonicalRuntimeComponentIsolationSnapshot,
+  waitForCanonicalRuntimeInstallation,
 } from '../integration/canonical-runtime-wiring.js';
 import { ensureTelemetryBootstrap } from '../integration/telemetry-bootstrap.js';
 import {
@@ -22,6 +27,7 @@ import {
 import { cryptaraGovernance } from '../governance/cryptara-integration.js';
 import {
   getCryptoCrawlerManualPowerPhase,
+  captureCryptoCrawlerWorkGuard,
   isCryptoCrawlerMasterPowerOn,
   setCryptoCrawlerManualPowerPhase,
 } from '../runtime/manual-power-state.js';
@@ -35,6 +41,7 @@ import {
   uninstallCryptaraSuperWorkerAdmission,
 } from '../integration/cryptara-super-worker.js';
 import { getCryptaraParallelProxySnapshot } from '../integration/cryptara-supabase-overflow-worker.js';
+import { profitLadder } from '../governance/profit-ladder.js';
 import { stageManager } from '../governance/stage-management.js';
 import { GovernanceError } from '../governance/types.js';
 import { autonomousFaucet } from '../faucet/autonomous-faucet.js';
@@ -57,17 +64,20 @@ const router = express.Router();
 
 // GET /admin/crypto/status - Get system status (public for dashboard loading)
 router.get('/status', (req, res) => {
+  const readiness = getRuntimeReadiness();
+  const reportedLifecycle = systemState.lifecycle === 'RUNNING' && !readiness.ready ? 'DEGRADED' : systemState.lifecycle;
   const zeroCapital = zeroCapitalEngine.getState();
   res.json({
     success: true,
-    running: systemState.running,
-    lifecycle: systemState.lifecycle,
+    running: systemState.running && readiness.ready,
+    lifecycle: reportedLifecycle,
+    readiness,
     lastError: systemState.lastError,
     control: {
+      ...getCanonicalCryptoCrawlerActivationState(),
       operatorStartRequired: true,
       automaticStartEnabled: false,
       manualPowerPhase: getCryptoCrawlerManualPowerPhase(),
-      ...getCanonicalCryptoCrawlerActivationState(),
     },
     cryptoCrawl: cryptoCrawlState.getStatus(),
     database: getCryptocrawlRuntimeDatabaseSnapshot(),
@@ -352,27 +362,22 @@ const cryptoCrawlState = {
       console.log('[CryptoCrawl] ✓ System enabled');
     } catch (error) {
       await Promise.allSettled([
-        Promise.resolve(gasOracle.stop()),
-        Promise.resolve(balanceMonitor.stop()),
-        Promise.resolve(networkHealth.stop()),
-      ]);
+        () => gasOracle.stop(),
+        () => balanceMonitor.stop(),
+        () => networkHealth.stop(),
+      ].map(stop => Promise.resolve().then(stop)));
       this.enabled = false;
       throw error;
     }
   },
   
   async disable(): Promise<void> {
-    if (!this.enabled) {
-      console.log('[CryptoCrawl] System already disabled');
-      return;
-    }
-    
     console.log('[CryptoCrawl] Disabling system...');
     const results = await Promise.allSettled([
-      Promise.resolve(gasOracle.stop()),
-      Promise.resolve(balanceMonitor.stop()),
-      Promise.resolve(networkHealth.stop()),
-    ]);
+      () => gasOracle.stop(),
+      () => balanceMonitor.stop(),
+      () => networkHealth.stop(),
+    ].map(stop => Promise.resolve().then(stop)));
     this.enabled = false;
 
     const failures = results.filter((result) => result.status === 'rejected');
@@ -466,23 +471,16 @@ router.post('/mode', (req, res) => {
 });
 
 async function rollbackCryptoCrawlerManualStart(): Promise<string[]> {
-  const results = await Promise.allSettled([
-    cryptaraGovernance.shutdown(),
-    deactivateCanonicalCryptoCrawlerRuntimeWiring(),
-    uninstallCryptaraSuperWorkerAdmission(),
-  ]);
-  resetGovernanceInitializationForManualStop();
-  await stopCryptaraHyperBridgeBootstrap();
-  await closeCryptocrawlRuntimeDatabasePools();
-  setCryptoCrawlerManualPowerPhase('OFF');
-  systemState.running = false;
-  if (systemState.lifecycle !== 'RUNNING') {
-    systemState.lifecycle = 'STOPPED';
-    systemState.startedAt = 0;
+  // A failed start can have partially activated any of the ordinary components.
+  // Use the same complete teardown as an explicit stop, including power phase,
+  // pipeline, engine, faucet, workers, telemetry, admission and database pools.
+  const startupError = systemState.lastError;
+  const result = await stopCryptoCrawlerRuntime();
+  if (result.stopped) {
+    systemState.lifecycle = 'FAILED';
+    systemState.lastError = startupError || 'CryptoCrawler startup failed; all components stopped';
   }
-  return results
-    .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
-    .map((result) => result.reason instanceof Error ? result.reason.message : String(result.reason));
+  return result.failures;
 }
 
 export async function stopCryptoCrawlerRuntime(): Promise<{ stopped: boolean; failures: string[] }> {
@@ -491,22 +489,22 @@ export async function stopCryptoCrawlerRuntime(): Promise<{ stopped: boolean; fa
   setCryptoCrawlerManualPowerPhase('STOPPING');
 
   const results = await Promise.allSettled([
-    pipeline.stop(),
-    Promise.resolve(zeroCapitalEngine.stop()),
-    Promise.resolve(autonomousFaucet.stop()),
-    cryptoCrawlState.disable(),
-    deactivateCanonicalCryptoCrawlerRuntimeWiring(),
-    cryptaraGovernance.shutdown(),
-    Promise.resolve(stopCryptaraHyperBridgeBootstrap()),
-  ]);
+    () => pipeline.stop(),
+    () => zeroCapitalEngine.stop(),
+    () => autonomousFaucet.stop(),
+    () => cryptoCrawlState.disable(),
+    () => deactivateCanonicalCryptoCrawlerRuntimeWiring(),
+    () => cryptaraGovernance.shutdown(),
+    () => stopCryptaraHyperBridgeBootstrap(),
+  ].map(stop => Promise.resolve().then(stop)));
 
   const admissionCleanup = await Promise.allSettled([
-    uninstallCryptaraSuperWorkerAdmission(),
+    Promise.resolve().then(() => uninstallCryptaraSuperWorkerAdmission()),
+    Promise.resolve().then(() => resetGovernanceInitializationForManualStop()),
   ]);
   results.push(...admissionCleanup);
-  resetGovernanceInitializationForManualStop();
   const databaseCleanup = await Promise.allSettled([
-    closeCryptocrawlRuntimeDatabasePools(),
+    Promise.resolve().then(() => closeCryptocrawlRuntimeDatabasePools()),
   ]);
   results.push(...databaseCleanup);
 
@@ -519,6 +517,13 @@ export async function stopCryptoCrawlerRuntime(): Promise<{ stopped: boolean; fa
     .map((result) => result.reason instanceof Error ? result.reason.message : String(result.reason));
 
   const stopped =
+    failures.length === 0 &&
+    !getCryptoCrawlerCoreRuntimeStatus().started &&
+    !multiTopologyDiscoveryController.isRunning() &&
+    !getCanonicalZeroCapitalDiscoverySnapshot().started &&
+    !gasOracle.isRunning() &&
+    !balanceMonitor.isRunning() &&
+    !networkHealth.isRunning() &&
     !zeroCapitalEngine.getState().isRunning &&
     !pipeline.isRunning() &&
     !autonomousFaucet.isActive() &&
@@ -554,7 +559,7 @@ type CryptoCrawlerStartResult = {
 };
 
 export async function startCryptoCrawlerRuntime(): Promise<CryptoCrawlerStartResult> {
-  if (systemState.lifecycle === 'RUNNING') {
+  if (systemState.lifecycle === 'RUNNING' && getRuntimeReadiness().ready) {
     return {
       success: true,
       status: 200,
@@ -580,17 +585,22 @@ export async function startCryptoCrawlerRuntime(): Promise<CryptoCrawlerStartRes
     };
   }
 
+  systemState.lifecycle = 'INITIALIZING';
+  systemState.lastError = null;
   setCryptoCrawlerManualPowerPhase('STARTING');
+  const startupGuard = captureCryptoCrawlerWorkGuard();
   reopenCryptocrawlRuntimeDatabasePools();
 
   if (process.env.NODE_ENV === 'production') {
     try {
       await startCryptaraHyperBridgeBootstrap();
+    startupGuard();
       const overflowBootstrap = getCryptaraHyperBridgeBootstrapSnapshot();
       if (overflowBootstrap.state !== 'ready') {
         throw new Error(`CryptoCrawler Overflow data plane is not ready: ${overflowBootstrap.reason || overflowBootstrap.state}`);
       }
       await ensureCryptocrawlOverflowRuntimeSchema();
+    startupGuard();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       systemState.lastError = message;
@@ -611,7 +621,9 @@ export async function startCryptoCrawlerRuntime(): Promise<CryptoCrawlerStartRes
 
   try {
     await initializeGovernance();
+    startupGuard();
     await cryptaraGovernance.initialize();
+    startupGuard();
     console.log('[CryptoCrawl] Start request accepted; governance and Cryptara initialized');
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -667,6 +679,7 @@ export async function startCryptoCrawlerRuntime(): Promise<CryptoCrawlerStartRes
     void ensureTelemetryBootstrap();
     console.log('[CryptoCrawl] Starting crawler dependencies');
     await cryptoCrawlState.enable();
+    startupGuard();
 
     if (process.env.ZERO_CAPITAL_ENABLE_EXECUTION === 'true') {
       const europaReceiverKind = process.env.ZERO_CAPITAL_EUROPA_RECEIVER_KIND?.trim() || 'sushi-v3';
@@ -691,11 +704,10 @@ export async function startCryptoCrawlerRuntime(): Promise<CryptoCrawlerStartRes
 
     const startStage1MarketOperations = async (): Promise<void> => {
       await pipeline.run();
+    startupGuard();
       console.log('[CryptoCrawl] Starting authoritative AutonomousFaucet');
-      void autonomousFaucet.runAutonomousLoop().catch(error => {
-        console.error('[CryptoCrawl] AutonomousFaucet stopped during startup/operation', error);
-        autonomousFaucet.stop();
-      });
+      await autonomousFaucet.runAutonomousLoop();
+      startupGuard();
     };
     await zeroCapitalEngine.start({
       onInitialGasReady: startStage1MarketOperations,
@@ -707,6 +719,10 @@ export async function startCryptoCrawlerRuntime(): Promise<CryptoCrawlerStartRes
       },
     });
 
+    await waitForCanonicalRuntimeInstallation();
+    startupGuard();
+    const readiness = getRuntimeReadiness(false);
+    if (!readiness.ready) throw new Error(`CryptoCrawler startup incomplete: ${readiness.missing.join(', ')}`);
     const marketOperationsAllowed = stageManager.isMarketOperationsAllowed();
     if (!zeroCapitalEngine.getState().isRunning ||
       (marketOperationsAllowed && (!pipeline.isRunning() || !autonomousFaucet.isActive()))) {
@@ -796,6 +812,8 @@ router.post('/stop', async (_req, res) => {
   // says STOPPED. This prevents stale workers/listeners from surviving behind a
   // misleading status flag.
   const uptime = systemState.startedAt ? Date.now() - systemState.startedAt : 0;
+  // Cancel pending startup immediately, then serialize cleanup behind it.
+  setCryptoCrawlerManualPowerPhase('STOPPING');
   const result = await serializeLifecycleCommand(() => stopCryptoCrawlerRuntime());
 
   return res.status(result.stopped ? 200 : 503).json({
@@ -874,7 +892,8 @@ router.post('/emergency', async (req, res) => {
   switch (action) {
     case 'pause_all': {
       governance.pause('human', 'emergency_pause_all');
-      const result = await stopCryptoCrawlerRuntime();
+      setCryptoCrawlerManualPowerPhase('STOPPING');
+      const result = await serializeLifecycleCommand(() => stopCryptoCrawlerRuntime());
       return res.status(result.stopped ? 200 : 503).json({
         success: result.stopped,
         message: result.stopped ? 'All CryptoCrawler operations paused and stopped' : 'Emergency pause left unresolved components',
@@ -916,3 +935,22 @@ async function getRecentLogs(limit: number) {
 }
 
 export {router as adminApi, systemState};
+function getRuntimeReadiness(requirePowerOn = true) {
+  const components = getCanonicalRuntimeComponentIsolationSnapshot();
+  const checks = {
+    masterPower: !requirePowerOn || isCryptoCrawlerMasterPowerOn(),
+    wiring: getCanonicalCryptoCrawlerActivationState().installed,
+    components: components.totalComponents > 0 && components.pendingComponents === 0 && components.degradedComponents === 0,
+    core: getCryptoCrawlerCoreRuntimeStatus().started,
+    discovery: multiTopologyDiscoveryController.isRunning(),
+    zeroCapitalDiscovery: getCanonicalZeroCapitalDiscoverySnapshot().started,
+    scheduler: pipeline.isRunning(),
+    faucet: autonomousFaucet.isActive(),
+    engine: zeroCapitalEngine.getState().isRunning,
+    gasOracle: gasOracle.isRunning(),
+    balanceMonitor: balanceMonitor.isRunning(),
+    networkHealth: networkHealth.isRunning(),
+  };
+  const missing = Object.entries(checks).filter(([, ready]) => !ready).map(([name]) => name);
+  return { ready: missing.length === 0, checks, missing, components };
+}

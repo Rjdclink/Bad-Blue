@@ -1,3 +1,4 @@
+import { assertDiscoveryWorkActive } from './discovery-work-context.js';
 import type { Wallet, providers } from 'ethers';
 import {
   chooseGasFundingMode,
@@ -58,6 +59,7 @@ async function getCachedSelfFundedAuthority(input: {
   wallet: string;
   minimumWei: bigint;
 }): Promise<SystemNativeGasAuthority | null> {
+  assertDiscoveryWorkActive();
   const cached = selfFundedAuthorityCache.get(input.chain);
   if (cached && cached.expiresAt > Date.now() && cached.minimumWei === input.minimumWei) {
     return cached.authority ? { ...cached.authority } : null;
@@ -74,6 +76,7 @@ async function getCachedSelfFundedAuthority(input: {
     // must not disable the initial Pimlico bootstrap lane.
     authority = null;
   }
+  assertDiscoveryWorkActive();
   selfFundedAuthorityCache.set(input.chain, {
     expiresAt: Date.now() + selfFundedProofCacheMs(),
     minimumWei: input.minimumWei,
@@ -113,6 +116,7 @@ export async function getProvenZeroCapitalGasFundingDecision(
   runtime: StrictZeroCapitalGasContext,
   chain: SupportedChain,
 ): Promise<GasFundingDecision> {
+  assertDiscoveryWorkActive();
   if (chain === 'europa') {
     return rememberDecision(chain, {
       chain,
@@ -152,6 +156,7 @@ export async function getProvenZeroCapitalGasFundingDecision(
     ? await getCachedSelfFundedAuthority({ chain, wallet: wallet.address, minimumWei: runwayRequired })
     : null;
 
+  assertDiscoveryWorkActive();
   if (selfFundedAuthority) {
     try {
       const nativeBalance = (await provider.getBalance(wallet.address)).toBigInt();

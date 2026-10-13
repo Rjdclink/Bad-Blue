@@ -31,7 +31,7 @@ assert.match(prices, /const ids = \[\.\.\.new Set\(requested\.map\(entry => entr
 assert.match(prices, /private inFlight = new Map<string, Promise<PriceFetchResult>>\(\)/, 'identical price requests must share in-flight work');
 assert.match(prices, /this\.recordAttributedTelemetry\(result\.canonicalProviderByCoinId, 'coalescedRequests'\)/, 'coalesced price requests must be observable');
 assert.match(prices, /const DEFAULT_LIVE_CACHE_TTL_MS = Math\.max\([\s\S]*Math\.min\(15_000/, 'live-price cache must remain short lived');
-assert.match(prices, /const complete = dedupedIds\.every\(coinId => result\.pricesByCoinId\[coinId\] !== undefined\)/, 'price-cache completeness must be explicit');
+assert.match(prices, /const complete = dedupedIds\.every\(coinId => cacheClass === 'live'[\s\S]{0,180}result\.executionEvidenceByCoinId\[coinId\] !== undefined[\s\S]{0,100}result\.pricesByCoinId\[coinId\] !== undefined\)/, 'price-cache completeness must be explicit');
 assert.match(prices, /if \(complete\) \{[\s\S]{0,400}this\.cache\.set\(cacheKey, \{/, 'partial price evidence must never receive the normal cache TTL');
 assert.match(prices, /rateLimitedResponses:/, 'per-provider telemetry must track 429s');
 assert.match(prices, /cacheHits:/, 'per-provider telemetry must track cache hits');

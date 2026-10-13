@@ -1,5 +1,5 @@
 import { coinGeckoPriceClient } from './coingecko-client.js';
-import { isCryptoCrawlerMasterPowerOn } from '../runtime/manual-power-state.js';
+import { isCryptoCrawlerMarketDataAllowed, onCryptoCrawlerManualPowerPhaseChange } from '../runtime/manual-power-state.js';
 import {
   createZeroCapitalPriceEvidence,
   getFreshZeroCapitalPriceEvidence,
@@ -15,19 +15,20 @@ import {
 class LivePriceMesh {
   private readonly residentEvidence = new Map<string, Readonly<ZeroCapitalPriceEvidence>>();
   private readonly symbolRefreshInFlight = new Map<string, Promise<void>>();
-  private readonly hotSymbols = ['USDC', 'USDT'] as const;
+  private readonly hotSymbols = ['USDC', 'USDT', 'ETH', 'POL', 'BNB', 'AVAX'] as const;
+  private generation = 0;
   private residentPlaneStarted = false;
   private residentPlaneTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor() {
+    onCryptoCrawlerManualPowerPhaseChange(() => {
+      if (!isCryptoCrawlerMarketDataAllowed()) {
+        this.generation++;
+        this.residentEvidence.clear();
+        this.symbolRefreshInFlight.clear();
+      }
+    });
     this.startResidentPricePlane();
-  }
-
-  private liveCacheTtlMs(): number {
-    const configured = Number(process.env.LIVE_PRICE_CACHE_TTL_MS || 3_000);
-    return Number.isFinite(configured)
-      ? Math.max(500, Math.min(15_000, Math.trunc(configured)))
-      : 3_000;
   }
 
   private evidenceMaxAgeMs(): number {
@@ -53,15 +54,20 @@ class LivePriceMesh {
     return [...new Set(symbols.map(symbol => symbol.trim().toUpperCase()).filter(Boolean))].sort();
   }
 
-  private publishResidentEvidence(prices: ReadonlyMap<string, number>): void {
+  private publishResidentEvidence(prices: ReadonlyMap<string, { priceUsd: number; observedAt: number; acquiredAt?: number }>): void {
     const receivedAt = Date.now();
-    const conservativeObservedAt = Math.max(0, receivedAt - this.liveCacheTtlMs());
-    const expiresAt = conservativeObservedAt + this.evidenceMaxAgeMs();
 
-    for (const [rawSymbol, rawPrice] of prices) {
+    for (const [rawSymbol, observation] of prices) {
+      const conservativeObservedAt = observation.observedAt;
+      // Aggregate USD conversions have their own bounded market-age budget;
+      // exact on-chain swap quotes keep their independent, shorter deadlines.
+      const configuredAge = Number(process.env.ZERO_CAPITAL_USD_MARKET_MAX_AGE_MS || 120_000);
+      const marketAgeMs = Number.isFinite(configuredAge) ? Math.max(1000, Math.min(300_000, configuredAge)) : 120_000;
+      const acquiredAt = observation.acquiredAt ?? conservativeObservedAt;
+      const expiresAt = Math.min(acquiredAt + this.evidenceMaxAgeMs(), conservativeObservedAt + marketAgeMs);
       const symbol = rawSymbol.trim().toUpperCase();
-      const priceUsd = Number(rawPrice);
-      if (!symbol || !Number.isFinite(priceUsd) || priceUsd <= 0 || expiresAt <= receivedAt) continue;
+      const priceUsd = Number(observation.priceUsd);
+      if (!Number.isFinite(acquiredAt) || acquiredAt > receivedAt || conservativeObservedAt > receivedAt || !symbol || !Number.isFinite(priceUsd) || priceUsd <= 0 || expiresAt <= receivedAt) continue;
       this.residentEvidence.set(symbol, createZeroCapitalPriceEvidence({
         priceUsd,
         observedAt: conservativeObservedAt,
@@ -85,7 +91,7 @@ class LivePriceMesh {
       // CryptoCrawler price residency is subordinate to the manual master power.
       // Keep the module import-safe for LegalWhat/Pantheon/Lexara: while OFF it
       // performs no crypto provider I/O and consumes no recurring crypto work.
-      if (!isCryptoCrawlerMasterPowerOn()) return;
+      if (!isCryptoCrawlerMarketDataAllowed()) return;
       const now = Date.now();
       const due = this.hotSymbols.filter(symbol => this.needsRefresh(symbol, now));
       if (due.length > 0) this.primeResidentSymbolPrices(due);
@@ -101,7 +107,8 @@ class LivePriceMesh {
    * in-flight refresh. Overlapping callers reuse the same promise per symbol.
    */
   private ensureRefresh(symbols: readonly string[]): Promise<void>[] {
-    if (!isCryptoCrawlerMasterPowerOn()) return [];
+    if (!isCryptoCrawlerMarketDataAllowed()) return [];
+    const generation = this.generation;
     const normalized = this.normalizedSymbols(symbols);
     const waiters: Promise<void>[] = [];
     const missing: string[] = [];
@@ -114,9 +121,9 @@ class LivePriceMesh {
 
     if (missing.length > 0) {
       let pending: Promise<void>;
-      pending = coinGeckoPriceClient.getLiveSymbolPrices(missing)
+      pending = coinGeckoPriceClient.getLiveSymbolPriceEvidence(missing)
         .then(prices => {
-          this.publishResidentEvidence(prices);
+          if (isCryptoCrawlerMarketDataAllowed() && generation === this.generation) this.publishResidentEvidence(prices);
         })
         .finally(() => {
           for (const symbol of missing) {
@@ -141,9 +148,12 @@ class LivePriceMesh {
    */
   async getLiveSymbolPrices(symbols: string[]): Promise<Map<string, number>> {
     const normalized = this.normalizedSymbols(symbols);
-    if (normalized.length === 0 || !isCryptoCrawlerMasterPowerOn()) return new Map<string, number>();
-    const waiters = this.ensureRefresh(normalized);
-    if (waiters.length > 0) await Promise.all(waiters);
+    if (normalized.length === 0 || !isCryptoCrawlerMarketDataAllowed()) return new Map<string, number>();
+    const missing = normalized.filter(symbol => !this.peekLiveSymbolPriceEvidence(symbol));
+    // Keep usable evidence immediately available while near-expiry data refreshes.
+    this.primeResidentSymbolPrices(normalized.filter(symbol => !missing.includes(symbol)));
+    if (missing.length > 0) await Promise.allSettled(this.ensureRefresh(missing));
+    if (!isCryptoCrawlerMarketDataAllowed()) return new Map<string, number>();
 
     const now = Date.now();
     const prices = new Map<string, number>();
@@ -163,6 +173,7 @@ class LivePriceMesh {
     symbol: string,
     now = Date.now(),
   ): Readonly<ZeroCapitalPriceEvidence> | null {
+    if (!isCryptoCrawlerMarketDataAllowed()) return null;
     const key = symbol.trim().toUpperCase();
     const evidence = this.residentEvidence.get(key);
     const fresh = getFreshZeroCapitalPriceEvidence(evidence, now);

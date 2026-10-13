@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 
 const provider = fs.readFileSync('server/services/cryptocrawl/integration/zero-capital-flash-provider-wiring.ts', 'utf8');
-const executor = fs.readFileSync('server/services/cryptocrawl/execution/zero-capital-canonical-executor.ts', 'utf8');
+const executor = fs.readFileSync('server/services/cryptocrawl/execution/zero-capital-flash-canonical-executor.ts', 'utf8');
 
 assert.match(provider, /const funding = await context\.getGasFundingDecision\(chain\)/);
 assert.match(provider, /funding\.strictZeroInitialCapitalEligible === true/);

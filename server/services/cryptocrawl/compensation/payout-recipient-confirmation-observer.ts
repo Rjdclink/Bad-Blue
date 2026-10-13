@@ -1,11 +1,12 @@
-import { createHash, createHmac } from 'crypto';
+import { createHash } from 'crypto';
+import { okxPrivateRequest } from '../intelligence/cex-private-authority.js';
+import { captureCryptoCrawlerWorkGuard, cryptoCrawlerWorkSignal, isCryptoCrawlerMarketDataAllowed, onCryptoCrawlerManualPowerPhaseChange } from '../runtime/manual-power-state.js';
 import logger from '../../../logger.js';
 import { pool, isDatabaseConfigured } from '../runtime/cryptocrawl-runtime-database.js';
 import { resolvePayoutFallbackAddress, resolvePrimaryProfitPayoutAddress } from '../core/wallet-identity.js';
 import { withCryptaraSupabasePriority } from '../integration/cryptara-supabase-admission-worker.js';
 
 const INTERVAL_MS = 15_000;
-const OKX_BASE_URL = 'https://us.okx.com';
 const PRIMARY_DESTINATION = resolvePrimaryProfitPayoutAddress() || '';
 const FALLBACK_DESTINATION = resolvePayoutFallbackAddress() || '';
 const ETHEREUM_RPC_URL = (
@@ -101,33 +102,11 @@ function destinationFingerprint(address: string): string {
 }
 
 async function okxWithdrawalHistory(target: ProofTarget): Promise<any | null> {
-  const apiKey = (process.env.OKX_API_KEY || '').trim();
-  const apiSecret = (process.env.OKX_API_SECRET || '').trim();
-  const passphrase = (process.env.OKX_API_PASSPHRASE || '').trim();
-  if (!apiKey || !apiSecret || !passphrase) throw new Error('OKX read credentials unavailable for payout confirmation');
-
-  const query = target.withdrawalId
-    ? new URLSearchParams({ wdId: target.withdrawalId }).toString()
-    : new URLSearchParams({ clientId: target.clientId || '' }).toString();
-  if (!query || query.endsWith('=')) return null;
-
-  const path = `/api/v5/asset/withdrawal-history?${query}`;
-  const timestamp = new Date().toISOString();
-  const signature = createHmac('sha256', apiSecret).update(`${timestamp}GET${path}`).digest('base64');
-  const response = await fetch(`${OKX_BASE_URL}${path}`, {
-    headers: {
-      'OK-ACCESS-KEY': apiKey,
-      'OK-ACCESS-SIGN': signature,
-      'OK-ACCESS-TIMESTAMP': timestamp,
-      'OK-ACCESS-PASSPHRASE': passphrase,
-      'Content-Type': 'application/json',
-    },
-  });
-  const body: any = await response.json().catch(() => null);
-  if (!response.ok || String(body?.code ?? '') !== '0') {
-    throw new Error(`OKX withdrawal-history read failed (${response.status}/${String(body?.code ?? 'unknown')})`);
-  }
-  const rows = Array.isArray(body?.data) ? body.data : [];
+  if (!target.withdrawalId && !target.clientId) return null;
+  const parameters: Record<string, string> = target.withdrawalId
+    ? { wdId: target.withdrawalId }
+    : { clientId: target.clientId! };
+  const { data: rows } = await okxPrivateRequest('/api/v5/asset/withdrawal-history', 'GET', parameters, { lane: 'account_read' });
   return rows.find((row: any) => target.withdrawalId
     ? String(row?.wdId || '') === target.withdrawalId
     : String(row?.clientId || '') === target.clientId) || rows[0] || null;
@@ -135,23 +114,39 @@ async function okxWithdrawalHistory(target: ProofTarget): Promise<any | null> {
 
 async function ethereumRpc(method: string, params: unknown[]): Promise<any> {
   if (!/^https:\/\//i.test(ETHEREUM_RPC_URL)) throw new Error('Ethereum payout confirmation RPC unavailable');
+  const power = cryptoCrawlerWorkSignal();
+  power.throwIfAborted();
+  const controller = new AbortController();
+  const abort = () => controller.abort(power.reason);
+  power.addEventListener('abort', abort, { once: true });
+  const timeout = setTimeout(() => controller.abort(), 12_000);
+  try {
   const response = await fetch(ETHEREUM_RPC_URL, {
+    signal: controller.signal,
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
   });
   const body: any = await response.json().catch(() => null);
   if (!response.ok || !body || body.error) throw new Error(`Ethereum payout confirmation RPC ${method} failed`);
+  controller.signal.throwIfAborted();
   return body.result;
+  } finally {
+    clearTimeout(timeout);
+    power.removeEventListener('abort', abort);
+  }
 }
 
 async function verifyTarget(target: ProofTarget, label: string): Promise<RecipientProof | null> {
+  const guard = captureCryptoCrawlerWorkGuard();
+  guard();
   const destination = destinationFor(target.destinationMode);
   if (!/^0x[0-9a-fA-F]{40}$/.test(destination)) {
     throw new Error(`${label} ${target.destinationMode} destination unavailable`);
   }
 
   const record = await okxWithdrawalHistory(target);
+  guard();
   if (!record) return null;
   const state = String(record.state ?? '');
   if (state !== '2') return null;
@@ -213,21 +208,30 @@ class PayoutRecipientConfirmationObserver {
   private timer: NodeJS.Timeout | null = null;
   private inFlight: Promise<void> | null = null;
   private running = false;
+  private generation = 0;
+
+  constructor() {
+    onCryptoCrawlerManualPowerPhaseChange(phase => {
+      if (phase === 'OFF' || phase === 'STOPPING') this.stop();
+    });
+  }
 
   start(): void {
-    if (this.running) return;
+    if (this.running || !isCryptoCrawlerMarketDataAllowed()) return;
     this.running = true;
     void this.tick();
   }
 
   stop(): void {
+    this.generation++;
     this.running = false;
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
   }
 
   private async tick(): Promise<void> {
-    if (!this.running) return;
+    if (!this.running || !isCryptoCrawlerMarketDataAllowed()) return;
+    const generation = this.generation;
     if (!this.inFlight) {
       this.inFlight = this.reconcile().finally(() => { this.inFlight = null; });
     }
@@ -240,7 +244,7 @@ class PayoutRecipientConfirmationObserver {
         moneyMovingAuthority: false,
       });
     } finally {
-      if (!this.running) return;
+      if (!this.running || generation !== this.generation) return;
       this.timer = setTimeout(() => {
         this.timer = null;
         void this.tick();
@@ -250,8 +254,11 @@ class PayoutRecipientConfirmationObserver {
   }
 
   private async reconcile(): Promise<void> {
+    const guard = captureCryptoCrawlerWorkGuard();
+    guard();
     if (!isDatabaseConfigured || !PRIMARY_DESTINATION || !ETHEREUM_RPC_URL) return;
     await this.reconcilePayoutBatches();
+    guard();
     await this.reconcileTerminalSweepLegs();
   }
 

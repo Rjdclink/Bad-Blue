@@ -71,7 +71,7 @@ for (const required of [
   'this.pendingBackfills.set(input.chain, input)',
   'logBackfillProviderFailover: true',
   'logBackfillAdaptiveRangeSplit: true',
-  'for (const log of logs) await ingestGhostWalletSettlementLog(input.chain, log)',
+  'for (const log of logs) {\n      assertDiscoveryWorkActive();\n      await ingestGhostWalletSettlementLog(input.chain, log);',
 ]) {
   assert.ok(source.includes(required), `Ghost settlement log failover verifier missing: ${required}`);
 }
@@ -81,7 +81,7 @@ assert.doesNotMatch(source, /address:\s*input\.addresses/);
 assert.match(source, /if \(!rangeLimited \|\| fromBlock >= toBlock\) throw error/);
 assert.match(source, /await recordGhostWalletRuntimeState\(\{/);
 
-const ingestIndex = source.indexOf('for (const log of logs) await ingestGhostWalletSettlementLog(input.chain, log)');
+const ingestIndex = source.indexOf('await ingestGhostWalletSettlementLog(input.chain, log)');
 const cursorIndex = source.indexOf('reconciledBlock: toBlock', ingestIndex);
 assert.ok(ingestIndex >= 0 && cursorIndex > ingestIndex, 'Durable reconciliation cursor must advance only after complete log ingestion');
 

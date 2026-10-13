@@ -181,8 +181,7 @@ export function assessSpectraAcquiredEvidence(
     });
   }
   const all = [...grouped.values()];
-  const countsByKind = Object.fromEntries(KINDS.map(kind => [kind, 0]))
-    as Record<SpectraEvidenceKind, number>;
+  const countsByKind = Object.fromEntries(KINDS.map(kind => [kind, 0])) as Record<SpectraEvidenceKind, number>;
   for (const record of all) countsByKind[record.kind]++;
   return {
     sourceRecordCount: all.reduce((sum, item) => sum + item.copies, 0),

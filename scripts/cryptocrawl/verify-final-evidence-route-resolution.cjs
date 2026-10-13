@@ -44,7 +44,7 @@ has(dexDiscovery, 'measureBalancerFlashLoanEconomics', 'DEX observation BPS must
 has(dexDiscovery, 'dex_observation_bps:indicative_not_execution_authority', 'indicative numeric BPS must not become execution authority');
 lacks(dexDiscovery, 'firm_hydration_budget_deferred_this_cycle', 'DEX routes must not be deferred by hydration budget');
 lacks(zeroCapitalQuoter, 'if (netProfitBps < discoveryFloorBps) return null', 'negative measured zero-capital routes must not disappear behind an observation floor');
-has(zeroCapitalQuoter, "multiProviderRpcManager.execute(\n      chain as RpcSupportedChain,\n      'contract_calls'", 'direct atomic route quotes must use the canonical RPC mesh');
+has(zeroCapitalQuoter, "multiProviderRpcManager.executeRead(\n      chain as RpcSupportedChain,\n      'contract_calls'", 'direct atomic route quotes must use the canonical RPC mesh');
 
 // Funding private evidence is acquired for every discovered OKX instrument on the
 // first pass. Entry-window timing can gate submission but cannot gate measurement.

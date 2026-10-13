@@ -1,3 +1,4 @@
+import { captureCryptoCrawlerWorkGuard } from './manual-power-state.js';
 import logger from '../../../logger.js';
 import { installCanonicalWalletConfiguration } from '../core/wallet-identity.js';
 import {
@@ -34,6 +35,7 @@ let coinbaseReadinessScheduled = false;
 let rainbowProfitBridgeScheduled = false;
 let walletConfigurationInstalled = false;
 let started = false;
+let lifecycleGeneration = 0;
 
 function ensureCanonicalWalletConfiguration(): void {
   if (walletConfigurationInstalled) return;
@@ -54,9 +56,10 @@ function ensureCanonicalWalletConfiguration(): void {
 function scheduleCoinbaseReadinessProbe(): void {
   if (coinbaseReadinessScheduled) return;
   coinbaseReadinessScheduled = true;
+  const guard = captureCryptoCrawlerWorkGuard();
   queueMicrotask(() => {
     void import('./coinbase-readiness-wiring.js')
-      .then(module => module.ensureCoinbaseReadinessProbe())
+      .then(module => { guard(); return module.ensureCoinbaseReadinessProbe(); })
       .catch(error => {
         logger.warn('[CryptoCoreRuntime] Coinbase readiness probe unavailable; Coinbase remains discovery-only', {
           component: 'CryptoCoreRuntime',
@@ -70,11 +73,13 @@ function scheduleCoinbaseReadinessProbe(): void {
 function scheduleRainbowProfitBridge(): void {
   if (rainbowProfitBridgeScheduled) return;
   rainbowProfitBridgeScheduled = true;
+  const guard = captureCryptoCrawlerWorkGuard();
+  const generation = lifecycleGeneration;
   queueMicrotask(() => {
     void import('./rainbow-profit-bridge-wiring.js')
-      .then(module => module.ensureRainbowProfitBridgeWiring())
+      .then(module => { guard(); if (generation === lifecycleGeneration) module.ensureRainbowProfitBridgeWiring(); })
       .catch(error => {
-        rainbowProfitBridgeScheduled = false;
+        if (generation === lifecycleGeneration) rainbowProfitBridgeScheduled = false;
         logger.warn('[CryptoCoreRuntime] Treasury retention wiring unavailable; realized profits remain at source', {
           component: 'CryptoCoreRuntime',
           error: error instanceof Error ? error.message : String(error),
@@ -85,6 +90,7 @@ function scheduleRainbowProfitBridge(): void {
 
 async function getLifecycle(): Promise<CryptoCrawlerCoreLifecycle> {
   if (!lifecyclePromise) {
+    const guard = captureCryptoCrawlerWorkGuard();
     // Install the canonical Stage-1 live-pilot policy before any discovery or
     // scheduler module can start. The bootstrap authority mutates StageManager's
     // shared StageConfig object rather than bypassing governance callers.
@@ -118,6 +124,7 @@ async function getLifecycle(): Promise<CryptoCrawlerCoreLifecycle> {
       marketFocusPolicy,
       inventoryPolicy,
     ]) => {
+      guard();
       profitPolicy.ensurePositiveProfitCaptureWiring();
       noBpsMakerPolicy.ensureNoBpsMakerAdmissionWiring();
       hybridCexPolicy.ensureHybridCexExecutionWiring();
@@ -154,13 +161,22 @@ async function getLifecycle(): Promise<CryptoCrawlerCoreLifecycle> {
  * Producer-specific provider/rate failures degrade only their own topology.
  */
 export async function ensureCryptoCrawlerCoreRuntime(): Promise<void> {
+  const guard = captureCryptoCrawlerWorkGuard();
+  const generation = lifecycleGeneration;
+  const active = () => {
+    guard();
+    if (generation !== lifecycleGeneration) throw new Error('Core runtime startup cancelled');
+  };
+  active();
   if (process.env.NODE_ENV === 'production') {
     await ensureCryptocrawlOverflowRuntimeSchema();
   }
+  active();
   ensureStageOneBootstrapAuthority();
   ensureCanonicalWalletConfiguration();
   ensureZeroCapitalRealizedProfitWiring();
   const lifecycle = await getLifecycle();
+  active();
   const changed = lifecycle.start();
   started = lifecycle.isStarted();
   scheduleCoinbaseReadinessProbe();
@@ -172,6 +188,7 @@ export async function ensureCryptoCrawlerCoreRuntime(): Promise<void> {
   // learning is a separate one-per-trading-day lane and never consumes the
   // ordinary 1-3 profit-seeking parent-trade quota.
   await runTreasuryTransferRecoveryOnce();
+  active();
   ensureTreasuryTransferRecoveryWorker();
   ensureCexTreasuryTransferWorker();
   ensureSystemCapitalSweepWorker();
@@ -226,22 +243,25 @@ export async function ensureCryptoCrawlerCoreRuntime(): Promise<void> {
 }
 
 export async function stopCryptoCrawlerCoreRuntime(): Promise<void> {
-  stopControlledLossLearningWorker();
-  stopSystemCapitalSweepWorker();
-  stopCexTreasuryTransferWorker();
-  stopTreasuryTransferRecoveryWorker();
-  stopSystemCapitalPlacementReconciliation();
-  if (!lifecyclePromise) {
-    started = false;
-    return;
-  }
-  const lifecycle = await lifecyclePromise;
-  const changed = lifecycle.stop();
-  started = lifecycle.isStarted();
-  if (!changed) return;
-  logger.info('[CryptoCoreRuntime] Canonical core runtime stopped', {
-    component: 'CryptoCoreRuntime',
-  });
+  lifecycleGeneration++;
+  rainbowProfitBridgeScheduled = false;
+  const results = await Promise.allSettled([
+    () => stopControlledLossLearningWorker(),
+    () => stopSystemCapitalSweepWorker(),
+    () => stopCexTreasuryTransferWorker(),
+    () => stopTreasuryTransferRecoveryWorker(),
+    () => stopSystemCapitalPlacementReconciliation(),
+    () => import('./rainbow-profit-bridge-wiring.js').then(module => module.stopRainbowProfitBridgeWiring()),
+    async () => {
+      if (!lifecyclePromise) { started = false; return; }
+      const lifecycle = await lifecyclePromise;
+      lifecycle.stop();
+      started = lifecycle.isStarted();
+    },
+  ].map(stop => Promise.resolve().then(stop)));
+  const failures = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
+  if (failures.length) throw new AggregateError(failures.map(result => result.reason), 'Core runtime shutdown incomplete');
+  logger.info('[CryptoCoreRuntime] Canonical core runtime stopped', { component: 'CryptoCoreRuntime' });
 }
 
 export function getCryptoCrawlerCoreRuntimeStatus(): { started: boolean } {

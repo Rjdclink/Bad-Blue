@@ -10,7 +10,9 @@ const fairness = fs.readFileSync('server/services/cryptocrawl/execution/zero-cap
 const overflowSchema = fs.readFileSync('server/services/cryptocrawl/runtime/cryptocrawl-overflow-runtime-schema.ts', 'utf8');
 const fairnessMigration = fs.readFileSync('server/migrations/059_cryptocrawler_zero_capital_rescue_fairness.sql', 'utf8');
 const mesh = fs.readFileSync('server/services/cryptocrawl/integration/bps-compression-mesh.ts', 'utf8');
-const executor = fs.readFileSync('server/services/cryptocrawl/execution/zero-capital-canonical-executor.ts', 'utf8');
+// The flash implementation was split from the canonical router. Inspect its real
+// file directly so standalone and deployment-preflight checks see the same code.
+const executor = fs.readFileSync('server/services/cryptocrawl/execution/zero-capital-flash-canonical-executor.ts', 'utf8');
 const stageOneSpread = fs.readFileSync('server/services/cryptocrawl/integration/stage-one-spread-observability.ts', 'utf8');
 const apeV4 = fs.readFileSync('server/services/cryptocrawl/integration/zero-capital-profitability-rescue-v4.ts', 'utf8');
 const receiverManager = fs.readFileSync('server/services/cryptocrawl/execution/adapters/sponsored-receiver-manager.ts', 'utf8');
@@ -32,7 +34,7 @@ assert.match(quoter, /quoteLeg\(provider, route\.chain, leg, currentAmount, rema
 assert.match(quoter, /if \(error instanceof Error && error\.message\.includes\('quote deadline'\)\) return null/);
 
 // First-pass evidence acquisition uses the canonical redundant RPC mesh.
-assert.match(quoter, /multiProviderRpcManager\.execute\([\s\S]*'contract_calls'/);
+assert.match(quoter, /multiProviderRpcManager\.executeRead\([\s\S]*'contract_calls'/);
 assert.match(quoter, /rpcProvider => quoteLegAgainstProvider\(rpcProvider, chain, leg, amountIn\)/);
 
 // Exact quote evidence is reused only inside the same canonical block. One logical
@@ -81,7 +83,7 @@ assert.match(dynamic, /Preliminary discovery intentionally leaves flash-loan cos
 // configured-route economics. Direct CoinGecko dependence can never suppress the
 // dynamic candidate/BPS stream when that one provider is exhausted or cooling down.
 assert.match(dynamic, /import \{ livePriceMesh \} from '\.\.\/bridge\/live-price-mesh\.js'/);
-assert.match(dynamic, /livePriceMesh\.getLiveSymbolPrices\(\['ETH'\]\)/);
+assert.match(dynamic, /livePriceMesh\.getLiveSymbolPrices\(\[nativeSymbol\]\)/);
 assert.doesNotMatch(dynamic, /coinGeckoPriceClient/);
 
 // Provider evidence is independently bounded. Each applicable protocol gets its
@@ -161,7 +163,7 @@ assert.match(discovery, /function refreshReceiverFleetForCycle\(target: Canonica
 assert.match(discovery, /const task = currentReceiverFleetTask\(target\)/);
 assert.match(discovery, /void withWatchdog\(task, receiverFleetWatchdogMs\(\), 'zero-capital receiver fleet'\)\.then/);
 assert.match(discovery, /globalProviderAdmissionBlocked: false/);
-assert.match(discovery, /async function scanOneChain\([\s\S]*const funding = await strictFunding\(target, chain\)/);
+assert.match(discovery, /async function scanOneChain\([\s\S]*const funding = await runDiscoveryWork\([\s\S]*\(\) => strictFunding\(target, chain\)/);
 assert.match(discovery, /const resourceReady = funding\.mode !== 'unavailable'[\s\S]*funding\.strictZeroInitialCapitalEligible === true[\s\S]*funding\.operatorMonetaryInputRequired === false[\s\S]*receiverReady/);
 assert.match(discovery, /runFairZeroCapitalProfitabilityRescue\(/);
 assert.match(discovery, /const selected = await repriceZeroCapitalProviderEconomics\(/);
@@ -169,9 +171,9 @@ assert.match(discovery, /getGasFundingDecision: selectedChain => strictFunding\(
 assert.match(discovery, /runChainScanWithWatchdog\(chain, provider\)/);
 assert.match(discovery, /const chainScanTasks = new Map<SupportedChain, Promise<void>>\(\)/);
 assert.match(discovery, /if \(existing\) \{[\s\S]*duplicate scan suppressed[\s\S]*return;/);
-assert.match(discovery, /await withWatchdog\(tracked, chainScanWatchdogMs\(\), `zero-capital \$\{chain\} chain scan`\)/);
-assert.match(discovery, /timedOutScanOwnershipReleased: error instanceof DiscoveryWatchdogTimeoutError/);
-assert.match(discovery, /lateTimedOutScanGenerationInvalidated: error instanceof DiscoveryWatchdogTimeoutError/);
+assert.match(discovery, /tracked = runDiscoveryWork\(`zero-capital \$\{chain\} chain scan`, chainScanWatchdogMs\(\)/);
+assert.match(discovery, /timedOutScanOwnershipReleased: error instanceof Error && error\.message\.includes\('deadline exceeded'\)/);
+assert.match(discovery, /lateTimedOutScanGenerationInvalidated: error instanceof Error && error\.message\.includes\('deadline exceeded'\)/);
 assert.match(discovery, /function schedule\(\): void/);
 assert.match(discovery, /cycleInFlight = cycle\(\)\.finally\(\(\) => \{ cycleInFlight = null; schedule\(\); \}\)/);
 assert.match(discovery, /degradedReceiverCycleMode: 'chain_local_admission_provider_repricing_continues'/);
@@ -180,7 +182,7 @@ assert.match(discovery, /schedulerAuthority:\s*false/);
 assert.match(discovery, /executionAuthority:\s*false/);
 
 // The runtime core is measurement-only. Configured and dynamic candidates must
-// converge before one fairness-ordered Atomic transformation pass; a hidden first
+// enter the same fairness-ordered Atomic transformation path as each lane completes; a hidden first
 // Rescue V2 pass here consumes the short live evidence TTL and is forbidden.
 assert.match(core, /Atomic rescue belongs to that canonical discovery layer/);
 assert.match(core, /duplicateAtomicRescuePass: false/);
@@ -218,6 +220,9 @@ assert.match(mesh, /const zeroFloor = bounded\(process\.env\.CRYPTOCRAWL_BPS_MES
 // Execution remains strict positive all-in and belongs only to the canonical executor.
 assert.match(executor, /Sole ZERO_CAPITAL_ATOMIC execution route/);
 assert.match(executor, /opportunity\.expectedProfit <= 0n/);
+const outputFloor = fs.readFileSync('server/services/cryptocrawl/integration/zero-capital-profit-output-floor.ts', 'utf8');
+assert.match(outputFloor, /ZERO_CAPITAL_STRICT_POSITIVE_MIN_BASE_UNITS = 1n/);
+assert.match(outputFloor, /opportunity\.expectedProfit >= requiredProfitBaseUnits/);
 assert.doesNotMatch(executor, /opportunity\.netProfitBps > 0/);
 assert.match(executor, /Canonical all-in net economics are not strictly positive/);
 

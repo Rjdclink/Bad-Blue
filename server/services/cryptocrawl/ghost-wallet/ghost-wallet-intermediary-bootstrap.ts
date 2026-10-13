@@ -1,3 +1,4 @@
+import { isCryptoCrawlerMarketDataAllowed, onCryptoCrawlerManualPowerPhaseChange, captureCryptoCrawlerWorkGuard } from '../runtime/manual-power-state.js';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { Contract, ethers } from 'ethers';
@@ -144,6 +145,11 @@ async function descriptor(chain: GhostWalletChain): Promise<IntermediaryDescript
 }
 
 class GhostWalletIntermediaryBootstrap {
+  constructor() {
+    onCryptoCrawlerManualPowerPhaseChange(() => {
+      if (!isCryptoCrawlerMarketDataAllowed()) this.stop();
+    });
+  }
   private running = false;
   private inFlight = false;
   private timer: NodeJS.Timeout | null = null;
@@ -154,7 +160,7 @@ class GhostWalletIntermediaryBootstrap {
   private workStates: BootstrapWorkState[] = [];
 
   start(): void {
-    if (this.running) return;
+    if (this.running || !isCryptoCrawlerMarketDataAllowed()) return;
     this.running = true;
     queueMicrotask(() => { void this.reconcile(); });
   }
@@ -191,22 +197,26 @@ class GhostWalletIntermediaryBootstrap {
 
   private async reconcile(): Promise<void> {
     if (!this.running || this.inFlight) return;
+    const active = captureCryptoCrawlerWorkGuard();
     this.inFlight = true;
     this.lastRunAt = Date.now();
     try {
       await ghostWalletProviderMesh.initialize();
+      active();
       const ready = new Set(ghostWalletProviderMesh.getReadyChains());
       const executable = getGhostWalletPimlicoSupportedChains().filter(chain => ready.has(chain));
       const explicit = configuredRows();
       const explicitChains = new Set(explicit.map(row => row.chain));
       const targets = executable.filter(chain => !explicitChains.has(chain));
       const settled = await Promise.allSettled(targets.map(chain => descriptor(chain)));
+      active();
 
       const verified: Array<{ chain: string; address: string }> = [];
       const pending: GhostWalletChain[] = [];
       const errors: Array<{ chain: GhostWalletChain; error: string }> = [];
       const workStates: BootstrapWorkState[] = [];
       for (let index = 0; index < settled.length; index += 1) {
+        active();
         const chain = targets[index];
         const result = settled[index];
         if (result.status === 'rejected') {
@@ -247,7 +257,9 @@ class GhostWalletIntermediaryBootstrap {
       if (nextJson !== previousJson) {
         process.env.GHOST_WALLET_INTERMEDIARIES_JSON = JSON.stringify(nextRows);
         await ghostWalletEngine.refresh();
+      active();
         await ghostWalletEngine.enqueueReadyIntentPairWork();
+      active();
         ghostWalletWorkSignal.emitWake('explicit_refresh');
       }
 

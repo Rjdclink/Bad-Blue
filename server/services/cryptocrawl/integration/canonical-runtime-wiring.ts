@@ -1,14 +1,19 @@
+import { setTimeout as delay } from 'node:timers/promises';
+import { captureCryptoCrawlerWorkGuard, cryptoCrawlerWorkSignal } from '../runtime/manual-power-state.js';
+import { stopExecutionReadinessProfitabilityWiring } from './execution-readiness-profitability-wiring.js';
+import { stopDynamicProfitabilityAdmissionWiring } from './dynamic-profitability-admission-wiring.js';
+import { stopZeroCapitalRecoveryObservability } from './zero-capital-recovery-observability.js';
 import logger from '../../../logger.js';
 import { ensureProviderMeshPendingStream, providerMeshPendingStream } from '../capital-free/provider-mesh-pending-stream.js';
 import {
   ensureZeroCapitalFundingLifecycleObserver,
   stopZeroCapitalFundingLifecycleObserver,
 } from '../evolution/zero-capital-funding-lifecycle-observer.js';
-import { startCanonicalZeroCapitalDiscovery, stopCanonicalZeroCapitalDiscovery } from '../discovery/zero-capital-canonical-discovery.js';
+import { startCanonicalZeroCapitalDiscovery, stopCanonicalZeroCapitalDiscovery, getCanonicalZeroCapitalDiscoverySnapshot } from '../discovery/zero-capital-canonical-discovery.js';
 import { multiTopologyDiscoveryController } from '../discovery/multi-topology-discovery-controller.js';
 import { ghostWalletUltraWorker } from '../ghost-wallet/ghost-wallet-ultra-worker.js';
 import { ensureStageOneBootstrapAuthority } from '../governance/stage-one-bootstrap-authority.js';
-import { ensureCanonicalIntelligenceOutbox } from '../intelligence/canonical-intelligence-outbox.js';
+import { canonicalIntelligenceOutbox, ensureCanonicalIntelligenceOutbox } from '../intelligence/canonical-intelligence-outbox.js';
 import { canonicalIntelligenceRepository } from '../intelligence/canonical-intelligence-repository.js';
 import { ensureDynamicScalePressureWiring } from '../scaling/dynamic-scale-pressure-wiring.js';
 import { ensureAdaptiveProfitOperationsWiring } from '../runtime/adaptive-profit-operations-wiring.js';
@@ -62,6 +67,7 @@ import { stopCryptaraTwoSpeedRevalidationWiring } from './cryptara-two-speed-rev
 
 let installed = false;
 let runtimeActivationAllowed = false;
+let runtimeGeneration = 0;
 let installRetryTimer: NodeJS.Timeout | null = null;
 let overflowSchemaRepairPromise: Promise<void> | null = null;
 let zeroCapitalStartPromise: Promise<void> | null = null;
@@ -69,7 +75,7 @@ let zeroCapitalRetryTimer: NodeJS.Timeout | null = null;
 let zeroCapitalStartAttempts = 0;
 
 type RuntimeComponentStatus = 'pending' | 'ready' | 'degraded';
-type RuntimeComponentInstaller = () => void | Promise<void>;
+type RuntimeComponentInstaller = () => unknown;
 
 interface RuntimeComponentState {
   status: RuntimeComponentStatus;
@@ -126,6 +132,7 @@ function scheduleRuntimeComponentRetry(name: string, installer: RuntimeComponent
 
 function installRuntimeComponent(name: string, installer: RuntimeComponentInstaller): void {
   if (!runtimeActivationAllowed) return;
+  const generation = runtimeGeneration;
   const previous = currentComponentState(name);
   const attempt = previous.attempts + 1;
   runtimeComponentStates.set(name, {
@@ -136,6 +143,7 @@ function installRuntimeComponent(name: string, installer: RuntimeComponentInstal
   });
 
   const markReady = () => {
+    if (!runtimeActivationAllowed || generation !== runtimeGeneration) return;
     runtimeComponentStates.set(name, {
       status: 'ready',
       attempts: attempt,
@@ -149,6 +157,7 @@ function installRuntimeComponent(name: string, installer: RuntimeComponentInstal
   };
 
   const markDegraded = (error: unknown) => {
+    if (!runtimeActivationAllowed || generation !== runtimeGeneration) return;
     const message = error instanceof Error ? error.message : String(error);
     runtimeComponentStates.set(name, {
       status: 'degraded',
@@ -206,9 +215,11 @@ function startCanonicalZeroCapitalRuntime(): void {
     clearTimeout(zeroCapitalRetryTimer);
     zeroCapitalRetryTimer = null;
   }
+  const generation = runtimeGeneration;
   zeroCapitalStartAttempts += 1;
   zeroCapitalStartPromise = startCanonicalZeroCapitalDiscovery()
     .then(() => {
+      if (generation !== runtimeGeneration) return;
       zeroCapitalRetryTimer = null;
       if (!runtimeActivationAllowed) {
         stopCanonicalZeroCapitalDiscovery();
@@ -229,6 +240,7 @@ function startCanonicalZeroCapitalRuntime(): void {
       });
     })
     .catch(error => {
+      if (generation !== runtimeGeneration || !runtimeActivationAllowed) return;
       const retryMs = zeroCapitalRetryDelayMs();
       logger.error('[ZeroCapitalRuntime] Canonical zero-capital discovery failed to start', {
         component: 'CanonicalCryptoCrawlerRuntimeWiring',
@@ -243,7 +255,7 @@ function startCanonicalZeroCapitalRuntime(): void {
       }
     })
     .finally(() => {
-      zeroCapitalStartPromise = null;
+      if (generation === runtimeGeneration) zeroCapitalStartPromise = null;
     });
 }
 
@@ -262,10 +274,13 @@ function installCanonicalRuntime(): void {
   install('zero_capital_shadow_priority', () => ensureZeroCapitalShadowPriorityWiring());
   install('zero_capital_atomic_stack', () => ensureZeroCapitalAtomicStackWiring());
   install('dynamic_rpc_provider', async () => {
+    const guard = captureCryptoCrawlerWorkGuard();
     try {
       await ensureDynamicRpcProviderWiring();
+      guard();
       ensureProviderMeshPendingStream();
     } finally {
+      guard();
       startCanonicalZeroCapitalRuntime();
     }
   });
@@ -511,12 +526,15 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
 }
 
 export function activateCanonicalCryptoCrawlerRuntimeWiring(): void {
+  captureCryptoCrawlerWorkGuard()();
   runtimeActivationAllowed = true;
   ensureCanonicalCryptoCrawlerRuntimeWiring();
 }
 
 export async function deactivateCanonicalCryptoCrawlerRuntimeWiring(): Promise<void> {
+  runtimeGeneration++;
   runtimeActivationAllowed = false;
+  zeroCapitalStartPromise = null;
 
   if (installRetryTimer) clearTimeout(installRetryTimer);
   installRetryTimer = null;
@@ -527,36 +545,39 @@ export async function deactivateCanonicalCryptoCrawlerRuntimeWiring(): Promise<v
   for (const timer of runtimeComponentRetryTimers.values()) clearTimeout(timer);
   runtimeComponentRetryTimers.clear();
 
-  stopCanonicalZeroCapitalDiscovery();
-  multiTopologyDiscoveryController.stop();
-  stopPredictionMarketDiscoveryWiring();
-  stopOrderBookEvolutionWiring();
-  stopCexFourModeObservabilityWiring();
-  stopCexInventoryReadinessWiring();
-  stopComputationalReactorWiring();
-  stopBpsCompressionMesh();
-  stopBpsFrontierWave3Wiring();
-  stopBpsDecompositionObservability();
-  stopEconomicTransformationWiring();
-  stopProfitabilityRecoveryCoordinator();
-  stopKalshiBpsOptimizationWiring();
-  stopFilteredMempoolObservability();
-  stopZeroXBudgetObservability();
-  stopAcrossBridgeObservability();
-  stopCryptoRuntimeObservability();
-  stopExpandedNetworkObservability();
-  stopExternalCapitalSelectionObserver();
-  stopZeroCapitalFundingLifecycleObserver();
-  stopCryptaraTwoSpeedRevalidationWiring();
-
-  const { stopTelemetryBootstrap } = await import('./telemetry-bootstrap.js');
-  await Promise.allSettled([
-    ghostWalletUltraWorker.stop(),
-    providerMeshPendingStream.stop(),
-    stopTelemetryBootstrap(),
-    stopLearningLifecycleWiring(),
-    stopMeasuredRebalanceRouteEvidenceWiring(),
-  ]);
+  // A single broken stop hook must not strand later workers or sockets.
+  const stopped = await Promise.allSettled([
+    () => canonicalIntelligenceOutbox.stop(),
+    () => stopExecutionReadinessProfitabilityWiring(),
+    () => stopDynamicProfitabilityAdmissionWiring(),
+    () => stopZeroCapitalRecoveryObservability(),
+    () => stopCanonicalZeroCapitalDiscovery(),
+    () => multiTopologyDiscoveryController.stop(),
+    () => stopPredictionMarketDiscoveryWiring(),
+    () => stopOrderBookEvolutionWiring(),
+    () => stopCexFourModeObservabilityWiring(),
+    () => stopCexInventoryReadinessWiring(),
+    () => stopComputationalReactorWiring(),
+    () => stopBpsCompressionMesh(),
+    () => stopBpsFrontierWave3Wiring(),
+    () => stopBpsDecompositionObservability(),
+    () => stopEconomicTransformationWiring(),
+    () => stopProfitabilityRecoveryCoordinator(),
+    () => stopKalshiBpsOptimizationWiring(),
+    () => stopFilteredMempoolObservability(),
+    () => stopZeroXBudgetObservability(),
+    () => stopAcrossBridgeObservability(),
+    () => stopCryptoRuntimeObservability(),
+    () => stopExpandedNetworkObservability(),
+    () => stopExternalCapitalSelectionObserver(),
+    () => stopZeroCapitalFundingLifecycleObserver(),
+    () => stopCryptaraTwoSpeedRevalidationWiring(),
+    () => ghostWalletUltraWorker.stop(),
+    () => providerMeshPendingStream.stop(),
+    () => import('./telemetry-bootstrap.js').then(module => module.stopTelemetryBootstrap()),
+    () => stopLearningLifecycleWiring(),
+    () => stopMeasuredRebalanceRouteEvidenceWiring(),
+  ].map(stop => Promise.resolve().then(stop)));
 
   installed = false;
   runtimeComponentStates.clear();
@@ -566,6 +587,8 @@ export async function deactivateCanonicalCryptoCrawlerRuntimeWiring(): Promise<v
     operatorStartRequired: true,
     automaticRestartAllowed: false,
   });
+  const failures = stopped.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
+  if (failures.length) throw new Error(`Canonical teardown incomplete: ${failures.map(result => String(result.reason)).join('; ')}`);
 }
 
 export function getCanonicalCryptoCrawlerActivationState(): {
@@ -578,4 +601,20 @@ export function getCanonicalCryptoCrawlerActivationState(): {
     activationAllowed: runtimeActivationAllowed,
     installed,
   };
+}
+
+/** Await actual component installation before the master controller reports ON. */
+export async function waitForCanonicalRuntimeInstallation(timeoutMs = 120_000): Promise<void> {
+  const signal = cryptoCrawlerWorkSignal();
+  const deadline = Date.now() + timeoutMs;
+  while (true) {
+    signal.throwIfAborted();
+    const state = getCanonicalRuntimeComponentIsolationSnapshot();
+    if (installed && state.totalComponents > 0 && state.pendingComponents === 0) {
+      if (state.degradedComponents) throw new Error(`Runtime components failed: ${state.components.filter(component => component.status === 'degraded').map(component => `${component.name}: ${component.lastError}`).join('; ')}`);
+      if (getCanonicalZeroCapitalDiscoverySnapshot().started) return;
+    }
+    if (Date.now() >= deadline) throw new Error('Runtime component startup timed out');
+    await delay(50, undefined, { signal });
+  }
 }

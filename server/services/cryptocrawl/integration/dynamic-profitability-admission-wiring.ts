@@ -1,3 +1,4 @@
+import { captureCryptoCrawlerWorkGuard, isCryptoCrawlerMarketDataAllowed } from '../runtime/manual-power-state.js';
 import logger from '../../../logger.js';
 import { fundingRateMonitor } from '../discovery/funding-rate-monitor.js';
 import { measuredCandidateRegistry, type MeasuredCandidate } from '../discovery/measured-candidate-registry.js';
@@ -27,6 +28,7 @@ const makerEvidenceQueue: Array<{
 }> = [];
 let makerEvidenceActive = 0;
 let evidenceScannerSubscribed = false;
+let unsubscribeEvidenceScanner: (() => void) | null = null;
 
 type CexRuntime = {
   execute: (plan: any) => Promise<any>;
@@ -159,7 +161,9 @@ function requestCexEvidenceReacquisition(
   if (evidenceReacquisitionInFlight.has(key) || (evidenceReacquisitionCooldownUntil.get(key) || 0) > Date.now()) return;
 
   const venues = [...new Set(requiredFeeVenues)].filter(venue => EXECUTABLE_CEX_VENUES.has(venue));
+  const guard = captureCryptoCrawlerWorkGuard();
   const task = (async () => {
+    guard();
     const feeResults = venues.length > 0
       ? await Promise.allSettled(venues.map(async venue => ({
           venue,
@@ -173,6 +177,7 @@ function requestCexEvidenceReacquisition(
       return [result.value.venue];
     });
 
+    guard();
     const cycle = await measuredOpportunityGraph.revalidateSymbols([symbol]);
     logger.info('[EvidenceScanner] Targeted CEX minimum execution evidence acquisition completed', {
       component: 'DynamicProfitabilityAdmissionWiring',
@@ -218,7 +223,9 @@ function requestKalshiEvidenceReacquisition(candidate: MeasuredCandidate): void 
     ? candidate.missingInformation.join(',')
     : `${candidate.status}:minimum_execution_evidence_incomplete`;
 
+  const guard = captureCryptoCrawlerWorkGuard();
   const task = (async () => {
+    guard();
     if (funding) await fundingRateMonitor.scanOnce();
     else await refreshKalshiSystemEvidenceNow();
     logger.info('[EvidenceScanner] Targeted Kalshi evidence acquisition completed', {
@@ -257,7 +264,7 @@ function requestKalshiEvidenceReacquisition(candidate: MeasuredCandidate): void 
 }
 
 function drainMakerEvidenceQueue(): void {
-  while (makerEvidenceActive < makerEvidenceConcurrency() && makerEvidenceQueue.length > 0) {
+  while (isCryptoCrawlerMarketDataAllowed() && makerEvidenceActive < makerEvidenceConcurrency() && makerEvidenceQueue.length > 0) {
     makerEvidenceQueue.sort((left, right) => right.priority - left.priority);
     const request = makerEvidenceQueue.shift()!;
     makerEvidenceQueued.delete(request.key);
@@ -265,7 +272,9 @@ function drainMakerEvidenceQueue(): void {
     if (evidenceReacquisitionInFlight.has(request.key)) continue;
 
     makerEvidenceActive += 1;
-    const task = (async () => {
+    const guard = captureCryptoCrawlerWorkGuard();
+  const task = (async () => {
+    guard();
       const feeResults = await Promise.allSettled(request.venues.map(async venue => ({
         venue,
         evidence: await resolveCexFeeEvidence(venue, request.symbol, { forceRefresh: true }),
@@ -279,6 +288,7 @@ function drainMakerEvidenceQueue(): void {
         return makerKnown ? [result.value.venue] : [];
       });
 
+      guard();
       const plan = await evaluateMakerRecoveryCandidate({
         symbol: request.symbol,
         notionalUsd: makerEvidenceNotionalUsd(),
@@ -351,6 +361,7 @@ function requestMakerEvidenceReacquisition(candidate: MeasuredCandidate): void {
 }
 
 function requestMinimumExecutionEvidence(candidate: MeasuredCandidate): void {
+  if (!isCryptoCrawlerMarketDataAllowed()) return;
   if (kalshiEvidenceMissing(candidate)) {
     requestKalshiEvidenceReacquisition(candidate);
     return;
@@ -386,7 +397,7 @@ export function ensureDynamicProfitabilityAdmissionWiring(): void {
 
   if (!evidenceScannerSubscribed) {
     evidenceScannerSubscribed = true;
-    measuredCandidateRegistry.onUpdate(candidate => requestMinimumExecutionEvidence(candidate));
+    unsubscribeEvidenceScanner = measuredCandidateRegistry.onUpdate(candidate => requestMinimumExecutionEvidence(candidate));
     for (const candidate of measuredCandidateRegistry.getRecent(256)) requestMinimumExecutionEvidence(candidate);
     logger.info('[EvidenceScanner] Parallel minimum-execution-evidence scanner installed', {
       component: 'DynamicProfitabilityAdmissionWiring',
@@ -476,4 +487,12 @@ export function ensureDynamicProfitabilityAdmissionWiring(): void {
     bpsSubsystemExecutionAuthority: false,
     terminalSettlementStillRequiredAfterExecution: true,
   });
+}
+export function stopDynamicProfitabilityAdmissionWiring(): void {
+  unsubscribeEvidenceScanner?.();
+  unsubscribeEvidenceScanner = null;
+  evidenceScannerSubscribed = false;
+  makerEvidenceQueue.length = 0;
+  makerEvidenceQueued.clear();
+  evidenceReacquisitionCooldownUntil.clear();
 }

@@ -1,3 +1,5 @@
+import { validatePreparedNativeFeeBudget } from './prepared-native-fee-budget.js';
+import { sponsoredBilledGasCostWei } from '../strategies/gas-sponsorship.js';
 import { BigNumber, Contract, ethers, type Wallet, type providers } from 'ethers';
 import logger from '../../../logger.js';
 import type { CryptaraExecutionFeedback } from '../../cryptara/index.js';
@@ -47,13 +49,14 @@ interface CanonicalRuntimeContext {
   dynamicChainConfigs: Map<Exclude<SupportedChain, 'europa'>, DynamicChainConfig>;
   receiverManager: { getReceiver: (chain: string) => string | null };
   gasSponsor: {
+    getBillingSurchargeBps: () => number;
     getReadiness: () => { ready: boolean };
     execute: (input: {
       wallet: Wallet;
       chainId: number;
       calls: Array<{ to: string; data: string; value?: BigNumber }>;
       timeoutMs: number;
-    }) => Promise<{ transactionHash: string }>;
+    }) => Promise<{ transactionHash: string; actualGasCostWei?: bigint }>;
   };
 }
 
@@ -765,11 +768,13 @@ export async function executeCanonicalZeroCapitalOpportunity(
       receipt = await provider.getTransactionReceipt(transactionHash);
       if (!receipt) receipt = await provider.waitForTransaction(transactionHash, 1, 15_000);
       sponsoredExecution = true;
-      if (receipt?.effectiveGasPrice) {
-        nativeFeeWei = BigInt(receipt.gasUsed.toString()) * BigInt(receipt.effectiveGasPrice.toString());
-      }
+      nativeFeeWei = sponsoredBilledGasCostWei(sponsored, target.gasSponsor.getBillingSurchargeBps());
     } else {
       const native = await executeSystemOwnedNativeTransaction({
+        validateFeeReservation: maximumWei => validatePreparedNativeFeeBudget({
+          chain: opportunity.chain, inputAssetSymbol: opportunity.inputAssetSymbol,
+          inputTokenDecimals: opportunity.inputTokenDecimals, budgetInInputToken: opportunity.estimatedGasCostInInputToken, maximumWei,
+        }),
         chain: opportunity.chain,
         wallet,
         provider,

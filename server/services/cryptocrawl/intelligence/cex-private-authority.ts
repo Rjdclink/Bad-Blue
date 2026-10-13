@@ -1,3 +1,5 @@
+import { setTimeout as delay } from 'node:timers/promises';
+import { captureCryptoCrawlerWorkGuard, cryptoCrawlerWorkSignal } from '../runtime/manual-power-state.js';
 import { createHash, createHmac } from 'crypto';
 import logger from '../../../logger.js';
 import { isDatabaseConfigured } from '../../../db.js';
@@ -70,12 +72,20 @@ function fingerprint(value: string): string {
 }
 
 async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+  const power = cryptoCrawlerWorkSignal();
+  power.throwIfAborted();
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const abort = () => controller.abort(power.reason);
+  power.addEventListener('abort', abort, { once: true });
+  const timeout = setTimeout(() => controller.abort(new Error('Private venue request timed out')), timeoutMs);
   try {
-    return await fetch(url, { ...init, signal: controller.signal });
+    const response = await fetch(url, { ...init, signal: controller.signal });
+    const body = await response.text();
+    controller.signal.throwIfAborted();
+    return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
   } finally {
     clearTimeout(timeout);
+    power.removeEventListener('abort', abort);
   }
 }
 
@@ -96,7 +106,7 @@ async function parseJson(response: Response, provider: string): Promise<any> {
 }
 
 function sleep(ms: number): Promise<void> {
-  return ms > 0 ? new Promise(resolve => setTimeout(resolve, ms)) : Promise.resolve();
+  return delay(Math.max(0, ms), undefined, { signal: cryptoCrawlerWorkSignal() });
 }
 
 // ============================================================================
@@ -287,13 +297,17 @@ export async function krakenPrivateRequest(
   parameters: Record<string, KrakenPrivateValue> = {},
   options: KrakenPrivateRequestOptions = {},
 ): Promise<any> {
+  const guard = captureCryptoCrawlerWorkGuard();
+  guard();
   return serializeKrakenPrivate(async () => {
+    guard();
     const apiKey = requireCredential('KRAKEN_API_KEY');
     const apiSecret = requireCredential('KRAKEN_API_SECRET');
     const decodedSecret = Buffer.from(apiSecret, 'base64');
     if (decodedSecret.length === 0) throw new Error('Kraken API secret is not valid base64');
 
     return withKrakenDistributedLane(apiKey, async nonce => {
+      guard();
       const late = options.lateParameters?.() || {};
       if (Object.prototype.hasOwnProperty.call(late, 'nonce')) {
         throw new Error('Kraken late parameters cannot override nonce authority');
@@ -460,7 +474,7 @@ function normalizeOkxBaseUrl(value: string): string {
 function okxBaseUrlCandidates(): string[] {
   const configured = credential('OKX_API_BASE_URL');
   if (configured) return [normalizeOkxBaseUrl(configured)];
-  return ['https://us.okx.com', 'https://openapi.okx.com'];
+  return ['https://us.okx.com', 'https://openapi.okx.com', 'https://eea.okx.com', 'https://tr.okx.com'];
 }
 
 function laneIntervalMs(lane: OkxPrivateLane): number {
@@ -694,9 +708,11 @@ async function authenticatedOkxRequestFromBase(
 }
 
 async function executeOkxWithAdaptiveRetry<T>(lane: OkxPrivateLane, operation: () => Promise<T>): Promise<T> {
+  const guard = captureCryptoCrawlerWorkGuard();
+  guard();
   for (let attempt = 0; ; attempt++) {
     try {
-      const result = await scheduleOkxLane(lane, operation);
+      const result = await scheduleOkxLane(lane, () => { guard(); return operation(); });
       recordOkxSuccess(lane);
       return result;
     } catch (error) {
@@ -710,6 +726,8 @@ async function executeOkxWithAdaptiveRetry<T>(lane: OkxPrivateLane, operation: (
 }
 
 async function selectOkxRegion(): Promise<OkxRegionSnapshot> {
+  const guard = captureCryptoCrawlerWorkGuard();
+  guard();
   if (okxRegion && okxRegion.expiresAt > Date.now()) return okxRegion;
   if (okxRegionInFlight) return okxRegionInFlight;
 
@@ -740,6 +758,7 @@ async function selectOkxRegion(): Promise<OkxRegionSnapshot> {
         });
         return snapshot;
       } catch (error) {
+        guard();
         failures.push(`${baseUrl}: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
@@ -764,7 +783,10 @@ export async function okxPrivateRequest(
   parameters: Record<string, string> = {},
   options: { timeoutMs?: number; lane?: OkxPrivateLane } = {},
 ): Promise<{ payload: any; data: any[]; baseUrl: string }> {
+  const guard = captureCryptoCrawlerWorkGuard();
+  guard();
   const baseUrl = await getOkxExecutionRestBaseUrl();
+  guard();
   const lane = options.lane || inferOkxLane(path, method);
   const requestExpiresAtMs = method === 'POST' && OKX_EXPIRABLE_ORDER_WRITE_PATHS.has(path)
     ? Date.now() + OKX_ORDER_REQUEST_EXPIRY_MS

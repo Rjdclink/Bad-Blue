@@ -1,3 +1,4 @@
+import { isCryptoCrawlerMarketDataAllowed } from '../runtime/manual-power-state.js';
 import logger from '../../../logger.js';
 import { isDatabaseConfigured, pool } from '../runtime/cryptocrawl-runtime-database.js';
 import {
@@ -87,7 +88,7 @@ export function primeResourceLeaseAuthorityReady(ttlMs = authorityReadyTtlMs()):
 export async function ensureResourceLeaseAuthority(
   priority: CryptaraSupabasePriority = 'high',
 ): Promise<boolean> {
-  if (!isDatabaseConfigured) return false;
+  if (!isCryptoCrawlerMarketDataAllowed() || !isDatabaseConfigured) return false;
   const now = Date.now();
   if (now < authorityReadyUntil) return true;
   if (now < authorityRetryAfter) return false;

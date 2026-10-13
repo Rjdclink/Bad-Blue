@@ -119,8 +119,13 @@ require('./verify-ghost-wallet-100-100-remediation.cjs');
 require('./verify-ghost-wallet-autonomous-readiness.cjs');
 require('./verify-full-runtime-regression-repair.cjs');
 
-const npx = process.platform === 'win32' ? 'npx.cmd' : 'npx';
-execFileSync(npx, ['--no-install', 'tsx', 'scripts/cryptocrawl/compile-flashloan-receiver.ts'], { stdio: 'inherit', env: process.env });
+for (const verifier of ['verify-scan-liveness-behavior.cjs', 'verify-price-lifecycle-behavior.cjs', 'verify-chain-fee-lifecycle-behavior.cjs', 'verify-bps-reduction-behavior.cjs', 'verify-zero-capital-gas-truth.cjs']) {
+  execFileSync(process.execPath, [`scripts/cryptocrawl/${verifier}`], {
+    stdio: 'inherit', env: process.env, timeout: 30_000,
+  });
+}
+
+execFileSync(process.execPath, ['--import', 'tsx', 'scripts/cryptocrawl/compile-flashloan-receiver.ts'], { stdio: 'inherit', env: process.env });
 
 for (const [artifactPath, expectedContract] of [
   ['artifacts/cryptocrawl/CryptocrawlAaveV3FlashLoanReceiver.json', 'CryptocrawlAaveV3FlashLoanReceiver'],

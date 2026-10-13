@@ -1,3 +1,4 @@
+import { captureCryptoCrawlerWorkGuard } from '../runtime/manual-power-state.js';
 import { Contract, providers, utils, Wallet } from 'ethers';
 import logger from '../../../logger.js';
 import {
@@ -77,6 +78,7 @@ function sameAddress(left: string, right: string): boolean { return left.toLower
 
 export class GhostWalletEngine {
   private running = false;
+  private lifecycleGeneration = 0;
   private config: GhostWalletSourceConfig = { intermediaries: [], aaveDelegations: [], eulerDebtAssumptions: [], capitalVaults: [] };
   private quotes: GhostWalletCapitalQuote[] = [];
   private sourceErrors: Array<{ source: string; chain?: string; error: string }> = [];
@@ -89,9 +91,18 @@ export class GhostWalletEngine {
 
   async start(): Promise<void> {
     if (this.running) return;
+    const powerGuard = captureCryptoCrawlerWorkGuard();
+    const generation = this.lifecycleGeneration;
+    const active = () => {
+      powerGuard();
+      if (generation !== this.lifecycleGeneration) throw new Error('Ghost engine startup cancelled');
+    };
+    active();
     await ghostWalletProviderMesh.initialize();
+    active();
     this.config = loadGhostWalletSourceConfig();
     await this.refresh();
+    active();
     this.running = true;
 
     // Dynamic imports avoid a static cycle: both demand verification and retained-profit
@@ -100,7 +111,9 @@ export class GhostWalletEngine {
       import('./ghost-wallet-borrower-demand-mesh.js'),
       import('./ghost-wallet-gas-reserve.js'),
     ]);
+    active();
     await Promise.all([ghostWalletBorrowerDemandMesh.start(), ghostWalletGasReserve.start()]);
+    active();
     const demandStatus = ghostWalletBorrowerDemandMesh.getStatus();
 
     if (demandStatus.configuredFeeds === 0) {
@@ -157,9 +170,10 @@ export class GhostWalletEngine {
     });
   }
 
-  stop(): void {
+  async stop(): Promise<void> {
+    this.lifecycleGeneration++;
     this.running = false;
-    void Promise.all([
+    await Promise.all([
       import('./ghost-wallet-borrower-demand-mesh.js').then(({ ghostWalletBorrowerDemandMesh }) => ghostWalletBorrowerDemandMesh.stop()),
       import('./ghost-wallet-gas-reserve.js').then(({ ghostWalletGasReserve }) => ghostWalletGasReserve.stop()),
     ]).catch(() => undefined);
