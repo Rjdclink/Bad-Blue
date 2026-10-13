@@ -1050,18 +1050,6 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
   if (!userId) {
     return res.status(401).json({ success: false, error: 'Authentication required.' });
   }
-  const refreshKey = requestedSessionId && directEvidence.length === 0
-    ? spectraRecentAcquisitionKey(userId, requestedSessionId, target, details, originSessionId || '')
-    : null;
-  if (refreshOnly && refreshKey) {
-    const prior = spectraRecentAcquisitions.get(refreshKey);
-    if (prior && prior.until > Date.now()) {
-      console.info('[SPECTRA Refresh] reused recent session evidence without provider requests');
-      return res.json({ ...prior.result, acquisition: {
-        ...prior.result.acquisition, reusedRecentEvidence: true,
-      } });
-    }
-  }
   const normalizedTarget = normalizeTargetIntent(target);
   const combinedTargetText = [normalizedTarget, details].filter(Boolean).join(' ');
   const phone = extractPhoneNumber(combinedTargetText);
@@ -1090,6 +1078,18 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
         ]).catch(() => { throw new SpectraRestoreError(); })
       : [[], []];
 
+    const refreshKey = requestedSessionId && directEvidence.length === 0
+      ? spectraRecentAcquisitionKey(userId, requestedSessionId, target, details, originSessionId || '')
+      : null;
+    if (refreshOnly && refreshKey) {
+      const prior = spectraRecentAcquisitions.get(refreshKey);
+      if (prior && prior.until > Date.now()) {
+        console.info('[SPECTRA Refresh] reused recent session evidence without provider requests');
+        return res.json({ ...prior.result, acquisition: {
+          ...prior.result.acquisition, reusedRecentEvidence: true,
+        } });
+      }
+    }
     // The selected target owns identity. Conversation details may contain the
     // assistant's "Open SPECTRA" launch text or unrelated earlier subjects.
     // They must not replace that target in either discovery or background work.
