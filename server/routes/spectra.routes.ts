@@ -46,6 +46,7 @@ import {
   loadSpectraAcquisitionEvidenceRecords,
 } from '../services/spectra/SpectraAcquisitionPersistence';
 import { buildSpectraAcquisitionRecords } from '../services/spectra/SpectraAcquisitionRecords';
+import { assessSpectraAcquiredEvidence } from '../services/spectra/SpectraEvidenceAssessment';
 import { readSpectraPublicFeedRecords } from '../services/spectra/SpectraPublicFeedStore';
 import {
   assessSpectraIdentityBinding,
@@ -2039,6 +2040,11 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
           : {}),
       },
     })), contextEvidence);
+    // Every successfully acquired source snapshot enters one auditable, typed
+    // assessment; context remains separate from authenticated position fixes.
+    const evidenceAssessment = assessSpectraAcquiredEvidence(
+      evidenceRecords, solvedLocationObservations.length,
+    );
     const persistence = await persistSpectraAcquisition({
       userId,
       sessionId: requestedSessionId,
@@ -2048,6 +2054,13 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       evidenceRecords,
       state: {
         pipelineDiagnostics,
+        evidenceAssessmentCounts: {
+          sourceRecordCount: evidenceAssessment.sourceRecordCount,
+          uniqueContributionCount: evidenceAssessment.uniqueContributionCount,
+          duplicateCopies: evidenceAssessment.duplicateCopies,
+          countsByKind: evidenceAssessment.countsByKind,
+          datedSourceEvents: evidenceAssessment.datedSourceEvents,
+        },
         constraintSolverDiagnostics: constraintSolution.diagnostics,
         identityConfidence,
         boundIdentityConfidence,
@@ -2128,6 +2141,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       sessionId: persistence.sessionId || requestedSessionId,
       persistenceAvailable: persistence.available,
       evidenceArchive: { stored: persistence.evidenceRecordCount || 0, omitted: persistence.evidenceRecordsOmitted || 0 },
+      evidenceAssessment,
       acquisition: {
         identityConfidence,
         boundIdentityConfidence,
