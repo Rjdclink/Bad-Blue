@@ -91,6 +91,25 @@ const empty = {
     assert.equal(result.retrieval.retrieved, 0);
     assert.equal(result.results.length, 1, 'keep discovery leads without pretending they were fetched');
   }));
+  await check('per-pass query fanout is capped at three and preserves distinct queries', async () => {
+    const dispatched = [];
+    const run = pass({
+      discoverLegalMeshTier3: async query => { dispatched.push(query); return []; },
+    });
+    await run(['alpha', 'beta', 'gamma', 'delta', 'epsilon'], { useClaude: false });
+    assert.deepEqual(dispatched, ['alpha', 'beta', 'gamma']);
+  });
+  await check('recursive discovery does not refetch selected URLs, including failed ones', async () => {
+    let fetched = 0;
+    const reused = new Set();
+    const run = pass({
+      retrieveSpectraPublicEvidence: async () => { fetched++; return []; },
+    });
+    await run(['wave one'], { useClaude: false }, new Set(), reused);
+    await run(['wave two'], { useClaude: false }, new Set(), reused);
+    assert.equal(fetched, 1);
+    assert.equal(reused.size, 1);
+  });
   await check('empty query batch neither dispatches nor invents retrievals', async () => {
     const result = await pass({ discoverLegalMeshTier3: () => { throw Error('must not dispatch'); } })([], { useClaude: false });
     assert.equal(result.attempted, 0); assert.equal(result.retrieval.selected, 0);
