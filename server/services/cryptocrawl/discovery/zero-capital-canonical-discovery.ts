@@ -25,6 +25,7 @@ import type { GasFundingDecision } from '../capital-free/dynamic-gas-funding-eng
 import { repriceZeroCapitalProviderEconomics } from '../integration/zero-capital-flash-provider-wiring.js';
 import { repriceZeroCapitalAlternativeCapital } from '../integration/zero-capital-alternative-capital-wiring.js';
 import { runFairZeroCapitalProfitabilityRescue } from '../integration/zero-capital-profitability-rescue-fair.js';
+import { runStageTwoZeroCapitalBpsReduction } from '../integration/stage-two-zero-capital-bps-reduction.js';
 import { selectApeStageOneHotSet } from '../integration/ape-directional-market.js';
 import { zeroCapitalRouteEvidenceRegistry } from '../optimization/zero-capital-route-evidence-registry.js';
 import { getProvenZeroCapitalGasFundingDecision } from '../runtime/system-owned-gas-funding-proof-wiring.js';
@@ -497,10 +498,37 @@ async function scanOneChain(
   const accept = async (opportunities: ZeroCapitalOpportunity[], source: 'configured' | 'dynamic', quotes?: QuotedZeroCapitalRoute[]) => {
     assertDiscoveryWorkActive();
     if (!isCurrentChainScanGeneration(chain, generation)) return;
-    for (let index = 0; index < opportunities.length; index++) {
-      recordPreselectionCandidate({ opportunity: opportunities[index], quote: quotes?.[index], source, resourceReady, resourceReason });
-    }
-    await processMeasuredBatch(chain, provider, generation, opportunities);
+    const publish = async (measured: ZeroCapitalOpportunity[]) => {
+      assertDiscoveryWorkActive();
+      if (!isCurrentChainScanGeneration(chain, generation)) return;
+      for (const opportunity of measured) {
+        const originalIndex = opportunities.indexOf(opportunity);
+        const quote = originalIndex >= 0 ? quotes?.[originalIndex] : undefined;
+        recordPreselectionCandidate({ opportunity, quote, source, resourceReady, resourceReason });
+      }
+      await processMeasuredBatch(chain, provider, generation, measured);
+    };
+    const admitted = opportunities.filter(clearsStageOneCandidateOutputFloor);
+    const belowFloor = opportunities.filter(o => Number.isFinite(o.netProfitBps) && !clearsStageOneCandidateOutputFloor(o));
+    // Existing admitted evidence must never wait behind below-floor exploration.
+    const ready = publish(admitted);
+    const reducing = (async () => {
+      if (belowFloor.length === 0) return;
+      let measured = belowFloor;
+      try {
+        measured = await runStageTwoZeroCapitalBpsReduction({
+          chain, provider, opportunities: belowFloor, configuredRoutes: executionRoutes(target),
+          fromQuotedRoute: target.fromQuotedRoute.bind(target),
+        });
+      } catch (error) {
+        assertDiscoveryWorkActive();
+        logger.warn('[ZeroCapitalDiscovery] Below-floor BPS reduction unavailable; original measurements retained', {
+          chain, error: error instanceof Error ? error.message : String(error),
+        });
+      }
+      await publish(measured);
+    })();
+    await Promise.all([ready, reducing]);
   };
   // Each acquisition lane hands fresh results directly to BPS rescue. A slow
   // sibling must not hold completed evidence behind Promise.all's final barrier.

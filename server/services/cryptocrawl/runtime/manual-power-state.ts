@@ -34,6 +34,11 @@ export function isCryptoCrawlerMasterPowerOn(): boolean {
   return phase === 'ON';
 }
 
+/** Manual startup must collect prices before it can report ready. */
+export function isCryptoCrawlerMarketDataAllowed(): boolean {
+  return phase === 'STARTING' || phase === 'ON';
+}
+
 export function assertCryptoCrawlerDatabaseAccessAllowed(): void {
   if (!isCryptoCrawlerDatabaseAccessAllowed()) {
     throw new Error('CRYPTOCRAWLER_MASTER_POWER_OFF');

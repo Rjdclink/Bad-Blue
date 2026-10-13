@@ -1,4 +1,6 @@
 import logger from '../../../logger.js';
+import { assertDiscoveryWorkActive, runDiscoveryWork } from '../runtime/discovery-work-context.js';
+import { recordBpsActivity } from './bps-activity.js';
 import type { providers } from 'ethers';
 import { livePriceMesh } from '../bridge/live-price-mesh.js';
 import type { SupportedChain, ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
@@ -204,7 +206,8 @@ function bindCurrentMeasuredCosts(
 
 function providerFresh(evidence: FlashLoanProviderEconomics, now = Date.now()): boolean {
   const maxAgeMs = bounded(process.env.ZERO_CAPITAL_PROVIDER_EVIDENCE_MAX_AGE_MS, 5_000, 500, 30_000);
-  return evidence.executableEvidenceComplete && now - evidence.observedAt <= maxAgeMs;
+  return evidence.executableEvidenceComplete && Number.isFinite(evidence.observedAt)
+    && evidence.observedAt <= now && now - evidence.observedAt <= maxAgeMs;
 }
 
 function providerSafeBorrowAmount(evidence: FlashLoanProviderEconomics): bigint {
@@ -346,7 +349,9 @@ function quoteBetter(
   candidate: QuotedZeroCapitalRoute,
 ): QuotedZeroCapitalRoute {
   if (!current) return candidate;
-  if (candidate.netProfitBps !== current.netProfitBps) return candidate.netProfitBps > current.netProfitBps ? candidate : current;
+  const candidateRatio = candidate.netProfit * current.amountIn;
+  const currentRatio = current.netProfit * candidate.amountIn;
+  if (candidateRatio !== currentRatio) return candidateRatio > currentRatio ? candidate : current;
   if (candidate.netProfit !== current.netProfit) return candidate.netProfit > current.netProfit ? candidate : current;
   return candidate.quoteLatencyMs < current.quoteLatencyMs ? candidate : current;
 }
@@ -354,7 +359,8 @@ function quoteBetter(
 function strictImprovement(original: ZeroCapitalOpportunity, candidate: QuotedZeroCapitalRoute): boolean {
   return Number.isFinite(candidate.netProfitBps)
     && Number.isFinite(original.netProfitBps)
-    && candidate.netProfitBps > original.netProfitBps + 1e-9;
+    && original.flashLoanAmount > 0n && candidate.amountIn > 0n
+    && candidate.netProfit * original.flashLoanAmount > original.expectedProfit * candidate.amountIn;
 }
 
 function stageTwoPriority(opportunity: ZeroCapitalOpportunity, now = Date.now()): number {
@@ -440,11 +446,13 @@ function createSharedProviderEvidencePromises(
       continue;
     }
 
-    const promise = measureFlashLoanProviders({
+    const promise = runDiscoveryWork(`stage-two provider evidence ${inFlightKey}`, Math.max(1, Math.min(
+      maxQuoteLatencyMs(), deadlineSlackMs(opportunity),
+    )), () => measureFlashLoanProviders({
       chain: input.chain as any,
       provider: input.provider,
       asset: opportunity.inputToken,
-    }).then(measurements => {
+    })).then(measurements => {
       const fresh = measurements.filter(item => providerFresh(item));
       return {
         measurements,
@@ -568,10 +576,12 @@ async function quoteSizes(
 
   const measuredRoute = bindCurrentMeasuredCosts(state.route, state.source);
   const settled = await Promise.allSettled(sizes.map(sizeUsd =>
-    quoteConfiguredZeroCapitalRoute({
+    runDiscoveryWork(`stage-two quote ${state.source.id}`, Math.max(1, Math.min(
+      maxQuoteLatencyMs(), state.source.expiresAt - Date.now() - deadlineSafetyMarginMs(),
+    )), () => quoteConfiguredZeroCapitalRoute({
       ...measuredRoute,
       amountIn: baseUnitsFromUsd(sizeUsd, measuredRoute.inputTokenDecimals, state.inputTokenUsdPrice),
-    }, provider),
+    }, provider)),
   ));
 
   let best = state.best;
@@ -868,6 +878,7 @@ export async function runStageTwoZeroCapitalBpsReduction(
   let expiredBeforeRequote = deadlineRejectedBeforeSelection + prefetchDeadlineRejected;
 
   for (const state of states) {
+    assertDiscoveryWorkActive();
     measuredAlternatives += state.measuredAlternatives;
     if (state.deadlineRejected) {
       expiredBeforeRequote += 1;
@@ -887,6 +898,7 @@ export async function runStageTwoZeroCapitalBpsReduction(
     const existing = measuredCandidateRegistry.get(state.source.id);
     zeroCapitalRouteEvidenceRegistry.record(refined);
     publishMeasuredSuccessor(existing, state.source, refined, state.inputTokenUsdPrice);
+    recordBpsActivity(state.source, { profit: refined.expectedProfit, amount: refined.flashLoanAmount }, 'requote');
     refinedById.set(state.source.id, refined);
     improved += 1;
     if (state.source.netProfitBps <= stageTwoEntryFloorBps() && refined.netProfitBps > stageTwoEntryFloorBps()) {

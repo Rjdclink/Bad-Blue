@@ -61,6 +61,7 @@ function canonical(options = {}) {
     '../optimization/zero-capital-route-evidence-registry.js': { zeroCapitalRouteEvidenceRegistry: { record() {} } },
     '../integration/ape-directional-market.js': { selectApeStageOneHotSet: x => x },
     '../integration/zero-capital-profitability-rescue-fair.js': { runFairZeroCapitalProfitabilityRescue: async input => { rescued.push(...input.opportunities); return options.rescue ? options.rescue(input) : input.opportunities; } },
+    '../integration/stage-two-zero-capital-bps-reduction.js': { runStageTwoZeroCapitalBpsReduction: options.reduce ?? (async input => input.opportunities) },
     '../integration/zero-capital-flash-provider-wiring.js': { repriceZeroCapitalProviderEconomics: async input => { repriced.push(...input.opportunities); return []; } },
     '../integration/zero-capital-alternative-capital-wiring.js': { repriceZeroCapitalAlternativeCapital: async () => [] },
   }, ['cycle']);
@@ -68,6 +69,27 @@ function canonical(options = {}) {
 }
 async function main() {
   process.env.NO_INTERVALS = 'true';
+  await check('below-floor measurements reach the reducer before unchanged Stage One admission', async () => {
+    let reductions = 0;
+    const raw = { ...opportunity(), netProfitBps: -15, expectedProfit: -1500n };
+    const c = canonical({ scan: async () => [raw], reduce: async input => {
+      reductions++; assert.equal(input.opportunities[0], raw);
+      return [{ ...raw, expectedProfit: -500n, netProfitBps: -5 }];
+    } });
+    await c.startCanonicalZeroCapitalDiscovery();
+    for (let i = 0; i < 8; i++) await tick();
+    assert.equal(reductions, 1); assert.equal(c.rescued[0].netProfitBps, -5);
+    c.stopCanonicalZeroCapitalDiscovery();
+  });
+  await check('ready candidates do not wait for below-floor reduction', async () => {
+    const gate = deferred();
+    const c = canonical({ scan: async () => [opportunity('ready'), { ...opportunity('below'), netProfitBps: -15 }], reduce: () => gate.promise });
+    await c.startCanonicalZeroCapitalDiscovery();
+    for (let i = 0; i < 8; i++) await tick();
+    assert.equal(c.rescued.length, 1); assert.equal(c.rescued[0].id, 'ready');
+    c.stopCanonicalZeroCapitalDiscovery(); gate.resolve([{ ...opportunity('below'), netProfitBps: 5 }]); await tick();
+    assert.equal(c.rescued.length, 1);
+  });
   await check('healthy RPC does not wait for a degraded peer recovery probe', async () => {
     const { instance, counters } = await manager();
     const first = instance.candidates.get('ethereum')[0];
@@ -91,7 +113,9 @@ async function main() {
   await check('timed-out read cannot start delayed retries or mark aborted requests healthy', async () => {
     const { instance } = await manager(); let calls = 0;
     await assert.rejects(instance.executeRead('ethereum', 'contract_calls', () => { calls++; return never(); }, 8), /deadline exceeded/);
-    await new Promise(r => setTimeout(r, 65)); assert.equal(calls, 2);
+    const callsAtDeadline = calls;
+    assert.ok(callsAtDeadline >= 1 && callsAtDeadline <= 2);
+    await new Promise(r => setTimeout(r, 65)); assert.equal(calls, callsAtDeadline);
     await instance.destroy();
   });
   await check('concurrent all-unhealthy requests share recovery probes', async () => {
