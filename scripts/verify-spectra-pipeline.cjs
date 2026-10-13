@@ -17,6 +17,7 @@ function load(file) {
   });
   return module.exports;
 }
+const { takeUnseenSpectraQueries } = load('server/services/spectra/SpectraDiscoveryDedup.ts');
 const diagnostics = load('server/services/spectra/SpectraPipelineDiagnostics.ts');
 const retrievalDiagnostics = load('server/services/spectra/SpectraRetrievalDiagnostics.ts');
 const client = load('client/src/lib/spectraFeedStatus.ts');
@@ -25,7 +26,7 @@ const settle = route.slice(route.indexOf('async function settleWithin'), route.i
 const discovery = route.slice(route.indexOf('async function runDiscoveryPass'), route.indexOf('\nfunction normalizeConfidence'));
 const fixture = { url: 'https://example.org/document', title: 'Public document', provider: 'fixture' };
 function pass(overrides = {}) {
-  const scope = {
+  const scope = { takeUnseenSpectraQueries,
     AbortController, setTimeout, clearTimeout,
     discoverLegalMeshTier3: async () => [fixture],
     discoverLegalMeshSupplemental: async () => [],

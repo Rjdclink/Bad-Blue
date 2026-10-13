@@ -34,6 +34,7 @@ export interface SpectraPublicFeedStatus {
 
 const LEASE_MS = 180_000;
 const TICK_MS = 30_000;
+const COLLECTION_CONCURRENCY = 2;
 // Shared public-event feeds change on provider cadence, not each idle scheduler tick.
 const PRUNE_INTERVAL_MS = 60 * 60_000;
 const MAX_BACKOFF_MS = 6 * 60 * 60_000;
@@ -232,28 +233,36 @@ async function runCollectionCycle(signal: AbortSignal): Promise<void> {
     await registerSources();
     sourcesRegistered = true;
   }
-  for (const source of SPECTRA_PUBLIC_FEED_SOURCES) {
-    if (signal.aborted) break;
-    let lease: any;
-    try {
-      lease = await claimFeed(source);
-      if (!lease) continue;
-      let result: SpectraPublicFeedResult;
+  const pending = [...SPECTRA_PUBLIC_FEED_SOURCES];
+  const collectNext = async (): Promise<void> => {
+    while (!signal.aborted) {
+      const source = pending.shift();
+      if (!source) return;
+      let lease: any;
       try {
-        result = await collectSpectraPublicFeed(source.id, {
-          signal, etag: lease.etag || undefined, lastModified: lease.last_modified || undefined,
-        });
-      } catch {
-        result = { provider: source.id, endpoint: source.endpoint, status: 'failed', records: [], errorCode: 'collection_failed' };
+        lease = await claimFeed(source);
+        if (!lease) continue;
+        if (signal.aborted) { await releaseAbortedLease(source, lease); continue; }
+        let result: SpectraPublicFeedResult;
+        try {
+          result = await collectSpectraPublicFeed(source.id, {
+            signal, etag: lease.etag || undefined, lastModified: lease.last_modified || undefined,
+          });
+        } catch {
+          result = { provider: source.id, endpoint: source.endpoint, status: 'failed', records: [], errorCode: 'collection_failed' };
+        }
+        if (signal.aborted) await releaseAbortedLease(source, lease);
+        else await persistFeedResult(source, lease, result);
+      } catch (error) {
+        console.warn('[SPECTRA public feeds] persistence', { provider: source.id, errorCode: persistenceErrorCode(error) });
+        // An uncommitted attempt retains its bounded lease until expiry. A
+        // second replica cannot race an uncertain first replica's transaction.
       }
-      if (signal.aborted) await releaseAbortedLease(source, lease);
-      else await persistFeedResult(source, lease, result);
-    } catch (error) {
-      console.warn('[SPECTRA public feeds] persistence', { provider: source.id, errorCode: persistenceErrorCode(error) });
-      // An uncommitted attempt retains its bounded lease until expiry. A
-      // second replica cannot race an uncertain first replica's transaction.
     }
-  }
+  };
+  // Independent public-event providers can overlap without occupying a database
+  // connection during HTTP. Durable leases and provider cadence still apply.
+  await Promise.all(Array.from({ length: COLLECTION_CONCURRENCY }, collectNext));
   // Retention does not need the provider polling cadence. Retry on the next
   // cycle if the maintenance statement fails; never advance on cancellation.
   if (!signal.aborted && Date.now() >= nextPruneAt) {

@@ -7,7 +7,7 @@ const ts = require('typescript');
 const source = fs.readFileSync(path.join(__dirname,
   '../client/src/components/geoconsole/SpectraEvidenceRecords.tsx'), 'utf8');
 const start = source.indexOf('  useEffect(() => {\n    const controller = new AbortController();');
-const needle = '  }, [scope, sessionId, refreshKey, provider]);';
+const needle = '  }, [scope, sessionId, refreshKey, provider, latestGeneration]);';
 const end = source.indexOf(needle, start);
 assert(start > 0 && end > start, 'evidence-record refresh effect must be present');
 const effect = source.slice(start, end + needle.length);
@@ -31,7 +31,8 @@ const document = {
 };
 const context = vm.createContext({
   AbortController, document, URL, Promise,
-  scope: 'public', sessionId: null, provider: '', refreshKey: 'active',
+  scope: 'public', sessionId: null, provider: '', refreshKey: 'active', latestGeneration: 0,
+  browsingOlder: { current: false }, setShowingOlder() {},
   olderController: { current: null }, exhaustedOlder: { current: false },
   setLoadingMore() {}, setRecords() {}, setNextCursor() {}, setFeeds() {}, setError() {},
   setLoading(value) { loading = value; },
@@ -75,6 +76,11 @@ const succeed = index => pending[index]({
   assert.equal(requests.length, 2, 'returning to a visible tab refreshes the evidence');
   succeed(1);
   await flush();
+  context.browsingOlder.current = true;
+  listeners.get('visibilitychange')();
+  await flush();
+  assert.equal(requests.length, 2, 'history browsing must not be overwritten by a live refresh');
+  context.browsingOlder.current = false;
   cleanup();
   assert.equal(listeners.size, 0, 'cleanup removes the visibility listener');
   assert.equal(timers.size, 0, 'cleanup cancels the next refresh');

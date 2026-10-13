@@ -381,6 +381,28 @@ function jsonEvidence(payload: any, sourceUrl: string): SpectraRetrievedObservat
   return dedupeObservations(observations);
 }
 
+/** Enforce the decoded byte budget before buffering the complete response. */
+async function readBoundedText(response: Response): Promise<string> {
+  if (!response.body) return '';
+  const reader = response.body.getReader();
+  const chunks: Buffer[] = [];
+  let size = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > MAX_RESPONSE_BYTES) throw new RetrievalFailure('response_too_large');
+      chunks.push(Buffer.from(value));
+    }
+    // Response.text() uses UTF-8 and strips a leading byte order mark.
+    return Buffer.concat(chunks, size).toString('utf8').replace(/^\uFEFF/, '');
+  } finally {
+    void reader.cancel().catch(() => undefined);
+    reader.releaseLock();
+  }
+}
+
 async function retrieveOne(
   rawUrl: string,
   parentSignal?: AbortSignal,
@@ -404,8 +426,9 @@ async function retrieveOne(
         controller.abort(new Error('SPECTRA retrieval timeout'));
       }, REQUEST_TIMEOUT_MS);
 
+      let response: Response | undefined;
       try {
-        const response = await fetch(current, {
+        response = await fetch(current, {
           method: 'GET',
           redirect: 'manual',
           signal: controller.signal,
@@ -447,8 +470,7 @@ async function retrieveOne(
         }
 
         if (/json/i.test(contentType)) {
-          const text = await response.text();
-          if (text.length > MAX_RESPONSE_BYTES) throw new RetrievalFailure('response_too_large');
+          const text = await readBoundedText(response);
           let payload: unknown;
           try { payload = JSON.parse(text); }
           catch { throw new RetrievalFailure('invalid_response'); }
@@ -465,8 +487,7 @@ async function retrieveOne(
         }
 
         if (/html|xhtml/i.test(contentType)) {
-          const text = await response.text();
-          if (text.length > MAX_RESPONSE_BYTES) throw new RetrievalFailure('response_too_large');
+          const text = await readBoundedText(response);
           let extracted: ReturnType<typeof htmlEvidence>;
           try { extracted = htmlEvidence(text, current.toString()); }
           catch { throw new RetrievalFailure('invalid_response'); }
@@ -483,6 +504,7 @@ async function retrieveOne(
         }
         throw new RetrievalFailure('unsupported_content_type');
       } finally {
+        if (response?.body && !response.body.locked) void response.body.cancel().catch(() => undefined);
         clearTimeout(timer);
         parentSignal?.removeEventListener('abort', relayAbort);
       }

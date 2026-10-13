@@ -17,7 +17,7 @@ function load(file, overrides = {}) {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
   }).outputText;
   vm.runInNewContext(compiled, {
-    module, exports: module.exports, URL, AbortController, Date,
+    module, exports: module.exports, URL, AbortController, Date, Buffer,
     setTimeout: (...args) => setTimeout(...args), clearTimeout: timer => clearTimeout(timer),
     fetch: async () => { throw new Error('Unexpected network request'); },
     require: name => {
@@ -93,12 +93,33 @@ async function check(name, run) { await run(); passed++; console.log('PASS', nam
       assert.equal(result.evidence.length, 0);
     }
   });
-  await check('unsupported images remain unsupported and report that explicitly', async () => {
+  await check('unsupported binary formats report unsupported_content_type', async () => {
     const result = await retrieve({ fetch: async () => new Response(marker, {
-      headers: { 'content-type': 'image/jpeg' },
+      headers: { 'content-type': 'application/octet-stream' },
     }) });
     assert.equal(result.events[0].reason, 'unsupported_content_type');
     assert.equal(result.evidence.length, 0);
+  });
+  await check('malformed supported images report invalid_response, not a transport failure', async () => {
+    const result = await retrieve({ fetch: async () => new Response(marker, {
+      headers: { 'content-type': 'image/jpeg' },
+    }) });
+    assert.equal(result.events[0].reason, 'invalid_response');
+    assert.equal(result.evidence.length, 0);
+  });
+  await check('streamed multibyte bodies are stopped at the byte budget', async () => {
+    let pulls = 0, cancelled = false;
+    const chunk = new TextEncoder().encode('é'.repeat(600_000));
+    const body = new ReadableStream({
+      pull(controller) { pulls++; controller.enqueue(chunk); },
+      cancel() { cancelled = true; },
+    }, { highWaterMark: 0 });
+    const result = await retrieve({ fetch: async () => new Response(body, {
+      headers: { 'content-type': 'text/html' },
+    }) });
+    assert.equal(result.events[0].reason, 'response_too_large');
+    assert.equal(pulls, 2, 'must stop reading once the byte budget is exceeded');
+    assert(cancelled, 'must cancel the remainder of the body');
   });
   await check('invalid JSON is not reported as an empty successful response', async () => {
     const result = await retrieve({ fetch: async () => json(marker) });
