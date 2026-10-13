@@ -19,6 +19,7 @@ function load(file) {
 }
 const diagnostics = load('server/services/spectra/SpectraPipelineDiagnostics.ts');
 const retrievalDiagnostics = load('server/services/spectra/SpectraRetrievalDiagnostics.ts');
+const discoveryDedup = load('server/services/spectra/SpectraDiscoveryDedup.ts');
 const client = load('client/src/lib/spectraFeedStatus.ts');
 const route = read('server/routes/spectra.routes.ts');
 const settle = route.slice(route.indexOf('async function settleWithin'), route.indexOf('\nfunction extractPhoneNumber'));
@@ -35,6 +36,7 @@ function pass(overrides = {}) {
     mergePublicRetrievedMetadata: (_prior, value) => ({ retrieved: true, publishedAt: value.publishedAt }),
     retrieveSpectraPublicEvidence: async () => [],
     ...retrievalDiagnostics,
+    ...discoveryDedup,
     ...overrides,
   };
   vm.runInNewContext(compile(settle + '\n' + discovery + '\nthis.run = runDiscoveryPass;'), scope);
@@ -139,6 +141,22 @@ const empty = {
     assert.equal(report.outcome, 'regional-context');
     assert.equal(report.coordinateFusion.executed, false);
     assert.match(client.spectraPipelineNotices(report).join(' '), /Regional inference is evaluated separately/);
+  });
+  await check('invalid counts cannot claim processing when sanitized totals are zero', () => {
+    for (const value of [Infinity, NaN, -1, 0.5]) {
+      const report = diagnostics.buildSpectraPipelineDiagnostics({ ...empty,
+        solvedObservations: value, regionalCandidates: value,
+      });
+      assert.equal(report.observations.solved, 0);
+      assert.equal(report.regionalCandidates, 0);
+      assert.equal(report.coordinateFusion.executed, false);
+      assert.equal(report.outcome, 'no-mappable-evidence');
+    }
+    const regional = diagnostics.buildSpectraPipelineDiagnostics({ ...empty,
+      solvedObservations: Infinity, regionalCandidates: 1,
+    });
+    assert.equal(regional.coordinateFusion.executed, false);
+    assert.equal(regional.outcome, 'regional-context');
   });
   await check('accepted observation path reports fusion separately from retrieved pages', () => {
     const report = diagnostics.buildSpectraPipelineDiagnostics({ ...empty,

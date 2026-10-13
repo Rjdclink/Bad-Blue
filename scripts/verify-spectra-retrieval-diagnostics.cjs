@@ -93,9 +93,9 @@ async function check(name, run) { await run(); passed++; console.log('PASS', nam
       assert.equal(result.evidence.length, 0);
     }
   });
-  await check('unsupported images remain unsupported and report that explicitly', async () => {
+  await check('unsupported GIF images report their unsupported content type explicitly', async () => {
     const result = await retrieve({ fetch: async () => new Response(marker, {
-      headers: { 'content-type': 'image/jpeg' },
+      headers: { 'content-type': 'image/gif' },
     }) });
     assert.equal(result.events[0].reason, 'unsupported_content_type');
     assert.equal(result.evidence.length, 0);

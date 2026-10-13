@@ -44,6 +44,8 @@ const issueCodes = new Set([
 export function buildSpectraPipelineDiagnostics(input: PipelineInput) {
   const selected = count(input.retrieval.selected);
   const retrieved = Math.min(selected, count(input.retrieval.retrieved));
+  const solved = count(input.solvedObservations);
+  const regionalCandidates = count(input.regionalCandidates);
   const issues: Record<string, number> = {};
   for (const issue of input.qualityIssues) {
     const code = issueCodes.has(issue.code) ? issue.code : 'other';
@@ -77,13 +79,13 @@ export function buildSpectraPipelineDiagnostics(input: PipelineInput) {
       accepted: count(input.acceptedObservations),
       rejected: count(input.rejectedObservations),
       qualityIssues: issues,
-      solved: count(input.solvedObservations),
+      solved,
     },
     coordinateFusion: {
-      executed: input.solvedObservations > 0,
+      executed: solved > 0,
       candidates: count(input.fusedCandidates),
     },
-    regionalCandidates: count(input.regionalCandidates),
+    regionalCandidates,
     regional: input.regional ? {
       sourcesEvaluated: count(input.regional.sourcesEvaluated),
       corroboratedClues: count(input.regional.corroboratedClues),
@@ -100,8 +102,8 @@ export function buildSpectraPipelineDiagnostics(input: PipelineInput) {
       mappedBy: ['corroborated', 'public-document', 'public-profile', 'phone-assignment', 'supplied-clue'].includes(input.regional.mappedBy)
         ? input.regional.mappedBy : 'none',
     } : undefined,
-    outcome: input.solvedObservations > 0 ? 'location-observations' as const
-      : input.regionalCandidates > 0 ? 'regional-context' as const
+    outcome: solved > 0 ? 'location-observations' as const
+      : regionalCandidates > 0 ? 'regional-context' as const
       : 'no-mappable-evidence' as const,
   };
 }
