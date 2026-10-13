@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import * as ExifReader from 'exifreader';
+import ExifReader from 'exifreader';
 import type { SpectraRetrievedEvidence } from './SpectraPublicRetrieval';
 
 type SocialPlatform = 'Bluesky' | 'Mastodon' | 'Facebook' | 'Instagram' | 'X' | 'Web';
