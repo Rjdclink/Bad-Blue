@@ -12,7 +12,7 @@ export interface SpectraSatelliteScene {
 }
 
 const STAC_SEARCH = 'https://earth-search.aws.element84.com/v1/search';
-const STAC_COLLECTIONS = new Set(['sentinel-2-c1-l2a', 'landsat-c2-l2']);
+const STAC_COLLECTIONS = new Set(['sentinel-2-c1-l2a', 'sentinel-2-l2a', 'landsat-c2-l2']);
 const MAX_RESPONSE_BYTES = 750_000;
 const MAX_ITEMS = 20;
 
@@ -50,6 +50,7 @@ function scene(value: unknown, fromMs: number, toMs: number): SpectraSatelliteSc
     && item.bbox.every((n: unknown) => typeof n === 'number' && Number.isFinite(n))
     && Math.abs(item.bbox[0]) <= 180 && Math.abs(item.bbox[2]) <= 180
     && Math.abs(item.bbox[1]) <= 90 && Math.abs(item.bbox[3]) <= 90
+    && item.bbox[1] <= item.bbox[3]
     ? [...item.bbox] as number[] : undefined;
   const links = Array.isArray(item.links)
     ? item.links.slice(0, 12).flatMap((link: unknown) => validLink(link) || [])
