@@ -1,4 +1,5 @@
 import type { SpectraRetrievedEvidence } from './SpectraPublicRetrieval';
+import { discoveryFetch, discoverySignal } from '../../lexara/DiscoveryDiagnostics';
 
 /**
  * X's documented Post lookup supplies media expansion only for a post that
@@ -80,6 +81,7 @@ export async function collectSpectraXPostMedia(
   options: { token?: string; fetchImpl?: typeof fetch; signal?: AbortSignal } = {},
 ): Promise<SpectraXMediaLookup> {
   const token = (options.token ?? process.env.SPECTRA_X_BEARER_TOKEN ?? '').trim();
+  const requestSignal = discoverySignal(options.signal);
   if (!token) return { posts: [], attempted: 0, retrieved: 0, failed: 0, status: 'unconfigured' };
 
   // Input MUST be a successfully retrieved post, never a search-result URL.
@@ -94,10 +96,10 @@ export async function collectSpectraXPostMedia(
   const resolved = new Map<string, SpectraRetrievedEvidence>();
   let attempted = 0, failed = 0;
   const acquirePost = async ([id, page]: [string, SpectraRetrievedEvidence]): Promise<void> => {
-    if (options.signal?.aborted) return;
+    if (requestSignal?.aborted) return;
     const controller = new AbortController();
     const cancel = () => controller.abort();
-    options.signal?.addEventListener('abort', cancel, { once: true });
+    requestSignal?.addEventListener('abort', cancel, { once: true });
     const timer = setTimeout(cancel, TIMEOUT_MS);
     timer.unref?.();
     attempted++;
@@ -107,7 +109,7 @@ export async function collectSpectraXPostMedia(
       endpoint.searchParams.set('expansions', 'attachments.media_keys');
       endpoint.searchParams.set('media.fields', 'media_key,type,url');
       endpoint.searchParams.set('tweet.fields', 'created_at');
-      const response = await (options.fetchImpl || fetch)(endpoint, {
+      const response = await discoveryFetch(options.fetchImpl || fetch, endpoint, {
         method: 'GET',
         redirect: 'error',
         signal: controller.signal,
@@ -137,7 +139,7 @@ export async function collectSpectraXPostMedia(
       failed++;
     } finally {
       clearTimeout(timer);
-      options.signal?.removeEventListener('abort', cancel);
+      requestSignal?.removeEventListener('abort', cancel);
     }
   };
   // At most two X requests in flight; results retain their original post order.
@@ -154,6 +156,6 @@ export async function collectSpectraXPostMedia(
     attempted,
     retrieved: posts.length,
     failed,
-    status: failed || (options.signal?.aborted && attempted < selected.size) ? 'partial' : 'complete',
+    status: failed || (requestSignal?.aborted && attempted < selected.size) ? 'partial' : 'complete',
   };
 }
