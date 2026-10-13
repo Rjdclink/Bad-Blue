@@ -82,6 +82,7 @@ import { publicProfileContactMatch, publicProfileNameMatch } from '../services/s
 import { publicProfileLeads } from '../services/spectra/SpectraPublicProfileLeads';
 import { collectSpectraPublicBlueskyImages, collectSpectraPublicMastodonImages, collectSpectraPublicSocialPageImages } from '../services/spectra/SpectraPublicImageRecords';
 import { prioritizeSpectraPublicMediaScenes } from '../services/spectra/SpectraPublicMediaPriority';
+import { collectSpectraXPostMedia } from '../services/spectra/SpectraXPostMedia';
 import { collectSpectraEarthSearchScenes } from '../services/spectra/SpectraPublicSatelliteRecords';
 import { shouldRunSpectraClaudeBackground } from '../services/spectra/SpectraClaudeBudget';
 import { takeUnseenSpectraQueries } from '../services/spectra/SpectraDiscoveryDedup';
@@ -1523,7 +1524,10 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
 
     // Only image URLs from retrieved public Facebook, Instagram or X post
     // HTML qualify. Failed/blocked webpages never generate image evidence.
-    const publicSocialImages = await collectSpectraPublicSocialPageImages(retrievedEvidence);
+    const xPostMedia = await collectSpectraXPostMedia(retrievedEvidence);
+    const publicSocialImages = await collectSpectraPublicSocialPageImages([
+      ...xPostMedia.posts, ...retrievedEvidence,
+    ]);
     retrievedEvidence.push(...publicSocialImages.records);
     report.publicRecords.push(...publicSocialImages.records.map(record => ({
       title: record.title, url: record.url, publishedAt: record.publishedAt,
@@ -2111,6 +2115,10 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
         publicSocialImageAttemptCount: publicSocialImages.attempted,
         publicSocialImageRecordCount: publicSocialImages.records.length,
         publicSocialImageFailureCount: publicSocialImages.failed,
+        publicXMediaApiStatus: xPostMedia.status,
+        publicXMediaApiAttempts: xPostMedia.attempted,
+        publicXMediaApiRetrieved: xPostMedia.retrieved,
+        publicXMediaApiFailures: xPostMedia.failed,
         publicMastodonStatus: publicMastodon.status,
         publicMastodonReason: publicMastodon.reason,
         publicMastodonRecordCount: publicMastodon.records.length,
@@ -2199,6 +2207,10 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
         publicSocialImageAttemptCount: publicSocialImages.attempted,
         publicSocialImageRecordCount: publicSocialImages.records.length,
         publicSocialImageFailureCount: publicSocialImages.failed,
+        publicXMediaApiStatus: xPostMedia.status,
+        publicXMediaApiAttempts: xPostMedia.attempted,
+        publicXMediaApiRetrieved: xPostMedia.retrieved,
+        publicXMediaApiFailures: xPostMedia.failed,
         publicMastodonStatus: publicMastodon.status,
         publicMastodonReason: publicMastodon.reason,
         publicMastodonRecordCount: publicMastodon.records.length,
