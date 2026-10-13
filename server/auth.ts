@@ -26,6 +26,7 @@ import {
   resetLocalPasswordHttp,
   getLocalSessionMaxAgeSeconds,
   registerLocalUserHttp,
+  getCanonicalSignupAdminReportHttp,
   verifyLocalSessionToken,
   probeLocalAuthStoreHttp,
   getLocalUserByIdHttp,
@@ -483,6 +484,22 @@ export async function setupAuth(app: Express) {
     } catch (error) {
       console.error("[AUTH] HTTP auth-store readiness failed:", error instanceof Error ? error.message : String(error));
       return res.status(503).json({ ready: false });
+    }
+  });
+
+  // Canonical LegalWhat signup register. Authenticated master only, not
+  // the Neon application usage database and never public.
+  app.get("/api/admin/legalwhat-signups", async (req, res) => {
+    res.setHeader("Cache-Control", "private, no-store");
+    if (!hasValidMasterCookie(req)) return res.status(403).json({ message: "Master admin access required" });
+    const requestedPage = Number(req.query.page);
+    const page = Number.isSafeInteger(requestedPage) && requestedPage >= 1 ? requestedPage : 1;
+    try {
+      const report = await getCanonicalSignupAdminReportHttp(page);
+      return res.json({ source: "canonical-legalwhat-auth", ...report });
+    } catch (error) {
+      console.error("[AUTH] Master signup report unavailable:", error instanceof Error ? error.message : String(error));
+      return res.status(503).json({ message: "Signup authority temporarily unavailable" });
     }
   });
 
