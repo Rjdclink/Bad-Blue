@@ -121,8 +121,8 @@ export async function inspectSpectraVisualScene(
       else controller.signal.addEventListener('abort', stop, { once: true });
     });
     const output = await Promise.race([
-      Promise.resolve().then(() => analyze(bytes, mimeType, controller.signal))
-        .catch(() => null),
+      Promise.resolve().then(() => controller.signal.aborted
+        ? null : analyze(bytes, mimeType, controller.signal)).catch(() => null),
       cancelled,
     ]);
     if (controller.signal.aborted || output === null) return null;
