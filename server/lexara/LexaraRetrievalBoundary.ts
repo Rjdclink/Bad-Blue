@@ -107,14 +107,14 @@ async function textFromPdf(buffer: Buffer): Promise<string> {
   } finally { await document.destroy(); }
 }
 
-async function retrieveOne(target: string, parentSignal?: AbortSignal, includePublisherMetadata = false): Promise<LexaraRetrievalEvidence | null> {
+async function retrieveOne(target: string, parentSignal?: AbortSignal, includePublisherMetadata = false, timeoutMs = REQUEST_TIMEOUT_MS): Promise<LexaraRetrievalEvidence | null> {
   let current = await assertPublicUrl(target);
   for (let redirectCount = 0; redirectCount <= MAX_REDIRECTS; redirectCount++) {
     const controller = new AbortController();
     const relayAbort = () => controller.abort(parentSignal?.reason);
     if (parentSignal?.aborted) controller.abort(parentSignal.reason);
     else parentSignal?.addEventListener('abort', relayAbort, { once: true });
-    const timer = setTimeout(() => controller.abort(new Error('Lexara retrieval timeout')), REQUEST_TIMEOUT_MS);
+    const timer = setTimeout(() => controller.abort(new Error('Lexara retrieval timeout')), timeoutMs);
     try {
       const response = await fetch(current, {
         method: 'GET',
@@ -175,12 +175,14 @@ export const lexaraRetrievalAdapter = {
     targets: string[];
     signal?: AbortSignal;
     includePublisherMetadata?: boolean;
+    timeoutMs?: number;
   }): Promise<LexaraRetrievalResponse> {
     if (request.purpose !== 'lexara_legal_research') {
       throw new Error('Lexara retrieval only serves Lexara legal research.');
     }
     const targets = [...new Set(request.targets)].slice(0, MAX_TARGETS);
-    const settled = await Promise.allSettled(targets.map(target => retrieveOne(target, request.signal, request.includePublisherMetadata)));
+    const timeoutMs = Number.isFinite(request.timeoutMs) ? Math.max(250, Math.min(10_000, request.timeoutMs!)) : REQUEST_TIMEOUT_MS;
+    const settled = await Promise.allSettled(targets.map(target => retrieveOne(target, request.signal, request.includePublisherMetadata, timeoutMs)));
     return {
       evidence: settled.flatMap(result =>
         result.status === 'fulfilled' && result.value ? [result.value] : []

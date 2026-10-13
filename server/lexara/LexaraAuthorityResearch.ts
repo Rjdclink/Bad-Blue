@@ -44,6 +44,8 @@ export interface LexaraAuthorityResearch {
 }
 
 export interface LexaraAuthorityResearchContext {
+  /** Legal answers require retrieved authority text, not index snippets. */
+  requirePrimaryText?: boolean;
   /** Public-law discovery only; personal record retrieval uses a separate query. */
   recordReliefState?: string;
   disableCourtRecordPlanning?: boolean;
@@ -256,9 +258,9 @@ async function discoverAuthoritySources(
       || (/\bsmall\s+claims?\b/i.test(formObjective) ? '631.1' : undefined);
     if (section) {
       add({ title: `Iowa Code section ${section}`, url: `https://www.legis.iowa.gov/docs/code/${section.toUpperCase()}.pdf`, provider: 'official-statute-directory' });
-      const retrieved = await enrichAuthoritySourcesWithLexaraRetrieval(sources, signal);
+      const retrieved = await enrichAuthoritySourcesWithLexaraRetrieval(sources, signal, false, false, false, context.requirePrimaryText);
       sources.splice(0, sources.length, ...retrieved);
-      if (!/\b(?:case\s+law|precedent|interpret\w*|holdings?|compare|constitutional|strategy)\b/i.test(formObjective)
+      if (!context.requirePrimaryText && !/\b(?:case\s+law|precedent|interpret\w*|holdings?|compare|constitutional|strategy)\b/i.test(formObjective)
         && sources.some(source => source.provider === 'official-statute-directory' && source.evidenceLevel === 'document')) return sources;
       if (signal?.aborted) return sources;
     }
@@ -284,9 +286,9 @@ async function discoverAuthoritySources(
       courtPlan ? searchLexaraCourtRecords(courtPlan, signal) : Promise.resolve([]),
     ]);
     courtRecordResult.forEach(add);
-    if (courtPlan || primaryTextLookup) supportingAuthorities.push(...courtListenerResult, ...govInfoResult);
+    if (courtPlan || primaryTextLookup || context.requirePrimaryText) supportingAuthorities.push(...courtListenerResult, ...govInfoResult);
     else [...courtListenerResult, ...govInfoResult].forEach(add);
-    if (!formLookup && !primaryTextLookup && !courtPlan && intent==='legal' && (sources.some(source => source.kind === 'primary' && Boolean(source.excerpt?.trim()) && !/^Issued:/i.test(source.excerpt || ''))
+    if (!context.requirePrimaryText && !formLookup && !primaryTextLookup && !courtPlan && intent==='legal' && (sources.some(source => source.kind === 'primary' && Boolean(source.excerpt?.trim()) && !/^Issued:/i.test(source.excerpt || ''))
       || courtListenerResult.some(source => Boolean(source.excerpt?.trim())))) return sources;
   }
 
@@ -341,10 +343,12 @@ async function enrichAuthoritySourcesWithLexaraRetrieval(
   formLookup = false,
   courtLookup = false,
   recordRelief = false,
+  requirePrimaryText = false,
 ): Promise<LexaraAuthoritySource[]> {
   if (!sources.length) return sources;
   const targets = sources.filter(source => source.recordType !== 'docket' && source.recordType !== 'portal' && source.evidenceLevel !== 'document' && (!source.excerpt?.trim()
     || source.recordType === 'opinion'
+    || (requirePrimaryText && source.kind === 'primary')
     || (recordRelief && source.kind === 'primary')
     || (courtLookup && (source.kind === 'primary' || /^https:\/\/(?:law|dockets)\.justia\.com\/(?:cases|docket)\//i.test(source.url)))
     || (formLookup && source.kind === 'primary' && /\b(?:forms?|instructions?|petition|cover\s+sheet|assignment)\b/i.test([source.title, source.excerpt].join(' ')))
@@ -353,25 +357,31 @@ async function enrichAuthoritySourcesWithLexaraRetrieval(
 
   try {
     if (signal?.aborted) return sources;
+    const retrievalController = new AbortController();
     let abortHandler: (() => void) | undefined;
     const aborted = new Promise<null>(resolve => {
       if (!signal) return;
-      abortHandler = () => resolve(null);
+      abortHandler = () => { retrievalController.abort(signal.reason); resolve(null); };
       signal.addEventListener('abort', abortHandler, { once: true });
     });
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const enrichment = await Promise.race([
-      lexaraRetrievalAdapter.retrieve({ purpose: 'lexara_legal_research', targets, signal }),
+      lexaraRetrievalAdapter.retrieve({ purpose: 'lexara_legal_research', targets, signal: retrievalController.signal,
+        timeoutMs: requirePrimaryText ? 10_000 : undefined }),
       aborted,
-      new Promise<null>(resolve => setTimeout(() => resolve(null), LEXARA_RETRIEVAL_TIMEOUT_MS)),
-    ]);
-    if (abortHandler) signal?.removeEventListener('abort', abortHandler);
+      new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), requirePrimaryText ? 12_000 : LEXARA_RETRIEVAL_TIMEOUT_MS); }),
+    ]).finally(() => {
+      clearTimeout(timer);
+      retrievalController.abort();
+      if (abortHandler) signal?.removeEventListener('abort', abortHandler);
+    });
     if (!enrichment?.evidence?.length) return sources;
 
     const statuteTargets = new Set(sources.filter(source => source.provider === 'official-statute-directory').map(source => source.url));
     const byTarget = new Map(enrichment.evidence.filter(item => item.content?.trim())
       .map(item => [item.target, recordRelief ? recordReliefEvidenceExcerpt(item.content.trim()) : formLookup ? officialFormEvidenceExcerpt(item.content.trim()) : statuteTargets.has(item.target)
         ? item.content.trim().length <= 6500 ? item.content.trim() : `${item.content.trim().slice(0, 5000)}\n[Additional section text omitted]\n${item.content.trim().slice(-1000)}`
-        : item.content.trim().slice(0, courtLookup ? 3000 : 900)]));
+        : item.content.trim().slice(0, requirePrimaryText ? 6500 : courtLookup ? 3000 : 900)]));
     return sources.map(source => ({ ...source, evidenceLevel: byTarget.has(source.url) ? 'document' : source.evidenceLevel, excerpt: formLookup || recordRelief
       ? [source.excerpt, byTarget.get(source.url)].filter(Boolean).join('\n') || undefined
       : byTarget.get(source.url) || source.excerpt || undefined }));
@@ -445,7 +455,8 @@ export async function researchLegalAuthority(
         ? /\b(?:instructions?|filing requirements|local rules)\b/i.test(source.title) ? 2 : 1 : 0;
       return score(b)-score(a);
     });
-    const sources = await enrichAuthoritySourcesWithLexaraRetrieval(discoveredSources, context.signal, formLookup, Boolean(courtRecordPlan), Boolean(reliefProfile));
+    if (context.requirePrimaryText) discoveredSources.sort((a, b) => Number(b.kind === 'primary') - Number(a.kind === 'primary'));
+    const sources = await enrichAuthoritySourcesWithLexaraRetrieval(discoveredSources, context.signal, formLookup, Boolean(courtRecordPlan), Boolean(reliefProfile), context.requirePrimaryText);
 
     void Promise.allSettled(sources.filter(source => source.recordType !== 'portal').map(source => rememberLexaraDiscoveryOutcome(
       source.url,
@@ -473,8 +484,9 @@ export async function researchLegalAuthority(
     return {
       summary,
       sources,
-      hasPrimaryAuthority: sources.some(source => source.kind === 'primary' && source.recordType !== 'portal'),
-      hasUsableEvidence: sources.some(source => source.recordType !== 'portal' && Boolean(source.excerpt?.trim())),
+      hasPrimaryAuthority: sources.some(source => source.kind === 'primary' && source.recordType !== 'portal' && source.evidenceLevel === 'document' && Boolean(source.excerpt?.trim())),
+      hasUsableEvidence: sources.some(source => source.recordType !== 'portal' && Boolean(source.excerpt?.trim()) && !/^Issued:/i.test(source.excerpt || '')
+        && (!context.requirePrimaryText || source.evidenceLevel === 'document')),
       searchedAt: new Date().toISOString(),
       selectedCrawlers:[...new Set(sources.map(source=>source.provider||'lexara-direct-retrieval'))],
       researchIntent:intent,

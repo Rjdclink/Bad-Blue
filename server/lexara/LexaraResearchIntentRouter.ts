@@ -103,6 +103,7 @@ const PERSONAL_LEGAL_PROCEDURE_PATTERN = /\b(?:how\s+(?:do|can|should|would)\s+(
 export function isLexaraLegalAuthorityIntent(text: string): boolean {
   const value = String(text || '').trim();
   return CASE_CAPTION_PATTERN.test(value) || LEGAL_AUTHORITY_INTENT_PATTERN.test(value)
+    || /\b(?:laws?|statutes?|statutory|lawful|unlawful|illegal)\b/i.test(value)
     || (/\b(?:official\s+(?:source|link)|small\s+claims\s+(?:dollar\s+)?limit)\b/i.test(value)
       && /\b(?:code|statute|court|legal|law|small\s+claims)\b/i.test(value))
     || (/\bforms?\b/i.test(value) && /\b(?:official|court|claims?|filing|local|required|petition)\b/i.test(value))
@@ -246,6 +247,15 @@ export function decideLexaraResearchNeed(
 
   const priorResearchTurn = [...previousUserTurns].reverse().find(turn => decideLexaraResearchNeed(turn, []).needed);
   const priorDecision = priorResearchTurn ? decideLexaraResearchNeed(priorResearchTurn, []) : null;
+  // Preserve a clear legal follow-up even if semantic inference is unavailable.
+  // Do not reinterpret an independently requested background fact as legal work.
+  if (!legal && fact === 'none' && priorDecision?.intent === 'legal'
+    && /\b(?:can|could|may|should|allowed|legal|lawful)\b/i.test(text)
+    && /\b(?:do\s+that|do\s+this|that\s+(?:allowed|legal)|they|he|she|it)\b/i.test(text)) {
+    const objective = `${priorDecision.standaloneQuery}\nFollow-up: ${text}`;
+    return { ...priorDecision, objective, standaloneQuery: objective,
+      reason: 'research-follow-up', inferred: true };
+  }
   const shortRefinement = text.split(/\s+/).length <= 8 && fact !== 'none' && Boolean(priorDecision?.needed);
   const followUp = /\b(?:try\s+again|look\s+harder|search\s+again|keep\s+looking|broaden|verify\s+that|check\s+again)\b/i.test(text);
   const contextualResearchClue = Boolean(priorDecision?.needed) && (

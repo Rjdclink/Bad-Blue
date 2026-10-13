@@ -1,4 +1,5 @@
 import { callClaude, callClaudeStreaming } from '../claude';
+import { completeLexaraLegalResearch, type LexaraLegalResearchOutcome } from './LexaraLegalResearchGate';
 import { recordReliefTopic, generateRecordReliefResponse } from './RecordReliefWorkflow';
 import { CURRENT_AI_MODELS, LEGAL_AI_MODELS } from '../aiHarmonyModelRegistry';
 import type { LawType as ExpertLawType } from '../../shared/legalCounselTypes';
@@ -564,7 +565,9 @@ export async function generateLexaraConversationResponse(
   const explicitStateJurisdiction = inferJurisdiction(cleanPrompt)
     || normalizeJurisdiction(context.jurisdiction)
     || inferPriorUserJurisdiction(context.previousMessages);
-  const jurisdictionRelevant = /\b(?:law|legal|court|case|charge|crime|criminal|civil|lawsuit|sue|claim|statute|deadline|limitation|file|filing|motion|petition|complaint|divorce|custody|probation|parole|warrant|rights?|attorney|judge|jurisdiction|venue|state\s+law|federal)\b/i.test(cleanPrompt);
+  const semanticResearchDecision = await semanticResearchDecisionPromise;
+  const jurisdictionRelevant = semanticResearchDecision.intent === 'legal' || semanticResearchDecision.intent === 'mixed'
+    || /\b(?:laws?|legal|court|case|charge|crime|criminal|civil|lawsuit|sue|claim|statutes?|deadline|limitation|file|filing|motion|petition|complaint|divorce|custody|probation|parole|warrant|rights?|attorney|judge|jurisdiction|venue|state\s+law|federal)\b/i.test(cleanPrompt);
   const backgroundStateJurisdiction = jurisdictionRelevant
     ? normalizeJurisdiction(context.backgroundJurisdiction) : undefined;
   const backgroundLocationConfidence = Math.max(0, Math.min(1, Number(context.backgroundLocationConfidence || 0)));
@@ -604,7 +607,6 @@ export async function generateLexaraConversationResponse(
   const jurisdictionCorrectionOnly = Boolean(inferJurisdiction(cleanPrompt))
     && !jurisdictionRelevant
     && (context.previousMessages?.length || 0) > 0;
-  const semanticResearchDecision = await semanticResearchDecisionPromise;
   const sequencePlan = planLexaraSequence(cleanPrompt, previousUserTurns, semanticResearchDecision);
   const deepClaudeNeeded = requiresDeepClaudeForTurn(
     cleanPrompt,
@@ -739,7 +741,7 @@ export async function generateLexaraConversationResponse(
     };
   }
 
-  // Source research is route-local and fail-open for ordinary conversation.
+  // Public legal authority is a prerequisite for legal answers.
   // It uses the platform retrieval stack and never makes Google/Gemini a LEXARA
   // dependency. A search outage must not kill the dialogue.
   const researchStartedAt = Date.now();
@@ -748,8 +750,16 @@ export async function generateLexaraConversationResponse(
   if (context.signal?.aborted) researchController.abort();
   else context.signal?.addEventListener('abort', relayResearchAbort, { once: true });
   const researchRouteSelected = sequencePlan.useLegalResearch || Boolean(courtRecordPlan);
+  const legalResearchRequired = sequencePlan.useLegalResearch;
+  let legalResearchOutcome: LexaraLegalResearchOutcome | undefined;
+  const authorityResearchRunner: typeof researchLegalAuthority = legalResearchRequired
+    ? async (question, researchContext = {}) => {
+        legalResearchOutcome = await completeLexaraLegalResearch(question, researchContext);
+        return legalResearchOutcome.research;
+      }
+    : researchLegalAuthority;
   const authorityResearchPromise = researchRouteSelected
-    ? researchLegalAuthority(researchDecision.standaloneQuery || researchDecision.objective || cleanPrompt, {
+    ? authorityResearchRunner(researchDecision.standaloneQuery || researchDecision.objective || cleanPrompt, {
         jurisdiction,
         domainName,
         researchHints: jurisdictionResearchHints,
@@ -792,7 +802,7 @@ export async function generateLexaraConversationResponse(
     ? 10 * 60_000
     : LIVE_BACKGROUND_FACT_BUDGET_MS;
   const [authorityResearch, backgroundInvestigation, deadlineAuthorityResearch] = await Promise.all([
-    Promise.race([
+    legalResearchRequired ? authorityResearchPromise : Promise.race([
       authorityResearchPromise,
       new Promise<null>(resolve => setTimeout(() => resolve(null), LIVE_RESEARCH_BUDGET_MS)),
     ]),
@@ -811,7 +821,13 @@ export async function generateLexaraConversationResponse(
           new Promise<null>(resolve => setTimeout(() => resolve(null), LIVE_RESEARCH_BUDGET_MS)),
         ])
       : Promise.resolve(null),
-  ]);
+  ]).finally(() => {
+    researchController.abort();
+    backgroundController.abort();
+    context.signal?.removeEventListener('abort', relayResearchAbort);
+    context.signal?.removeEventListener('abort', relayBackgroundAbort);
+  });
+  if (context.signal?.aborted) throw context.signal.reason || new Error('Lexara turn cancelled');
   if (backgroundResearchRequested && !backgroundInvestigation && !deepBackgroundRequested) {
     backgroundController.abort(new Error('lexara_live_background_budget_exhausted'));
   }
@@ -903,6 +919,9 @@ export async function generateLexaraConversationResponse(
   const researchStatusPrompt = researchRouteSelected && !authorityResearch?.hasUsableEvidence && !backgroundInvestigation?.evidenceSummary
     ? '\n\nAPPLICATION RESEARCH STATUS\nLexara attempted the selected external research route for this turn but no independently usable source result was returned within the live research budget. Do not claim that no search was attempted. Do not invent the requested fact; say it could not be verified from the completed search and preserve useful next steps or clarification.'
     : '';
+  const completedLegalResearchPrompt = legalResearchOutcome?.status === 'supported'
+    ? '\n\nLEGAL RESEARCH COMPLETED BEFORE ANSWERING\nAnswer directly from the supplied supporting authority and its qualifications. Do not say you need to research, check or verify authority already supplied. Never generalize this verification to all laws or unresolved facts. If a distinct material issue remains unsupported, identify that specific limitation rather than repeating a generic promise to verify Iowa law.'
+    : '';
   const jurisdictionCorrectionPrompt = jurisdictionCorrectionOnly
     ? '\n\nJURISDICTION CORRECTION TURN\nThe user has supplied or corrected the location for the ongoing matter. Adopt it silently as controlling context. Do not explain jurisdictional background or repeat the correction. Continue directly with the single next necessary question or answer from the existing matter.'
     : '';
@@ -919,6 +938,7 @@ export async function generateLexaraConversationResponse(
     + formatDeadlineCalculationForSystem(verifiedDeterministicDeadline)
     + resolvedBackgroundSubjectPrompt
     + researchStatusPrompt
+    + completedLegalResearchPrompt
     + (!authorityResearch ? formatLexaraCourtRecordPlan(courtRecordPlan) : '')
     + formatLexaraBackgroundResearchForSystem(backgroundInvestigation)
     + backgroundPresentationPrompt
@@ -960,7 +980,8 @@ export async function generateLexaraConversationResponse(
   // model sentence can never outrun source validation.
   const progressiveClaudeAllowed = !backgroundResearchRequested
     && !courtRecordPlan
-    && !researchDecision.needed;
+    && !researchDecision.needed
+    && !legalResearchRequired;
   // Document-routing answers may stream text immediately. The existing route
   // still blocks document text from the real-time speech channel.
 
@@ -975,7 +996,10 @@ export async function generateLexaraConversationResponse(
     : researchDecision.requestedFact === 'business'
       ? `which business ${unverifiedSubject} operates`
       : `the requested information about ${unverifiedSubject}`;
-  let text = unverifiedBackgroundOnly
+  const legalResearchIncomplete = legalResearchRequired && legalResearchOutcome?.status !== 'supported';
+  let text = legalResearchIncomplete
+    ? `I couldn't establish the applicable ${publicJurisdiction || 'legal'} rule from the sources I could retrieve and check. I can't give you a reliable conclusion on that legal question from this evidence.`
+    : unverifiedBackgroundOnly
     ? `I couldn't verify ${unverifiedObjective} from the ${criminalBackgroundOnly ? 'available' : 'completed'} sources.`
     : '';
   const claudeStartedAt = Date.now();
@@ -1146,6 +1170,8 @@ export async function generateLexaraConversationResponse(
 
   console.info('[LEXARA Performance] live turn', {
     researchWaitMs,
+    legalResearchStatus: legalResearchOutcome?.status || 'not-required',
+    legalResearchAttempts: legalResearchOutcome?.attempts || 0,
     claudeMs: Date.now() - claudeStartedAt,
     totalMs: Date.now() - turnStartedAt,
     grounded: !!authorityResearch?.hasUsableEvidence || !!backgroundInvestigation?.evidenceSummary,
