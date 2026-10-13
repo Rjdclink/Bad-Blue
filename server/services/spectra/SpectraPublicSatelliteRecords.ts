@@ -8,10 +8,12 @@ export interface SpectraSatelliteScene {
   platform?: string;
   bbox?: number[];
   links: Array<{ rel: string; href: string }>;
+  /** Optional preview asset URL from STAC metadata; it has not been downloaded. */
+  previewUrl?: string;
 }
 
 const STAC_SEARCH = 'https://earth-search.aws.element84.com/v1/search';
-const STAC_COLLECTIONS = new Set(['sentinel-2-c1-l2a', 'landsat-c2-l2']);
+const STAC_COLLECTIONS = new Set(['sentinel-2-c1-l2a', 'sentinel-2-l2a', 'landsat-c2-l2']);
 const MAX_RESPONSE_BYTES = 750_000;
 const MAX_ITEMS = 20;
 
@@ -49,15 +51,31 @@ function scene(value: unknown, fromMs: number, toMs: number): SpectraSatelliteSc
     && item.bbox.every((n: unknown) => typeof n === 'number' && Number.isFinite(n))
     && Math.abs(item.bbox[0]) <= 180 && Math.abs(item.bbox[2]) <= 180
     && Math.abs(item.bbox[1]) <= 90 && Math.abs(item.bbox[3]) <= 90
+    && item.bbox[1] <= item.bbox[3]
     ? [...item.bbox] as number[] : undefined;
   const links = Array.isArray(item.links)
     ? item.links.slice(0, 12).flatMap((link: unknown) => validLink(link) || [])
     : [];
+  // A STAC Item's preview is often an asset rather than a rel=preview link.
+  // Expose the catalog's immutable URL only; don't fetch scene pixels, track
+  // people, or confuse a preview with a time-verified sensor observation.
+  const assets = item.assets && typeof item.assets === 'object'
+    && !Array.isArray(item.assets) ? item.assets as Record<string, any> : {};
+  const previewUrl = ['thumbnail', 'rendered_preview', 'visual']
+    .map(name => {
+      const raw = assets[name];
+      if (!raw || typeof raw !== 'object') return null;
+      try {
+        const link = new URL(String(raw.href || ''));
+        return link.protocol === 'https:' && !link.username && !link.password
+          && !link.port ? link.toString() : null;
+      } catch { return null; }
+    }).find((value): value is string => value !== null);
   return {
     provider: 'Element 84 Earth Search', id, collection, observedAt,
     cloudCover, platform: typeof item.properties?.platform === 'string'
       ? item.properties.platform.slice(0, 100) : undefined,
-    bbox, links: links.slice(0, 4),
+    bbox, links: links.slice(0, 4), ...(previewUrl ? { previewUrl } : {}),
   };
 }
 
