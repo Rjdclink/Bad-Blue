@@ -625,17 +625,22 @@ export default function SpectraPage() {
     }
   }, [addMessage, directEvidence, speakIfEnabled, spectraSessionId, publicPlaceMode]);
 
+  // Keep the latest acquisition handler without restarting the recurring
+  // visibility/refresh subscription every time a message or status renders.
+  const acquireTargetRef = useRef(acquireTarget);
+  const refreshInFlightRef = useRef(false);
+  useEffect(() => { acquireTargetRef.current = acquireTarget; }, [acquireTarget]);
+
   // Continue bounded public acquisition while this investigation is open.
   // Each pass may revise the regional hypothesis; a confidence score never
   // prevents another pass. Hidden tabs do not launch background searches.
   useEffect(() => {
     if (phase !== 'active' || publicPlaceMode || !target.trim() || !details.trim()) return;
-    let refreshing = false;
     const refresh = async () => {
-      if (refreshing || document.visibilityState !== 'visible') return;
-      refreshing = true;
-      try { await acquireTarget(target, details, directEvidence, spectraSessionId || undefined, true); }
-      finally { refreshing = false; }
+      if (refreshInFlightRef.current || document.visibilityState !== 'visible') return;
+      refreshInFlightRef.current = true;
+      try { await acquireTargetRef.current(target, details, directEvidence, spectraSessionId || undefined, true); }
+      finally { refreshInFlightRef.current = false; }
     };
     const timer = setInterval(() => { void refresh(); }, 5 * 60_000);
     const onVisible = () => {
@@ -643,7 +648,7 @@ export default function SpectraPage() {
     };
     document.addEventListener('visibilitychange', onVisible);
     return () => { clearInterval(timer); document.removeEventListener('visibilitychange', onVisible); };
-  }, [phase, publicPlaceMode, target, details, directEvidence, spectraSessionId, acquireTarget]);
+  }, [phase, publicPlaceMode, target, details, directEvidence, spectraSessionId]);
 
   useEffect(() => {
     const launch = lexaraLaunchRef.current;

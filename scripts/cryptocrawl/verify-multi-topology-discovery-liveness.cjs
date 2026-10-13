@@ -19,7 +19,7 @@ assert.match(controller, /private readonly topologyTasks = new Map<TopologyTaskK
 assert.match(controller, /private readonly topologyTaskGenerations = new Map<TopologyTaskKey/);
 assert.match(controller, /private async runTopologyTask<T>/);
 assert.match(controller, /const reusedInFlight = Boolean\(tracked\)/);
-assert.match(controller, /runWithCandidatePublicationGeneration\(topology, generation, operation\)/);
+assert.match(controller, /runWithCandidatePublicationGeneration\(topology, generation, \(\) =>\s*runDiscoveryWork\(`topology:\$\{key\}`, topologyTaskWatchdogMs\(\), async \(\) => operation\(\), cryptoCrawlerWorkSignal\(\)\)\)/);
 assert.match(controller, /if \(this\.topologyTasks\.get\(key\) === owned\) \{[\s\S]{0,220}this\.topologyTasks\.delete\(key\);[\s\S]{0,120}this\.topologyTaskGenerations\.delete\(key\);/);
 assert.match(controller, /await withTopologyWatchdog\(tracked, key\)/);
 assert.match(controller, /if \(lease\) invalidateCandidatePublicationGeneration\(lease\.topology, lease\.generation\)/);
@@ -50,7 +50,7 @@ for (const key of ['cex', 'dex', 'cross_chain', 'mempool', 'liquidation', 'maker
 assert.match(controller, /await Promise\.allSettled\(\[/);
 assert.match(controller, /private runScheduledCycle\(\): void/);
 assert.match(controller, /recurring schedule continues/);
-assert.match(controller, /\.finally\(\(\) => this\.scheduleNext\(\)\)/);
+assert.match(controller, /\.finally\(\(\) => \{ if \(owner === this\.lifecycleGeneration\) this\.scheduleNext\(\); \}\)/);
 assert.match(controller, /isolatedPendingTopologyTasks: \[\.\.\.this\.topologyTasks\.keys\(\)\]/);
 assert.match(controller, /timedOutTopologyOwnershipReleased: true/);
 assert.doesNotMatch(controller, /async function timedOptional/);

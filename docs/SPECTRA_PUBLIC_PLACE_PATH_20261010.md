@@ -27,6 +27,6 @@ footer exclusion, conflicting addresses, geocoder failures and abstention.
 The saved official Smithsonian visit page parses as Washington, DC. The full
 Spectra verification suite, connection checks, focused module typecheck,
 Vite compilation and server compilation pass. Full npm build is locally
-blocked by an unrelated prebuild tsx IPC socket (EPERM); its production gate
-is unchanged. Direct local network retrieval returned no page, so a deployed
+blocked by an unrelated prebuild tsx IPC socket (EPERM); its production build
+checks are unchanged. Direct local network retrieval returned no page, so a deployed
 browser test remains necessary before claiming live end-to-end success.

@@ -46,6 +46,7 @@ import {
   loadSpectraAcquisitionEvidenceRecords,
 } from '../services/spectra/SpectraAcquisitionPersistence';
 import { buildSpectraAcquisitionRecords } from '../services/spectra/SpectraAcquisitionRecords';
+import { assessSpectraAcquiredEvidence } from '../services/spectra/SpectraEvidenceAssessment';
 import { readSpectraPublicFeedRecords } from '../services/spectra/SpectraPublicFeedStore';
 import {
   assessSpectraIdentityBinding,
@@ -83,6 +84,7 @@ import { collectSpectraPublicBlueskyImages, collectSpectraPublicMastodonImages, 
 import { prioritizeSpectraPublicMediaScenes } from '../services/spectra/SpectraPublicMediaPriority';
 import { collectSpectraEarthSearchScenes } from '../services/spectra/SpectraPublicSatelliteRecords';
 import { shouldRunSpectraClaudeBackground } from '../services/spectra/SpectraClaudeBudget';
+import { takeUnseenSpectraQueries } from '../services/spectra/SpectraDiscoveryDedup';
 
 const router = Router();
 router.use(isAuthenticated);
@@ -381,6 +383,7 @@ function discoveryResultFromCandidate(candidate: LegalMeshCandidate): SpectraDis
 async function runDiscoveryPass(
   queries: string[],
   context: { subject?: string; location?: string; useClaude?: boolean } = {},
+  attemptedQueries: Set<string> = new Set<string>(),
 ): Promise<{
   results: SpectraDiscoveryResult[];
   retrievedEvidence: SpectraRetrievedEvidence[];
@@ -391,8 +394,7 @@ async function runDiscoveryPass(
 }> {
   const retrieval: SpectraRetrievalCounts = { selected: 0, retrieved: 0, deadlineExpiredPasses: 0 };
   const retrievedEvidence: SpectraRetrievedEvidence[] = [];
-  const uniqueQueries = [...new Set(queries.map(query => query.replace(/\s+/g, ' ').trim()).filter(Boolean))]
-    .slice(0, 6);
+  const uniqueQueries = takeUnseenSpectraQueries(queries, attemptedQueries, 6);
   if (!uniqueQueries.length) {
     return { results: [], retrievedEvidence, attempted: 0, failed: 0, claudeNotes: [], retrieval };
   }
@@ -1087,13 +1089,14 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       'SPECTRA background research',
     );
 
+    const attemptedDiscoveryQueries = new Set<string>();
     const firstPassPromise = runDiscoveryPass(initialQueries, {
       subject: resolvedSubjectName,
       location: discoveryJurisdiction,
       // The native-first background lane owns the paid fallback. Avoid
       // duplicate Claude searches for this same subject in parallel.
       useClaude: false,
-    });
+    }, attemptedDiscoveryQueries);
     const activeAcquisitionPromise = acquireSpectraActiveTelemetry({
       deviceRef,
       sessionId: requestedSessionId,
@@ -1487,7 +1490,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
         subject: resolvedSubjectName,
         location: discoveryJurisdiction,
         useClaude: false,
-      });
+      }, attemptedDiscoveryQueries);
       discoveryQueriesAttempted += nextPass.attempted;
       retrievedEvidence.push(...nextPass.retrievedEvidence);
       searchRetrievedEvidence.push(...nextPass.retrievedEvidence);
@@ -2037,6 +2040,11 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
           : {}),
       },
     })), contextEvidence);
+    // Every successfully acquired source snapshot enters one auditable, typed
+    // assessment; context remains separate from authenticated position fixes.
+    const evidenceAssessment = assessSpectraAcquiredEvidence(
+      evidenceRecords, solvedLocationObservations.length,
+    );
     const persistence = await persistSpectraAcquisition({
       userId,
       sessionId: requestedSessionId,
@@ -2046,6 +2054,13 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       evidenceRecords,
       state: {
         pipelineDiagnostics,
+        evidenceAssessmentCounts: {
+          sourceRecordCount: evidenceAssessment.sourceRecordCount,
+          uniqueContributionCount: evidenceAssessment.uniqueContributionCount,
+          duplicateCopies: evidenceAssessment.duplicateCopies,
+          countsByKind: evidenceAssessment.countsByKind,
+          datedSourceEvents: evidenceAssessment.datedSourceEvents,
+        },
         constraintSolverDiagnostics: constraintSolution.diagnostics,
         identityConfidence,
         boundIdentityConfidence,
@@ -2126,6 +2141,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       sessionId: persistence.sessionId || requestedSessionId,
       persistenceAvailable: persistence.available,
       evidenceArchive: { stored: persistence.evidenceRecordCount || 0, omitted: persistence.evidenceRecordsOmitted || 0 },
+      evidenceAssessment,
       acquisition: {
         identityConfidence,
         boundIdentityConfidence,

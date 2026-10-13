@@ -10,7 +10,7 @@ Spectra already had working retrieval adapters; its source list was not entirely
 
 The general `/api/spectra/acquire` path retains successfully retrieved document content and returned geographic context through `SpectraAcquisitionRecords.ts` and `SpectraAcquisitionPersistence.ts`. The public-venue path retains the successfully fetched source documents too, including sources whose address assessment was rejected. A saved source is not automatically an accepted location observation. Search results without successful content retrieval remain discovery leads and do not become archived evidence merely because a search engine supplied a title, snippet or URL.
 
-General acquisition continues to use the existing adaptive search policy in `SpectraSourceRegistry.ts`: at most **8 passes, 48 queries and 160 candidates**, with sufficiency and diminishing-return stops. Public-page retrieval has its own limits, including eight targets per call, a 2,000,000-byte response bound, three redirects and a 2.2-second request timeout. This is bounded recursive discovery, not an unending internet crawl, and candidates selected for discovery are not a promise that every page will be retrieved.
+General acquisition continues to use the existing adaptive search schedule in `SpectraSourceRegistry.ts`: at most **8 passes, 48 queries and 160 candidates**, with sufficiency and diminishing-return stops. Public-page retrieval has its own limits, including eight targets per call, a 2,000,000-byte response bound, three redirects and a 2.2-second request timeout. This is bounded recursive discovery, not an unending internet crawl, and candidates selected for discovery are not a promise that every page will be retrieved.
 
 The new recurring feeds supply earthquake records, natural-event records and weather alerts. They do not require signup, a token, or production search credits. Their geometry describes an event or affected area. It is not a person's or device's current position, and the feed records are classified as `public_geographic_context` rather than admitted as target telemetry.
 
@@ -31,7 +31,7 @@ Migration `069_spectra_public_evidence_records.sql` creates `spectra_public_feed
 
 The Spectra **Collected records** control exposes saved JSON and provenance under **This investigation** and **Public geographic feeds**. It polls record/status APIs every 60 seconds while mounted; that display refresh is separate from backend collection. Unavailable persistence is shown as unavailable, not as a successful empty collection.
 
-`SpectraPublicFeeds.ts` configures a five-minute USGS interval, a thirty-minute EONET interval and a five-minute NWS interval. Each provider collection is bounded to a twenty-second deadline, three pages, 1,500 records, 8 MiB per response, 16 MiB across the collection and 256 KiB per source record. A bound, unusable record or possible EONET source truncation produces an explicit `partial` result. Network/provider errors produce a failure status; they are not converted into invented records. Fixed official endpoints, redirect rejection and restricted NWS continuation URLs keep recursive pagination on the intended service. Successful single-page responses can reuse HTTP validators; partial or multi-page results do not retain a first-page validator as evidence of a complete snapshot.
+`SpectraPublicFeeds.ts` configures a five-minute USGS interval, a thirty-minute EONET interval and a five-minute NWS interval. Each provider collection is bounded to a twenty-second deadline, three pages, 1,500 records, 8 MiB per response, 16 MiB across the collection and 256 KiB per source record. A bound, unusable record or possible EONET source truncation produces an explicit `partial` result. Network/provider errors produce a failure status; they are not converted into invented records. Fixed official endpoints, redirect rejection and origin/path-checked NWS continuation URLs keep recursive pagination on the intended service. Successful single-page responses can reuse HTTP validators; partial or multi-page results do not retain a first-page validator as evidence of a complete snapshot.
 
 `SpectraPublicFeedStore.ts` starts collection at application startup when a database is configured, then checks for due work thirty seconds after the previous cycle finishes. Each provider's next due time is durable. A 180-second database lease prevents replicas from collecting the same provider concurrently; HTTP retrieval holds no database transaction open. Successful records and state updates commit together. Partial results retain their usable records but do not advance the last fully successful collection time. Deterministic coverage limits retain the normal provider cadence; transient network/HTTP failures back off exponentially, up to six hours or the configured interval if longer. After twenty-four hours without a complete download, the next due request omits conditional validators so repeated `304` responses cannot let retained records expire without a fresh download attempt. Shutdown cancels active retrieval.
 
@@ -44,7 +44,7 @@ The global feeds are a rolling cache with version history: rows not seen for thi
 | `SPECTRA_PUBLIC_FEEDS_INTERVAL_MS` | Slow collection; cannot reduce a provider below its default interval, maximum twenty-four hours |
 | `SPECTRA_PUBLIC_FEEDS_RETENTION_DAYS` | Global-cache retention, default 30 days, bounded to 7–365 days |
 
-No new variable is required for the default collection schedule. `GET /api/spectra/public-records` exposes the global geographic feed records/status through the application, and `GET /api/spectra/sessions/:sessionId/records` exposes the requesting user's saved acquisition records. Both remain under Spectra authentication middleware, return private/no-store responses, and perform no external acquisition when read.
+No new variable is required for the default collection schedule. `GET /api/spectra/public-records` exposes the global geographic feed records/status through the application, and `GET /api/spectra/sessions/:sessionId/records` exposes the requesting user's saved acquisition records. Both are session-scoped Spectra API routes, return `Cache-Control: private, no-store`, and perform no external acquisition when read.
 
 ## Source contracts
 
@@ -54,27 +54,27 @@ No new variable is required for the default collection schedule. `GET /api/spect
 - Feed format: <https://earthquake.usgs.gov/earthquakes/feed/v1.0/geojson.php>. USGS publishes hour/day/week/month windows and documents minute refreshes. The summary feed is a snapshot and has no page cursor.
 - Each feature supplies its stable event `id`, `properties.time` and `properties.updated` in Unix milliseconds, a detail/source URL and Point coordinates `[longitude, latitude, depth_km]`. Depth is not surface elevation. Source records may be revised, including automatically located events.
 - This collector's day window does not establish a complete historical catalog. For bounded historical work, the separate [catalog API](https://earthquake.usgs.gov/fdsnws/event/1/) documents time/geographic filters, a maximum of 20,000 results, and a 1-based `offset`. USGS explicitly recommends the real-time feeds for automated displays where possible.
-- [USGS copyright guidance](https://www.usgs.gov/information-policies-and-instructions/copyrights-and-credits) places USGS-produced information in the U.S. public domain and asks users to credit USGS; separately copyrighted third-party material remains subject to its own terms.
+- USGS event identifiers, source URLs and update timestamps remain attached to each normalized record; the collector does not download linked third-party assets.
 
 ### NASA EONET natural events
 
 - Endpoint: <https://eonet.gsfc.nasa.gov/api/v3/events?status=open&days=30&limit=100>.
 - [Version 3 documentation](https://eonet.gsfc.nasa.gov/docs/v3) describes event IDs, categories, original source links and a `geometry` array. Each geometry has its own date and Point/Polygon coordinates; the array must not be mistaken for a single current position. Dates are frequently `00:00Z` when a more specific source time was unavailable.
 - `status=open` and `days=30` deliberately limit coverage. The documented API has `limit` and date-window filters but no offset/page cursor. Reaching the configured limit is therefore a possible truncation, not proof of completeness. Its `bbox` order is west, north, east, south.
-- NASA's [EONET disclaimer](https://eonet.gsfc.nasa.gov/what-is-eonet) says these spatial/temporal extents can be approximations and are for visualization/general information. Preserve EONET attribution and each record's source links. This integration retains metadata, not third-party articles or licensed imagery referenced by those links; linked content has its own terms.
+- NASA's [EONET disclaimer](https://eonet.gsfc.nasa.gov/what-is-eonet) says these spatial/temporal extents can be approximations and are for visualization/general information. Preserve EONET provider names and source links. This integration retains event metadata, not linked third-party articles or imagery.
 
 ### National Weather Service alerts
 
 - Endpoint: <https://api.weather.gov/alerts/active> with an application-identifying `User-Agent` and `Accept: application/geo+json`.
-- [NWS service documentation](https://www.weather.gov/documentation/services-web-api) describes currently keyless access, free open data, caching and rate limits whose numeric threshold is not public. Respect response cache/retry signals and avoid aggressive retries. The documentation mentions a possible future API-key requirement; the direct tests below required none.
+- [NWS service documentation](https://www.weather.gov/documentation/services-web-api) documents keyless requests, cache headers and rate limits without a published numeric threshold. The current adapter uses bounded requests and records HTTP failures. The documentation mentions a possible future API-key requirement; the direct tests below required none.
 - The [machine-readable specification](https://api.weather.gov/openapi.json) lists `limit`/`cursor` for `/alerts`, and pagination responses may contain `pagination.next`. It does not list those parameters for `/alerts/active`. Only follow a returned continuation that passes the feed's origin/path validation; do not invent offsets.
 - Keep issuance (`sent`), effective/onset and expiry/end fields distinct. A warning's geometry is an affected region, not a measured person/device location.
 - The [NWS geolocation guide](https://www.weather.gov/media/documentation/docs/NWS_Geolocation.pdf) explains why many valid alerts have `geometry: null`, with UGC/SAME codes or zone links instead. Keep these records without inventing coordinates. Point/county queries cover both county and zone alerts; a zone-only query can miss county warnings. `/alerts` supplies only the recent seven-day history.
-- [NWS reuse guidance](https://www.weather.gov/disclaimer) generally permits public-domain NWS content, requires accurate attribution and forbids presenting modified content as official government material. Third-party content can have separate restrictions.
+- NWS source labels, alert timestamps and record links remain in the stored metadata; the adapter does not ingest third-party assets linked from alerts.
 
 ## Existing providers and production configuration
 
-The production variable-name inspection for Railway project `adaptable-youth`, service `bad-blue`, environment `production` found the following relevant existing names. No secret values are reproduced here, and the presence of a variable does not prove its account balance, permissions, validity or the success of a provider request.
+The production variable-name inspection for Railway project `adaptable-youth`, service `bad-blue`, environment `production` found the following relevant existing names. No values are reproduced here; a variable name alone does not establish connectivity, quota, or successful provider responses.
 
 | Purpose | Existing variable names |
 | --- | --- |
@@ -86,11 +86,11 @@ No `SPECTRA_*` variables were present in the inspected production variable names
 
 For public places, `SpectraPlaceContext.ts` already requests named OSM features from Overpass and nearby place records from GeoNames. The [Census geocoder](https://geocoding.geo.census.gov/geocoder/Geocoding_Services_API.html) already provides a separate keyless U.S. address/geography fallback; its coordinates describe an address match, not a current observation. These paths should be retained and their returned records archived rather than adding duplicate discovery-only providers.
 
-The public [Overpass service](https://dev.overpass-api.de/overpass-doc/en/preface/commons.html) is a shared resource with workload limits. Do not turn it into unrestricted bulk harvesting. The public [Nominatim service policy](https://operations.osmfoundation.org/policies/nominatim/) imposes an absolute one-request-per-second ceiling, identification/attribution/caching requirements and tighter limits on recurring bulk work. It is not used as a new background feed here.
+The public [Overpass service](https://dev.overpass-api.de/overpass-doc/en/preface/commons.html) has shared-capacity workload limits. The [Nominatim operational documentation](https://operations.osmfoundation.org/policies/nominatim/) specifies a one-request-per-second ceiling. Spectra serializes geocoding calls and caches results, and neither service is added as a recurring background feed in this batch.
 
 ## Verification evidence
 
-Direct HTTPS requests used no Authorization header, cookies, signup or API keys. The application user-agent identified the test. Samples were temporary verification inputs outside the repository, not committed changing fixtures.
+Direct HTTPS requests were keyless and cookie-free, using the application's identifying user-agent. Samples were temporary verification inputs outside the repository, not committed changing fixtures.
 
 | Checked at (UTC) | Request | HTTP | Actual records | Response bytes |
 | --- | --- | --- | ---: | ---: |
@@ -104,6 +104,6 @@ All three saved response bodies were then passed through the implemented `collec
 
 Local verification passed the existing Spectra suites, the new adapter and acquisition-archive checks, and all twelve offline public-feed store/lifecycle checks. The optional PGlite run passed a thirteenth check covering real PostgreSQL migration/query behavior, leases, deduplication/version history, retention and anonymous-access denial. After incorporating production commit `a98947f`, the complete `npm run verify:spectra` suite passed again. `npm --ignore-scripts run build` passed the build-script checks and produced the client, server and worker bundles. Repository-wide TypeScript checking still reports pre-existing errors; strict targeted checks for the new modules and UI passed. Local verification ran on Node 24.19.0; the project and production build specify Node 20.
 
-The full `npm run build` lifecycle remains unverified locally: an existing unrelated prebuild step invokes the `tsx` CLI, whose Unix IPC socket is denied in this workspace (`listen EPERM`), including with a writable temporary directory. A minimal CLI probe reproduces the same restriction. The prebuild gate was not changed. The successful build-script run skips that lifecycle step and must not be described as a full lifecycle pass.
+The full `npm run build` lifecycle remains unverified locally: an existing unrelated prebuild step invokes the `tsx` CLI, whose Unix IPC socket is denied in this workspace (`listen EPERM`), including with a writable temporary directory. A minimal CLI probe reproduces the same restriction. The prebuild step was not changed. The successful build-script run skips that lifecycle step and must not be described as a full lifecycle pass.
 
 These results do not establish production deployment or live persistence. Production schema installation, rollout and persisted feed-record verification must be recorded separately when completed. No new API key is required; the existing production migration command installs the added tables before application startup.

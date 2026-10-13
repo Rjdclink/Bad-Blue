@@ -1,4 +1,4 @@
-import * as ExifReader from 'exifreader';
+import ExifReader from 'exifreader';
 import { extractGPSFromFile, type GPSCoordinates } from '../gpsIntelligence';
 import { exifToolExtractor } from './ExifToolExtractor';
 

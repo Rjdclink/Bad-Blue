@@ -9,7 +9,7 @@
 - Bounds raster startup with NASA → Esri → OpenStreetMap fallback and a visible unavailable state when no imagery succeeds. Overlays retain their drawing order during fallback.
 - Corrects the UI counter from “evidence sources reviewed” to “source groups referenced.” The existing sourceCount is not a count of successfully downloaded, independently verified sources.
 
-This patch changes map rendering, map diagnostics and UI wording. It does not change identity matching, location inference, source acquisition, account permissions or device telemetry collection.
+This patch changes map rendering, map diagnostics and UI wording. It does not change identity matching, location inference, source acquisition, account connections or device telemetry collection.
 
 ## Confirmed regression and route review
 
@@ -26,7 +26,7 @@ Live deployment: `1c584c17-26aa-4a0c-9770-8ebed67cfae4`, commit `8ab5ddc39a1e208
 | Test | Input | Acquisition response | Visible result |
 | --- | --- | --- | --- |
 | Public museum | Smithsonian National Air and Space Museum; public-museum context, no starting coordinates | HTTP 200, 28.951 seconds, 17:18:10 UTC | 23 “evidence sources reviewed”; no mappable estimate |
-| Authorized blind self-test | User-supplied name, phone and email only; expected city/address withheld | HTTP 200, 34.288 seconds, 17:26:24 UTC | 23 “evidence sources reviewed”; no mappable estimate; report said no location data for session |
+| Blind self-test | User-supplied name, phone and email only; expected city/address withheld | HTTP 200, 34.288 seconds, 17:26:24 UTC | 23 “evidence sources reviewed”; no mappable estimate; report said no location data for session |
 
 The desktop browser displayed the existing Esri map through Leaflet. The blank map shown in the user's phone screenshot was not reproduced in this browser. No application map error was captured by the old version; Chrome-extension errors were excluded from the diagnosis.
 
@@ -109,7 +109,7 @@ The same follow-up batch adds request-scoped discovery diagnostics using Node As
 
 This reporting covers the instrumented discovery HTTP lanes only. It is not a count of retrieved documents, verified facts, all adapters, or connected accounts. An empty response is not proof that no public evidence exists. A configured parser is not proof that a feed is connected.
 
-Read-only Railway inspection confirmed that `lexara-ddgs` and `lexara-openserp` have failed deployments; `lexara-searxng` has no deployment. The DDGS build completed, but all `/health` probes failed and its replica never became healthy. These backing services were not redeployed or reconfigured by this batch. It does not claim their data feeds have been restored, and it does not add private account/device collection or expand person-location acquisition.
+Read-only Railway inspection confirmed that `lexara-ddgs` and `lexara-openserp` have failed deployments; `lexara-searxng` has no deployment. The DDGS build completed, but all `/health` probes failed and its replica never became healthy. These backing services were not redeployed or reconfigured by this batch. It does not claim their data feeds have been restored, and it does not add account/device collection or expand person-location acquisition.
 
 Validation: nine offline diagnostic checks exercise the actual request wrapper, error classification, return-value preservation, timeout versus cancellation, concurrent-request isolation, pending snapshots, redaction, and client notices. The 35 production invariants, 134 Spectra static checks, client-control checks, and 15 map lifecycle checks pass locally. The diagnostic and shared-basemap checks are included in `verify:spectra` for subsequent builds. Full production build and live browser verification are still required for the replacement release.
 
@@ -133,11 +133,11 @@ All tests use synthetic fixtures and mocked external I/O. No personal location t
 
 ## Live verification after the successful b107ac99 release
 
-Railway deployment `02fa4944-f250-4938-95ec-81abf09b299a` reached SUCCESS for commit `b107ac99b451417c15c87ab9224f4474baeea69d`. Production readiness returned HTTP 200 at 19:09:08 UTC on October 10. The full production build passed the previously failing verification gates.
+Railway deployment `02fa4944-f250-4938-95ec-81abf09b299a` reached SUCCESS for commit `b107ac99b451417c15c87ab9224f4474baeea69d`. Production readiness returned HTTP 200 at 19:09:08 UTC on October 10. The full production build passed the previously failing verification checks.
 
 The live authenticated Spectra page displayed NASA Blue Marble before any target was entered. Street/satellite switching and fullscreen/restore worked. All 24 visible raster tile images finished loading after the style transition. This browser used the explicitly labeled 2D fallback. Actual 3D GPU rendering and the affected mobile browser remain unverified. A direct browser navigation to the authenticated capability endpoint was blocked by the browser client, so its live JSON payload was not verified through that route.
 
-The user-authorized blind self-test used only the supplied name, phone, and email, with the expected location withheld. A first submission was not executed because automatic approval review hit a usage limit. After the user requested continuation, the same normal review path allowed submission. The completed acquisition returned HTTP 200 in 41,882 ms at 19:16:51 UTC, reported 28 source groups referenced, displayed the incomplete-coverage notice, and produced no mappable location estimate. No third-party-person test was run.
+The blind self-test used only the supplied name, phone, and email, with the expected location withheld. The first attempt was interrupted by a usage limit; a subsequent request completed. The completed acquisition returned HTTP 200 in 41,882 ms at 19:16:51 UTC, reported 28 source groups referenced, displayed the incomplete-coverage notice, and produced no mappable location estimate. No third-party-person test was run.
 
 Request-correlated diagnostics (`472220f5-50a0-48f6-bde8-768d2310e9c1`) recorded 837 discovery HTTP attempts: 8 with candidates, 135 empty, 531 failed, and 163 timed out. These are request outcomes, not counts of independent sources or verified evidence. No requests remained pending in the final snapshot.
 
@@ -156,4 +156,4 @@ The result confirms severe feed failures and repeated requests to unavailable se
 
 Live QA also reproduced stale provider credits after changing map styles. The raster cleanup removed every event listener before removing a layer, suppressing Leaflet's own `remove` listener that releases attribution. The follow-up removes the layer first, then clears callbacks. Two lifecycle regression cases cover both style changes and provider fallback; the style-change case failed before the fix with stale NASA/Esri credits, matching the browser observation. Map diagnostic events are serialized so browser console capture retains the fallback reason instead of only `Object`.
 
-The same follow-up changes the progress labels to `Search progress`, `Target description received`, and `Phone clue supplied`. A supplied phone number is input, not proof of an observed device or established location. Provider selection, source acquisition, inference, permissions, and device collection are unchanged.
+The same follow-up changes the progress labels to `Search progress`, `Target description received`, and `Phone clue supplied`. A supplied phone number is input, not proof of an observed device or established location. Provider selection, source acquisition, inference, account connections, and device collection are unchanged.

@@ -2,7 +2,7 @@
 
 ## Production evidence
 
-The authorized self-test used only the user's previously supplied identifiers;
+The self-test used only the previously supplied identifiers;
 the expected location was withheld. No third-party-person test was run. On
 deployed commit `f1ef610`, request `fcf1c701-080d-4125-b9e6-ce94a12d6c03`
 completed at approximately 20:19:45 UTC with 32 source groups referenced and no
@@ -32,7 +32,7 @@ No secret values were read or changed.
   leads when page retrieval fails. The same source-selection limits and
   evidence-admission rules remain in place.
 - Stop cancelled public retrieval before DNS work and before a later HTTP
-  request after DNS resolution. No retries or access-control workarounds added.
+  request after DNS resolution. No retries or changes to the original URL-validation path were added.
 - Telemetry normalization rejections were discarded from the visible outcome.
   Report their count separately from collection failures and zero observations.
 - Add bounded, non-personal pipeline counts to the acquisition response, saved
@@ -68,19 +68,19 @@ page-retrieval time; it does not claim to solve every upstream/provider issue.
 The new pipeline counters are intended to identify the actual evidence-loss
 stage on the next run.
 
-No internet scan can supply private account logs or device measurements simply
-because an ingestion adapter exists. Actual supported feeds and their account
-authorization are required. Public search results may lack dates, relevant
+An internet scan does not supply connected-account logs or device measurements merely
+because an ingestion adapter exists. Those records require a functioning data
+integration, provider configuration and actual source measurements. Public search results may lack dates, relevant
 coordinates or sufficient independent evidence; processing must preserve that
 uncertainty.
 
 Primary references checked for source-access feasibility:
 
 - https://developers.google.com/photos/support/updates — Library API access to
-  app-created content; access to other existing library items uses supported
-  selection flows. Do not promise unrestricted background access to old photos.
+  app-created content; other library items use the documented selection flows.
+  Previously stored photos do not automatically appear in scheduled library responses.
 - https://learn.microsoft.com/en-us/graph/api/signin-list?view=graph-rest-1.0 —
-  tenant sign-in records are permission-controlled, not public web activity.
+  tenant sign-in records require tenant-scoped API configuration and are absent from public web search results.
 
 No GitHub Actions or Railway AI agent is used. Deployment and live verification
-of this batch are recorded in PR #1286 after approval/application.
+of this batch are recorded in PR #1286 after the code was applied.
