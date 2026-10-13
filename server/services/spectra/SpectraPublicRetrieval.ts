@@ -376,9 +376,11 @@ function jsonEvidence(payload: any, sourceUrl: string): SpectraRetrievedObservat
   return dedupeObservations(observations);
 }
 
-/** Enforce the decoded byte budget before buffering the complete response. */
-async function readBoundedText(response: Response): Promise<string> {
-  if (!response.body) return '';
+/** A single byte-bounded reader serves both source text and binary PDF.
+ * No second network fetch and no additional search-provider credits.
+ */
+async function readBoundedBytes(response: Response): Promise<Buffer> {
+  if (!response.body) return Buffer.alloc(0);
   const reader = response.body.getReader();
   const chunks: Buffer[] = [];
   let size = 0;
@@ -390,12 +392,16 @@ async function readBoundedText(response: Response): Promise<string> {
       if (size > MAX_RESPONSE_BYTES) throw new RetrievalFailure('response_too_large');
       chunks.push(Buffer.from(value));
     }
-    // Response.text() uses UTF-8 and strips a leading byte order mark.
-    return Buffer.concat(chunks, size).toString('utf8').replace(/^\uFEFF/, '');
+    return Buffer.concat(chunks, size);
   } finally {
     void reader.cancel().catch(() => undefined);
     reader.releaseLock();
   }
+}
+
+async function readBoundedText(response: Response): Promise<string> {
+  // Response.text() uses UTF-8 and strips a leading byte order mark.
+  return (await readBoundedBytes(response)).toString('utf8').replace(/^\uFEFF/, '');
 }
 
 async function retrieveOne(
@@ -464,6 +470,30 @@ async function retrieveOne(
           if (!image) throw new RetrievalFailure('invalid_response');
           reason = 'retrieved';
           return { ...image, requestedUrl: rawUrl };
+        }
+
+        // Public PDFs are common among archives and court records. Reuse the
+        // existing offline parser; never submit source bytes to a paid model.
+        // Image-only/scanned or malformed PDFs are not fabricated as facts.
+        if (contentType === 'application/pdf') {
+          const bytes = await readBoundedBytes(response);
+          if (bytes.length < 64 || bytes.subarray(0, 5).toString('ascii') !== '%PDF-') {
+            throw new RetrievalFailure('invalid_response');
+          }
+          let extracted = '';
+          try {
+            const { textFromPdf } = await import('../../lexara/LexaraRetrievalBoundary');
+            extracted = await textFromPdf(bytes, 8);
+          } catch {
+            throw new RetrievalFailure('invalid_response');
+          }
+          if (!extracted.trim()) throw new RetrievalFailure('invalid_response');
+          reason = 'retrieved';
+          return {
+            url: current.toString(), requestedUrl: rawUrl,
+            retrievedAt: new Date().toISOString(), contentType,
+            textExcerpt: extracted.slice(0, MAX_TEXT), observations: [],
+          };
         }
 
         if (contentType === 'application/json' || contentType === 'text/json' || /^application\/[a-z0-9!#$&^_.+-]+\+json$/.test(contentType)) {
