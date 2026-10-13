@@ -1,3 +1,4 @@
+import { discoveryFetch } from '../../lexara/DiscoveryDiagnostics';
 import {
   normalizeSpectraProviderPayload,
   SPECTRA_PROVIDER_NORMALIZER_KINDS,
@@ -418,7 +419,7 @@ async function fetchAdapter(
     headers.Authorization = `Bearer ${headers.Authorization}`;
   }
 
-  const response = await fetch(url, {
+  const response = await discoveryFetch(fetch, url, {
     method: config.method,
     headers,
     redirect: 'error',

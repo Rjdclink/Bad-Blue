@@ -1,3 +1,4 @@
+import { discoveryFetch } from '../../lexara/DiscoveryDiagnostics';
 /** Public natural-event records. These records are never person/device observations. */
 export interface SpectraPublicFeedRecord {
   provider: string;
@@ -280,7 +281,7 @@ export async function collectSpectraPublicFeed(provider: string, options: Spectr
       };
       if (page === 0 && options.etag) headers['If-None-Match'] = options.etag;
       if (page === 0 && options.lastModified) headers['If-Modified-Since'] = options.lastModified;
-      const response = await withSignal((options.fetchImpl ?? fetch)(url, {
+      const response = await withSignal(discoveryFetch(options.fetchImpl ?? fetch, url, {
         method: 'GET', headers, signal: controller.signal, redirect: 'error', credentials: 'omit',
       }), controller.signal);
       if (response.redirected || response.url && response.url !== url) {

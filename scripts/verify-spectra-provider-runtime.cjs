@@ -45,6 +45,55 @@ const workFor = ms => signal => new Promise((resolve, reject) => {
   };
   const capture = async run => d.withDiscoveryDiagnostics(async () => { const result = await run(); return { result, stats: d.getDiscoveryDiagnostics() }; });
 
+  for (const status of [429, 432, 433]) await test(`HTTP ${status} blocks repeated dispatch without reading a stalled error body`, async () => {
+    let requests = 0, cancelled = 0;
+    global.fetch = async () => {
+      requests++;
+      return new Response(new ReadableStream({ cancel() { cancelled++; } }), {
+        status, headers: { 'retry-after': '3600' },
+      });
+    };
+    const { stats } = await capture(async () => { await d.tavily('fixture'); await d.tavily('fixture'); });
+    assert.equal(requests, 1); assert.equal(cancelled, 1);
+    assert.equal(stats.failed, 1); assert.equal(stats.skipped, 1);
+    assert.equal(stats.providers[0].errors[`http-${status}`], 1);
+  });
+
+  await test('Retry-After controls recovery and a successful probe restores dispatch', async () => {
+    const clock = require('@sinonjs/fake-timers').install({ toFake: ['Date'] });
+    try {
+      let requests = 0;
+      global.fetch = async () => ++requests === 1 ? json({}, 429, { 'retry-after': '3600' }) : json({ results: [] });
+      await capture(() => d.tavily('fixture'));
+      clock.setSystemTime(Date.now() + 3599_000);
+      await capture(() => d.tavily('fixture'));
+      assert.equal(requests, 1);
+      clock.setSystemTime(Date.now() + 2_000);
+      const { stats } = await capture(() => d.tavily('fixture'));
+      assert.equal(requests, 2); assert.equal(stats.empty, 1);
+    } finally { clock.uninstall(); }
+  });
+
+  await test('an expired outage admits one recovery probe before parallel requests', async () => {
+    const clock = require('@sinonjs/fake-timers').install({ toFake: ['Date'] });
+    try {
+      global.fetch = async () => { throw Object.assign(new Error('fixture'), { cause: { code: 'ENOTFOUND' } }); };
+      await capture(() => d.tavily('fixture'));
+      clock.setSystemTime(Date.now() + 31_000);
+      let requests = 0, release;
+      global.fetch = async () => {
+        requests++;
+        if (requests === 1) await new Promise(resolve => { release = resolve; });
+        return json({ results: [] });
+      };
+      const pending = capture(() => Promise.all([d.tavily('fixture'), d.tavily('fixture')]));
+      await delay(30);
+      assert.equal(requests, 1);
+      release(); await pending;
+      assert.equal(requests, 2);
+    } finally { clock.uninstall(); }
+  });
+
   await test('DNS outage stops a forty-job fan-out after two dispatched attempts', async () => {
     let requests = 0;
     const dns = Object.assign(new Error('DO_NOT_LOG'), { cause: Object.assign(new Error('DO_NOT_LOG'), { code: 'ENOTFOUND' }) });

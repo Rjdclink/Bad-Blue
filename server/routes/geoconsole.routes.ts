@@ -1,3 +1,4 @@
+import { discoveryFetch } from '../lexara/DiscoveryDiagnostics';
 /**
  * Hybrid Geoconsole API Routes
  * 
@@ -656,7 +657,7 @@ async function openCellIdPoint(
     if (radio) endpoint.searchParams.set('radio', radio);
 
     try {
-      const response = await fetch(endpoint, {
+      const response = await discoveryFetch(fetch, endpoint, {
         headers: {
           Accept: 'application/json',
           'User-Agent': 'LegalWhat-SPECTRA/1.0',
@@ -757,7 +758,7 @@ async function beaconDbRadioPoint(
   if (!wifiAccessPoints.length && !cellTowers.length) return null;
 
   try {
-    const response = await fetch('https://api.beacondb.net/v1/geolocate', {
+    const response = await discoveryFetch(fetch, 'https://api.beacondb.net/v1/geolocate', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -827,7 +828,7 @@ async function googleRadioPoint(
   endpoint.searchParams.set('key', key);
 
   try {
-    const response = await fetch(endpoint, {
+    const response = await discoveryFetch(fetch, endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify({
@@ -2202,7 +2203,7 @@ router.get('/street-imagery', async (req: Request, res: Response) => {
   });
 
   try {
-    const response = await fetch(`${endpoint}?${params.toString()}`, {
+    const response = await discoveryFetch(fetch, `${endpoint}?${params.toString()}`, {
       headers: { Accept: 'application/json' },
       signal: AbortSignal.timeout(6000),
     });
@@ -2345,7 +2346,7 @@ export async function trafficLandCameras(
   endpoint.searchParams.set('key', key);
   endpoint.searchParams.set('system', system);
 
-  const response = await fetch(endpoint, {
+  const response = await discoveryFetch(fetch, endpoint, {
     headers: {
       Accept: 'application/json',
       'Accept-Encoding': 'gzip',
@@ -2420,7 +2421,7 @@ export async function arcGisCameras(
     endpoint.searchParams.set('spatialRel', 'esriSpatialRelIntersects');
     endpoint.searchParams.set('resultRecordCount', '200');
 
-    const response = await fetch(endpoint, {
+    const response = await discoveryFetch(fetch, endpoint, {
       headers: { Accept: 'application/json' },
       signal: AbortSignal.timeout(6_000),
     });
@@ -2560,7 +2561,7 @@ export async function wikimediaNearbyMedia(
   endpoint.searchParams.set('prop', 'coordinates|imageinfo');
   endpoint.searchParams.set('iiprop', 'url|timestamp|mime');
 
-  const response = await fetch(endpoint, {
+  const response = await discoveryFetch(fetch, endpoint, {
     headers: {
       Accept: 'application/json',
       'User-Agent': 'LegalWhat-SPECTRA/1.0',
@@ -2628,7 +2629,7 @@ export async function flickrNearbyMedia(
   endpoint.searchParams.set('per_page', '100');
   endpoint.searchParams.set('extras', 'geo,date_taken,date_upload,url_o,url_l,url_c,owner_name');
 
-  const response = await fetch(endpoint, {
+  const response = await discoveryFetch(fetch, endpoint, {
     headers: {
       Accept: 'application/json',
       'User-Agent': 'LegalWhat-SPECTRA/1.0',
@@ -2752,7 +2753,7 @@ export async function nwsLatestObservation(lat: number, lng: number): Promise<Re
   // allowed 18s of work after the Spectra context request had already expired.
   const signal = AbortSignal.timeout(7_000);
   try {
-    const pointResponse = await fetch(`https://api.weather.gov/points/${lat},${lng}`, {
+    const pointResponse = await discoveryFetch(fetch, `https://api.weather.gov/points/${lat},${lng}`, {
       headers,
       signal,
     });
@@ -2761,7 +2762,7 @@ export async function nwsLatestObservation(lat: number, lng: number): Promise<Re
     const stationsUrl = String(point?.properties?.observationStations || '').trim();
     if (!/^https:\/\/api\.weather\.gov\//i.test(stationsUrl)) return null;
 
-    const stationResponse = await fetch(`${stationsUrl}?limit=1`, {
+    const stationResponse = await discoveryFetch(fetch, `${stationsUrl}?limit=1`, {
       headers,
       signal,
     });
@@ -2771,7 +2772,7 @@ export async function nwsLatestObservation(lat: number, lng: number): Promise<Re
     const stationId = String(station?.properties?.stationIdentifier || '').trim();
     if (!stationId) return null;
 
-    const observationResponse = await fetch(
+    const observationResponse = await discoveryFetch(fetch,
       `https://api.weather.gov/stations/${encodeURIComponent(stationId)}/observations/latest`,
       {
         headers,
@@ -2839,7 +2840,7 @@ export async function copernicusItems(
   };
 
   try {
-    const response = await fetch(endpoint, {
+    const response = await discoveryFetch(fetch, endpoint, {
       method: 'POST',
       headers: {
         Accept: 'application/geo+json,application/json',

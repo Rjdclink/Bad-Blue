@@ -1,3 +1,4 @@
+import { discoveryFetch } from '../../lexara/DiscoveryDiagnostics';
 import type { SpectraRetrievedEvidence } from './SpectraPublicRetrieval';
 
 /** Public posts from an explicitly supplied Bluesky profile; no account login or API key. */
@@ -106,7 +107,7 @@ export function suppliedBlueskyProfile(input: string): { handle: string; url: st
 }
 
 async function boundedJson(url: URL, fetchImpl: typeof fetch, signal: AbortSignal): Promise<Record<string, any>> {
-  const response = await fetchImpl(url, {
+  const response = await discoveryFetch(fetchImpl, url, {
     method: 'GET', redirect: 'manual', signal,
     headers: { Accept: 'application/json', 'User-Agent': 'LegalWhat-SPECTRA/1.0' },
   });

@@ -1,5 +1,5 @@
 import { Router, type Request, type Response } from 'express';
-import { getDiscoveryDiagnostics, withDiscoveryDiagnostics } from '../lexara/DiscoveryDiagnostics';
+import { getDiscoveryDiagnostics, withDiscoveryDiagnostics, discoveryRequestLifetime, discoverySignal, throwIfDiscoveryCancelled } from '../lexara/DiscoveryDiagnostics';
 import { z } from 'zod';
 import { isAuthenticated } from '../auth';
 import {
@@ -88,6 +88,11 @@ import { takeUnseenSpectraQueries } from '../services/spectra/SpectraDiscoveryDe
 
 const router = Router();
 router.use(isAuthenticated);
+router.use((req, res, next) => {
+  if (req.method === 'POST' && ['/acquire', '/public-place'].includes(req.path)) {
+    discoveryRequestLifetime(req, res, next);
+  } else next();
+});
 
 // Collection is owned by the server scheduler. Reading records never initiates
 // external requests or accepts arbitrary source URLs from the browser.
@@ -957,6 +962,7 @@ router.post('/public-place', async (req: Request, res: Response) => withDiscover
       retrieve: retrieveSpectraPublicEvidence,
       geocode: geocodeCityState,
     });
+    throwIfDiscoveryCancelled();
     const persistence = await persistSpectraAcquisition({
       userId,
       sessionId: parsed.data.sessionId,
@@ -1086,7 +1092,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
           // truncated request followed by the same search again.
           claudeResearchMaxTokens: 2_048,
           claudeRetryTruncatedOutput: false,
-          signal: AbortSignal.timeout(backgroundBudgetMs),
+          signal: discoverySignal(AbortSignal.timeout(backgroundBudgetMs)),
         },
       ),
       backgroundBudgetMs,
@@ -2045,6 +2051,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
     const evidenceAssessment = assessSpectraAcquiredEvidence(
       evidenceRecords, solvedLocationObservations.length,
     );
+    throwIfDiscoveryCancelled();
     const persistence = await persistSpectraAcquisition({
       userId,
       sessionId: requestedSessionId,

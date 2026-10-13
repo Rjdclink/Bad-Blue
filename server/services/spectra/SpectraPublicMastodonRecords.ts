@@ -1,3 +1,4 @@
+import { discoveryFetch } from '../../lexara/DiscoveryDiagnostics';
 import { load } from 'cheerio';
 import { isIP } from 'node:net';
 import { assertPublicUrl, type SpectraRetrievedEvidence } from './SpectraPublicRetrieval';
@@ -113,7 +114,7 @@ function object(value: unknown): Record<string, any> | null {
 
 async function boundedJson(url: URL, token: string | null, fetchImpl: typeof fetch, signal: AbortSignal): Promise<unknown> {
   // Never forward credentials to a supplied profile URL or follow a redirect.
-  const response = await fetchImpl(url, {
+  const response = await discoveryFetch(fetchImpl, url, {
     method: 'GET', redirect: 'manual', signal,
     headers: {
       Accept: 'application/json', 'User-Agent': 'LegalWhat-SPECTRA/1.0',

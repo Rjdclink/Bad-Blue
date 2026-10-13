@@ -1,3 +1,4 @@
+import { discoveryFetch } from '../../lexara/DiscoveryDiagnostics';
 import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 import { Buffer } from 'node:buffer';
@@ -428,7 +429,7 @@ async function retrieveOne(
 
       let response: Response | undefined;
       try {
-        response = await fetch(current, {
+        response = await discoveryFetch(fetch, current, {
           method: 'GET',
           redirect: 'manual',
           signal: controller.signal,

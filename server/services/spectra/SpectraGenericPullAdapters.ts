@@ -1,3 +1,4 @@
+import { discoveryFetch } from '../../lexara/DiscoveryDiagnostics';
 import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 import type { GPSPoint } from '../geoconsole/types';
@@ -179,7 +180,7 @@ export async function pullSpectraGenericAdapter(adapterId: string): Promise<GPSP
     if (value) headers[header] = value;
   }
 
-  const response = await fetch(url, {
+  const response = await discoveryFetch(fetch, url, {
     headers,
     redirect: 'error',
     signal: AbortSignal.timeout(8_000),

@@ -1,5 +1,45 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
+import type { Request as ExpressRequest, Response as ExpressResponse, NextFunction } from 'express';
+
+const requestSignals = new AsyncLocalStorage<AbortSignal>();
+
+/** A disconnected/completed acquisition must not leave upstream work running. */
+export function discoveryRequestLifetime(req: ExpressRequest, res: ExpressResponse, next: NextFunction): void {
+  const controller = new AbortController();
+  const stop = () => {
+    clearTimeout(timer);
+    req.removeListener('aborted', stop);
+    res.removeListener('close', stop);
+    res.removeListener('finish', stop);
+    controller.abort(new DOMException('Acquisition ended', 'AbortError'));
+  };
+  const timer = setTimeout(stop, 180_000);
+  timer.unref?.();
+  req.once('aborted', stop);
+  res.once('close', stop);
+  res.once('finish', stop);
+  if (req.aborted || res.destroyed) stop();
+  requestSignals.run(controller.signal, next);
+}
+
+export function discoverySignal(signal?: AbortSignal | null): AbortSignal | undefined {
+  const request = requestSignals.getStore();
+  return request && signal ? AbortSignal.any([request, signal]) : request || signal || undefined;
+}
+
+export function throwIfDiscoveryCancelled(): void {
+  requestSignals.getStore()?.throwIfAborted();
+}
+
+/** Explicit transport injection preserves fixtures and avoids patching global fetch. */
+export function discoveryFetch(transport: typeof fetch, input: Parameters<typeof fetch>[0], init?: RequestInit): Promise<Response> {
+  const request = requestSignals.getStore();
+  if (!request) return transport(input, init);
+  request.throwIfAborted();
+  const local = init?.signal ?? (typeof Request !== 'undefined' && input instanceof Request ? input.signal : undefined);
+  return transport(input, { ...init, signal: discoverySignal(local) });
+}
 
 export type DiscoveryOutcome = 'ok' | 'empty' | 'failed' | 'timeout' | 'cancelled' | 'skipped';
 type Counts = Record<DiscoveryOutcome, number> & { pending: number; dispatched: number; partial: number };

@@ -1,3 +1,4 @@
+import { discoveryFetch } from '../../lexara/DiscoveryDiagnostics';
 import { createHash } from 'node:crypto';
 import ExifReader from 'exifreader';
 import type { SpectraRetrievedEvidence } from './SpectraPublicRetrieval';
@@ -234,7 +235,7 @@ async function collect(leads: ImageLead[], options: {
         // including each redirect destination; provider host allowlists are gone.
         const validated = options.fetchImpl ? url
           : await (await import('./SpectraPublicRetrieval')).assertPublicUrl(url.toString());
-        const fetched = await (options.fetchImpl || fetch)(validated, {
+        const fetched = await discoveryFetch(options.fetchImpl || fetch, validated, {
           method: 'GET', redirect: 'manual', signal: controller.signal,
           headers: { Accept: 'image/jpeg,image/png,image/webp', 'User-Agent': 'LegalWhat-SPECTRA/1.0' },
         });

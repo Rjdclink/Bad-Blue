@@ -1,3 +1,4 @@
+import { discoverySignal } from './lexara/DiscoveryDiagnostics';
 import { meterClaudeRequest } from './claudeUsage';
 /**
  * Claude (Anthropic) AI Service - High-quality reasoning
@@ -129,7 +130,7 @@ export async function callClaude(
         ]
       };
       return meterClaudeRequest(model, 'messages', () => client.messages.create(requestBody, {
-        signal: options.signal,
+        signal: discoverySignal(options.signal),
         ...(options.providerPolicy === 'legalwhat' ? { maxRetries: 0 } : {}),
       }));
     };
@@ -334,7 +335,7 @@ export async function callClaudeWebSearch(
         messages,
         tools,
       }, {
-        signal: options.signal,
+        signal: discoverySignal(options.signal),
         maxRetries: 0,
       }));
 
@@ -459,7 +460,7 @@ export async function callClaudeMediaExtraction(input: {
         ],
       }],
     }, {
-      signal: input.signal,
+      signal: discoverySignal(input.signal),
       maxRetries: 0,
     }));
 
@@ -520,7 +521,7 @@ export async function callClaudeStreaming(
       system: buildClaudeSystemBlocks(systemText, cacheSystemPrompt, options.cacheSystemPromptPrefix),
       messages: [{ role: 'user', content: prompt }],
     } as any, {
-      signal: options.signal,
+      signal: discoverySignal(options.signal),
       ...(options.providerPolicy === 'legalwhat' ? { maxRetries: 0 } : {}),
     });
 

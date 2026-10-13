@@ -1,3 +1,4 @@
+import { discoveryFetch } from '../../lexara/DiscoveryDiagnostics';
 import type { SpectraRetrievedEvidence } from './SpectraPublicRetrieval';
 
 /** Public RECAP docket metadata. A case-name match is a lead, never proof of identity or residence. */
@@ -9,7 +10,7 @@ export interface SpectraPublicCourtCollection {
 type CourtSearch = (url: URL, token: string, signal: AbortSignal) => Promise<unknown>;
 
 const defaultSearch: CourtSearch = async (url, token, signal) => {
-  const response = await fetch(url, {
+  const response = await discoveryFetch(fetch, url, {
     headers: { Authorization: `Token ${token}`, Accept: 'application/json' },
     signal,
   });
