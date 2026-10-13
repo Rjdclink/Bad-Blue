@@ -7,6 +7,8 @@ type ImageLead = { url: string; post: SpectraRetrievedEvidence; platform: Social
 const MAX_BYTES = 3_000_000;
 const TIMEOUT_MS = 3_500;
 const MAX_IMAGES_PER_PLATFORM = 4;
+// A bounded cross-platform budget; no early platform can use every slot.
+const MAX_SOCIAL_IMAGES_TOTAL = 6;
 const MAX_REDIRECTS = 3;
 const CACHE_MS = 30 * 60_000;
 const CACHE_LIMIT = 100;
@@ -28,7 +30,7 @@ function validUrl(raw: string): URL | null {
   } catch { return null; }
 }
 
-function platformForPage(raw: string): SocialPlatform | null {
+function platformForPage(raw: string): 'Facebook' | 'Instagram' | 'X' | null {
   const url = validUrl(raw);
   if (!url) return null;
   const host = url.hostname.toLowerCase().replace(/^www\./, '');
@@ -197,10 +199,11 @@ export async function inspectSpectraPublicImageResponse(
 
 async function collect(leads: ImageLead[], options: {
   fetchImpl?: typeof fetch; signal?: AbortSignal;
-}): Promise<SpectraPublicImageCollection> {
+}, maxImages = MAX_IMAGES_PER_PLATFORM): Promise<SpectraPublicImageCollection> {
   const records: SpectraRetrievedEvidence[] = [];
   let attempted = 0, failed = 0, cached = 0;
-  const unique = [...new Map(leads.map(lead => [lead.url, lead])).values()].slice(0, MAX_IMAGES_PER_PLATFORM);
+  const unique = [...new Map(leads.map(lead => [lead.url, lead])).values()]
+    .slice(0, Math.max(0, Math.min(12, maxImages)));
   const run = async (lead: ImageLead) => {
     // Mocked fetches are independent fixtures; cache only genuine public HTTP results.
     const prior = options.fetchImpl ? undefined : cache.get(lead.url);
@@ -317,14 +320,31 @@ export async function collectSpectraPublicSocialPageImages(
   pages: readonly SpectraRetrievedEvidence[],
   options: { fetchImpl?: typeof fetch; signal?: AbortSignal } = {},
 ): Promise<SpectraPublicImageCollection> {
-  const leads: ImageLead[] = [];
-  for (const post of pages.slice(0, 80)) {
+  const platforms = ['Facebook', 'Instagram', 'X'] as const;
+  const byPlatform: Record<(typeof platforms)[number], ImageLead[]> = {
+    Facebook: [], Instagram: [], X: [],
+  };
+  const seen = new Set<string>();
+  for (const post of pages.slice(0, 100)) {
     const platform = platformForPage(post.url);
     if (!platform || !Array.isArray(post.publicImageUrls)) continue;
     for (const url of spectraSocialPageImageLeads(post.url, post.publicImageUrls)) {
-      leads.push({ url, post, platform });
+      if (byPlatform[platform].length >= MAX_IMAGES_PER_PLATFORM) break;
+      // The same photo discovered in several posts is fetched once per batch.
+      if (seen.has(url)) continue;
+      seen.add(url);
+      byPlatform[platform].push({ url, post, platform });
     }
-    if (leads.length >= MAX_IMAGES_PER_PLATFORM) break;
   }
-  return collect(leads, options);
+  // Preserve first-seen order inside a platform, but rotate across platforms.
+  // Four Facebook images must not suppress Instagram and X entirely.
+  const leads: ImageLead[] = [];
+  for (let index = 0; index < MAX_IMAGES_PER_PLATFORM
+    && leads.length < MAX_SOCIAL_IMAGES_TOTAL; index++) {
+    for (const platform of platforms) {
+      if (byPlatform[platform][index]) leads.push(byPlatform[platform][index]);
+      if (leads.length >= MAX_SOCIAL_IMAGES_TOTAL) break;
+    }
+  }
+  return collect(leads, options, MAX_SOCIAL_IMAGES_TOTAL);
 }
