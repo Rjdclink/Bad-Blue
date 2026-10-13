@@ -1008,7 +1008,7 @@ must(
 must(
   lexaraLegalMesh.includes('async function firstUsefulParallelSearch') &&
     lexaraLegalMesh.includes('Promise.allSettled(providers)') &&
-    lexaraLegalMesh.includes('queries.map(query => freeSearch(query, signal, false))') &&
+    lexaraLegalMesh.includes('queries.map(query => freeSearch(query, signal, false, false, allowPaidSearch))') &&
     !lexaraLegalMesh.includes('const learnedOutcomes=await Promise.allSettled') &&
     !lexaraLegalMesh.includes('const plannedOutcomes=await Promise.allSettled') &&
     lexaraBackgroundInvestigation.includes('LIVE_TOTAL_CANDIDATES = 18') &&
@@ -1020,7 +1020,7 @@ must(
 must(
   lexaraLegalMesh.includes('firstUseful?: boolean') &&
     lexaraLegalMesh.includes('Promise.any(') &&
-    lexaraLegalMesh.includes('freeSearch(query, controller.signal, true)') &&
+    lexaraLegalMesh.includes('freeSearch(query, controller.signal, true, false, allowPaidSearch)') &&
     lexaraBackgroundInvestigation.includes('pass === 0 && !deepAcquisitionRequested') &&
     lexaraLegalMesh.includes('const groups=options.firstUseful') &&
     lexaraBackgroundInvestigation.includes('firstUseful: !deepAcquisitionRequested') &&
