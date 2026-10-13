@@ -12,6 +12,12 @@ export interface SpectraPhotoScene {
   priorityBand: 'recent_scene' | 'historical_scene' | 'undated_scene' | 'no_geotag';
   currentPositionVerified: false;
   subjectPresenceVerified: false;
+  sceneAnalysis?: {
+    evidenceRole: 'model_interpreted_scene_context';
+    validation: 'unverified_model_output';
+    objects: string[]; vehicles: string[]; settings: string[];
+    currentPositionVerified: false; subjectPresenceVerified: false;
+  };
 }
 
 export interface SpectraGeographicContextEvidence {
@@ -26,7 +32,8 @@ export interface SpectraGeographicContextEvidence {
     latitude?: number; longitude?: number;
     observedAt?: string; textDescription?: string; temperatureC?: number | null };
   earthObservation: Array<{ id?: string; provider?: string; observedAt?: string; bbox?: number[];
-    cloudCover?: number | null; platform?: string; links?: Array<{ rel?: string; href?: string }> }>;
+    cloudCover?: number | null; platform?: string; previewUrl?: string;
+    links?: Array<{ rel?: string; href?: string }> }>;
   sourceFamilies: string[];
 }
 
@@ -89,6 +96,10 @@ export function SpectraGeographicContext({ value, photoScenes = [] }: {
           {scene.captureGps
             ? ' · GPS capture coordinates available'
             : ' · capture GPS absent'}
+          {scene.sceneAnalysis?.validation === 'unverified_model_output'
+            && <> · Model-labeled scene (unverified):
+              {' '}{[...scene.sceneAnalysis.objects, ...scene.sceneAnalysis.vehicles,
+                ...scene.sceneAnalysis.settings].slice(0, 9).join(', ') || 'no reliable categories'}</>}
           {' · '}<a href={scene.sourcePostUrl} target="_blank" rel="noopener noreferrer"
             className="underline">Public post</a>
         </p>)}
@@ -126,8 +137,9 @@ export function SpectraGeographicContext({ value, photoScenes = [] }: {
           {' '}Acquired {timestamp(item.observedAt)}
           {typeof item.cloudCover === 'number' && Number.isFinite(item.cloudCover)
             ? ' · cloud cover ' + item.cloudCover.toFixed(0) + '%' : ''}
-          {publicLink(item.links?.find(link => link.rel === 'preview')?.href)
-            && <> · <a href={publicLink(item.links?.find(link => link.rel === 'preview')?.href)} target="_blank" rel="noopener noreferrer" className="underline">Preview</a></>}
+          {(publicLink(item.previewUrl) || publicLink(item.links?.find(link => link.rel === 'preview')?.href))
+            && <> · <a href={publicLink(item.previewUrl) || publicLink(item.links?.find(link => link.rel === 'preview')?.href)}
+              target="_blank" rel="noopener noreferrer" className="underline">Catalog preview (unverified)</a></>}
         </p>)}
       </div>
     </Section>
