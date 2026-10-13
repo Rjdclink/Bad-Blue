@@ -36,8 +36,9 @@ for (const file of [
 // An acquisition's environmental result has to reach the Spectra UI.
 assert.match(route, /contextEvidence,\s*liveLocationAssessment/);
 assert.match(page, /setContextEvidence\(payload\.contextEvidence\?\.anchor/);
-assert.match(page, /<SpectraGeographicContext value=\{contextEvidence\}/);
-assert.match(panel, /not sightings or measurements of the investigated person/);
+assert.match(page, /<SpectraGeographicContext value=\{contextEvidence\} photoScenes=\{photoScenes\}/);
+assert.match(panel, /Photograph metadata by capture date/);
+assert.doesNotMatch(panel, /not sightings or measurements of the investigated person/);
 assert.match(panel, /Source time unknown/);
 
 // Existing spatial observations must remain separate from source-scene/context records.
