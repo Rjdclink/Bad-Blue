@@ -5,9 +5,22 @@ import {
   collectSpectraPublicMastodonImages,
   collectSpectraPublicSocialPageImages,
   spectraSocialPageImageLeads,
+  spectraExifDecimalGps,
 } from '../server/services/spectra/SpectraPublicImageRecords';
 import { htmlEvidence } from '../server/services/spectra/SpectraPublicRetrieval';
 import type { SpectraRetrievedEvidence } from '../server/services/spectra/SpectraPublicRetrieval';
+
+// The merged EXIF decoder's raw references must be axis-valid.
+assert.equal(spectraExifDecimalGps({ description: 38.9 }, { value: ['N'] }, 'latitude'), 38.9);
+assert.equal(spectraExifDecimalGps({ description: 77.02 }, { value: ['W'] }, 'longitude'), -77.02);
+assert.equal(spectraExifDecimalGps({ description: -77.02 }, { value: ['E'] }, 'longitude'), 77.02);
+assert.equal(spectraExifDecimalGps({ description: 38.9 }, { value: ['E'] }, 'latitude'), null);
+assert.equal(spectraExifDecimalGps({ description: 77.02 }, { value: ['S'] }, 'longitude'), null);
+assert.equal(spectraExifDecimalGps({ description: 77.02 }, { description: 'West longitude' }, 'longitude'), null,
+  'human-readable descriptions may not replace original EXIF direction tags');
+assert.equal(spectraExifDecimalGps({ description: 38.9 }, null, 'latitude'), null,
+  'missing hemisphere metadata must not imply north');
+assert.equal(spectraExifDecimalGps({ description: 'NaN' }, { value: ['N'] }, 'latitude'), null);
 
 const now = new Date().toISOString();
 const jpeg = Buffer.from([255, 216, 255, 217]);
@@ -132,5 +145,26 @@ assert.equal(disguised.failed, 1, 'non-image bytes must never be treated as insp
 const external = htmlEvidence('<meta property="og:image" content="' + social[2][1] + '">',
   'https://unrelated.example/story');
 assert.equal(external.publicImageUrls, undefined, 'a generic site cannot launder social CDN URLs');
+
+// Four early Facebook results must not consume every image slot before the
+// Instagram and X result pages are processed.
+const crowded: SpectraRetrievedEvidence[] = [
+  ...Array.from({ length: 4 }, (_, i) => post(
+    'https://www.facebook.com/fake/posts/' + (i + 10), 'Public webpage')),
+  ...Array.from({ length: 4 }, (_, i) => post(
+    'https://www.instagram.com/p/example' + (i + 10) + '/', 'Public webpage')),
+  ...Array.from({ length: 4 }, (_, i) => post(
+    'https://x.com/fake/status/' + (123456789100 + i), 'Public webpage')),
+].map((page, i) => ({
+  ...page, publicImageUrls: ['https://images.example.invalid/photo-' + i + '.jpg'],
+}));
+const fair = await collectSpectraPublicSocialPageImages(crowded, {
+  fetchImpl: async () => jpegResponse(),
+});
+assert.equal(fair.attempted, 6, 'bounded cross-platform media budget');
+assert.equal(fair.failed, 0);
+assert.deepEqual(fair.records.map(record => (record.structuredRecord as any).sourcePlatform),
+  ['Facebook', 'Instagram', 'X', 'Facebook', 'Instagram', 'X'],
+  'each public platform receives a share of the bounded retrieval budget');
 
 console.log('SPECTRA public social image pipeline passed: cross-provider public image URLs and redirects, Bluesky, Mastodon, Facebook, Instagram, X, deduplication, bounded bytes and EXIF metadata.');
