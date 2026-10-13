@@ -27,6 +27,25 @@ export interface LocalTrialActivation {
   user: StatelessLocalUser;
 }
 
+/** Customer-facing profile fields only; never exposes password hashes. */
+export interface CanonicalSignupAdminRecord {
+  id: string;
+  email: string;
+  firstName: string | null;
+  lastName: string | null;
+  status: string;
+  hasPaidForAccess: boolean;
+  hasLocalCredentials: boolean;
+  createdAt: string | null;
+  lastLoginAt: string | null;
+}
+
+export interface CanonicalSignupAdminReport {
+  page: number;
+  total: number;
+  signups: CanonicalSignupAdminRecord[];
+}
+
 export interface StatelessLocalSession extends StatelessLocalUser {
   sessionVersion: 2;
 }
@@ -78,6 +97,9 @@ const AUTH_EDGE_FUNCTION = "legalwhat-local-auth";
 
 interface EdgeAuthResponse {
   ok?: boolean;
+  page?: number;
+  total?: number;
+  signups?: CanonicalSignupAdminRecord[];
   user?: StatelessLocalUser | null;
   decision?: { outcome?: TrialActivationOutcome } | null;
   trialSchemaReady?: boolean;
@@ -86,7 +108,7 @@ interface EdgeAuthResponse {
 }
 
 async function edgeAuthRequest(
-  action: "probe" | "login" | "register" | "user" | "set_subscription" | "activate_trial",
+  action: "probe" | "login" | "register" | "user" | "set_subscription" | "activate_trial" | "admin_signups",
   payload: Record<string, unknown> = {},
 ): Promise<EdgeAuthResponse> {
   const url = String(process.env.LEGALWHAT_AUTH_SUPABASE_URL || getConfig().SUPABASE_URL || "").trim();
@@ -359,6 +381,80 @@ export async function probeLocalAuthStoreHttp(): Promise<void> {
 export async function isLocalTrialSchemaReady(): Promise<boolean> {
   await resolveLocalAuthBackend();
   return trialSchemaReady;
+}
+
+function mapCanonicalSignup(row: any, ids: Set<string>): CanonicalSignupAdminRecord {
+  const id = String(row.id);
+  return {
+    id,
+    email: String(row.email || ""),
+    firstName: row.first_name == null ? null : String(row.first_name),
+    lastName: row.last_name == null ? null : String(row.last_name),
+    status: String(row.status || "pending_payment"),
+    hasPaidForAccess: row.has_paid_for_access === true,
+    hasLocalCredentials: ids.has(id) || row.has_local_credentials === true,
+    createdAt: row.created_at == null ? null : String(row.created_at),
+    lastLoginAt: row.last_login_at == null ? null : String(row.last_login_at),
+  };
+}
+
+/**
+ * Master-admin signup reporting follows the SAME selected auth authority
+ * that receives registrations. Never count Neon application users as signups.
+ * The caller is responsible for checking the master-admin session first.
+ */
+export async function getCanonicalSignupAdminReportHttp(requestedPage = 1): Promise<CanonicalSignupAdminReport> {
+  const page = Number.isSafeInteger(requestedPage) && requestedPage >= 1
+    ? Math.min(requestedPage, 10000) : 1;
+  const limit = 50;
+  const offset = (page - 1) * limit;
+  const backend = await resolveLocalAuthBackend();
+
+  if (backend.kind === "edge") {
+    const response = await edgeAuthRequest("admin_signups", { page });
+    if (!Array.isArray(response.signups) || !Number.isSafeInteger(response.total) || response.total! < 0) {
+      throw new Error("Canonical signup authority returned an invalid report");
+    }
+    return { page, total: response.total!, signups: response.signups };
+  }
+
+  if (backend.kind === "postgres") {
+    const [count, rows] = await Promise.all([
+      authDbQuery("SELECT count(*)::int AS total FROM users"),
+      authDbQuery(
+        `SELECT u.id,u.email,u.first_name,u.last_name,u.status,u.has_paid_for_access,
+                u.created_at,u.last_login_at,
+                EXISTS (SELECT 1 FROM auth_accounts a WHERE a.user_id=u.id
+                  AND a.auth_type='local' AND a.password_hash IS NOT NULL AND a.password_hash <> '') AS has_local_credentials
+           FROM users u ORDER BY u.created_at DESC,u.id DESC LIMIT $1 OFFSET $2`,
+        [limit, offset],
+      ),
+    ]);
+    return {
+      page,
+      total: Number(count.rows?.[0]?.total || 0),
+      signups: (rows.rows || []).map((row: any) => mapCanonicalSignup(row, new Set<string>())),
+    };
+  }
+
+  const { data: rows, error, count } = await backend.client.from("users")
+    .select("id,email,first_name,last_name,status,has_paid_for_access,created_at,last_login_at", { count: "exact" })
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
+    .range(offset, offset + limit - 1);
+  if (error || count == null) throw new Error("Canonical signup lookup failed: " + (error?.message || "no count"));
+
+  const ids = (rows || []).map((row: any) => String(row.id));
+  const { data: accounts, error: credentialsError } = ids.length
+    ? await backend.client.from("auth_accounts").select("user_id")
+        .eq("auth_type", "local")
+        .not("password_hash", "is", null)
+        .neq("password_hash", "")
+        .in("user_id", ids)
+    : { data: [] as { user_id: string }[], error: null };
+  if (credentialsError) throw new Error("Credential state lookup failed: " + credentialsError.message);
+  const credentialIds = new Set((accounts || []).map((row: any) => String(row.user_id)));
+  return { page, total: count, signups: (rows || []).map((row: any) => mapCanonicalSignup(row, credentialIds)) };
 }
 
 export async function getLocalUserByIdHttp(userId: string): Promise<StatelessLocalUser | null> {
