@@ -56,6 +56,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { SEOHead } from "@/components/SEOHead";
+import CanonicalSignupsPanel from "@/components/CanonicalSignupsPanel";
 
 // ============================================================================
 // TYPES
@@ -71,25 +72,6 @@ interface LoggedUser {
   hasPaidForAccess: boolean;
   subscriptionOverride: boolean;
   status: string;
-}
-
-interface CanonicalLegalWhatSignup {
-  id: string;
-  email: string;
-  firstName: string | null;
-  lastName: string | null;
-  status: string;
-  hasPaidForAccess: boolean;
-  hasLocalCredentials: boolean;
-  createdAt: string | null;
-  lastLoginAt: string | null;
-}
-
-interface CanonicalLegalWhatSignupReport {
-  source: "canonical-legalwhat-auth";
-  page: number;
-  total: number;
-  signups: CanonicalLegalWhatSignup[];
 }
 
 interface AdminStats {
@@ -163,9 +145,6 @@ export default function AdminConsole() {
   
   // User Management State
   const [users, setUsers] = useState<LoggedUser[]>([]);
-  const [signupPage, setSignupPage] = useState(1);
-  const [canonicalSignups, setCanonicalSignups] = useState<CanonicalLegalWhatSignupReport | null>(null);
-  const [signupReportError, setSignupReportError] = useState("");
   const [adminStats, setAdminStats] = useState<AdminStats | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [updatingUsers, setUpdatingUsers] = useState<Set<string>>(new Set());
@@ -293,33 +272,6 @@ export default function AdminConsole() {
       console.error('Failed to fetch admin stats:', error);
     }
   }, []);
-
-  // LegalWhat signup counts must come from the separate canonical auth store,
-  // not the Neon application-data plane used for usage/admin statistics.
-  const fetchCanonicalSignups = useCallback(async () => {
-    try {
-      const res = await fetch(`/api/admin/legalwhat-signups?page=${signupPage}`, {
-        credentials: "include",
-        headers: { "Cache-Control": "no-store" },
-      });
-      if (!res.ok) throw new Error(`Signup authority returned HTTP ${res.status}`);
-      const report = await res.json() as CanonicalLegalWhatSignupReport;
-      if (report.source !== "canonical-legalwhat-auth" || !Array.isArray(report.signups)) {
-        throw new Error("Invalid canonical signup report");
-      }
-      setCanonicalSignups(report);
-      setSignupReportError("");
-    } catch (error) {
-      setSignupReportError(error instanceof Error ? error.message : "Signup report unavailable");
-    }
-  }, [signupPage]);
-
-  useEffect(() => {
-    if (!user) return;
-    void fetchCanonicalSignups();
-    const interval = setInterval(fetchCanonicalSignups, 60000);
-    return () => clearInterval(interval);
-  }, [user, fetchCanonicalSignups]);
 
   // Fetch crypto system status
   const fetchSystemStatus = useCallback(async () => {
@@ -715,53 +667,7 @@ export default function AdminConsole() {
             </Card>
           </div>
 
-          {/* This is the actual LegalWhat signup authority, kept separate from Neon metrics. */}
-          <Card className="bg-gray-800/50 border-white/10 mb-6">
-            <CardHeader>
-              <CardTitle className="text-white flex items-center gap-2">
-                <Users className="w-5 h-5 text-purple-400" />
-                LegalWhat Website Signups
-              </CardTitle>
-              <CardDescription className="text-gray-400">
-                Canonical authentication registry. These are registered website profiles, not page visits or paid subscriptions.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {signupReportError ? (
-                <p className="text-amber-300">Signup report unavailable: {signupReportError}</p>
-              ) : canonicalSignups ? (
-                <div className="space-y-3">
-                  <p className="text-white text-lg font-semibold">{canonicalSignups.total} registered profiles</p>
-                  {canonicalSignups.signups.map((signup) => (
-                    <div key={signup.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-white/10 p-3">
-                      <div>
-                        <p className="text-white font-medium">{[signup.firstName, signup.lastName].filter(Boolean).join(" ") || "Name not provided"}</p>
-                        <p className="text-sm text-gray-400">{signup.email}</p>
-                        <p className="text-xs text-gray-500">Registered {formatDate(signup.createdAt)}</p>
-                      </div>
-                      <div className="text-sm text-right">
-                        <p className="text-gray-300">{signup.status}</p>
-                        <p className={signup.hasLocalCredentials ? "text-green-300" : "text-amber-300"}>
-                          {signup.hasLocalCredentials ? "Login credentials present" : "Login credentials missing"}
-                        </p>
-                      </div>
-                    </div>
-                  ))}
-                  <div className="flex items-center justify-between pt-2">
-                    <Button variant="outline" size="sm" disabled={signupPage <= 1} onClick={() => setSignupPage((page) => page - 1)}>
-                      Previous
-                    </Button>
-                    <p className="text-sm text-gray-400">Page {canonicalSignups.page} of {Math.max(1, Math.ceil(canonicalSignups.total / 50))}</p>
-                    <Button variant="outline" size="sm" disabled={signupPage >= Math.ceil(canonicalSignups.total / 50)} onClick={() => setSignupPage((page) => page + 1)}>
-                      Next
-                    </Button>
-                  </div>
-                </div>
-              ) : (
-                <p className="text-gray-400">Loading canonical signup records...</p>
-              )}
-            </CardContent>
-          </Card>
+          <CanonicalSignupsPanel />
 
           {/* Admin Control Surface (navigation + access toggles) */}
           <Card className="bg-gray-800/50 border-white/10 mb-6">
