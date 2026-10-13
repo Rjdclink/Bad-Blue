@@ -1,3 +1,13 @@
+export const SPECTRA_UNSUPPORTED_CONTENT_KINDS = ['pdf', 'xml', 'image', 'binary', 'missing', 'other'] as const;
+type ContentKind = typeof SPECTRA_UNSUPPORTED_CONTENT_KINDS[number];
+export function unsupportedSpectraContentKind(type: string): ContentKind {
+  if (!type) return 'missing';
+  if (type === 'application/pdf') return 'pdf';
+  if (type === 'application/xml' || type === 'text/xml' || type.endsWith('+xml')) return 'xml';
+  if (type.startsWith('image/')) return 'image';
+  if (type === 'application/octet-stream') return 'binary';
+  return 'other';
+}
 /** Bounded diagnostics only: no URLs, bodies, identities, or exception messages. */
 export const SPECTRA_RETRIEVAL_REASONS = [
   'retrieved', 'cancelled', 'timeout', 'invalid_url', 'blocked_url', 'dns_error',
@@ -12,6 +22,7 @@ export interface SpectraRetrievalDiagnostic {
   reason: SpectraRetrievalReason;
   /** Last HTTP status observed for this page selection, not every redirect response. */
   httpStatus?: number;
+  unsupportedContentKind?: ContentKind;
 }
 
 export interface SpectraRetrievalSummary {
@@ -20,6 +31,7 @@ export interface SpectraRetrievalSummary {
   unreported: number;
   reasons: Partial<Record<SpectraRetrievalReason, number>>;
   httpStatuses: Record<string, number>;
+  unsupportedContentKinds?: Partial<Record<ContentKind, number>>;
 }
 
 const count = (value: number) => Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
@@ -35,20 +47,24 @@ export function createSpectraRetrievalDiagnostics(selected: number) {
       || !SPECTRA_RETRIEVAL_REASONS.includes(row.reason)) return;
     const httpStatus = Number.isInteger(row.httpStatus) && row.httpStatus! >= 100 && row.httpStatus! <= 599
       ? row.httpStatus : undefined;
-    rows.set(row.targetIndex, { targetIndex: row.targetIndex, reason: row.reason, httpStatus });
+    rows.set(row.targetIndex, { targetIndex: row.targetIndex, reason: row.reason, httpStatus,
+      unsupportedContentKind: row.reason === 'unsupported_content_type' && SPECTRA_UNSUPPORTED_CONTENT_KINDS.includes(row.unsupportedContentKind!) ? row.unsupportedContentKind : undefined });
   };
   const finish = (): SpectraRetrievalSummary => {
     sealed = true;
     const reasons: SpectraRetrievalSummary['reasons'] = {};
     const httpStatuses: Record<string, number> = {};
+    const unsupportedContentKinds: Partial<Record<ContentKind, number>> = {};
     for (const row of rows.values()) {
+      if (row.unsupportedContentKind) unsupportedContentKinds[row.unsupportedContentKind] = (unsupportedContentKinds[row.unsupportedContentKind] || 0) + 1;
       reasons[row.reason] = (reasons[row.reason] || 0) + 1;
       if (row.httpStatus !== undefined) {
         httpStatuses[row.httpStatus] = (httpStatuses[row.httpStatus] || 0) + 1;
       }
     }
     return { countingUnit: 'page-selection', completed: rows.size,
-      unreported: limit - rows.size, reasons, httpStatuses };
+      unreported: limit - rows.size, reasons, httpStatuses,
+      ...(Object.keys(unsupportedContentKinds).length ? { unsupportedContentKinds } : {}) };
   };
   return { record, finish };
 }
@@ -67,6 +83,10 @@ export function mergeSpectraRetrievalDiagnostics(
     for (const reason of SPECTRA_RETRIEVAL_REASONS) {
       const n = count(summary.reasons[reason] || 0);
       if (n) result.reasons[reason] = (result.reasons[reason] || 0) + n;
+    }
+    for (const kind of SPECTRA_UNSUPPORTED_CONTENT_KINDS) {
+      const n = count(summary.unsupportedContentKinds?.[kind] || 0);
+      if (n) { result.unsupportedContentKinds ||= {}; result.unsupportedContentKinds[kind] = (result.unsupportedContentKinds[kind] || 0) + n; }
     }
     // Do not copy arbitrary keys supplied by a caller into logs or responses.
     for (let status = 100; status <= 599; status += 1) {

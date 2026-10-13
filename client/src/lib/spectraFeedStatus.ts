@@ -12,7 +12,7 @@ export interface SpectraFeedDiagnostics {
   skipped?: number;
   cancelled?: number;
   pending?: number;
-  providers?: Array<{ provider: string; errors?: Record<string, number> }>;
+  providers?: Array<{ provider: string; empty?: number; errors?: Record<string, number> }>;
 }
 
 const safeCount = (value: number | undefined) => Number.isFinite(value)
@@ -33,18 +33,23 @@ export function spectraFeedNotices(diagnostics?: SpectraFeedDiagnostics): string
     'duckduckgo-instant-answer': 'DuckDuckGo Instant Answer', other: 'Other provider',
   };
   const errors: Record<string, string> = {
+    'not-configured': 'not configured', cooldown: 'cooldown active', disabled: 'disabled after challenge',
+    'quota-exhausted': 'credit budget exhausted', 'budget-unavailable': 'credit budget unverified', 'local-rate-limit': 'local request limit reached',
     'queue-capacity': 'queue full', 'queue-timeout': 'queue wait expired',
     'provider-unavailable': 'provider unavailable (specific cause unconfirmed)',
     'upstream-error': 'upstream errors', dns: 'DNS failures', connection: 'connection failures',
     timeout: 'timeouts', 'invalid-response': 'invalid responses', 'request-failed': 'request failures',
   };
   for (const row of diagnostics.providers || []) {
-    if (!Object.hasOwn(providers, row.provider)) continue;
+    if (!Object.prototype.hasOwnProperty.call(providers, row.provider)) continue;
     const reasons = Object.entries(row.errors || {}).flatMap(([code, value]) => {
-      const label = Object.hasOwn(errors, code) ? errors[code]
+      const label = Object.prototype.hasOwnProperty.call(errors, code) ? errors[code]
         : /^http-[45]\d\d$/.test(code) ? `HTTP ${code.slice(5)}` : undefined;
       return label && safeCount(value) ? [`${safeCount(value)} ${label}`] : [];
     });
+    if (row.provider === 'tavily' && (safeCount(row.errors?.['http-432']) || safeCount(row.errors?.['http-433']))) notices.push('Tavily rejected a request at its plan or pay-as-you-go limit. Review account usage before retrying.');
+    if (safeCount(row.errors?.['http-401'])) notices.push(`${providers[row.provider]} rejected authentication. Check the configured API credential and account credit status.`);
+    if (row.provider === 'duckduckgo-instant-answer' && safeCount(row.empty)) notices.push('DuckDuckGo Instant Answer supplies limited answers, not a full web-results index. Empty responses do not establish absence of web evidence.');
     if (reasons.length) notices.push(`${providers[row.provider]}: ${reasons.join('; ')}.`);
   }
   return notices;
@@ -65,7 +70,7 @@ export function spectraObservationNotices(
     conflicted: 'Location evidence conflicts; current location is unverified.',
     corroborated: 'Spatial evidence is corroborated; subject identity is assessed separately.',
   };
-  if (status && Object.hasOwn(labels, status)) notices.push(labels[status]);
+  if (status && Object.prototype.hasOwnProperty.call(labels, status)) notices.push(labels[status]);
   return notices;
 }
 
@@ -80,7 +85,7 @@ export function spectraFeedNotice(diagnostics?: SpectraFeedDiagnostics): string 
 export interface SpectraPipelineDiagnostics {
   scope: 'evidence-pipeline';
   publicRetrieval: { selected: number; retrieved: number; deadlineExpiredPasses: number; diagnostics?: SpectraRetrievalSummary };
-  telemetry: { configuredCollectors: number; failed: number; normalizationFailed: number; fulfilled?: number; skipped?: number; observations?: number };
+  telemetry: { collectors?: Array<{ family: string; fulfilled: number; failed: number; skipped: number; measurements: number; reasons: Record<string, number> }>; configuredCollectors: number; failed: number; normalizationFailed: number; fulfilled?: number; skipped?: number; observations?: number };
   observations: { accepted: number; rejected: number; supplied?: number; saved?: number; normalized?: number; solved?: number; qualityIssues?: Record<string, number> };
   coordinateFusion: { executed: boolean };
 }
@@ -90,6 +95,7 @@ export interface SpectraRetrievalSummary {
   unreported: number;
   reasons: Record<string, number | undefined>;
   httpStatuses: Record<string, number>;
+  unsupportedContentKinds?: Record<string, number | undefined>;
 }
 
 export function spectraRetrievalNotices(diagnostics?: SpectraRetrievalSummary): string[] {
@@ -110,6 +116,10 @@ export function spectraRetrievalNotices(diagnostics?: SpectraRetrievalSummary): 
   const statuses = Object.entries(diagnostics.httpStatuses || {})
     .filter(([status, n]) => /^[45]\d\d$/.test(status) && count(n) > 0)
     .map(([status, n]) => `${status}: ${count(n)}`);
+  const families = ['pdf', 'xml', 'image', 'binary', 'missing', 'other'].flatMap(kind => {
+    const n = count(diagnostics.unsupportedContentKinds?.[kind]); return n ? [`${kind}: ${n}`] : [];
+  });
+  if (families.length) notices.push(`Unsupported response formats: ${families.join('; ')}.`);
   if (statuses.length) notices.push(`Last observed HTTP error statuses: ${statuses.join('; ')}.`);
   if (count(diagnostics.unreported)) {
     notices.push(`${count(diagnostics.unreported)} page selections had no completed diagnostic when the result was returned; their failure cause is unconfirmed.`);
@@ -138,6 +148,13 @@ export function spectraPipelineNotices(diagnostics?: SpectraPipelineDiagnostics)
   }
   if (diagnostics.telemetry.fulfilled !== undefined && diagnostics.telemetry.observations !== undefined) {
     notices.push(`Automatic telemetry: ${count(diagnostics.telemetry.configuredCollectors)} collectors configured; ${count(diagnostics.telemetry.fulfilled)} collection attempts fulfilled; ${count(diagnostics.telemetry.observations)} coordinate observations received. Configuration and fulfilled requests alone do not establish usable measurements.`);
+  }
+  const collectorLabels: Record<string, string> = { 'android-managed-lost-mode': 'Android managed device', 'apple-managed-lost-mode': 'Apple supervised device', 'cisco-spaces-location': 'Cisco Spaces', other: 'Other collector' };
+  const collectorReasons: Record<string, string> = { 'not-configured': 'not configured', 'missing-device': 'device identifier missing', 'request-failed': 'request failed', other: 'other reason' };
+  for (const row of diagnostics.telemetry.collectors || []) {
+    if (!Object.prototype.hasOwnProperty.call(collectorLabels, row.family)) continue;
+    const reasons = Object.entries(collectorReasons).flatMap(([code, label]) => safeCount(row.reasons?.[code]) ? [`${safeCount(row.reasons[code])} ${label}`] : []);
+    notices.push(`${collectorLabels[row.family]}: ${count(row.fulfilled)} fulfilled; ${count(row.failed)} failed; ${count(row.skipped)} skipped; ${count(row.measurements)} measurements${reasons.length ? '; ' + reasons.join('; ') : ''}.`);
   }
   const observations = diagnostics.observations;
   if (observations.supplied !== undefined && observations.saved !== undefined && observations.normalized !== undefined) {

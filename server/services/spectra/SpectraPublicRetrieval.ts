@@ -1,3 +1,4 @@
+import { unsupportedSpectraContentKind } from './SpectraRetrievalDiagnostics';
 import { discoveryFetch } from '../../lexara/DiscoveryDiagnostics';
 import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
@@ -241,12 +242,8 @@ export function htmlEvidence(raw: string, sourceUrl: string): {
     observations.push({
       latitude,
       longitude,
-      timestamp: timestamp(
-        meta.get('article:published_time')
-        || meta.get('date')
-        || meta.get('datepublished')
-        || meta.get('og:updated_time')
-      ),
+      // Publication or modification time is not a timestamped measurement.
+      // Keep publishedAt separately for source freshness.
       sourceUrl,
       acquisitionMethod: 'html-geospatial-metadata',
       metadata: { metadataKind: 'html-meta' },
@@ -304,14 +301,7 @@ export function htmlEvidence(raw: string, sourceUrl: string): {
           observations.push({
             latitude: lat,
             longitude: lon,
-            timestamp: timestamp(
-              value.datePublished
-              ?? value.dateCreated
-              ?? value.uploadDate
-              ?? value.startDate
-              ?? value.endDate
-              ?? geo.timestamp
-            ),
+            timestamp: timestamp(geo.timestamp),
             sourceUrl,
             acquisitionMethod: 'json-ld-geospatial-metadata',
             metadata: {
@@ -411,6 +401,7 @@ async function retrieveOne(
 ): Promise<SpectraRetrievedEvidence | null> {
   let reason: SpectraRetrievalReason = 'network_error';
   let httpStatus: number | undefined;
+  let unsupportedContentKind: SpectraRetrievalDiagnostic['unsupportedContentKind'];
   let timedOut = false;
   try {
     if (parentSignal?.aborted) throw new RetrievalFailure('cancelled');
@@ -456,11 +447,11 @@ async function retrieveOne(
         if (Number.isFinite(contentLength) && contentLength > MAX_RESPONSE_BYTES) {
           throw new RetrievalFailure('response_too_large');
         }
-        const contentType = response.headers.get('content-type') || '';
+        const contentType = (response.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
 
         // Binary image responses are inspected in the existing bounded retrieval
         // request; the evidence archive receives metadata/hash, never raw pixels.
-        if (/^image\/(?:jpeg|png|webp)\b/i.test(contentType)) {
+        if (['image/jpeg', 'image/png', 'image/webp'].includes(contentType)) {
           const image = await inspectSpectraPublicImageResponse(response, {
             url: current.toString(), sourcePostUrl: current.toString(),
             platform: 'Web', maxBytes: MAX_RESPONSE_BYTES,
@@ -470,7 +461,7 @@ async function retrieveOne(
           return { ...image, requestedUrl: rawUrl };
         }
 
-        if (/json/i.test(contentType)) {
+        if (contentType === 'application/json' || contentType === 'text/json' || /^application\/[a-z0-9!#$&^_.+-]+\+json$/.test(contentType)) {
           const text = await readBoundedText(response);
           let payload: unknown;
           try { payload = JSON.parse(text); }
@@ -487,7 +478,7 @@ async function retrieveOne(
           return evidence;
         }
 
-        if (/html|xhtml/i.test(contentType)) {
+        if (contentType === 'text/html' || contentType === 'application/xhtml+xml') {
           const text = await readBoundedText(response);
           let extracted: ReturnType<typeof htmlEvidence>;
           try { extracted = htmlEvidence(text, current.toString()); }
@@ -503,6 +494,14 @@ async function retrieveOne(
           reason = 'retrieved';
           return evidence;
         }
+        if (['text/plain', 'text/csv', 'text/markdown'].includes(contentType)) {
+          const text = await readBoundedText(response);
+          reason = 'retrieved';
+          return { url: current.toString(), requestedUrl: rawUrl,
+            retrievedAt: new Date().toISOString(), contentType,
+            textExcerpt: text.slice(0, MAX_TEXT), observations: [] };
+        }
+        unsupportedContentKind = unsupportedSpectraContentKind(contentType);
         throw new RetrievalFailure('unsupported_content_type');
       } finally {
         if (response?.body && !response.body.locked) void response.body.cancel().catch(() => undefined);
@@ -517,7 +516,7 @@ async function retrieveOne(
     return null;
   } finally {
     // Reporting must not alter retrieval results or expose an exception message.
-    try { report?.({ reason, httpStatus }); } catch { /* diagnostic observer only */ }
+    try { report?.({ reason, httpStatus, ...(unsupportedContentKind ? { unsupportedContentKind } : {}) }); } catch { /* diagnostic observer only */ }
   }
 }
 

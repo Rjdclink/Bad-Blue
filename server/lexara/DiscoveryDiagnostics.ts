@@ -65,10 +65,13 @@ export function discoveryErrorType(error: unknown): string {
     seen.add(current);
     const code = String(current.code || '');
     const local: Record<string, string> = {
+      DISCOVERY_NOT_CONFIGURED: 'not-configured', DISCOVERY_DISABLED: 'disabled', DISCOVERY_COOLDOWN: 'cooldown',
+      DISCOVERY_QUOTA_EXHAUSTED: 'quota-exhausted', DISCOVERY_BUDGET_UNAVAILABLE: 'budget-unavailable',
+      DISCOVERY_LOCAL_RATE_LIMIT: 'local-rate-limit',
       DISCOVERY_QUEUE_FULL: 'queue-capacity', DISCOVERY_QUEUE_TIMEOUT: 'queue-timeout',
       DISCOVERY_UNAVAILABLE: 'provider-unavailable', DISCOVERY_PROVIDER_ERROR: 'upstream-error',
     };
-    if (local[code]) return local[code];
+    if (Object.prototype.hasOwnProperty.call(local, code)) return local[code];
     if (code === 'ENOTFOUND' || code === 'EAI_AGAIN') return 'dns';
     if (['ECONNREFUSED', 'ECONNRESET', 'UND_ERR_SOCKET'].includes(code)) return 'connection';
     if (['ETIMEDOUT', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT'].includes(code)
@@ -84,7 +87,7 @@ export function discoveryErrorType(error: unknown): string {
 export function beginDiscoveryAttempt(lane: string) {
   const context = contexts.getStore();
   // Only fixed code-defined lane labels are emitted, never caller-supplied text.
-  const provider = providerNames[lane] || 'other';
+  const provider = Object.prototype.hasOwnProperty.call(providerNames, lane) ? providerNames[lane] : 'other';
   let row = context?.providers.get(provider);
   if (context && !row) {
     row = { provider, ...counts(), errors: {} };
@@ -136,7 +139,8 @@ export function getDiscoveryDiagnostics() {
 }
 
 export function markDiscoveryPartial(lane: string): void {
-  const row = contexts.getStore()?.providers.get(providerNames[lane] || 'other');
+  const provider = Object.prototype.hasOwnProperty.call(providerNames, lane) ? providerNames[lane] : 'other';
+  const row = contexts.getStore()?.providers.get(provider);
   if (row) row.partial++;
 }
 

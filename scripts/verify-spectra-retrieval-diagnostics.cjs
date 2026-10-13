@@ -72,6 +72,25 @@ async function check(name, run) { await run(); passed++; console.log('PASS', nam
     assert.equal(result.evidence[0].publishedAt, '2020-01-02T00:00:00.000Z');
     assert.notEqual(result.evidence[0].publishedAt, result.evidence[0].retrievedAt);
   });
+  await check('plain text, CSV and Markdown are retained without inventing observations', async () => {
+    for (const type of ['text/plain', 'text/csv; charset=utf-8', 'TEXT/MARKDOWN; Charset=UTF-8']) {
+      const result = await retrieve({ fetch: async () => new Response('Public fixture é\n42,-93', { headers: { 'content-type': type } }) });
+      assert.equal(result.events[0].reason, 'retrieved');
+      assert.equal(result.evidence[0].textExcerpt, 'Public fixture é\n42,-93');
+      assert.equal(result.evidence[0].observations.length, 0);
+      assert.equal(result.evidence[0].publishedAt, undefined);
+    }
+  });
+  await check('unsupported MIME labels are bounded and survive diagnostic aggregation', async () => {
+    for (const [type, kind] of [['application/pdf', 'pdf'], ['text/xml', 'xml'], ['image/gif', 'image'], ['application/x-private-fixture', 'other']]) {
+      const result = await retrieve({ fetch: async () => new Response(marker, { headers: { 'content-type': type } }) });
+      assert.equal(result.events[0].unsupportedContentKind, kind);
+      const tracker = d.createSpectraRetrievalDiagnostics(1); tracker.record(result.events[0]);
+      const summary = d.mergeSpectraRetrievalDiagnostics([tracker.finish()]);
+      assert.equal(summary.unsupportedContentKinds[kind], 1);
+      assert(client.spectraRetrievalNotices(summary).join(' ').includes(kind + ': 1'));
+    }
+  });
   await check('malformed URL and existing URL-policy rejection stay distinct', async () => {
     const invalid = await retrieve({}, ['not-a-url']);
     const blocked = await retrieve({}, ['file:///example']);

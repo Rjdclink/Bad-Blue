@@ -141,6 +141,33 @@ const empty = {
     assert.equal(report.coordinateFusion.executed, false);
     assert.match(client.spectraPipelineNotices(report).join(' '), /Regional inference is evaluated separately/);
   });
+  await check('invalid counts cannot claim processing when sanitized totals are zero', () => {
+    for (const value of [Infinity, NaN, -1, 0.5]) {
+      const report = diagnostics.buildSpectraPipelineDiagnostics({ ...empty,
+        solvedObservations: value, regionalCandidates: value,
+      });
+      assert.equal(report.observations.solved, 0);
+      assert.equal(report.regionalCandidates, 0);
+      assert.equal(report.coordinateFusion.executed, false);
+      assert.equal(report.outcome, 'no-mappable-evidence');
+    }
+    const regional = diagnostics.buildSpectraPipelineDiagnostics({ ...empty,
+      solvedObservations: Infinity, regionalCandidates: 1,
+    });
+    assert.equal(regional.coordinateFusion.executed, false);
+    assert.equal(regional.outcome, 'regional-context');
+  });
+  await check('collector reasons remain fixed categories and invalid counts are sanitized', () => {
+    const report = diagnostics.buildSpectraPipelineDiagnostics({ ...empty, activeAttempts: [
+      { status: 'skipped', normalizerKind: 'android-managed-lost-mode', reasonCode: 'missing-device', measurementCount: -2 },
+      { status: 'failed', normalizerKind: 'PRIVATE_DO_NOT_COPY', reasonCode: 'PRIVATE_DO_NOT_COPY', measurementCount: NaN },
+    ] });
+    assert.equal(report.telemetry.collectors[0].reasons['missing-device'], 1);
+    assert.equal(report.telemetry.collectors[0].measurements, 0);
+    assert.equal(report.telemetry.collectors[1].family, 'other');
+    assert(!JSON.stringify(report).includes('PRIVATE_DO_NOT_COPY'));
+    assert.match(client.spectraPipelineNotices(report).join(' '), /device identifier missing/);
+  });
   await check('accepted observation path reports fusion separately from retrieved pages', () => {
     const report = diagnostics.buildSpectraPipelineDiagnostics({ ...empty,
       configuredCollectors: 1, activeObservations: 1, normalizedObservations: 1,
