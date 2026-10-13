@@ -213,7 +213,15 @@ export function summarizeSpectraSceneOverlap(
       || attributes.method !== 'claude_image_classification'
       || typeof attributes.contentSha256 !== 'string'
       || attributes.contentSha256.toLowerCase() !== sha.toLowerCase()) continue;
-    const validated = parseSpectraVisualSceneAssessment(JSON.stringify(attributes), sha);
+    const kinds = [attributes.objects, attributes.vehicles, attributes.settings];
+    if (!kinds.every(value => Array.isArray(value) && value.length <= 32)) continue;
+    // Never serialize an untrusted arbitrary object into the request path;
+    // only bounded plain-string category labels reach the parser.
+    const safeTags = kinds.map(value => (value as unknown[])
+      .filter(item => typeof item === 'string').slice(0, 16));
+    const validated = parseSpectraVisualSceneAssessment(JSON.stringify({
+      objects: safeTags[0], vehicles: safeTags[1], settings: safeTags[2],
+    }), sha);
     if (!validated) continue;
     // First validated copy of identical bytes is authoritative for this
     // bounded calculation; the existing source archive retains each repost.
