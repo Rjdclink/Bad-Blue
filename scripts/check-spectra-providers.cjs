@@ -56,7 +56,17 @@ async function runProviderChecks({ env = process.env, fetchImpl = fetch, emit = 
     independent('openserp', 'OPENSERP_URL', 7000, '/health', '/mega/search', { text: QUERY, limit: '3', mode: 'balanced', engines: 'baidu' }),
     (async () => {
       const apiKey = key(env, ['TAVILY_API_KEY']); if (!apiKey) return missing('tavily');
-      await request('tavily', 'search', 'https://api.tavily.com/search', { method: 'POST', headers: { ...jsonHeaders, authorization: `Bearer ${apiKey}` }, body: JSON.stringify({ query: QUERY, search_depth: 'basic', max_results: 3, include_answer: false, include_raw_content: false }) }, body => rows(body, 'results'));
+      const budget = await request('tavily', 'usage', 'https://api.tavily.com/usage', {
+        headers: { accept: 'application/json', authorization: `Bearer ${apiKey}` },
+      }, body => {
+        const values = [body?.key?.usage, body?.key?.limit, body?.account?.plan_usage,
+          body?.account?.plan_limit, body?.account?.paygo_usage, body?.account?.paygo_limit];
+        if (!values.every(value => typeof value === 'number' && Number.isFinite(value) && value >= 0)) return { status: 'budget-unavailable' };
+        const [used, limit, planUsed, planLimit, paygoUsed, paygoLimit] = values;
+        return { status: Math.min(limit - used, planLimit + paygoLimit - planUsed - paygoUsed) >= 1 ? 'ok' : 'quota-exhausted' };
+      });
+      if (budget.status !== 'ok') return;
+      await request('tavily', 'search', 'https://api.tavily.com/search', { method: 'POST', headers: { ...jsonHeaders, authorization: `Bearer ${apiKey}` }, body: JSON.stringify({ query: QUERY, search_depth: 'basic', auto_parameters: false, max_results: 3, include_answer: false, include_raw_content: false }) }, body => rows(body, 'results'));
     })(),
     (async () => {
       const apiKey = key(env, ['SERPAPI_KEY', 'SERPAPI_API_KEY']); if (!apiKey) return missing('serpapi');

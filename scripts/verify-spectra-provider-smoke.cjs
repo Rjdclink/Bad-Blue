@@ -26,5 +26,13 @@ const { runProviderChecks } = require('./check-spectra-providers.cjs');
   const missing = await runProviderChecks({ env: { DDGS_URL: 'invalid-url' }, fetchImpl: async () => new Response('', { status: 503 }), emit: () => {} });
   assert.equal(missing.results.filter(r => r.status === 'not-configured').length, 3);
   assert.equal(missing.results.find(r => r.provider === 'ddgs').status, 'invalid-configuration');
+  for (const payload of [{}, { key: { usage: 1, limit: 1 }, account: { plan_usage: 1, plan_limit: 1, paygo_usage: 0, paygo_limit: 0 } }]) {
+    const requested = [];
+    const budget = await runProviderChecks({ env: { TAVILY_API_KEY: 'DO_NOT_LOG' }, emit: () => {}, fetchImpl: async raw => {
+      requested.push(String(raw)); return new Response(JSON.stringify(payload));
+    } });
+    assert.equal(requested.filter(url => url === 'https://api.tavily.com/search').length, 0);
+    assert(['budget-unavailable', 'quota-exhausted'].includes(budget.results.find(row => row.provider === 'tavily').status));
+  }
   console.info('PASS bounded provider checks, credential alias, failed-health short circuit and secret-free logs');
 })().catch(error => { console.error(error); process.exitCode = 1; });

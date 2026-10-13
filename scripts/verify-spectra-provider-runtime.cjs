@@ -23,7 +23,7 @@ const workFor = ms => signal => new Promise((resolve, reject) => {
     stdin: { contents: mesh + `
       export { withTimeout as attempt, tavily, ddgsBackend, searxng, openserp, scrapingBee, commonCrawl, serpApi, duckDuckGoInstantAnswer };
       export * from './DiscoveryDiagnostics';
-      export function resetFixture() { engineCooldownUntil.clear(); laneFailures.clear(); laneInFlight.clear(); laneQueued.clear(); captchaDisabledEngines.clear(); captchaDisabledEngines.add('duckduckgo'); }
+      export function resetFixture() { tavilyBudget.reset(); engineCooldownUntil.clear(); laneFailures.clear(); laneInFlight.clear(); laneQueued.clear(); captchaDisabledEngines.clear(); captchaDisabledEngines.add('duckduckgo'); }
     `, resolveDir: path.join(root, 'server/lexara'), loader: 'ts' },
     outfile: path.join(temp, 'check.cjs'), bundle: true, platform: 'node', format: 'cjs',
     plugins: [{ name: 'unrelated-planning-fixtures', setup(build) {
@@ -45,6 +45,22 @@ const workFor = ms => signal => new Promise((resolve, reject) => {
   };
   const capture = async run => d.withDiscoveryDiagnostics(async () => { const result = await run(); return { result, stats: d.getDiscoveryDiagnostics() }; });
 
+  await test('exhausted Tavily budget sends no search', async () => {
+    let calls = 0;
+    global.fetch = async url => { calls++; assert.equal(String(url), 'https://api.tavily.com/usage'); return json({ key: { usage: 1, limit: 1 }, account: { plan_usage: 1, plan_limit: 1, paygo_usage: 0, paygo_limit: 0 } }); };
+    const { stats } = await capture(() => d.tavily('fixture'));
+    assert.equal(calls, 1); assert.equal(stats.skipped, 1); assert.equal(stats.providers[0].errors['quota-exhausted'], 1);
+  });
+  await test('Tavily search reserves basic cost and keeps query within limit', async () => {
+    let searches = 0;
+    global.fetch = async (url, init) => {
+      if (String(url).endsWith('/usage')) return json({ key: { usage: 0, limit: 1 }, account: { plan_usage: 0, plan_limit: 1, paygo_usage: 0, paygo_limit: 0 } });
+      searches++; const body = JSON.parse(init.body);
+      assert.equal(body.search_depth, 'basic'); assert.equal(body.auto_parameters, false); assert(body.query.length < 400);
+      return json({ results: [] });
+    };
+    await d.tavily('fixture '.repeat(100)); await d.tavily('fixture'); assert.equal(searches, 1);
+  });
   await test('DNS outage stops a forty-job fan-out after two dispatched attempts', async () => {
     let requests = 0;
     const dns = Object.assign(new Error('DO_NOT_LOG'), { cause: Object.assign(new Error('DO_NOT_LOG'), { code: 'ENOTFOUND' }) });
