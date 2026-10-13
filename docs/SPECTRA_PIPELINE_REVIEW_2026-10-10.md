@@ -78,7 +78,7 @@ Primary references checked for source-access feasibility:
 
 - https://developers.google.com/photos/support/updates — Library API access to
   app-created content; other library items use the documented selection flows.
-  This is not an unrestricted background feed of previously stored photos.
+  Previously stored photos do not automatically appear in scheduled library responses.
 - https://learn.microsoft.com/en-us/graph/api/signin-list?view=graph-rest-1.0 —
   tenant sign-in records require tenant-scoped API configuration and are absent from public web search results.
 
