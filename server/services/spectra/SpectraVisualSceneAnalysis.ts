@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { discoverySignal } from '../../lexara/DiscoveryDiagnostics';
 
 export const SPECTRA_SCENE_OBJECTS = [
   'building', 'road', 'sidewalk', 'bridge', 'traffic_light', 'street_sign',
@@ -89,14 +90,15 @@ export async function inspectSpectraVisualScene(
   mimeType: VisualMimeType,
   options: { analyzer?: AnalyzeImage; signal?: AbortSignal; allowProvider?: boolean } = {},
 ): Promise<SpectraVisualSceneAssessment | null> {
+  const requestSignal = discoverySignal(options.signal);
   if (!Buffer.isBuffer(bytes) || bytes.length < 4 || bytes.length > 3_000_000
     || !['image/jpeg', 'image/png', 'image/webp'].includes(mimeType)
-    || options.signal?.aborted) return null;
+    || requestSignal?.aborted) return null;
   if (!options.analyzer && (options.allowProvider !== true
     || process.env.SPECTRA_SCENE_ANALYSIS_ENABLED !== 'true')) return null;
   const controller = new AbortController();
   const abort = () => controller.abort();
-  options.signal?.addEventListener('abort', abort, { once: true });
+  requestSignal?.addEventListener('abort', abort, { once: true });
   const timer = setTimeout(abort, 6_000);
   timer.unref?.();
   try {
@@ -117,7 +119,7 @@ export async function inspectSpectraVisualScene(
     return null;
   } finally {
     clearTimeout(timer);
-    options.signal?.removeEventListener('abort', abort);
+    requestSignal?.removeEventListener('abort', abort);
   }
 }
 
