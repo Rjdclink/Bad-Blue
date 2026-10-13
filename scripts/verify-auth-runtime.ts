@@ -41,6 +41,10 @@ const authEdgeSource = readFileSync(new URL('../supabase/functions/legalwhat-loc
 const legacyLocalAuth = new URL('../server/localAuth.ts', import.meta.url);
 
 assert.equal(existsSync(legacyLocalAuth), false, 'obsolete Passport local auth module must remain removed');
+assert.doesNotMatch(authSource, /PURGE_LOCAL_TEST_USERS_BEFORE|purgeLocalTestUsersBeforeHttp/, 'startup must never delete customer accounts using an age cutoff');
+assert.doesNotMatch(statelessLocalAuthSource, /purgeLocalTestUsersBeforeHttp/, 'obsolete age-based account cleanup must remain removed');
+assert.match(authEdgeSource, /price:\s*1999,/, 'Edge subscription plan price must match $19.99 checkout');
+assert.doesNotMatch(authEdgeSource, /price:\s*2599,/, 'obsolete $25.99 Edge plan metadata must remain retired');
 assert.doesNotMatch(authSource, /setupLocalStrategy/);
 assert.doesNotMatch(routesSource, /app\.post\(["']\/api\/login\/local["']/);
 assert.doesNotMatch(routesSource, /app\.post\(["']\/api\/register\/local["']/);
