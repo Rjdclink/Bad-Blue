@@ -91,10 +91,10 @@ export async function collectSpectraXPostMedia(
     if (selected.size >= MAX_POSTS) break;
   }
 
-  const posts: SpectraRetrievedEvidence[] = [];
+  const resolved = new Map<string, SpectraRetrievedEvidence>();
   let attempted = 0, failed = 0;
-  for (const [id, page] of selected) {
-    if (options.signal?.aborted) break;
+  const acquirePost = async ([id, page]: [string, SpectraRetrievedEvidence]): Promise<void> => {
+    if (options.signal?.aborted) return;
     const controller = new AbortController();
     const cancel = () => controller.abort();
     options.signal?.addEventListener('abort', cancel, { once: true });
@@ -114,7 +114,7 @@ export async function collectSpectraXPostMedia(
         headers: { Authorization: 'Bearer ' + token, Accept: 'application/json' },
       });
       const payload = await boundedJson(response);
-      if (!payload || String(payload?.data?.id || '') !== id) { failed++; continue; }
+      if (!payload || String(payload?.data?.id || '') !== id) { failed++; return; }
       const keys = new Set(
         Array.isArray(payload.data.attachments?.media_keys)
           ? payload.data.attachments.media_keys.filter((value: unknown): value is string =>
@@ -126,7 +126,7 @@ export async function collectSpectraXPostMedia(
           .map((media: any) => validPhotoUrl(media.url))
           .filter((url: string | null): url is string => url !== null))].slice(0, MAX_MEDIA_PER_POST)
         : [];
-      posts.push({
+      resolved.set(id, {
         ...page,
         // The original retrieved post remains the evidence. The API expansion
         // only contributes verified photo URLs, not new subject observations.
@@ -139,7 +139,16 @@ export async function collectSpectraXPostMedia(
       clearTimeout(timer);
       options.signal?.removeEventListener('abort', cancel);
     }
+  };
+  // At most two X requests in flight; results retain their original post order.
+  const entries = [...selected.entries()];
+  for (let index = 0; index < entries.length; index += 2) {
+    await Promise.all(entries.slice(index, index + 2).map(acquirePost));
   }
+  const posts: SpectraRetrievedEvidence[] = entries.flatMap(([id]) => {
+    const found = resolved.get(id);
+    return found ? [found] : [];
+  });
   return {
     posts,
     attempted,
