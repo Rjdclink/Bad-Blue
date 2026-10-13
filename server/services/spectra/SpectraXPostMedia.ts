@@ -159,6 +159,6 @@ export async function collectSpectraXPostMedia(
     attempted,
     retrieved: posts.length,
     failed,
-    status: failed || (requestSignal?.aborted && attempted < selected.size) ? 'partial' : 'complete',
+    status: failed || (requestSignal?.aborted && posts.length < selected.size) ? 'partial' : 'complete',
   };
 }
