@@ -33,6 +33,7 @@ const voiceRoutesSource = readFileSync(new URL('../server/routes/voice.routes.ts
 const consultationRoutesSource = readFileSync(new URL('../server/routes/consultation.routes.ts', import.meta.url), 'utf8');
 const verificationRoutesSource = readFileSync(new URL('../server/routes/verification.routes.ts', import.meta.url), 'utf8');
 const adminRoutesSource = readFileSync(new URL('../server/routes/admin-console.routes.ts', import.meta.url), 'utf8');
+const adminConsoleSource = readFileSync(new URL('../client/src/pages/admin-console.tsx', import.meta.url), 'utf8');
 const railwayEnvSource = readFileSync(new URL('../.env.railway.example', import.meta.url), 'utf8');
 const deployPrepSource = readFileSync(new URL('../scripts/prepare-deployment.sh', import.meta.url), 'utf8');
 const migrationReconcilerSource = readFileSync(new URL('../server/migrations/reconcileAppSchema.ts', import.meta.url), 'utf8');
@@ -45,6 +46,10 @@ assert.doesNotMatch(authSource, /PURGE_LOCAL_TEST_USERS_BEFORE|purgeLocalTestUse
 assert.doesNotMatch(statelessLocalAuthSource, /purgeLocalTestUsersBeforeHttp/, 'obsolete age-based account cleanup must remain removed');
 assert.match(authEdgeSource, /price:\s*1999,/, 'Edge subscription plan price must match $19.99 checkout');
 assert.doesNotMatch(authEdgeSource, /price:\s*2599,/, 'obsolete $25.99 Edge plan metadata must remain retired');
+assert.match(authSource, /app\.get\("\/api\/admin\/legalwhat-signups"[\s\S]{0,300}hasValidMasterCookie\(req\)/, 'canonical signup report must require master session');
+assert.match(statelessLocalAuthSource, /getCanonicalSignupAdminReportHttp[\s\S]{0,400}resolveLocalAuthBackend/, 'signup reporting must use selected auth authority');
+assert.match(authEdgeSource, /if \(action === "admin_signups"\)/, 'Edge authority must support private paginated signup report');
+assert.match(adminConsoleSource, /\/api\/admin\/legalwhat-signups/, 'administrator dashboard must read canonical signup report');
 assert.doesNotMatch(authSource, /setupLocalStrategy/);
 assert.doesNotMatch(routesSource, /app\.post\(["']\/api\/login\/local["']/);
 assert.doesNotMatch(routesSource, /app\.post\(["']\/api\/register\/local["']/);
