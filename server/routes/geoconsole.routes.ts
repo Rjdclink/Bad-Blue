@@ -40,6 +40,7 @@ import {
   type SpectraTelemetryImportFormat,
 } from '../services/spectra/SpectraTelemetryImport';
 import { acquireSpectraPlaceContext } from '../services/spectra/SpectraPlaceContext';
+import { collectSpectraEarthSearchScenes } from '../services/spectra/SpectraPublicSatelliteRecords';
 import {
   acquireConfiguredSpectraCameras,
   configuredSpectraCameraJsonFeeds,
@@ -2897,18 +2898,24 @@ router.get('/environment-context', async (req: Request, res: Response) => {
     return res.status(400).json({ success: false, error: 'from must not be later than to' });
   }
 
-  const [weatherOutcome, earthOutcome] = await Promise.allSettled([
+  const [weatherOutcome, earthOutcome, earthSearchOutcome] = await Promise.allSettled([
     nwsLatestObservation(validation.data.lat, validation.data.lng),
     copernicusItems(validation.data.lat, validation.data.lng, from, to),
+    collectSpectraEarthSearchScenes(validation.data.lat, validation.data.lng, from, to),
   ]);
 
+  const catalogues = [
+    ...(earthOutcome.status === 'fulfilled' ? earthOutcome.value : []),
+    ...(earthSearchOutcome.status === 'fulfilled' ? earthSearchOutcome.value.map(item => ({ ...item })) : []),
+  ];
   const data: EnvironmentContextResult = {
     weather: weatherOutcome.status === 'fulfilled' && weatherOutcome.value
       ? weatherOutcome.value
       : undefined,
-    earthObservation: earthOutcome.status === 'fulfilled'
-      ? earthOutcome.value
-      : [],
+    earthObservation: catalogues
+      .filter(item => Number.isFinite(Date.parse(String(item.observedAt || ''))))
+      .sort((a, b) => Date.parse(String(b.observedAt)) - Date.parse(String(a.observedAt)))
+      .slice(0, 40),
   };
 
   return res.json({
