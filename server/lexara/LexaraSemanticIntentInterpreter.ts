@@ -106,13 +106,12 @@ function deterministicSubjectNeedsSemanticReview(subject?: string): boolean {
 }
 
 /**
- * Semantic fallback for background or mixed legal/background intent.
+ * Semantic fallback for legal, background or mixed research dependencies.
  *
  * The deterministic planner remains the zero-latency fast path for already
  * recognized factual/mixed turns. Claude semantically reviews otherwise
- * conversational or legal-only turns so hidden background dependencies do not
- * require magic words, while pure legal-only routing remains unchanged when
- * no external factual dependency exists.
+ * conversational or legal-only turns so hidden authority and factual
+ * dependencies do not require magic words.
  */
 export async function resolveLexaraResearchDecisionSemantic(
   prompt: string,
@@ -143,15 +142,16 @@ export async function resolveLexaraResearchDecisionSemantic(
 
   const userTurnContext = previousUserTurns.slice(-6).map((turn, index) => `USER_${index + 1}: ${turn}`).join('\n');
   const prior = String(conversationContext || userTurnContext).trim().slice(-5_000);
-  const classificationPrompt = `Classify whether this turn needs EXTERNAL BACKGROUND FACT RESEARCH.
+  const classificationPrompt = `Classify whether answering this turn requires EXTERNAL RESEARCH before responding.
 
-This classifier exists only to detect:
+Detect:
+- controlling legal authority needed to answer the user's question or apply law to their supplied facts, including implicit questions and follow-ups in an ongoing legal matter;
 - factual/background research about a real person, organization, place, record, event, status, or other externally verifiable subject; or
 - a mixed turn that needs BOTH legal analysis and external background facts.
 
 Do not require special words such as search, research, verify, find, background, records, or a question mark. Infer the user's meaning from ordinary language and the conversation context. A statement, shorthand follow-up, or broad request can require background research when that is the clear meaning.
 
-Do NOT upgrade pure legal-only questions, casual conversation, acknowledgements, document drafting, or facts the user is merely supplying about themselves unless external verification is actually needed.
+Pure legal questions use intent=legal, needed=true, requestedFact=none. A user need not ask for research or name a statute. Use the prior conversation to formulate a standalone legal question, including the known jurisdiction. If the previous answer said legal verification was needed and the user continues that issue, research the unresolved authority now. Prior assistant statements are context, not verified evidence. Do not turn mere intake, casual conversation, acknowledgements or a new unrelated topic into research. Do not investigate the user's personal facts merely because legal analysis relies on them.
 
 Return JSON only:
 {
@@ -160,7 +160,7 @@ Return JSON only:
   "requestedFact": "age-dob" | "death-date" | "professional-license" | "marriage-divorce" | "employment" | "property" | "court-record" | "incarceration" | "business" | "financial-professional" | "healthcare-professional" | "sanctions-discipline" | "intellectual-property" | "domain-web" | "news-history" | "identity" | "contact-address" | "relatives-associates" | "social-online" | "public-image" | "government-public" | "education" | "vehicle" | "criminal-arrest" | "probation-parole" | "warrant" | "sex-offender" | "bankruptcy-financial" | "relationship-timeline" | "general-public-record" | "none",
   "subject": "exact subject from the conversation or empty string",
   "subjectKind": "person" | "organization" | "place" | "entity",
-  "objective": "one short description of exactly what external fact must be established"
+  "objective": "standalone question identifying the applicable law or external fact to establish, with relevant user-supplied facts and jurisdiction"
 }
 
 Examples:
@@ -172,7 +172,9 @@ Output: {"needed":true,"intent":"factual","requestedFact":"employment","subject"
 <example>User: The officer who arrested me was fired for misconduct. Does that affect my suppression motion?
 Output: {"needed":true,"intent":"mixed","requestedFact":"sanctions-discipline","subject":"the officer who arrested me","subjectKind":"person","objective":"Verify the officer misconduct/employment fact that may affect the legal analysis."}</example>
 <example>User: How do I file for divorce in Iowa?
-Output: {"needed":false,"intent":"legal","requestedFact":"none","subject":"","objective":""}</example>
+Output: {"needed":true,"intent":"legal","requestedFact":"none","subject":"","objective":"What current Iowa authority governs filing for divorce?"}</example>
+<example>Prior: The user described an Iowa landlord keeping a security deposit. User: Can they do that?
+Output: {"needed":true,"intent":"legal","requestedFact":"none","subject":"","objective":"Under current Iowa law, when may a landlord retain the tenant's security deposit in the circumstances described?"}</example>
 <example>User: Thanks, that makes sense.
 Output: {"needed":false,"intent":"conversation","requestedFact":"none","subject":"","objective":""}</example>
 
@@ -192,7 +194,17 @@ ${text}`;
     });
     const semantic = JSON.parse(cleanJson(response.content)) as SemanticIntentPayload;
     const semanticIntent = semantic.intent;
-    if (semantic.needed !== true || (semanticIntent !== 'factual' && semanticIntent !== 'mixed')) return deterministic;
+    if (semantic.needed !== true || !['legal', 'factual', 'mixed'].includes(semanticIntent || '')) return deterministic;
+    if (semanticIntent === 'legal' && !deterministicFactual) {
+      const objective = String(semantic.objective || text).trim().slice(0, 1200) || text;
+      return {
+        ...deterministic, needed: true, reason: 'legal-authority',
+        objectiveKind: 'legal-authority', intent: 'legal', requestedFact: 'none',
+        sourceCategories: [], subject: undefined, subjectKind: undefined,
+        objective, standaloneQuery: objective, inferred: true,
+      };
+    }
+    if (semanticIntent !== 'factual' && semanticIntent !== 'mixed') return deterministic;
     const intent: LexaraResearchIntent = deterministic.intent === 'legal' ? 'mixed' : semanticIntent;
 
     const subject = supportedSubject(semantic.subject, text, previousUserTurns, needsSubjectReview);
