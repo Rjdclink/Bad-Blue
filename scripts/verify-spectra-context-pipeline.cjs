@@ -34,7 +34,7 @@ for (const file of [
 }
 
 // An acquisition's environmental result has to reach the Spectra UI.
-assert.match(route, /contextEvidence,\s*liveLocationAssessment/);
+assert.match(route, /locationObservations,\s*candidateLocations,\s*mediaCaptureScenes,\s*contextEvidence,\s*liveLocationAssessment/);
 assert.match(page, /setContextEvidence\(payload\.contextEvidence\?\.anchor/);
 assert.match(page, /<SpectraGeographicContext value=\{contextEvidence\} photoScenes=\{photoScenes\}/);
 assert.match(panel, /Photograph metadata by capture date/);
@@ -69,6 +69,10 @@ assert.match(cameras, /length > 5_000_000/);
 assert.match(geo, /cameraPositionNumber\(coordinate\?\.lat\)/);
 assert.match(route, /spectraContextCache\.get\(key\)/);
 assert.match(route, /spectraContextCache\.set\(key/);
+assert.match(route, /collectSpectraEarthSearchScenes\(input\.latitude, input\.longitude, earthFrom, earthTo\)/);
+assert.match(route, /basis === 'timestamped_observation'/);
+assert.match(route, /candidateLocations\[0\]\.confidence >= 0\.1/);
+assert.match(panel, /Photograph metadata by capture date/);
 assert.match(route, /camera\.status\?\.disabled === true/);
 
 // Only actual retrieved HTML can supply social post media URLs.
