@@ -132,7 +132,7 @@ export async function collectSpectraXPostMedia(
         ...page,
         // The original retrieved post remains the evidence. The API expansion
         // only contributes verified photo URLs, not new subject observations.
-        publicImageUrls: [...new Set([...(page.publicImageUrls || []), ...urls])].slice(0, 8),
+        publicImageUrls: [...new Set([...urls, ...(page.publicImageUrls || [])])].slice(0, 8),
         publishedAt: page.publishedAt || publishedTime(payload.data.created_at),
       });
     } catch {
