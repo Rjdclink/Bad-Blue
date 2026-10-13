@@ -82,6 +82,7 @@ import { publicProfileContactMatch, publicProfileNameMatch } from '../services/s
 import { publicProfileLeads } from '../services/spectra/SpectraPublicProfileLeads';
 import { collectSpectraPublicBlueskyImages, collectSpectraPublicMastodonImages, collectSpectraPublicSocialPageImages } from '../services/spectra/SpectraPublicImageRecords';
 import { prioritizeSpectraPublicMediaScenes } from '../services/spectra/SpectraPublicMediaPriority';
+import { summarizeSpectraMediaEvidence } from '../services/spectra/SpectraMediaCorrelation';
 import { collectSpectraXPostMedia } from '../services/spectra/SpectraXPostMedia';
 import { collectSpectraEarthSearchScenes } from '../services/spectra/SpectraPublicSatelliteRecords';
 import { shouldRunSpectraClaudeBackground } from '../services/spectra/SpectraClaudeBudget';
@@ -1535,12 +1536,16 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       identityStatus: 'Public image file metadata inspected',
     })));
 
-    const mediaCaptureScenes = prioritizeSpectraPublicMediaScenes([
+    const acquiredPublicImageRecords = [
       ...publicBlueskyImages.records,
       ...publicMastodonImages.records,
       ...publicSocialImages.records,
       ...retrievedEvidence.filter(record => record.title === 'Public Web image bytes inspected'),
-    ]);
+    ];
+    const mediaCaptureScenes = prioritizeSpectraPublicMediaScenes(acquiredPublicImageRecords);
+    // Back-end-only source correlation. No new map fields, scene-based subject
+    // location observations, or client presentation changes are introduced.
+    const mediaCorrelationSummary = summarizeSpectraMediaEvidence(acquiredPublicImageRecords);
 
     if (
       discoveryResults.length === 0
@@ -2065,6 +2070,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       evidenceRecords,
       state: {
         pipelineDiagnostics,
+        mediaCorrelationSummary,
         evidenceAssessmentCounts: {
           sourceRecordCount: evidenceAssessment.sourceRecordCount,
           uniqueContributionCount: evidenceAssessment.uniqueContributionCount,
