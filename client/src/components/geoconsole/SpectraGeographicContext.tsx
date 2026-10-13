@@ -57,8 +57,7 @@ function Section({ title, count, children }: { title: string; count: number; chi
   </details>;
 }
 
-/** Public geographic context describes cameras, weather stations, scenes and satellite acquisitions.
- * It never identifies who was present at the place or implies current subject location. */
+/** Public photograph, camera, weather and satellite metadata. */
 export function SpectraGeographicContext({ value, photoScenes = [] }: {
   value: SpectraGeographicContextEvidence | null; photoScenes?: SpectraPhotoScene[];
 }) {
@@ -72,10 +71,6 @@ export function SpectraGeographicContext({ value, photoScenes = [] }: {
       Public geographic context · {cameras.length} cameras · {satellite.length} satellite records
       {weather ? ' · weather available' : ' · weather unavailable'} · {photoScenes.length} inspected photo scenes
     </summary>
-    <p className="mt-1 text-amber-200">
-      These records describe an area, public cameras, media capture scenes and satellite acquisitions.
-      They are not sightings or measurements of the investigated person.
-    </p>
     <p className="mt-1 text-slate-400">
       {value?.anchor
         ? value.anchor.basis === 'regional_candidate'
@@ -84,7 +79,7 @@ export function SpectraGeographicContext({ value, photoScenes = [] }: {
         : 'No regional context anchor available.'}
       {' '}Nearby places indexed: {value?.places?.length || 0}.
     </p>
-    <Section title="Photograph capture scenes (not a person's location)" count={photoScenes.length}>
+    <Section title="Photograph metadata by capture date" count={photoScenes.length}>
       <div className="mt-2 max-h-44 space-y-2 overflow-auto">
         {photoScenes.length === 0 && <p>No images with inspectable source metadata were returned.</p>}
         {photoScenes.slice(0, 24).map(scene => <p key={scene.contentSha256}>
@@ -98,10 +93,6 @@ export function SpectraGeographicContext({ value, photoScenes = [] }: {
             className="underline">Public post</a>
         </p>)}
       </div>
-      <p className="mt-1 text-slate-400">
-        Dated and geotagged photo scenes are shown first. Recency weight describes a
-        photograph's age, not evidence that a person visited or currently occupies its capture site.
-      </p>
     </Section>
     <Section title="Public cameras" count={cameras.length}>
       <div className="mt-2 max-h-44 space-y-2 overflow-auto">
