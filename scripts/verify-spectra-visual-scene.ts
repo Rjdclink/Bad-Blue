@@ -129,4 +129,33 @@ assert.deepEqual(summarizeSpectraSceneOverlap([
   strongestGenericLabelOverlap: null, facialIdentityComparisons: 0, verifiedPersonLocations: 0,
 });
 
+// A never-settling analyzer must not keep the whole acquisition waiting
+// when the request is cancelled, even if the analyzer ignores AbortSignal.
+const cancellation = new AbortController();
+let signalModelStarted: () => void = () => undefined;
+const modelStarted = new Promise<void>(resolve => { signalModelStarted = resolve; });
+const hanging = inspectSpectraVisualScene(bytes, 'image/jpeg', {
+  signal: cancellation.signal,
+  analyzer: async () => {
+    signalModelStarted();
+    return new Promise<string>(() => undefined);
+  },
+});
+await modelStarted;
+cancellation.abort();
+const stopped = await Promise.race([
+  hanging,
+  new Promise(resolve => setTimeout(() => resolve('wait_not_bounded'), 300)),
+]);
+assert.equal(stopped, null, 'an uncooperative model may not stall the acquisition after cancellation');
+
+const alreadyStopped = new AbortController();
+alreadyStopped.abort();
+let dispatchedAfterAbort = 0;
+assert.equal(await inspectSpectraVisualScene(bytes, 'image/jpeg', {
+  signal: alreadyStopped.signal,
+  analyzer: async () => { dispatchedAfterAbort++; return text; },
+}), null);
+assert.equal(dispatchedAfterAbort, 0);
+
 console.log('Spectra visual scenes: opt-in model analysis, strict categories, safe scene-only comparisons and non-fatal model failures.');
