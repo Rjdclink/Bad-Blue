@@ -10,7 +10,7 @@ accepted location evidence.
 
 This release adds diagnostic reporting to the existing bounded retrieval
 operation. It preserves the returned evidence array, source selection,
-timeouts, redirect and size limits, URL policy, extraction rules, evidence
+timeouts, redirect and size limits, URL validation, extraction rules, evidence
 admission and inference. It adds no collector, identity query, image acquisition,
 retry, credential, source expansion or device/account connection.
 
@@ -66,19 +66,19 @@ repository code was copied into the implementation.
 - Local checks ran on Node 24; the repository declares Node 20 for production.
   The full local `npm run build` stopped in an unrelated existing contract
   compiler invocation: the sandbox denied the `tsx` CLI's IPC socket (`EPERM`),
-  including when its temporary directory was placed in the workspace. No build
-  gate or assertion was removed. Railway must execute the original build and
-  readiness gates before any new production deployment is reported successful.
+  including when its temporary directory was placed in the workspace. No build-stage
+  check or assertion was removed. Railway must execute the original build and
+  readiness checks before any new production deployment is reported successful.
 - The expected personal address was not added to source, fixtures or inference.
   Synthetic regression success is not a real-world location accuracy result.
 
 ## Remaining connection and verification work
 
 Automatic device measurements need a supported provider connection and actual
-measurements. Account-derived evidence needs an authorized importer and account
+measurements. Account-derived evidence needs a configured importer and a functioning account
 connection. Parser/adapter presence alone establishes neither. This release does
 not claim that connecting any arbitrary account will supply location evidence.
 
-Authenticated application-flow verification is separate from deployment health.
+Session-level application-flow verification is separate from deployment health.
 The original personal-location acceptance test has not been performed by this
 release, and its outcome is not established by these diagnostics.
