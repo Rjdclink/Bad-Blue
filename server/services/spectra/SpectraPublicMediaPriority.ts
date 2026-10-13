@@ -1,4 +1,4 @@
-import type { SpectraVisualSceneAssessment } from './SpectraVisualSceneAnalysis';
+import { parseSpectraVisualSceneAssessment } from './SpectraVisualSceneAnalysis';
 
 /** Recency priority for locations embedded in publicly fetched PHOTOGRAPHS.
  * This ranks dated capture scenes, not a person's current or historical presence.
@@ -69,13 +69,16 @@ export function prioritizeSpectraPublicMediaScenes(
     const ageDays = validTime ? Math.max(0, now - originalCaptureTime) / DAY_MS : null;
     const recencyWeight = validGps && ageDays !== null
       ? Math.pow(0.5, ageDays / HALF_LIFE_DAYS) : 0;
+    // Never forward arbitrary source-provided model fields. Rebuild a bounded
+    // allowlisted assessment, validating its byte hash and provenance marker.
     const sceneCandidate = object(item.sceneAnalysis);
-    const sceneAnalysis: SpectraVisualSceneAssessment | undefined =
-      sceneCandidate?.evidenceRole === 'model_interpreted_scene_context'
+    const sceneAnalysis = sceneCandidate?.evidenceRole === 'model_interpreted_scene_context'
       && sceneCandidate?.validation === 'unverified_model_output'
+      && sceneCandidate?.method === 'claude_image_classification'
       && typeof sceneCandidate?.contentSha256 === 'string'
       && sceneCandidate.contentSha256.toLowerCase() === sha.toLowerCase()
-        ? item.sceneAnalysis as SpectraVisualSceneAssessment : undefined;
+      ? parseSpectraVisualSceneAssessment(JSON.stringify(sceneCandidate), sha)
+      : null;
     const scene: SpectraPrioritizedMediaScene = {
       imageUrl: record.url,
       sourcePostUrl: post,
