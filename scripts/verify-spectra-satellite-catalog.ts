@@ -19,10 +19,13 @@ const results = await collectSpectraEarthSearchScenes(39.15, -105.15, from, to, 
     assert.equal(options?.redirect, 'error');
     assert.equal(new Headers(options?.headers).get('Authorization'), null);
     const body = JSON.parse(String(options?.body || '{}'));
-    assert.deepEqual(body.collections, ['sentinel-2-c1-l2a', 'landsat-c2-l2']);
+    assert.deepEqual(body.collections, ['sentinel-2-c1-l2a', 'sentinel-2-l2a', 'landsat-c2-l2']);
     assert.equal(body.limit, 20);
     return new Response(JSON.stringify({ features: [
       feature('s2', 'sentinel-2-c1-l2a', '2026-10-10T09:15:00Z'),
+      feature('s2-modern', 'sentinel-2-l2a', '2026-10-09T09:15:00Z', {
+        assets: { thumbnail: { href: 'https://example.org/s2-modern-thumbnail.png', type: 'image/png' } },
+      }),
       feature('landsat', 'landsat-c2-l2', '2026-10-11T10:00:00Z'),
       feature('s2', 'sentinel-2-c1-l2a', '2026-10-10T09:15:00Z'),
       feature('outside', 'sentinel-2-c1-l2a', '2012-01-01T00:00:00Z'),
@@ -31,7 +34,9 @@ const results = await collectSpectraEarthSearchScenes(39.15, -105.15, from, to, 
   },
 });
 assert.equal(requests, 1);
-assert.deepEqual(results.map(item => item.id), ['landsat', 's2']);
+assert.deepEqual(results.map(item => item.id), ['landsat', 's2', 's2-modern']);
+assert.equal(results[2].previewUrl, 'https://example.org/s2-modern-thumbnail.png',
+  'source-provided STAC thumbnail is catalog metadata, not a downloaded frame');
 assert(results.every(item => item.provider === 'Element 84 Earth Search'));
 assert.equal(results[0].links.length, 1);
 assert.equal(results[0].links[0].rel, 'preview');
