@@ -39,6 +39,8 @@ export interface LegalMeshSearchOptions {
   // A caller with its own bounded query waves must retain its contact clues
   // and source objectives instead of expanding the same subject again.
   queryAlreadyPlanned?: boolean;
+  /** Call-site budget guard: skip SerpApi and ScrapingBee when explicitly disabled. */
+  allowPaidSearch?: boolean;
 }
 
 const clean = (v: unknown) => {
@@ -780,6 +782,10 @@ export async function discoverLegalMeshSupplemental(
     if(plannedFresh.length) return plannedFresh;
   }
 
+  // Exhausted quotas must not be spent by an investigation that explicitly
+  // requests free-only supplemental discovery. Other Lexara callers keep
+  // their existing behavior unless they opt into this restriction.
+  if (options.allowPaidSearch === false) return [];
   const paid=await serpApi(query,existingUrls,signal);
   if(paid.length) return diversify(paid,12);
   return diversify(await scrapingBee(query,existingUrls,signal),12);

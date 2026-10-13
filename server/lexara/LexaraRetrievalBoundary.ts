@@ -93,12 +93,13 @@ function textFromResponse(raw: string, contentType: string, includePublisherMeta
   return '';
 }
 
-async function textFromPdf(buffer: Buffer): Promise<string> {
+/** Shared local PDF extractor. The caller controls the page budget; no API credits. */
+export async function textFromPdf(buffer: Buffer, maxPages = 20): Promise<string> {
   const task = getDocument({ data: new Uint8Array(buffer), disableFontFace: true, isEvalSupported: false, useSystemFonts: true });
   const document = await task.promise;
   try {
     const pages: string[] = [];
-    for (let page = 1; page <= Math.min(document.numPages, 20); page++) {
+    for (let page = 1; page <= Math.min(document.numPages, Math.max(1, Math.min(20, Math.floor(maxPages)))); page++) {
       const content = await (await document.getPage(page)).getTextContent();
       pages.push(content.items.map(item => 'str' in item ? item.str : '').join(' '));
       if (pages.join(' ').length >= MAX_CONTENT_CHARACTERS) break;
