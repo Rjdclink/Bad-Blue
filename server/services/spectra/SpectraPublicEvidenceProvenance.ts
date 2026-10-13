@@ -41,6 +41,8 @@ export function mergePublicRetrievedMetadata(
     fetchedContentType: evidence.contentType,
     fetchedRecord: evidence.structuredRecord,
     fetchedRecordOmitted: evidence.structuredRecordOmitted === true,
+    // A discovered image link is not evidence that the bytes were retrieved.
+    fetchedPublicImageUrls: evidence.publicImageUrls,
     retrievedLocationEvidence: unboundPublicGeoContext(evidence.observations),
   };
 }

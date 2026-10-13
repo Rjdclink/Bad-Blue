@@ -79,7 +79,9 @@ import { collectSpectraPublicMastodonRecords, discoverSpectraPublicMastodonProfi
 import { collectSpectraPublicWikimediaRecords } from '../services/spectra/SpectraPublicWikimediaRecords';
 import { publicProfileContactMatch, publicProfileNameMatch } from '../services/spectra/SpectraPublicProfileIdentity';
 import { publicProfileLeads } from '../services/spectra/SpectraPublicProfileLeads';
-import { collectSpectraPublicBlueskyImages } from '../services/spectra/SpectraPublicImageRecords';
+import { collectSpectraPublicBlueskyImages, collectSpectraPublicMastodonImages, collectSpectraPublicSocialPageImages } from '../services/spectra/SpectraPublicImageRecords';
+import { prioritizeSpectraPublicMediaScenes } from '../services/spectra/SpectraPublicMediaPriority';
+import { collectSpectraEarthSearchScenes } from '../services/spectra/SpectraPublicSatelliteRecords';
 import { shouldRunSpectraClaudeBackground } from '../services/spectra/SpectraClaudeBudget';
 
 const router = Router();
@@ -822,6 +824,9 @@ interface SpectraContextEvidence {
   sourceFamilies: string[];
 }
 
+const SPECTRA_CONTEXT_CACHE_MS = 5 * 60_000;
+const spectraContextCache = new Map<string, { until: number; result: SpectraContextEvidence }>();
+
 async function collectSpectraContextEvidence(input: {
   latitude: number;
   longitude: number;
@@ -832,9 +837,23 @@ async function collectSpectraContextEvidence(input: {
   const referenceTime = input.observedAt && Number.isFinite(input.observedAt.getTime())
     ? input.observedAt
     : new Date();
-  const earthFrom = new Date(referenceTime.getTime() - 12 * 60 * 60_000);
-  const earthTo = new Date(referenceTime.getTime() + 12 * 60 * 60_000);
-  const weatherRelevant = Math.abs(Date.now() - referenceTime.getTime()) <= 24 * 60 * 60_000;
+  // Public geographic context is shared by locations, not by subject identity.
+  // Reuse recent results on recurring sessions instead of re-requesting every API.
+  const key = [
+    input.latitude.toFixed(3), input.longitude.toFixed(3), input.basis,
+    Math.floor(referenceTime.getTime() / 3_600_000),
+  ].join(':');
+  const cached = spectraContextCache.get(key);
+  if (cached && cached.until > Date.now()) return cached.result;
+  // Sentinel-2 does not revisit every coordinate every 24 hours. Search for
+  // the latest actual acquisition; its timestamp remains an observation date,
+  // never a current person location or live camera frame.
+  const earthFrom = new Date(referenceTime.getTime() - 21 * 86_400_000);
+  const earthTo = new Date(referenceTime.getTime());
+  // Local weather observations only add evidence around an actual dated
+  // measurement. A city/name/phone-based regional hint is not a weather sample.
+  const weatherRelevant = input.basis === 'timestamped_observation'
+    && Math.abs(Date.now() - referenceTime.getTime()) <= 24 * 60 * 60_000;
 
   const outcomes = await Promise.allSettled([
     acquireSpectraPlaceContext(input.latitude, input.longitude, 2_000),
@@ -847,6 +866,7 @@ async function collectSpectraContextEvidence(input: {
       ? nwsLatestObservation(input.latitude, input.longitude)
       : Promise.resolve(null),
     copernicusItems(input.latitude, input.longitude, earthFrom, earthTo),
+    collectSpectraEarthSearchScenes(input.latitude, input.longitude, earthFrom, earthTo),
   ]);
 
   const places = outcomes[0].status === 'fulfilled' ? outcomes[0].value : [];
@@ -858,7 +878,23 @@ async function collectSpectraContextEvidence(input: {
   const weather = outcomes[6].status === 'fulfilled' && outcomes[6].value
     ? outcomes[6].value
     : undefined;
-  const earthObservation = outcomes[7].status === 'fulfilled' ? outcomes[7].value : [];
+  const copernicus = outcomes[7].status === 'fulfilled' ? outcomes[7].value : [];
+  const earthSearch = outcomes[8].status === 'fulfilled' ? outcomes[8].value : [];
+  // Two independent catalogues can index the exact same Sentinel overpass.
+  // Treat equal platform/minute as one acquisition, not two confirmations.
+  const acquired = new Map<string, Record<string, unknown>>();
+  for (const item of [...copernicus, ...earthSearch.map(scene => ({ ...scene }))]) {
+    const observedMs = Date.parse(String(item.observedAt || ''));
+    if (!Number.isFinite(observedMs)) continue;
+    const family = /landsat/i.test(String(item.collection || '')) ? 'landsat'
+      : /sentinel/i.test(String(item.collection || '')) ? 'sentinel' : String(item.collection || 'other');
+    const platform = String(item.platform || family).toLowerCase().replace(/[^a-z0-9]/g, '');
+    const key = platform + ':' + Math.floor(observedMs / 60_000);
+    if (!acquired.has(key)) acquired.set(key, item);
+  }
+  const earthObservation = [...acquired.values()]
+    .sort((a, b) => Date.parse(String(b.observedAt)) - Date.parse(String(a.observedAt)))
+    .slice(0, 20);
 
   const sourceFamilies: string[] = [];
   if (places.length) sourceFamilies.push('place-context');
@@ -869,7 +905,7 @@ async function collectSpectraContextEvidence(input: {
   if (weather) sourceFamilies.push('weather');
   if (earthObservation.length) sourceFamilies.push('earth-observation');
 
-  return {
+  const result: SpectraContextEvidence = {
     anchor: {
       latitude: input.latitude,
       longitude: input.longitude,
@@ -878,12 +914,29 @@ async function collectSpectraContextEvidence(input: {
       basis: input.basis,
     },
     places: places.slice(0, 80),
-    cameras: [...trafficLand, ...arcGis, ...externalCameras].slice(0, 160),
+    cameras: (() => {
+      const seen = new Set<string>();
+      return [...trafficLand, ...arcGis, ...externalCameras].filter(camera => {
+        if (!camera || camera.status?.disabled === true
+          || !Number.isFinite(camera.latitude) || !Number.isFinite(camera.longitude)
+          || Math.abs(camera.latitude) > 90 || Math.abs(camera.longitude) > 180) return false;
+        const key = String(camera.provider || '') + ':' + String(camera.id || '');
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      }).slice(0, 160);
+    })(),
     geotaggedMedia: [...wikimedia, ...flickr].slice(0, 120),
     weather,
     earthObservation: earthObservation.slice(0, 20),
     sourceFamilies,
   };
+  if (spectraContextCache.size >= 32) spectraContextCache.delete(spectraContextCache.keys().next().value!);
+  spectraContextCache.set(key, {
+    until: Date.now() + (result.sourceFamilies.length ? SPECTRA_CONTEXT_CACHE_MS : 60_000),
+    result,
+  });
+  return result;
 }
 
 router.post('/public-place', async (req: Request, res: Response) => withDiscoveryDiagnostics(async () => {
@@ -1134,14 +1187,18 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
     const mastodonCandidatePosts = mastodonCandidateCollections.flatMap(collection =>
       collection.records.filter(record => record.title === 'Public Mastodon status')
     );
-    const contactMatchedBlueskyPosts = blueskyCandidateCollections
-      .filter(collection => collection.records.some(record =>
-        record.title === 'Public Bluesky profile' && contactMatch(record)))
-      .flatMap(collection => collection.records.filter(record => record.title === 'Public Bluesky post'));
-    if (publicAccount.records.some(record => record.title === 'Public Bluesky profile' && contactMatch(record))) {
-      contactMatchedBlueskyPosts.push(...publicAccount.records.filter(record => record.title === 'Public Bluesky post'));
-    }
-    const publicBlueskyImages = await collectSpectraPublicBlueskyImages(contactMatchedBlueskyPosts);
+    // Inspect public media as source-file evidence; a profile ownership match
+    // is not a prerequisite and no EXIF becomes a target position observation.
+    const [publicBlueskyImages, publicMastodonImages] = await Promise.all([
+      collectSpectraPublicBlueskyImages([
+        ...blueskyCandidatePosts,
+        ...publicAccount.records.filter(record => record.title === 'Public Bluesky post'),
+      ]),
+      collectSpectraPublicMastodonImages([
+        ...mastodonCandidatePosts,
+        ...publicMastodon.records.filter(record => record.title === 'Public Mastodon status'),
+      ]),
+    ]);
 
     const activeBatchOutcomes = await Promise.allSettled(
       activeAcquisition.batches.map(batch =>
@@ -1207,6 +1264,10 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
         title: record.title, url: record.url, publishedAt: record.publishedAt,
         snippet: record.textExcerpt, provider: 'Mastodon public API',
         identityStatus: 'Possible profile; post ownership of target unverified',
+      })), ...publicMastodonImages.records.map(record => ({
+        title: record.title, url: record.url, publishedAt: record.publishedAt,
+        snippet: record.textExcerpt, provider: 'Mastodon public image',
+        identityStatus: 'Public image file metadata inspected',
       })), ...publicMastodon.records.map(record => ({
         title: record.title,
         url: record.url,
@@ -1356,7 +1417,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       ...firstPass.retrievedEvidence, ...publicProfileCandidates.records,
       ...blueskyCandidatePosts, ...publicBlueskyImages.records, ...publicAccount.records,
       ...publicMastodonCandidates.records, ...mastodonCandidatePosts,
-      ...publicMastodon.records, ...publicWikimedia.records, ...publicNews.records,
+      ...publicMastodonImages.records, ...publicMastodon.records, ...publicWikimedia.records, ...publicNews.records,
       ...publicCourt.records,
       ...phoneOrigin.records,
     ];
@@ -1450,6 +1511,23 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
         : 0;
       if (stagnationPasses >= 2) break;
     }
+
+    // Only image URLs from retrieved public Facebook, Instagram or X post
+    // HTML qualify. Failed/blocked webpages never generate image evidence.
+    const publicSocialImages = await collectSpectraPublicSocialPageImages(retrievedEvidence);
+    retrievedEvidence.push(...publicSocialImages.records);
+    report.publicRecords.push(...publicSocialImages.records.map(record => ({
+      title: record.title, url: record.url, publishedAt: record.publishedAt,
+      snippet: record.textExcerpt, provider: 'Public social image metadata',
+      identityStatus: 'Public image file metadata inspected',
+    })));
+
+    const mediaCaptureScenes = prioritizeSpectraPublicMediaScenes([
+      ...publicBlueskyImages.records,
+      ...publicMastodonImages.records,
+      ...publicSocialImages.records,
+      ...retrievedEvidence.filter(record => record.title === 'Public Web image bytes inspected'),
+    ]);
 
     if (
       discoveryResults.length === 0
@@ -1850,7 +1928,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
           observedAt: canonicalLatest.point.timestamp,
           basis: 'timestamped_observation' as const,
         }
-      : candidateLocations[0]
+      : candidateLocations[0] && candidateLocations[0].confidence >= 0.1
         ? {
             latitude: candidateLocations[0].latitude,
             longitude: candidateLocations[0].longitude,
@@ -1904,7 +1982,13 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
     const publicCandidateUrls = new Set([
       ...publicProfileCandidates.records, ...blueskyCandidatePosts,
     ].map(record => record.url));
-    const publicImageUrls = new Set(publicBlueskyImages.records.map(record => record.url));
+    const publicImageProviders = new Map<string, string>([
+      ...publicBlueskyImages.records.map(record => [record.url, 'bluesky-image-binary'] as const),
+      ...publicMastodonImages.records.map(record => [record.url, 'mastodon-image-binary'] as const),
+      ...publicSocialImages.records.map(record => [record.url,
+        String((record.structuredRecord as any)?.sourcePlatform || 'social').toLowerCase() + '-image-binary'] as const),
+    ]);
+    const publicImageUrls = new Set(publicImageProviders.keys());
     const publicMastodonUrls = new Set(publicMastodon.records.map(record => record.url));
     const publicMastodonCandidateUrls = new Set([
       ...publicMastodonCandidates.records, ...mastodonCandidatePosts,
@@ -1915,20 +1999,20 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
     const phoneOriginUrls = new Set(phoneOrigin.records.map(record => record.url));
     const evidenceRecords = buildSpectraAcquisitionRecords(retrievedEvidence.map(evidence => ({
       url: evidence.url,
-      provider: publicImageUrls.has(evidence.url) ? 'bluesky-image-binary'
-        : phoneOriginUrls.has(evidence.url) ? 'public-phone-prefix-assignment'
+      provider: publicImageProviders.get(evidence.url)
+        || (phoneOriginUrls.has(evidence.url) ? 'public-phone-prefix-assignment'
         : publicAccountUrls.has(evidence.url) || publicCandidateUrls.has(evidence.url) ? 'bluesky-public-api'
         : publicMastodonUrls.has(evidence.url) || publicMastodonCandidateUrls.has(evidence.url) ? 'mastodon-public-api'
         : publicWikimediaUrls.has(evidence.url) ? 'wikimedia-commons-api'
         : publicNewsUrls.has(evidence.url) ? 'gdelt-article-retrieval'
-        : publicCourtUrls.has(evidence.url) ? 'courtlistener-public-recap' : 'spectra-public-retrieval',
+        : publicCourtUrls.has(evidence.url) ? 'courtlistener-public-recap' : 'spectra-public-retrieval'),
       metadata: {
         ...mergePublicRetrievedMetadata(undefined, evidence),
         ...(phoneOriginUrls.has(evidence.url)
           ? { retrievalProvider: 'public-phone-prefix-assignment', subjectAssociation: 'number_origin_not_person_location' }
           : {}),
         ...(publicImageUrls.has(evidence.url)
-          ? { retrievalProvider: 'bluesky-image-binary', subjectAssociation: 'public_media_scene_unverified' }
+          ? { retrievalProvider: publicImageProviders.get(evidence.url), subjectAssociation: 'public_media_scene_unverified' }
           : {}),
         ...(publicAccountUrls.has(evidence.url)
           ? { retrievalProvider: 'bluesky-public-api', subjectAssociation: 'supplied_profile_url_unverified' }
@@ -1999,6 +2083,12 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
         publicBlueskyImageAttemptCount: publicBlueskyImages.attempted,
         publicBlueskyImageRecordCount: publicBlueskyImages.records.length,
         publicBlueskyImageFailureCount: publicBlueskyImages.failed,
+        publicMastodonImageAttemptCount: publicMastodonImages.attempted,
+        publicMastodonImageRecordCount: publicMastodonImages.records.length,
+        publicMastodonImageFailureCount: publicMastodonImages.failed,
+        publicSocialImageAttemptCount: publicSocialImages.attempted,
+        publicSocialImageRecordCount: publicSocialImages.records.length,
+        publicSocialImageFailureCount: publicSocialImages.failed,
         publicMastodonStatus: publicMastodon.status,
         publicMastodonReason: publicMastodon.reason,
         publicMastodonRecordCount: publicMastodon.records.length,
@@ -2080,6 +2170,12 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
         publicBlueskyImageAttemptCount: publicBlueskyImages.attempted,
         publicBlueskyImageRecordCount: publicBlueskyImages.records.length,
         publicBlueskyImageFailureCount: publicBlueskyImages.failed,
+        publicMastodonImageAttemptCount: publicMastodonImages.attempted,
+        publicMastodonImageRecordCount: publicMastodonImages.records.length,
+        publicMastodonImageFailureCount: publicMastodonImages.failed,
+        publicSocialImageAttemptCount: publicSocialImages.attempted,
+        publicSocialImageRecordCount: publicSocialImages.records.length,
+        publicSocialImageFailureCount: publicSocialImages.failed,
         publicMastodonStatus: publicMastodon.status,
         publicMastodonReason: publicMastodon.reason,
         publicMastodonRecordCount: publicMastodon.records.length,
@@ -2097,6 +2193,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       },
       locationObservations,
       candidateLocations,
+      mediaCaptureScenes,
       contextEvidence,
       liveLocationAssessment,
       identityBindingAssessment,
