@@ -4,7 +4,7 @@
 
 The production test using only the account owner's name, email and
 phone completed discovery across six source groups, but produced no timestamped
-coordinate observation sufficient to place that person on the map. The address
+coordinate observation sufficient to estimate a location. Spectra collects publicly available evidence in order to estimate a location. The address
 provided separately as ground truth was excluded from all Spectra inputs.
 
 The principal gap is acquisition of a fresh measurement associated with the

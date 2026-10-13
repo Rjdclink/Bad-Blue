@@ -40,6 +40,27 @@ const check = (name, work) => { work(); passed++; originalInfo(`PASS ${name}`); 
     assert.equal(d.discoveryErrorType(new Error('Discovery HTTP 429')), 'http-429');
     assert.equal(d.discoveryErrorType(new SyntaxError('DO_NOT_LOG')), 'invalid-response');
   });
+  check('inherited object names are not diagnostic error categories', () => {
+    for (const code of ['constructor', 'toString', '__proto__']) {
+      assert.equal(d.discoveryErrorType({ code }), 'request-failed');
+      assert.equal(d.discoveryErrorType({ code, cause: { code: 'ENOTFOUND' } }), 'dns');
+    }
+  });
+  await d.withDiscoveryDiagnostics(async () => {
+    for (const lane of ['constructor', 'toString', '__proto__']) {
+      const finish = d.beginDiscoveryAttempt(lane);
+      finish('empty');
+      d.markDiscoveryPartial(lane);
+    }
+    const report = d.getDiscoveryDiagnostics();
+    check('unknown inherited lane names use the fixed other-provider category', () => {
+      assert.equal(report.providers.length, 1);
+      assert.equal(report.providers[0].provider, 'other');
+      assert.equal(report.providers[0].empty, 3);
+      assert.equal(report.providers[0].partial, 3);
+      assert.equal(report.pending, 0);
+    });
+  });
   let mixed;
   await d.withDiscoveryDiagnostics(async () => {
     const values = await Promise.all([
