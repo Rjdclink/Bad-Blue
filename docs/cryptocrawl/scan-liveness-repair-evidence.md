@@ -26,7 +26,7 @@ No Alchemy provider was added. Read hedging does not submit transactions. Existi
 - Existing HTTP/WebSocket provider failover matrix: passed with the actual manager loaded through isolated dependencies.
 - Dashboard state, OFF polling, terminal, manual lifecycle, canonical BPS propagation, resource admission, gas truth, and quote-liveness verifiers: passed.
 - New cancellation-context TypeScript check: passed. The repository-wide TypeScript invocation exceeded the local default 2 GB heap; it is not reported as a passing check.
-- `npm run build` completed deployment preflight, contract compilation, application verification suites, and the Vite frontend build. The local Vite CLI retained an open handle after reporting success, so the server and worker production bundles were also built explicitly to separate output paths; both passed. No application server was started.
+- `npm run build` completed deployment preflight, contract compilation, application verification suites, and the Vite frontend build. The subsequent browser-asset preservation step could not download historical production assets within its 180-second network deadline in this environment. The server and worker production bundles were therefore also built explicitly to separate output paths; both passed. The full npm command is not reported as a successful local exit. No application server was started.
 
 The preflight now runs the new scan behavior, reducer behavior, and funding-contract verifiers automatically. Contract compilation uses `node --import tsx`, avoiding an unnecessary CLI IPC listener without skipping compilation.
 
