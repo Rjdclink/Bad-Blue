@@ -78,6 +78,7 @@ const diagnostics = execute('server/lexara/DiscoveryDiagnostics.ts', {
 });
 const meshEvidence = execute('server/lexara/LegalProviderMesh.ts', {
   './DiscoveryDiagnostics': diagnostics,
+  './TavilyBudget': execute('server/lexara/TavilyBudget.ts'),
   './LexaraPublicSourceRegistry': {},
   './LexaraDiscoveryLearning': {},
   './LexaraResearchAssist': {},

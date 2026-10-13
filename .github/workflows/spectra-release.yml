@@ -1,0 +1,52 @@
+name: Spectra three-group release verification
+
+on:
+  pull_request:
+    branches: [develop]
+    paths:
+      - '.github/workflows/spectra-release.yml'
+      - 'client/src/lib/spectra*'
+      - 'client/src/pages/spectra.tsx'
+      - 'shared/spectra*'
+      - 'server/lexara/**'
+      - 'server/services/spectra/**'
+      - 'server/routes/spectra.routes.ts'
+      - 'scripts/verify-spectra*'
+      - 'scripts/spectra-crawl4ai*'
+      - 'Dockerfile'
+      - 'scripts/test-lexara*'
+      - 'package.json'
+      - 'package-lock.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: spectra-release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install local Crawl4AI extraction runtime
+        run: |
+          python -m venv .spectra-crawl4ai
+          .spectra-crawl4ai/bin/pip install -r scripts/spectra-crawl4ai-requirements.txt
+          echo "SPECTRA_CRAWL4AI_PYTHON=$GITHUB_WORKSPACE/.spectra-crawl4ai/bin/python" >> "$GITHUB_ENV"
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+      # One step guarantees that a rerun begins at group one after any failure.
+      # This job never receives production credentials or deploys services.
+      - name: Run all three verifier and regression groups
+        run: bash scripts/verify-spectra-release.sh

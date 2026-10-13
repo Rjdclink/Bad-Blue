@@ -1,5 +1,6 @@
+import { withoutSpectraTimestamps } from '../../shared/spectraTimestampClues';
 import { Router, type Request, type Response } from 'express';
-import { getDiscoveryDiagnostics, withDiscoveryDiagnostics } from '../lexara/DiscoveryDiagnostics';
+import { getDiscoveryDiagnostics, withDiscoveryDiagnostics, discoveryRequestLifetime, discoverySignal, throwIfDiscoveryCancelled } from '../lexara/DiscoveryDiagnostics';
 import { z } from 'zod';
 import { isAuthenticated } from '../auth';
 import {
@@ -14,7 +15,7 @@ import {
 import { getPlatformUserId } from '../authIdentity';
 import { callClaudeWebSearch } from '../claude';
 import {
-  discoverLegalMeshTier3,
+  discoverLegalMeshTier3 as discoverSharedMeshTier3,
   discoverLegalMeshSupplemental,
   type LegalMeshCandidate,
 } from '../lexara/LegalProviderMesh';
@@ -53,7 +54,11 @@ import {
   conservativeJointConfidence,
 } from '../services/spectra/SpectraIdentityBinding';
 import { acquireSpectraPlaceContext } from '../services/spectra/SpectraPlaceContext';
-import { retrieveSpectraPublicEvidence, type SpectraRetrievedEvidence } from '../services/spectra/SpectraPublicRetrieval';
+import { retrieveSpectraPublicEvidence as retrieveDirectPublicEvidence, assertPublicUrl, type SpectraRetrievedEvidence } from '../services/spectra/SpectraPublicRetrieval';
+import { createSpectraProviderConnections } from '../services/spectra/SpectraProviderConnections';
+const { discover: discoverLegalMeshTier3, retrieve: retrieveSpectraPublicEvidence } = createSpectraProviderConnections({
+  discover: discoverSharedMeshTier3, retrieve: retrieveDirectPublicEvidence, validate: assertPublicUrl,
+});
 import { createSpectraRetrievalDiagnostics, mergeSpectraRetrievalDiagnostics } from '../services/spectra/SpectraRetrievalDiagnostics';
 import {
   mergePublicRetrievedMetadata,
@@ -88,6 +93,11 @@ import { takeUnseenSpectraQueries } from '../services/spectra/SpectraDiscoveryDe
 
 const router = Router();
 router.use(isAuthenticated);
+router.use((req, res, next) => {
+  if (req.method === 'POST' && ['/acquire', '/public-place'].includes(req.path)) {
+    discoveryRequestLifetime(req, res, next);
+  } else next();
+});
 
 // Collection is owned by the server scheduler. Reading records never initiates
 // external requests or accepts arbitrary source URLs from the browser.
@@ -161,6 +171,8 @@ const PHONE_CANDIDATE_RE = /(?:\+\d{1,3}[\s().-]*)?(?:\d[\s().-]*){7,15}/;
 const MAC_CANDIDATE_RE = /\b(?:[0-9A-F]{2}[:-]){5}[0-9A-F]{2}\b/i;
 const LABELED_DEVICE_REF_RE = /\b(?:device(?:\s*(?:id|ref))?|imei|meid|bssid|mac(?:\s+address)?)\s*(?::|=|-)\s*([A-Za-z0-9._:-]{4,120})/i;
 
+class SpectraRestoreError extends Error {}
+
 const configuredOsintTimeout = Number(process.env.SPECTRA_OSINT_TIMEOUT_MS);
 const SPECTRA_OSINT_TIMEOUT_MS = Number.isFinite(configuredOsintTimeout)
   ? Math.max(15_000, configuredOsintTimeout)
@@ -196,7 +208,7 @@ async function settleWithin<T>(
 }
 
 function extractPhoneNumber(value: string): string | undefined {
-  const candidate = value.match(PHONE_CANDIDATE_RE)?.[0]?.trim();
+  const candidate = withoutSpectraTimestamps(value).match(PHONE_CANDIDATE_RE)?.[0]?.trim();
   if (!candidate) return undefined;
   const digits = candidate.replace(/\D/g, '');
   if (digits.length < 7 || digits.length > 15) return undefined;
@@ -399,6 +411,7 @@ async function runDiscoveryPass(
     return { results: [], retrievedEvidence, attempted: 0, failed: 0, claudeNotes: [], retrieval };
   }
 
+  const passDeadline = Date.now() + 15_000;
   const controller = new AbortController();
   // Reserve part of the existing 15-second pass budget for reading pages.
   // A finished search deadline must not pre-cancel the evidence retrieval stage.
@@ -515,15 +528,18 @@ async function runDiscoveryPass(
     if (retrievalTargets.length) {
       const retrievalDiagnostics = createSpectraRetrievalDiagnostics(retrievalTargets.length);
       const retrievalController = new AbortController();
+      // Fast search leaves time for cold reader responses. Slow search retains
+      // the original overall 15-second bound instead of extending the pass.
+      const retrievalBudgetMs = Math.max(1, Math.min(8_000, passDeadline - Date.now() - 250));
       const retrievalTimer = setTimeout(() => {
         retrieval.deadlineExpiredPasses = 1;
         retrievalController.abort(new Error('SPECTRA page retrieval timeout'));
-      }, 4_500);
+      }, Math.max(1, retrievalBudgetMs - 250));
       let retrieved: Awaited<ReturnType<typeof retrieveSpectraPublicEvidence>> = [];
       try {
         const outcome = await settleWithin(
           retrieveSpectraPublicEvidence(retrievalTargets, retrievalController.signal, retrievalDiagnostics.record),
-          5_000,
+          retrievalBudgetMs,
           'SPECTRA page retrieval',
         );
         if (outcome.status === 'fulfilled') retrieved = outcome.value;
@@ -955,6 +971,7 @@ router.post('/public-place', async (req: Request, res: Response) => withDiscover
       retrieve: retrieveSpectraPublicEvidence,
       geocode: geocodeCityState,
     });
+    throwIfDiscoveryCancelled();
     const persistence = await persistSpectraAcquisition({
       userId,
       sessionId: parsed.data.sessionId,
@@ -1031,12 +1048,14 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
   const resolvedTargetLabel = resolvedName || phone || normalizedTarget;
 
   try {
-    const persistedObservationsPromise = requestedSessionId
-      ? loadSpectraSessionObservations(userId, requestedSessionId).catch(() => [])
-      : Promise.resolve([] as GPSPoint[]);
-    const identityBindingsPromise = requestedSessionId
-      ? loadSpectraSessionIdentityBindings(userId, requestedSessionId).catch(() => [])
-      : Promise.resolve([]);
+    // Restore first: an unavailable store must not launch a replacement search
+    // or let a refresh overwrite an investigation as if its history were empty.
+    const [persistedObservations, identityBindingEvidence] = requestedSessionId
+      ? await Promise.all([
+          loadSpectraSessionObservations(userId, requestedSessionId),
+          loadSpectraSessionIdentityBindings(userId, requestedSessionId),
+        ]).catch(() => { throw new SpectraRestoreError(); })
+      : [[], []];
 
     // The selected target owns identity. Conversation details may contain the
     // assistant's "Open SPECTRA" launch text or unrelated earlier subjects.
@@ -1082,7 +1101,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
           // truncated request followed by the same search again.
           claudeResearchMaxTokens: 2_048,
           claudeRetryTruncatedOutput: false,
-          signal: AbortSignal.timeout(backgroundBudgetMs),
+          signal: discoverySignal(AbortSignal.timeout(backgroundBudgetMs)),
         },
       ),
       backgroundBudgetMs,
@@ -1114,8 +1133,6 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
     const [
       backgroundOutcome,
       firstPass,
-      persistedObservations,
-      identityBindingEvidence,
       activeAcquisition,
       publicAccount,
       publicProfileCandidates,
@@ -1128,8 +1145,6 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
     ] = await Promise.all([
       backgroundPromise,
       firstPassPromise,
-      persistedObservationsPromise,
-      identityBindingsPromise,
       activeAcquisitionPromise,
       publicAccountPromise,
       publicProfileCandidatesPromise,
@@ -2045,6 +2060,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
     const evidenceAssessment = assessSpectraAcquiredEvidence(
       evidenceRecords, solvedLocationObservations.length,
     );
+    throwIfDiscoveryCancelled();
     const persistence = await persistSpectraAcquisition({
       userId,
       sessionId: requestedSessionId,
@@ -2232,10 +2248,11 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       },
     });
   } catch (error) {
-    console.error('[SPECTRA] Acquisition failed', error);
-    return res.status(500).json({
+    const restoreFailed = error instanceof SpectraRestoreError;
+    console.error('[SPECTRA] Acquisition failed', { code: restoreFailed ? 'SESSION_RESTORE_UNAVAILABLE' : 'ACQUISITION_FAILED' });
+    return res.status(restoreFailed ? 503 : 500).json({
       success: false,
-      error: 'SPECTRA could not complete target acquisition.',
+      error: restoreFailed ? 'Saved investigation evidence is temporarily unavailable. Please retry.' : 'SPECTRA could not complete target acquisition.',
       feedDiagnostics: getDiscoveryDiagnostics(),
     });
   }

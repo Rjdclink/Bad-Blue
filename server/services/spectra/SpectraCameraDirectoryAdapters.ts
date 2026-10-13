@@ -1,3 +1,4 @@
+import { discoveryFetch } from '../../lexara/DiscoveryDiagnostics';
 import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 
@@ -205,7 +206,7 @@ export async function acquireConfiguredSpectraCameras(
       if (value) headers[header] = value;
     }
 
-    const response = await fetch(endpoint, {
+    const response = await discoveryFetch(fetch, endpoint, {
       headers,
       redirect: 'error',
       signal: AbortSignal.timeout(7_000),

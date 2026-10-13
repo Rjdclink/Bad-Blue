@@ -1,3 +1,4 @@
+import { discoveryFetch } from '../../lexara/DiscoveryDiagnostics';
 /** Keyless, bounded metadata catalogue lookup. No source is a live vehicle/person feed. */
 export interface SpectraSatelliteScene {
   provider: 'Element 84 Earth Search';
@@ -88,7 +89,7 @@ export async function collectSpectraEarthSearchScenes(
   timer.unref?.();
   try {
     if (options.signal?.aborted) return [];
-    const response = await (options.fetchImpl || fetch)(STAC_SEARCH, {
+    const response = await discoveryFetch(options.fetchImpl || fetch, STAC_SEARCH, {
       method: 'POST', redirect: 'error', signal: controller.signal,
       headers: { Accept: 'application/geo+json,application/json',
         'Content-Type': 'application/json', 'User-Agent': 'LegalWhat-SPECTRA/1.0' },

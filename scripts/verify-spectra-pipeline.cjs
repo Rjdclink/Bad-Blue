@@ -17,6 +17,7 @@ function load(file) {
   });
   return module.exports;
 }
+const { takeUnseenSpectraQueries } = load('server/services/spectra/SpectraDiscoveryDedup.ts');
 const diagnostics = load('server/services/spectra/SpectraPipelineDiagnostics.ts');
 const retrievalDiagnostics = load('server/services/spectra/SpectraRetrievalDiagnostics.ts');
 const client = load('client/src/lib/spectraFeedStatus.ts');
@@ -25,8 +26,8 @@ const settle = route.slice(route.indexOf('async function settleWithin'), route.i
 const discovery = route.slice(route.indexOf('async function runDiscoveryPass'), route.indexOf('\nfunction normalizeConfidence'));
 const fixture = { url: 'https://example.org/document', title: 'Public document', provider: 'fixture' };
 function pass(overrides = {}) {
-  const scope = {
-    AbortController, setTimeout, clearTimeout,
+  const scope = { takeUnseenSpectraQueries,
+    AbortController, Date, setTimeout, clearTimeout,
     discoverLegalMeshTier3: async () => [fixture],
     discoverLegalMeshSupplemental: async () => [],
     discoveryResultFromCandidate: value => ({ ...value }),
@@ -83,7 +84,7 @@ const empty = {
       signal = s; return new Promise(() => {});
     } });
     const pending = run(['public document'], { useClaude: false });
-    await clock.tickAsync(5_000);
+    await clock.tickAsync(8_000);
     const result = await pending;
     assert.equal(signal.aborted, true);
     assert.equal(result.retrieval.deadlineExpiredPasses, 1);
@@ -100,7 +101,7 @@ const empty = {
       record = observer; return new Promise(() => {});
     } });
     const pending = run(['public document'], { useClaude: false });
-    await clock.tickAsync(5_000);
+    await clock.tickAsync(8_000);
     const result = await pending;
     assert.equal(result.retrieval.diagnostics.unreported, 1);
     record({ targetIndex: 0, reason: 'retrieved', httpStatus: 200 });
@@ -139,6 +140,33 @@ const empty = {
     assert.equal(report.outcome, 'regional-context');
     assert.equal(report.coordinateFusion.executed, false);
     assert.match(client.spectraPipelineNotices(report).join(' '), /Regional inference is evaluated separately/);
+  });
+  await check('invalid counts cannot claim processing when sanitized totals are zero', () => {
+    for (const value of [Infinity, NaN, -1, 0.5]) {
+      const report = diagnostics.buildSpectraPipelineDiagnostics({ ...empty,
+        solvedObservations: value, regionalCandidates: value,
+      });
+      assert.equal(report.observations.solved, 0);
+      assert.equal(report.regionalCandidates, 0);
+      assert.equal(report.coordinateFusion.executed, false);
+      assert.equal(report.outcome, 'no-mappable-evidence');
+    }
+    const regional = diagnostics.buildSpectraPipelineDiagnostics({ ...empty,
+      solvedObservations: Infinity, regionalCandidates: 1,
+    });
+    assert.equal(regional.coordinateFusion.executed, false);
+    assert.equal(regional.outcome, 'regional-context');
+  });
+  await check('collector reasons remain fixed categories and invalid counts are sanitized', () => {
+    const report = diagnostics.buildSpectraPipelineDiagnostics({ ...empty, activeAttempts: [
+      { status: 'skipped', normalizerKind: 'android-managed-lost-mode', reasonCode: 'missing-device', measurementCount: -2 },
+      { status: 'failed', normalizerKind: 'PRIVATE_DO_NOT_COPY', reasonCode: 'PRIVATE_DO_NOT_COPY', measurementCount: NaN },
+    ] });
+    assert.equal(report.telemetry.collectors[0].reasons['missing-device'], 1);
+    assert.equal(report.telemetry.collectors[0].measurements, 0);
+    assert.equal(report.telemetry.collectors[1].family, 'other');
+    assert(!JSON.stringify(report).includes('PRIVATE_DO_NOT_COPY'));
+    assert.match(client.spectraPipelineNotices(report).join(' '), /device identifier missing/);
   });
   await check('accepted observation path reports fusion separately from retrieved pages', () => {
     const report = diagnostics.buildSpectraPipelineDiagnostics({ ...empty,

@@ -497,6 +497,7 @@ for (const [name, env, expectedKey] of [
       if (spec === './claudeUsage') return { meterClaudeRequest: (_model, _operation, request) => request() };
       if (spec === '@anthropic-ai/sdk') return FixtureAnthropic;
       if (spec === './aiHarmonyModelRegistry') return { CURRENT_AI_MODELS: { claudeBalanced: 'fixture-model' } };
+      if (spec === './lexara/DiscoveryDiagnostics') return { discoverySignal: signal => signal };
       throw new Error('Unexpected Claude dependency: ' + spec);
     };
     vm.runInNewContext(`(function(require,module,exports){${compiled}\n})`, {
@@ -552,6 +553,7 @@ test('Claude adapter uses low-effort Haiku 5.5 while preserving paid-model effor
     if (spec === './aiHarmonyModelRegistry') {
       return { CURRENT_AI_MODELS: { claudeBalanced: 'claude-sonnet-5-5' } };
     }
+    if (spec === './lexara/DiscoveryDiagnostics') return { discoverySignal: signal => signal };
     throw new Error('Unexpected Claude dependency: ' + spec);
   };
   vm.runInNewContext(`(function(require,module,exports){${compiled}\n})`, {

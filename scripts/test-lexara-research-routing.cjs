@@ -90,7 +90,9 @@ function harness(options = {}) {
   };
   const forbidden = /openrouter|firecrawl/i;
   async function fixtureFetch(raw, init) {
-    const url = String(raw); calls.http.push({ url, init });
+    const url = String(raw);
+    if (url === 'https://api.tavily.com/usage') return { ok: true, status: 200, json: async () => ({ key: { usage: 0, limit: 10000 }, account: { plan_usage: 0, plan_limit: 10000, paygo_usage: 0, paygo_limit: 0 } }) };
+    calls.http.push({ url, init });
     assert(!forbidden.test(url), 'removed transport received an HTTP request: ' + url);
     if (options.fetchResponse) return options.fetchResponse(url, init);
     const payload = options.fetchPayload?.(url, init, calls.http.length) ?? { results: [] };
@@ -229,6 +231,7 @@ test('Spectra native discovery does not buy query planning and retains supplemen
   vm.runInNewContext(compiled, {
     exports, AbortController, setTimeout, clearTimeout,
     ...h.load('server/services/spectra/SpectraRetrievalDiagnostics.ts'),
+    ...h.load('server/services/spectra/SpectraDiscoveryDedup.ts'),
     discoverLegalMeshTier3: mesh.discoverLegalMeshTier3,
     discoverLegalMeshSupplemental: mesh.discoverLegalMeshSupplemental,
     chooseSpectraPublicRetrievalUrls: h.load('server/services/spectra/SpectraCityDiscoveryPolicy.ts').chooseSpectraPublicRetrievalUrls,

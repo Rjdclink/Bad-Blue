@@ -1,3 +1,4 @@
+import { discoveryFetch } from '../../lexara/DiscoveryDiagnostics';
 import { createHash } from 'node:crypto';
 import ExifReader from 'exifreader';
 import type { SpectraRetrievedEvidence } from './SpectraPublicRetrieval';
@@ -67,7 +68,7 @@ function rawExifValue(tag: any): string | undefined {
   return undefined;
 }
 
-function decimalGps(tag: any, ref: string | undefined): number | null {
+function decimalGps(tag: any, reference: any): number | null {
   const raw = tag?.description;
   let number: number | null = null;
   if (typeof raw === 'number' && Number.isFinite(raw)) number = raw;
@@ -90,7 +91,10 @@ function decimalGps(tag: any, ref: string | undefined): number | null {
     }
   }
   if (number === null || !Number.isFinite(number)) return null;
-  const direction = String(ref || '').toUpperCase();
+  // ExifReader descriptions are display labels (e.g. 'West longitude').
+  // Hemisphere authority is the raw N/S/E/W tag value.
+  const rawReference = Array.isArray(reference?.value) ? reference.value[0] : reference?.value;
+  const direction = String(rawReference || reference?.description || '').trim().toUpperCase();
   return direction === 'S' || direction === 'W' ? -Math.abs(number) : number;
 }
 
@@ -172,8 +176,8 @@ export async function inspectSpectraPublicImageResponse(
       const value = rawExifValue(tags?.[key]);
       if (value !== undefined) exif[key] = value;
     }
-    const lat = decimalGps(tags?.GPSLatitude, exif.GPSLatitudeRef);
-    const lon = decimalGps(tags?.GPSLongitude, exif.GPSLongitudeRef);
+    const lat = decimalGps(tags?.GPSLatitude, tags?.GPSLatitudeRef);
+    const lon = decimalGps(tags?.GPSLongitude, tags?.GPSLongitudeRef);
     if (lat !== null && lon !== null && Math.abs(lat) <= 90 && Math.abs(lon) <= 180) {
       gps = { latitude: lat, longitude: lon };
     }
@@ -231,7 +235,7 @@ async function collect(leads: ImageLead[], options: {
         // including each redirect destination; provider host allowlists are gone.
         const validated = options.fetchImpl ? url
           : await (await import('./SpectraPublicRetrieval')).assertPublicUrl(url.toString());
-        const fetched = await (options.fetchImpl || fetch)(validated, {
+        const fetched = await discoveryFetch(options.fetchImpl || fetch, validated, {
           method: 'GET', redirect: 'manual', signal: controller.signal,
           headers: { Accept: 'image/jpeg,image/png,image/webp', 'User-Agent': 'LegalWhat-SPECTRA/1.0' },
         });

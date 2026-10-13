@@ -1,3 +1,5 @@
+import { unsupportedSpectraContentKind } from './SpectraRetrievalDiagnostics';
+import { discoveryFetch } from '../../lexara/DiscoveryDiagnostics';
 import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 import { Buffer } from 'node:buffer';
@@ -30,10 +32,14 @@ export interface SpectraRetrievedEvidence {
   /** Image media URLs discovered in fetched public social post HTML, not assumed downloaded. */
   publicImageUrls?: string[];
   textExcerpt?: string;
+  /** Text provenance only; does not establish an observation or publication date. */
+  textExtractionProvider?: 'crawl4ai' | 'jina-reader';
   /** Visible address blocks, separate from prose and subject observations. */
   addressBlocks?: string[];
   observations: SpectraRetrievedObservation[];
 }
+
+export type SpectraHtmlEnhancer = (html: string, evidence: SpectraRetrievedEvidence, signal?: AbortSignal) => Promise<SpectraRetrievedEvidence>;
 
 const MAX_TARGETS = 8;
 const MAX_RESPONSE_BYTES = 2_000_000;
@@ -240,12 +246,8 @@ export function htmlEvidence(raw: string, sourceUrl: string): {
     observations.push({
       latitude,
       longitude,
-      timestamp: timestamp(
-        meta.get('article:published_time')
-        || meta.get('date')
-        || meta.get('datepublished')
-        || meta.get('og:updated_time')
-      ),
+      // Publication or modification time is not a timestamped measurement.
+      // Keep publishedAt separately for source freshness.
       sourceUrl,
       acquisitionMethod: 'html-geospatial-metadata',
       metadata: { metadataKind: 'html-meta' },
@@ -303,14 +305,7 @@ export function htmlEvidence(raw: string, sourceUrl: string): {
           observations.push({
             latitude: lat,
             longitude: lon,
-            timestamp: timestamp(
-              value.datePublished
-              ?? value.dateCreated
-              ?? value.uploadDate
-              ?? value.startDate
-              ?? value.endDate
-              ?? geo.timestamp
-            ),
+            timestamp: timestamp(geo.timestamp),
             sourceUrl,
             acquisitionMethod: 'json-ld-geospatial-metadata',
             metadata: {
@@ -381,13 +376,37 @@ function jsonEvidence(payload: any, sourceUrl: string): SpectraRetrievedObservat
   return dedupeObservations(observations);
 }
 
+/** Enforce the decoded byte budget before buffering the complete response. */
+async function readBoundedText(response: Response): Promise<string> {
+  if (!response.body) return '';
+  const reader = response.body.getReader();
+  const chunks: Buffer[] = [];
+  let size = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > MAX_RESPONSE_BYTES) throw new RetrievalFailure('response_too_large');
+      chunks.push(Buffer.from(value));
+    }
+    // Response.text() uses UTF-8 and strips a leading byte order mark.
+    return Buffer.concat(chunks, size).toString('utf8').replace(/^\uFEFF/, '');
+  } finally {
+    void reader.cancel().catch(() => undefined);
+    reader.releaseLock();
+  }
+}
+
 async function retrieveOne(
   rawUrl: string,
   parentSignal?: AbortSignal,
   report?: (diagnostic: Omit<SpectraRetrievalDiagnostic, 'targetIndex'>) => void,
+  enhanceHtml?: SpectraHtmlEnhancer,
 ): Promise<SpectraRetrievedEvidence | null> {
   let reason: SpectraRetrievalReason = 'network_error';
   let httpStatus: number | undefined;
+  let unsupportedContentKind: SpectraRetrievalDiagnostic['unsupportedContentKind'];
   let timedOut = false;
   try {
     if (parentSignal?.aborted) throw new RetrievalFailure('cancelled');
@@ -404,8 +423,9 @@ async function retrieveOne(
         controller.abort(new Error('SPECTRA retrieval timeout'));
       }, REQUEST_TIMEOUT_MS);
 
+      let response: Response | undefined;
       try {
-        const response = await fetch(current, {
+        response = await discoveryFetch(fetch, current, {
           method: 'GET',
           redirect: 'manual',
           signal: controller.signal,
@@ -432,11 +452,11 @@ async function retrieveOne(
         if (Number.isFinite(contentLength) && contentLength > MAX_RESPONSE_BYTES) {
           throw new RetrievalFailure('response_too_large');
         }
-        const contentType = response.headers.get('content-type') || '';
+        const contentType = (response.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
 
         // Binary image responses are inspected in the existing bounded retrieval
         // request; the evidence archive receives metadata/hash, never raw pixels.
-        if (/^image\/(?:jpeg|png|webp)\b/i.test(contentType)) {
+        if (['image/jpeg', 'image/png', 'image/webp'].includes(contentType)) {
           const image = await inspectSpectraPublicImageResponse(response, {
             url: current.toString(), sourcePostUrl: current.toString(),
             platform: 'Web', maxBytes: MAX_RESPONSE_BYTES,
@@ -446,9 +466,8 @@ async function retrieveOne(
           return { ...image, requestedUrl: rawUrl };
         }
 
-        if (/json/i.test(contentType)) {
-          const text = await response.text();
-          if (text.length > MAX_RESPONSE_BYTES) throw new RetrievalFailure('response_too_large');
+        if (contentType === 'application/json' || contentType === 'text/json' || /^application\/[a-z0-9!#$&^_.+-]+\+json$/.test(contentType)) {
+          const text = await readBoundedText(response);
           let payload: unknown;
           try { payload = JSON.parse(text); }
           catch { throw new RetrievalFailure('invalid_response'); }
@@ -464,9 +483,8 @@ async function retrieveOne(
           return evidence;
         }
 
-        if (/html|xhtml/i.test(contentType)) {
-          const text = await response.text();
-          if (text.length > MAX_RESPONSE_BYTES) throw new RetrievalFailure('response_too_large');
+        if (contentType === 'text/html' || contentType === 'application/xhtml+xml') {
+          const text = await readBoundedText(response);
           let extracted: ReturnType<typeof htmlEvidence>;
           try { extracted = htmlEvidence(text, current.toString()); }
           catch { throw new RetrievalFailure('invalid_response'); }
@@ -479,10 +497,25 @@ async function retrieveOne(
             observations: extracted.observations,
           };
           reason = 'retrieved';
+          clearTimeout(timer);
+          // The caller's acquisition deadline still bounds optional enrichment.
+          // A reader failure must never discard the directly retrieved record.
+          if (enhanceHtml) {
+            try { return await enhanceHtml(text, evidence, parentSignal); } catch { return evidence; }
+          }
           return evidence;
         }
+        if (['text/plain', 'text/csv', 'text/markdown'].includes(contentType)) {
+          const text = await readBoundedText(response);
+          reason = 'retrieved';
+          return { url: current.toString(), requestedUrl: rawUrl,
+            retrievedAt: new Date().toISOString(), contentType,
+            textExcerpt: text.slice(0, MAX_TEXT), observations: [] };
+        }
+        unsupportedContentKind = unsupportedSpectraContentKind(contentType);
         throw new RetrievalFailure('unsupported_content_type');
       } finally {
+        if (response?.body && !response.body.locked) void response.body.cancel().catch(() => undefined);
         clearTimeout(timer);
         parentSignal?.removeEventListener('abort', relayAbort);
       }
@@ -494,7 +527,7 @@ async function retrieveOne(
     return null;
   } finally {
     // Reporting must not alter retrieval results or expose an exception message.
-    try { report?.({ reason, httpStatus }); } catch { /* diagnostic observer only */ }
+    try { report?.({ reason, httpStatus, ...(unsupportedContentKind ? { unsupportedContentKind } : {}) }); } catch { /* diagnostic observer only */ }
   }
 }
 
@@ -502,12 +535,13 @@ export async function retrieveSpectraPublicEvidence(
   targets: string[],
   signal?: AbortSignal,
   onDiagnostic?: (diagnostic: SpectraRetrievalDiagnostic) => void,
+  enhanceHtml?: SpectraHtmlEnhancer,
 ): Promise<SpectraRetrievedEvidence[]> {
   const uniqueTargets = [...new Set(targets.map(value => value.trim()).filter(Boolean))]
     .slice(0, MAX_TARGETS);
   const settled = await Promise.allSettled(
     uniqueTargets.map((target, targetIndex) => retrieveOne(target, signal,
-      diagnostic => onDiagnostic?.({ targetIndex, ...diagnostic })))
+      diagnostic => onDiagnostic?.({ targetIndex, ...diagnostic }), enhanceHtml))
   );
   return settled.flatMap(result =>
     result.status === 'fulfilled' && result.value ? [result.value] : []

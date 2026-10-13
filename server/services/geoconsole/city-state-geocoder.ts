@@ -1,3 +1,4 @@
+import { discoveryFetch } from '../../lexara/DiscoveryDiagnostics';
 const STATE_ABBREVIATIONS: Record<string, string> = {
   alabama: 'AL', alaska: 'AK', arizona: 'AZ', arkansas: 'AR', california: 'CA',
   colorado: 'CO', connecticut: 'CT', delaware: 'DE', florida: 'FL', georgia: 'GA',
@@ -339,7 +340,7 @@ async function queryGeocoder(url: URL, strategy = 'unknown'): Promise<Array<{
   await waitForGeocoderSlot();
   let response: Response;
   try {
-    response = await fetch(url, {
+    response = await discoveryFetch(fetch, url, {
     headers: {
       Accept: 'application/json',
       'User-Agent': 'LegalWhat-SPECTRA-Geocoder/1.0',
@@ -445,7 +446,7 @@ async function queryCensusAddressGeocoder(address: AddressHint): Promise<CitySta
   endpoint.searchParams.set('format', 'json');
 
   try {
-    const response = await fetch(endpoint, {
+    const response = await discoveryFetch(fetch, endpoint, {
       headers: {
         Accept: 'application/json',
         'User-Agent': 'LegalWhat-SPECTRA-Geocoder/1.0',

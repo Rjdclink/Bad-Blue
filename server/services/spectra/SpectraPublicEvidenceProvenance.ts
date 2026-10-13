@@ -37,6 +37,7 @@ export function mergePublicRetrievedMetadata(
     publishedAt: evidence.publishedAt ?? previous?.publishedAt,
     fetchedTitle: evidence.title ?? previous?.fetchedTitle,
     fetchedExcerpt: evidence.textExcerpt ?? previous?.fetchedExcerpt,
+    fetchedTextProvider: evidence.textExtractionProvider,
     fetchedAddressBlocks: evidence.addressBlocks,
     fetchedContentType: evidence.contentType,
     fetchedRecord: evidence.structuredRecord,

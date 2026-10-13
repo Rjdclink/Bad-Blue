@@ -1,3 +1,4 @@
+import { withoutSpectraTimestamps } from '@shared/spectraTimestampClues';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Loader2, Mic, MicOff, Paperclip, RotateCcw, Send, Target } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -227,6 +228,11 @@ export default function SpectraPage() {
   const [acquisitionStage, setAcquisitionStage] = useState('Waiting for target');
   const scrollRef = useRef<HTMLDivElement>(null);
   const requestRef = useRef(0);
+  const acquisitionControllerRef = useRef<AbortController | null>(null);
+  useEffect(() => () => {
+    requestRef.current += 1;
+    acquisitionControllerRef.current?.abort();
+  }, []);
   const mediaInputRef = useRef<HTMLInputElement>(null);
   const messageHandlerRef = useRef<(message: string) => void>(() => undefined);
   const lastSpokenTextRef = useRef<{ normalized: string; expiresAt: number } | null>(null);
@@ -340,6 +346,7 @@ export default function SpectraPage() {
 
   const resetSession = useCallback(() => {
     requestRef.current += 1;
+    acquisitionControllerRef.current?.abort();
     launchedFromLexaraRef.current = false;
     originLexaraSessionIdRef.current = null;
     setPhase('awaiting_target');
@@ -372,6 +379,9 @@ export default function SpectraPage() {
   ) => {
     if (publicPlaceMode) extraEvidence = [];
     const requestId = ++requestRef.current;
+    acquisitionControllerRef.current?.abort();
+    const acquisitionController = new AbortController();
+    acquisitionControllerRef.current = acquisitionController;
     if (!silentRefresh) {
       setPhase('acquiring');
       setFeedNotice(null);
@@ -417,6 +427,7 @@ export default function SpectraPage() {
         if (!locationText.trim()) continue;
         try {
           const previewResponse = await fetch('/api/geoconsole/geocode-city-state', {
+            signal: acquisitionController.signal,
             method: 'POST',
             credentials: 'include',
             headers: { 'Content-Type': 'application/json' },
@@ -465,6 +476,7 @@ export default function SpectraPage() {
     try {
       void previewRegionPromise;
       const response = await fetch(publicPlaceMode ? '/api/spectra/public-place' : '/api/spectra/acquire', {
+        signal: acquisitionController.signal,
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
@@ -494,7 +506,7 @@ export default function SpectraPage() {
 
       const payload = await response.json() as AcquisitionResponse;
       previewOpen = false;
-      if (requestId !== requestRef.current) return;
+      if (requestId !== requestRef.current || acquisitionController.signal.aborted) return;
 
       if (!response.ok || !payload.success) {
         setFeedNotice(spectraFeedNotice(payload.feedDiagnostics));
@@ -612,7 +624,7 @@ export default function SpectraPage() {
       }
     } catch (error) {
       previewOpen = false;
-      if (requestId !== requestRef.current) return;
+      if (requestId !== requestRef.current || acquisitionController.signal.aborted) return;
       const message = error instanceof Error ? error.message : 'Target acquisition failed.';
       setLastError(message);
       setAcquisitionStage('Acquisition could not finish');
@@ -622,6 +634,10 @@ export default function SpectraPage() {
         addMessage('spectra', responseText);
         speakIfEnabled(responseText);
       }
+    } finally {
+      previewOpen = false;
+      acquisitionController.abort();
+      if (acquisitionControllerRef.current === acquisitionController) acquisitionControllerRef.current = null;
     }
   }, [addMessage, directEvidence, speakIfEnabled, spectraSessionId, publicPlaceMode]);
 
@@ -1079,7 +1095,7 @@ export default function SpectraPage() {
               <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1">
                 <span>Target description received ✓</span>
                 <span>Details received ✓</span>
-                <span>{/\d[\d\s().+-]{6,}\d/.test(`${target} ${details}`) ? 'Phone clue supplied ✓' : 'Phone clue not supplied'}</span>
+                <span>{/\d[\d\s().+-]{6,}\d/.test(withoutSpectraTimestamps(`${target} ${details}`)) ? 'Phone clue supplied ✓' : 'Phone clue not supplied'}</span>
                 <span>{candidateLocations.length > 0 ? 'Regional context ✓' : 'Regional context searching'}</span>
                 <span>{observations.length > 0 ? `${observations.length} timed observation${observations.length === 1 ? '' : 's'} ✓` : 'Timed evidence searching'}</span>
               </div>

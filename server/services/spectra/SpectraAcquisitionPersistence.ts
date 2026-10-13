@@ -195,7 +195,7 @@ export async function loadSpectraSessionIdentityBindings(
       });
     });
   } catch (error: any) {
-    if (error?.code === '42P01') return [];
+    // Missing schema is an unavailable store, not an empty investigation.
     throw error;
   }
 }
@@ -267,7 +267,7 @@ export async function loadSpectraSessionObservations(
       } as GPSPoint];
     });
   } catch (error: any) {
-    if (error?.code === '42P01') return [];
+    // Missing schema is an unavailable store, not an empty investigation.
     throw error;
   }
 }

@@ -1,3 +1,4 @@
+import { discoveryFetch } from '../../lexara/DiscoveryDiagnostics';
 export interface SpectraPlaceContextItem {
   id: string;
   name: string;
@@ -33,7 +34,7 @@ async function overpassNearbyPlaces(
 
   const endpoint = new URL('https://overpass-api.de/api/interpreter');
   try {
-    const response = await fetch(endpoint, {
+    const response = await discoveryFetch(fetch, endpoint, {
       method: 'POST',
       headers: {
         Accept: 'application/json',
@@ -97,7 +98,7 @@ async function geoNamesNearbyPlaces(
   endpoint.searchParams.set('username', username);
 
   try {
-    const response = await fetch(endpoint, {
+    const response = await discoveryFetch(fetch, endpoint, {
       headers: {
         Accept: 'application/json',
         'User-Agent': 'LegalWhat-SPECTRA/1.0',

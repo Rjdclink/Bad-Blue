@@ -471,7 +471,7 @@ must(
     orchestrator.includes('CURRENT_AI_MODELS.claudeBalanced') &&
     orchestrator.includes('CURRENT_AI_MODELS.claudeDeep') &&
     orchestrator.includes("progressiveClaudeAllowed = !backgroundResearchRequested") &&
-    orchestrator.includes('&& !researchDecision.needed;') &&
+    /&& !researchDecision\.needed\s*&& !legalResearchRequired;/.test(orchestrator) &&
     !orchestrator.includes('&& !sequencePlan.documentAction;') &&
     orchestrator.includes('cacheSystemPrompt: true') &&
     orchestrator.includes("reasoningProvider: 'claude'") &&

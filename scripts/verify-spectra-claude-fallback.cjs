@@ -18,7 +18,7 @@ function transport(responses) {
   const calls = [];
   const exports = {};
   vm.runInNewContext(compiled, {
-    exports, DOMException,
+    exports, DOMException, discoverySignal: signal => signal,
     CURRENT_AI_MODELS: { claudeBalanced: 'fixture' },
     getClaudeClient: () => ({ messages: { create: async (request, options) => {
       calls.push({ request, options });

@@ -1,5 +1,45 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
+import type { Request as ExpressRequest, Response as ExpressResponse, NextFunction } from 'express';
+
+const requestSignals = new AsyncLocalStorage<AbortSignal>();
+
+/** A disconnected/completed acquisition must not leave upstream work running. */
+export function discoveryRequestLifetime(req: ExpressRequest, res: ExpressResponse, next: NextFunction): void {
+  const controller = new AbortController();
+  const stop = () => {
+    clearTimeout(timer);
+    req.removeListener('aborted', stop);
+    res.removeListener('close', stop);
+    res.removeListener('finish', stop);
+    controller.abort(new DOMException('Acquisition ended', 'AbortError'));
+  };
+  const timer = setTimeout(stop, 180_000);
+  timer.unref?.();
+  req.once('aborted', stop);
+  res.once('close', stop);
+  res.once('finish', stop);
+  if (req.aborted || res.destroyed) stop();
+  requestSignals.run(controller.signal, next);
+}
+
+export function discoverySignal(signal?: AbortSignal | null): AbortSignal | undefined {
+  const request = requestSignals.getStore();
+  return request && signal ? AbortSignal.any([request, signal]) : request || signal || undefined;
+}
+
+export function throwIfDiscoveryCancelled(): void {
+  requestSignals.getStore()?.throwIfAborted();
+}
+
+/** Explicit transport injection preserves fixtures and avoids patching global fetch. */
+export function discoveryFetch(transport: typeof fetch, input: Parameters<typeof fetch>[0], init?: RequestInit): Promise<Response> {
+  const request = requestSignals.getStore();
+  if (!request) return transport(input, init);
+  request.throwIfAborted();
+  const local = init?.signal ?? (typeof Request !== 'undefined' && input instanceof Request ? input.signal : undefined);
+  return transport(input, { ...init, signal: discoverySignal(local) });
+}
 
 export type DiscoveryOutcome = 'ok' | 'empty' | 'failed' | 'timeout' | 'cancelled' | 'skipped';
 type Counts = Record<DiscoveryOutcome, number> & { pending: number; dispatched: number; partial: number };
@@ -11,6 +51,7 @@ interface DiscoveryContext {
 const contexts = new AsyncLocalStorage<DiscoveryContext>();
 const counts = (): Counts => ({ ok: 0, empty: 0, failed: 0, timeout: 0, cancelled: 0, skipped: 0, pending: 0, dispatched: 0, partial: 0 });
 const providerNames: Record<string, string> = {
+  firecrawlKeyless: 'firecrawl-keyless', jinaReader: 'jina-reader', crawl4ai: 'crawl4ai',
   tavily: 'tavily', duckDuckGoInstantAnswer: 'duckduckgo-instant-answer',
   searxng: 'searxng', ddgsBackend: 'ddgs', openserp: 'openserp',
   serpApi: 'serpapi', scrapingBee: 'scrapingbee', commonCrawl: 'common-crawl',
@@ -25,10 +66,13 @@ export function discoveryErrorType(error: unknown): string {
     seen.add(current);
     const code = String(current.code || '');
     const local: Record<string, string> = {
+      DISCOVERY_NOT_CONFIGURED: 'not-configured', DISCOVERY_DISABLED: 'disabled', DISCOVERY_COOLDOWN: 'cooldown',
+      DISCOVERY_QUOTA_EXHAUSTED: 'quota-exhausted', DISCOVERY_BUDGET_UNAVAILABLE: 'budget-unavailable',
+      DISCOVERY_LOCAL_RATE_LIMIT: 'local-rate-limit',
       DISCOVERY_QUEUE_FULL: 'queue-capacity', DISCOVERY_QUEUE_TIMEOUT: 'queue-timeout',
       DISCOVERY_UNAVAILABLE: 'provider-unavailable', DISCOVERY_PROVIDER_ERROR: 'upstream-error',
     };
-    if (local[code]) return local[code];
+    if (Object.prototype.hasOwnProperty.call(local, code)) return local[code];
     if (code === 'ENOTFOUND' || code === 'EAI_AGAIN') return 'dns';
     if (['ECONNREFUSED', 'ECONNRESET', 'UND_ERR_SOCKET'].includes(code)) return 'connection';
     if (['ETIMEDOUT', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT'].includes(code)
@@ -44,7 +88,7 @@ export function discoveryErrorType(error: unknown): string {
 export function beginDiscoveryAttempt(lane: string) {
   const context = contexts.getStore();
   // Only fixed code-defined lane labels are emitted, never caller-supplied text.
-  const provider = providerNames[lane] || 'other';
+  const provider = Object.prototype.hasOwnProperty.call(providerNames, lane) ? providerNames[lane] : 'other';
   let row = context?.providers.get(provider);
   if (context && !row) {
     row = { provider, ...counts(), errors: {} };
@@ -96,7 +140,8 @@ export function getDiscoveryDiagnostics() {
 }
 
 export function markDiscoveryPartial(lane: string): void {
-  const row = contexts.getStore()?.providers.get(providerNames[lane] || 'other');
+  const provider = Object.prototype.hasOwnProperty.call(providerNames, lane) ? providerNames[lane] : 'other';
+  const row = contexts.getStore()?.providers.get(provider);
   if (row) row.partial++;
 }
 

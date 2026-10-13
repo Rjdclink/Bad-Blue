@@ -60,6 +60,9 @@ export function SpectraEvidenceRecords({ sessionId, refreshKey }: { sessionId: s
   const [nextCursor, setNextCursor] = useState<string | undefined>();
   const olderController = useRef<AbortController | null>(null);
   const exhaustedOlder = useRef(false);
+  const browsingOlder = useRef(false);
+  const [showingOlder, setShowingOlder] = useState(false);
+  const [latestGeneration, setLatestGeneration] = useState(0);
 
   useEffect(() => { setScope(sessionId ? 'session' : 'public'); }, [sessionId]);
 
@@ -69,6 +72,8 @@ export function SpectraEvidenceRecords({ sessionId, refreshKey }: { sessionId: s
     let fetching = false;
     olderController.current?.abort();
     exhaustedOlder.current = false;
+    browsingOlder.current = false;
+    setShowingOlder(false);
     setLoadingMore(false);
     setRecords([]);
     setNextCursor(undefined);
@@ -83,7 +88,7 @@ export function SpectraEvidenceRecords({ sessionId, refreshKey }: { sessionId: s
       if (controller.signal.aborted || fetching) return;
       if (scope === 'session' && !sessionId) { setLoading(false); return; }
       // Stop polling when the document is hidden. Resume immediately on visibility.
-      if (document.visibilityState === 'hidden') { schedule(); return; }
+      if (document.visibilityState === 'hidden' || browsingOlder.current) { schedule(); return; }
       fetching = true;
       const url = scope === 'session'
         ? `/api/spectra/sessions/${encodeURIComponent(sessionId!)}/records`
@@ -91,7 +96,7 @@ export function SpectraEvidenceRecords({ sessionId, refreshKey }: { sessionId: s
       try {
         const response = await fetch(url, { credentials: 'include', signal: controller.signal, cache: 'no-store' });
         const result = await response.json() as RecordResponse;
-        if (controller.signal.aborted) return;
+        if (controller.signal.aborted || browsingOlder.current) return;
         if (!response.ok || !result.success || !result.persistenceAvailable) {
           throw new Error('Saved records are temporarily unavailable.');
         }
@@ -101,7 +106,7 @@ export function SpectraEvidenceRecords({ sessionId, refreshKey }: { sessionId: s
           const seen = new Set(firstPage.map(record => record.id));
           return [...firstPage, ...previous.filter(record => !seen.has(record.id))].slice(0, 500);
         });
-        setNextCursor(previous => exhaustedOlder.current ? undefined : previous || result.nextCursor);
+        setNextCursor(result.nextCursor);
         setFeeds(Array.isArray(result.feeds) ? result.feeds : []);
         setError('');
       } catch {
@@ -128,10 +133,12 @@ export function SpectraEvidenceRecords({ sessionId, refreshKey }: { sessionId: s
       olderController.current?.abort();
       clearTimeout(timer);
     };
-  }, [scope, sessionId, refreshKey, provider]);
+  }, [scope, sessionId, refreshKey, provider, latestGeneration]);
 
   const loadOlder = async () => {
     if (!sessionId || scope !== 'session' || !nextCursor || loadingMore) return;
+    browsingOlder.current = true;
+    setShowingOlder(true);
     olderController.current?.abort();
     const controller = new AbortController();
     olderController.current = controller;
@@ -144,7 +151,7 @@ export function SpectraEvidenceRecords({ sessionId, refreshKey }: { sessionId: s
       if (controller.signal.aborted) return;
       setRecords(previous => {
         const seen = new Set(previous.map(record => record.id));
-        return [...previous, ...(result.records || []).filter(record => !seen.has(record.id))].slice(0, 500);
+        return [...previous, ...(result.records || []).filter(record => !seen.has(record.id))].slice(-500);
       });
       setNextCursor(result.nextCursor);
       exhaustedOlder.current = !result.nextCursor;
@@ -206,6 +213,11 @@ export function SpectraEvidenceRecords({ sessionId, refreshKey }: { sessionId: s
         </details>;
       })}
     </div>
+    {showingOlder && <p className="mt-2 text-slate-300">
+      Browsing older records; automatic refresh is paused. The latest 500 loaded records are shown.
+      <button type="button" onClick={() => setLatestGeneration(value => value + 1)}
+        className="ml-2 rounded border border-slate-700 px-2 py-1">Return to newest records</button>
+    </p>}
     {scope === 'session' && nextCursor && <button type="button" onClick={() => void loadOlder()} disabled={loadingMore}
       className="mt-2 rounded border border-slate-700 px-2 py-1 disabled:opacity-40">
       {loadingMore ? 'Loading…' : 'Show older records'}

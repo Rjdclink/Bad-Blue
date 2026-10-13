@@ -6,14 +6,28 @@ const jsonHeaders = { accept: 'application/json', 'content-type': 'application/j
 
 async function runProviderChecks({ env = process.env, fetchImpl = fetch, emit = value => console.info('[SPECTRA Provider Smoke]', JSON.stringify(value)) } = {}) {
   const results = [];
+  async function readJson(response) {
+    const reader = response.body?.getReader();
+    const chunks = []; let bytes = 0;
+    try {
+      while (reader) {
+        const part = await reader.read();
+        if (part.done) break;
+        bytes += part.value.byteLength;
+        if (bytes > 2_000_000) throw new SyntaxError('Oversize provider response');
+        chunks.push(Buffer.from(part.value));
+      }
+      return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    } finally { if (reader) { void reader.cancel().catch(() => undefined); reader.releaseLock(); } }
+  }
   async function request(provider, phase, url, init = {}, inspect) {
     const start = Date.now();
     let result;
     try {
-      const response = await fetchImpl(url, { ...init, signal: AbortSignal.timeout(10_000) });
+      const response = await fetchImpl(url, { ...init, redirect: 'error', signal: AbortSignal.timeout(10_000) });
       result = { provider, phase, httpStatus: response.status, status: response.ok ? 'ok' : `http-${response.status}` };
       if (response.ok && inspect) {
-        const body = await response.json();
+        const body = await readJson(response);
         const checked = inspect(body);
         result = { ...result, ...checked };
       } else if (response.body?.cancel) await response.body.cancel();
@@ -50,13 +64,53 @@ async function runProviderChecks({ env = process.env, fetchImpl = fetch, emit = 
       return result;
     });
   }
+  const optionalRequest = (provider, flag, phase, ...args) => {
+    if (env[flag] !== 'false') return request(provider, phase, ...args);
+    const result = { provider, phase, status: 'disabled' }; results.push(result); emit(result);
+    return Promise.resolve(result);
+  };
   await Promise.all([
+    optionalRequest('firecrawl-keyless', 'SPECTRA_FIRECRAWL_ENABLED', 'search', 'https://api.firecrawl.dev/v2/search', {
+      method: 'POST', headers: jsonHeaders,
+      body: JSON.stringify({ query: QUERY, limit: 3, sources: ['web'], timeout: 7000 }),
+    }, body => body?.success === true ? rows(body.data, 'web') : { status: 'invalid-response' }),
+    optionalRequest('jina-reader', 'SPECTRA_JINA_ENABLED', 'read', 'https://r.jina.ai/https://example.com/', {
+      headers: { accept: 'application/json', 'X-Respond-With': 'markdown', 'X-Respond-Timing': 'visible-content' },
+    }, body => ({ status: body?.code === 200 && body?.data?.url === 'https://example.com/'
+      && typeof body.data.content === 'string' && body.data.content.trim() ? 'ok' : 'invalid-response' })),
+    (async () => {
+      const python = key(env, ['SPECTRA_CRAWL4AI_PYTHON']);
+      const result = { provider: 'crawl4ai', phase: 'extract', status: 'not-configured' };
+      if (env.SPECTRA_CRAWL4AI_ENABLED === 'false') result.status = 'disabled';
+      else if (python) {
+        const { promisify } = require('node:util');
+        const { execFile } = require('node:child_process');
+        try {
+          await promisify(execFile)(python, [require('node:path').join(__dirname, 'verify-spectra-crawl4ai.py')], {
+            timeout: 8_000, maxBuffer: 4096,
+            env: { PATH: env.PATH, HOME: env.HOME, OPENBLAS_NUM_THREADS: '1', OMP_NUM_THREADS: '1' },
+          });
+          result.status = 'ok';
+        } catch { result.status = 'extraction-failed'; }
+      }
+      results.push(result); emit(result);
+    })(),
     independent('ddgs', 'DDGS_URL', 4479, '/health', '/search/text', {}, { query: QUERY, max_results: 3, safesearch: 'off', backend: key(env, ['LEXARA_DDGS_BACKEND']) || 'yahoo' }),
     independent('searxng', 'SEARXNG_URL', 8080, '/healthz', '/search', { q: QUERY, format: 'json', engines: 'google cse,brave,bing', safesearch: '0' }),
     independent('openserp', 'OPENSERP_URL', 7000, '/health', '/mega/search', { text: QUERY, limit: '3', mode: 'balanced', engines: 'baidu' }),
     (async () => {
       const apiKey = key(env, ['TAVILY_API_KEY']); if (!apiKey) return missing('tavily');
-      await request('tavily', 'search', 'https://api.tavily.com/search', { method: 'POST', headers: { ...jsonHeaders, authorization: `Bearer ${apiKey}` }, body: JSON.stringify({ query: QUERY, search_depth: 'basic', max_results: 3, include_answer: false, include_raw_content: false }) }, body => rows(body, 'results'));
+      const budget = await request('tavily', 'usage', 'https://api.tavily.com/usage', {
+        headers: { accept: 'application/json', authorization: `Bearer ${apiKey}` },
+      }, body => {
+        const values = [body?.key?.usage, body?.key?.limit, body?.account?.plan_usage,
+          body?.account?.plan_limit, body?.account?.paygo_usage, body?.account?.paygo_limit];
+        if (!values.every(value => Number.isSafeInteger(value) && value >= 0)) return { status: 'budget-unavailable' };
+        const [used, limit, planUsed, planLimit, paygoUsed, paygoLimit] = values;
+        return { status: Math.min(limit - used, planLimit + paygoLimit - planUsed - paygoUsed) >= 1 ? 'ok' : 'quota-exhausted' };
+      });
+      if (budget.status !== 'ok') return;
+      await request('tavily', 'search', 'https://api.tavily.com/search', { method: 'POST', headers: { ...jsonHeaders, authorization: `Bearer ${apiKey}` }, body: JSON.stringify({ query: QUERY, search_depth: 'basic', auto_parameters: false, max_results: 3, include_answer: false, include_raw_content: false }) }, body => rows(body, 'results'));
     })(),
     (async () => {
       const apiKey = key(env, ['SERPAPI_KEY', 'SERPAPI_API_KEY']); if (!apiKey) return missing('serpapi');

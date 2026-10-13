@@ -23,7 +23,7 @@ const workFor = ms => signal => new Promise((resolve, reject) => {
     stdin: { contents: mesh + `
       export { withTimeout as attempt, tavily, ddgsBackend, searxng, openserp, scrapingBee, commonCrawl, serpApi, duckDuckGoInstantAnswer };
       export * from './DiscoveryDiagnostics';
-      export function resetFixture() { engineCooldownUntil.clear(); laneFailures.clear(); laneInFlight.clear(); laneQueued.clear(); captchaDisabledEngines.clear(); captchaDisabledEngines.add('duckduckgo'); }
+      export function resetFixture() { tavilyBudget.reset(); engineCooldownUntil.clear(); laneFailures.clear(); laneInFlight.clear(); laneQueued.clear(); captchaDisabledEngines.clear(); captchaDisabledEngines.add('duckduckgo'); }
     `, resolveDir: path.join(root, 'server/lexara'), loader: 'ts' },
     outfile: path.join(temp, 'check.cjs'), bundle: true, platform: 'node', format: 'cjs',
     plugins: [{ name: 'unrelated-planning-fixtures', setup(build) {
@@ -38,12 +38,87 @@ const workFor = ms => signal => new Promise((resolve, reject) => {
   console.info = console.warn = (...args) => logs.push(args);
   process.env.TAVILY_API_KEY = process.env.SCRAPINGBEE_API_KEY = process.env.SERPAPI_KEY = 'FIXTURE_DO_NOT_LOG';
   process.env.SEARXNG_URL = process.env.DDGS_URL = process.env.OPENSERP_URL = 'http://fixture.invalid';
-  const test = async (name, run) => {
+  const fundedUsage = { key: { usage: 0, limit: 10000 }, account: { plan_usage: 0, plan_limit: 10000, paygo_usage: 0, paygo_limit: 0 } };
+  const test = async (name, run, usagePayload = fundedUsage) => {
     d.resetFixture();
     global.fetch = () => { throw new Error('Unexpected HTTP fixture'); };
-    await run(); passed++; saved.info(`PASS ${name}`);
+    // Wrap each fixture assignment, preserving counters for actual search requests.
+    let fixtureFetch = global.fetch;
+    Object.defineProperty(global, 'fetch', { configurable: true,
+      get: () => async (url, init) => String(url).endsWith('/usage') ? json(usagePayload) : fixtureFetch(url, init),
+      set: value => { fixtureFetch = value; },
+    });
+    try { await run(); } finally { Object.defineProperty(global, 'fetch', { value: saved.fetch, writable: true, configurable: true }); }
+    passed++; saved.info(`PASS ${name}`);
   };
   const capture = async run => d.withDiscoveryDiagnostics(async () => { const result = await run(); return { result, stats: d.getDiscoveryDiagnostics() }; });
+
+  for (const [payload, code] of [
+    [{ ...fundedUsage, key: { usage: 1, limit: 1 } }, 'quota-exhausted'],
+    [{}, 'budget-unavailable'],
+  ]) await test(`usage admission ${code} prevents search HTTP and reports skipped work`, async () => {
+    let searches = 0;
+    global.fetch = async () => { searches++; return json({ results: [] }); };
+    const { stats } = await capture(() => d.tavily('fixture'));
+    assert.equal(searches, 0); assert.equal(stats.skipped, 1); assert.equal(stats.empty, 0);
+    assert.equal(stats.providers[0].errors[code], 1);
+  }, payload);
+
+  await test('search uses an explicitly bounded one-credit basic request', async () => {
+    let body;
+    global.fetch = async (_url, init) => { body = JSON.parse(init.body); return json({ results: [] }); };
+    await capture(() => d.tavily('fixture'));
+    assert.equal(body.search_depth, 'basic'); assert.equal(body.auto_parameters, false);
+  });
+
+  for (const status of [429, 432, 433]) await test(`HTTP ${status} blocks repeated dispatch without reading a stalled error body`, async () => {
+    let requests = 0, cancelled = 0;
+    global.fetch = async () => {
+      requests++;
+      return new Response(new ReadableStream({ cancel() { cancelled++; } }), {
+        status, headers: { 'retry-after': '3600' },
+      });
+    };
+    const { stats } = await capture(async () => { await d.tavily('fixture'); await d.tavily('fixture'); });
+    assert.equal(requests, 1); assert.equal(cancelled, 1);
+    assert.equal(stats.failed, 1); assert.equal(stats.skipped, 1);
+    assert.equal(stats.providers[0].errors[`http-${status}`], 1);
+  });
+
+  await test('Retry-After controls recovery and a successful probe restores dispatch', async () => {
+    const clock = require('@sinonjs/fake-timers').install({ toFake: ['Date'] });
+    try {
+      let requests = 0;
+      global.fetch = async () => ++requests === 1 ? json({}, 429, { 'retry-after': '3600' }) : json({ results: [] });
+      await capture(() => d.tavily('fixture'));
+      clock.setSystemTime(Date.now() + 3599_000);
+      await capture(() => d.tavily('fixture'));
+      assert.equal(requests, 1);
+      clock.setSystemTime(Date.now() + 2_000);
+      const { stats } = await capture(() => d.tavily('fixture'));
+      assert.equal(requests, 2); assert.equal(stats.empty, 1);
+    } finally { clock.uninstall(); }
+  });
+
+  await test('an expired outage admits one recovery probe before parallel requests', async () => {
+    const clock = require('@sinonjs/fake-timers').install({ toFake: ['Date'] });
+    try {
+      global.fetch = async () => { throw Object.assign(new Error('fixture'), { cause: { code: 'ENOTFOUND' } }); };
+      await capture(() => d.tavily('fixture'));
+      clock.setSystemTime(Date.now() + 31_000);
+      let requests = 0, release;
+      global.fetch = async () => {
+        requests++;
+        if (requests === 1) await new Promise(resolve => { release = resolve; });
+        return json({ results: [] });
+      };
+      const pending = capture(() => Promise.all([d.tavily('fixture'), d.tavily('fixture')]));
+      await delay(30);
+      assert.equal(requests, 1);
+      release(); await pending;
+      assert.equal(requests, 2);
+    } finally { clock.uninstall(); }
+  });
 
   await test('DNS outage stops a forty-job fan-out after two dispatched attempts', async () => {
     let requests = 0;
