@@ -23,6 +23,8 @@ assert.deepEqual(calls, [
   'start:scheduler',
   'stop:scheduler',
   'stop:discovery',
+  'stop:scheduler',
+  'stop:discovery',
 ]);
 assert.equal(lifecycle.isStarted(), false);
 

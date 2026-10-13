@@ -1,3 +1,4 @@
+import { captureCryptoCrawlerWorkGuard } from '../runtime/manual-power-state.js';
 import logger from '../../../logger.js';
 import { ensureProviderMeshPendingStream, providerMeshPendingStream } from '../capital-free/provider-mesh-pending-stream.js';
 import { multiProviderRpcManager, type SupportedChain } from '../api/blockchain-providers.js';
@@ -181,7 +182,10 @@ async function registerBestEffortAnkrFallbacks(): Promise<void> {
 }
 
 async function startFreeProviderTelemetry(): Promise<void> {
+  const guard = captureCryptoCrawlerWorkGuard();
+  guard();
   await ensureDynamicRpcProviderWiring();
+  guard();
   ensureProviderMeshPendingStream();
   const healthyProviders = TELEMETRY_CHAINS.flatMap(chain =>
     multiProviderRpcManager.getHealth(chain)
@@ -251,6 +255,7 @@ async function probeMarketUniverseProviders(): Promise<void> {
 }
 
 export function ensureTelemetryBootstrap(): Promise<void> {
+  captureCryptoCrawlerWorkGuard()();
   if (!bootstrapPromise) {
     const generation = ++bootstrapGeneration;
     adoptLegacyProviderAliases();

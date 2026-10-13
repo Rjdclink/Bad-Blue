@@ -1,3 +1,4 @@
+import { captureCryptoCrawlerWorkGuard } from '../runtime/manual-power-state.js';
 import { assertDiscoveryWorkActive, awaitDiscoveryWork, discoveryProvider, runDiscoveryWork } from '../runtime/discovery-work-context.js';
 import { BigNumber, type Wallet, type providers } from 'ethers';
 import logger from '../../../logger.js';
@@ -741,14 +742,24 @@ function schedule(): void {
 }
 
 export async function startCanonicalZeroCapitalDiscovery(): Promise<void> {
-  if (startingTask) return startingTask;
-  if (started || cycleInFlight) return;
+  const guard = captureCryptoCrawlerWorkGuard();
+  guard();
+  if (startingTask) await startingTask;
+  guard();
+  if (started) return;
+  // A stopped generation may still be unwinding a cancelled scan. Wait for it,
+  // then start this generation instead of treating that stale promise as ON.
+  if (cycleInFlight) await cycleInFlight.catch(() => undefined);
+  guard();
+  if (started) return;
   const controller = new AbortController();
   lifecycleController = controller;
-  startingTask = zeroCapitalEngine.initialize(controller.signal);
-  try { await startingTask; }
-  finally { startingTask = null; }
-  if (controller.signal.aborted || lifecycleController !== controller) return;
+  const initializing = zeroCapitalEngine.initialize(controller.signal);
+  startingTask = initializing;
+  try { await initializing; }
+  finally { if (startingTask === initializing) startingTask = null; }
+  guard();
+  if (controller.signal.aborted || lifecycleController !== controller) throw new Error('Zero-capital startup cancelled');
   started = true;
   cycleInFlight = cycle().finally(() => { cycleInFlight = null; schedule(); });
   await cycleInFlight;
@@ -795,6 +806,7 @@ export function stopCanonicalZeroCapitalDiscovery(): void {
   started = false;
   lifecycleController?.abort(new Error('CryptoCrawler stopped'));
   lifecycleController = null;
+  startingTask = null;
   stopZeroCapitalQuoteTracking();
   if (timer) clearTimeout(timer);
   timer = null;

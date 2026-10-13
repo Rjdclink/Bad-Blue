@@ -49,7 +49,10 @@ function canonical(options = {}) {
     scanChain: options.scan ?? (async () => [opportunity()]),
     fromQuotedRoute(q) { assert.equal(this, runtime); return { ...opportunity(q.id), timestamp: q.observedAt, expiresAt: q.expiresAt }; },
   };
+  const power = load('runtime/manual-power-state.ts');
+  power.setCryptoCrawlerManualPowerPhase('STARTING');
   const result = load('discovery/zero-capital-canonical-discovery.ts', {
+    '../runtime/manual-power-state.js': power,
     '../core/zero-capital-engine.js': { zeroCapitalEngine: runtime },
     './dynamic-zero-capital-routes.js': { discoverDynamicZeroCapitalQuotes: options.dynamic ?? (async () => []) },
     './measured-candidate-registry.js': { measuredCandidateRegistry: { get() {}, record(v) { recorded.push(v); } } },
@@ -164,7 +167,7 @@ async function main() {
   });
   await check('Stop during initialization cannot resurrect discovery', async () => {
     const gate = deferred(); const c = canonical({ initialize: () => gate.promise });
-    const startup = c.startCanonicalZeroCapitalDiscovery(); c.stopCanonicalZeroCapitalDiscovery(); gate.resolve(); await startup;
+    const startup = c.startCanonicalZeroCapitalDiscovery(); c.stopCanonicalZeroCapitalDiscovery(); gate.resolve(); await assert.rejects(startup, /cancelled/);
     assert.equal(c.getCanonicalZeroCapitalDiscoverySnapshot().started, false); assert.equal(c.recorded.length, 0);
   });
   await check('Stop aborts a sponsor read and prevents any subsequent sponsor request', async () => {

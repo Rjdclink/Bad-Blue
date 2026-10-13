@@ -365,8 +365,8 @@ function Router() {
               <Route path="/inmate-locator" component={InmateLocatorPage} />
               <Route path="/inmate-locator/dashboard" component={InmateLocatorPage} />
               <Route path="/inmate-locator-v2" component={InmateLocatorV2Page} />
-              <Route path="/cryptocrawler" component={GatedCryptoCrawlerV2} />
-              <Route path="/cryptocrawler-v2" component={GatedCryptoCrawlerV2} />
+              <Route path="/cryptocrawler" component={isMasterSession ? CryptoCrawlerCommandDashboard : GatedCryptoCrawlerV2} />
+              <Route path="/cryptocrawler-v2" component={isMasterSession ? CryptoCrawlerCommandDashboard : GatedCryptoCrawlerV2} />
               {isMasterSession && <Route path="/cryptocrawler-dashboard" component={CryptoCrawlerCommandDashboard} />}
               <Route path="/badblue" component={Home} />
               <Route path="/home" component={Home} />

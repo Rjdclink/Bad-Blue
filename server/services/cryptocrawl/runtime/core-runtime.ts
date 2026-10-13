@@ -245,24 +245,23 @@ export async function ensureCryptoCrawlerCoreRuntime(): Promise<void> {
 export async function stopCryptoCrawlerCoreRuntime(): Promise<void> {
   lifecycleGeneration++;
   rainbowProfitBridgeScheduled = false;
-  stopControlledLossLearningWorker();
-  stopSystemCapitalSweepWorker();
-  stopCexTreasuryTransferWorker();
-  stopTreasuryTransferRecoveryWorker();
-  stopSystemCapitalPlacementReconciliation();
-  const rainbow = await import('./rainbow-profit-bridge-wiring.js');
-  rainbow.stopRainbowProfitBridgeWiring();
-  if (!lifecyclePromise) {
-    started = false;
-    return;
-  }
-  const lifecycle = await lifecyclePromise;
-  const changed = lifecycle.stop();
-  started = lifecycle.isStarted();
-  if (!changed) return;
-  logger.info('[CryptoCoreRuntime] Canonical core runtime stopped', {
-    component: 'CryptoCoreRuntime',
-  });
+  const results = await Promise.allSettled([
+    () => stopControlledLossLearningWorker(),
+    () => stopSystemCapitalSweepWorker(),
+    () => stopCexTreasuryTransferWorker(),
+    () => stopTreasuryTransferRecoveryWorker(),
+    () => stopSystemCapitalPlacementReconciliation(),
+    () => import('./rainbow-profit-bridge-wiring.js').then(module => module.stopRainbowProfitBridgeWiring()),
+    async () => {
+      if (!lifecyclePromise) { started = false; return; }
+      const lifecycle = await lifecyclePromise;
+      lifecycle.stop();
+      started = lifecycle.isStarted();
+    },
+  ].map(stop => Promise.resolve().then(stop)));
+  const failures = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
+  if (failures.length) throw new AggregateError(failures.map(result => result.reason), 'Core runtime shutdown incomplete');
+  logger.info('[CryptoCoreRuntime] Canonical core runtime stopped', { component: 'CryptoCoreRuntime' });
 }
 
 export function getCryptoCrawlerCoreRuntimeStatus(): { started: boolean } {

@@ -36,23 +36,8 @@ for (const panelPath of panelPaths) {
 }
 
 const adminRoutes = [...appRoutes].filter(route => route.startsWith("/admin-"));
-for (const route of adminRoutes) {
-  assert(panelSet.has(route), `Administrative route omitted from master traversal: ${route}`);
-}
-
-const requiredSurfaces = [
-  "/administrator",
-  "/dashboard",
-  "/cryptocrawler-v2",
-  "/cryptocrawler-dashboard",
-  "/orchestrator-console",
-  "/control-room",
-  "/pantheon",
-  "/spectra",
-];
-for (const route of requiredSurfaces) {
-  assert(panelSet.has(route), `Required master surface omitted: ${route}`);
-}
+assert(panelPaths.length === 2, "Master arrows must switch between exactly Lexara and CryptoCrawler");
+assert(!panelSet.has('/cryptocrawler-v2'), "Legacy CryptoCrawler must not be a separate master panel");
 
 for (const foldedRoute of [
   "/geoconsole",

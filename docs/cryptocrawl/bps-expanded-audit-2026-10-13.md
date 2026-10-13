@@ -13,7 +13,7 @@ The running service identified its source as `a0742ad4f5a8e7b0d5f31bb95ea90da211
 - 00:43:22 UTC: recovery telemetry reported 6,732 structural candidates, 322 measured quotes, zero true-positive quotes. These are reported counters, not necessarily a single uniformly sampled cohort.
 - 00:46:28 UTC: all four primary price providers had successful responses; CoinMarketCap had 13 rate-limit responses, while DexScreener/DefiLlama/CoinLore also supplied data. CoinGecko emergency calls were zero. The alternatives exist and work; aggregation/lifecycle defects can still prevent their results being useful.
 - Resource-lease and settlement workers continued logging `CRYPTOCRAWLER_MASTER_POWER_OFF` failures while background price telemetry continued. This establishes inconsistent ongoing activity/availability, but does not alone establish whether the cause is incomplete stop, startup rollback, or duplicated state. Do not erase the OFF guard to hide it.
-- Runtime readiness reported rejected OKX credentials and no spendable inventory. No credentials were changed or disclosed.
+- Runtime readiness reported failed OKX authenticated requests and no spendable inventory. This does not establish that the key is invalid; region selection and credential loading must be distinguished. No credentials were changed or disclosed.
 
 ## Confirmed defects and selected resolutions
 
@@ -52,7 +52,7 @@ The running service identified its source as `a0742ad4f5a8e7b0d5f31bb95ea90da211
 
 1. **Hosted CI is blocked.** Current published-head run `38329946448` did not execute steps: GitHub states the account is locked due to a billing issue. The account owner must resolve billing; no payment or account change was made.
 2. **Repository-wide type check is not green.** With an 8 GiB heap, the check completed instead of exhausting memory and reported 216 diagnostics (339 output lines) in files outside this follow-up repair. Remaining failures span other repository files, including pre-existing CryptoCrawler modules; full-build/CI success must not be claimed. Runtime-affecting undefined identifiers found in the touched BPS/gas/shutdown paths were repaired. This PR is not a general rewrite of all repository type errors.
-3. **Account data is unavailable.** Live OKX credentials were rejected and inventory/fee/depth evidence was missing on some venues. The code must continue to report those lanes unavailable. No credentials, balances, discounts or fee schedules were invented; restoring account credentials requires the owner.
+3. **Account data is unavailable.** Live OKX authenticated requests failed and inventory/fee/depth evidence was missing on some venues. These failures do not establish a bad key. A hard-coded regional endpoint bypass in payout confirmation has now been repaired and the regional selector covers the documented official regional origins; account-specific success remains unverified on production. No credentials, balances, discounts or fee schedules were invented.
 4. **Deployment validation remains outstanding.** Production still ran the older deployment while these changes were being prepared. At 01:28 UTC, logs still showed the old OFF-worker failures. No power command, application startup, trade, or live profitability experiment was issued. After CI and deployment, verify the deployed source and OFF egress; actual profitability requires real market evidence under a separately authorized running system.
 
 ## Research method and rationale
@@ -82,3 +82,25 @@ Chosen approach: measured route/size alternatives plus accurate all-in costs, fa
 - Local deployment preflight completed, including the final success marker, flash receiver compilation, and all four Ghost Wallet contract compilations.
 - Repository-wide TypeScript completed with the failures described above; full build and hosted CI remain unpassed. Earlier local full build hit historical asset-download limits.
 - All added behavioral tests replace external I/O. No application startup, live wallet, or transaction was used. Passing mocked improvements are not live-profit evidence.
+
+
+## Power consistency and two-page navigation follow-up
+
+Live evidence at 2026-10-13 11:18 UTC identified production source `a0742ad4f5a8e7b0d5f31bb95ea90da211a06a94`, active background workers, repeated MASTER_POWER_OFF database rejections, a stopped scheduler, and a main scan completed at 00:42 UTC. The repair branch was not deployed.
+
+Changes:
+- Master arrows contain exactly Lexara consent and CryptoCrawler Command. Old CryptoCrawler URLs render the same command dashboard for a master session. Other application routes were not deleted.
+- Master startup awaits the faucet and canonical installation, checks the core, scheduler, both discovery controllers and bridge workers before reporting ON, and preserves cancellation across an interrupted start.
+- Status reads compute readiness from current component flags without provider I/O. Missing components report DEGRADED. Failed stop hooks prevent a false successful STOPPED report.
+- All independent stop callbacks execute even after synchronous failures. Added missing shutdown of the intelligence outbox, evidence subscription, readiness optimizer and zero-capital recovery observers.
+- Public and private exchange sockets close on STOPPING/OFF. Pending connection/identity work cannot reopen them after restart. Private REST requests and response bodies abort with the power generation; queued private operations recheck their original generation.
+- Discovery tasks inherit power cancellation. Old startup promises cannot be mistaken for a new zero-capital discovery start. Delayed faucet/telemetry work cannot reactivate stopped resources.
+- Payout confirmation uses the shared OKX credential/region authority instead of hard-coded US requests. Region selection now includes official EEA and Turkey origins when no explicit origin is configured; public EEA streams follow the authenticated cached region.
+
+Verification: 9 new mocked power/transport tests, 21 scan-liveness tests, 15 price/HTTP tests, 15 gas/lifecycle tests and 24 BPS tests (84 total); core lifecycle, master navigation and manual lifecycle verifiers; frontend Vite build; Overflow-authority server bundle; full deployment preflight with receiver and Ghost contract compilation. Tests use mock transports and do not start the production application or submit transactions. The environment runs Node 24; the repository targets Node 20, so hosted target-runtime verification remains required.
+
+Research references: Node.js timer cancellation documentation (https://nodejs.org/api/timers.html), OKX regional API documentation (https://www.okx.com/docs-v5/), and OKX REST-domain changelog (https://www.okx.com/docs-v5/log_en/). A regional `50119` response is not sufficient evidence to call a key invalid.
+
+Remaining limits: these code repairs do not prove production egress silence or successful live BPS improvement. Already-sent chain/venue requests cannot be recalled; existing ethers HTTP operations have their transport deadlines while continuations are cancelled. Profitability remains conditional on actual fee, liquidity and price evidence. Hosted CI and repository-wide TypeScript remain merge gates; do not merge or claim production fixed until these gates and deployed verification are resolved. No live power, credential, deployment or transaction change was made in this follow-up.
+
+Final follow-up typecheck: 209 diagnostics remain across other repository files; none reference the files changed in this follow-up. Repository-wide typecheck is still failing.

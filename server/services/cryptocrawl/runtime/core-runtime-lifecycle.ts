@@ -43,13 +43,13 @@ export function createCryptoCrawlerCoreLifecycle(
     },
 
     stop(): boolean {
-      if (!started) return false;
-      // Stop admission before discovery so no new execution can be selected
-      // while the candidate producer is being torn down.
-      dependencies.stopScheduler();
-      dependencies.stopDiscovery();
+      const wasStarted = started;
+      const failures: unknown[] = [];
+      try { dependencies.stopScheduler(); } catch (error) { failures.push(error); }
+      try { dependencies.stopDiscovery(); } catch (error) { failures.push(error); }
+      if (failures.length) throw new AggregateError(failures, 'Core shutdown incomplete');
       started = false;
-      return true;
+      return wasStarted;
     },
 
     isStarted(): boolean {

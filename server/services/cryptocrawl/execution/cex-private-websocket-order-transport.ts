@@ -1,3 +1,4 @@
+import { captureCryptoCrawlerWorkGuard, cryptoCrawlerWorkSignal, isCryptoCrawlerMarketDataAllowed, isCryptoCrawlerMasterPowerOn, onCryptoCrawlerManualPowerPhaseChange } from '../runtime/manual-power-state.js';
 import { createHmac, randomUUID } from 'node:crypto';
 import WebSocket from 'ws';
 import logger from '../../../logger.js';
@@ -72,21 +73,58 @@ abstract class PersistentPrivateOrderSocket {
   protected readonly pending = new Map<string, PendingRequest>();
   protected lastTrafficAt = 0;
   private heartbeatTimer: NodeJS.Timeout | null = null;
+  private readonly connectingSockets = new Set<WebSocket>();
+
+  constructor() {
+    onCryptoCrawlerManualPowerPhaseChange(phase => {
+      if (phase === 'OFF' || phase === 'STOPPING') this.stop();
+    });
+  }
+
+  stop(): void {
+    if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
+    this.heartbeatTimer = null;
+    const socket = this.socket;
+    if (socket) { this.handleClose(socket, 'master power stopped'); socket.terminate(); }
+    for (const pending of this.connectingSockets) pending.terminate();
+    this.connectingSockets.clear();
+    this.readyPromise = null;
+  }
+
+  protected trackConnectingSocket(socket: WebSocket): void {
+    const power = cryptoCrawlerWorkSignal();
+    power.throwIfAborted();
+    this.connectingSockets.add(socket);
+    const abort = () => socket.terminate();
+    power.addEventListener('abort', abort, { once: true });
+    // Keep an error listener throughout cancellation, including during handshake.
+    socket.on('error', () => {});
+    socket.once('close', () => {
+      power.removeEventListener('abort', abort);
+      this.connectingSockets.delete(socket);
+    });
+  }
 
   abstract readonly venue: 'kraken' | 'okx';
   protected abstract connectAndAuthenticate(): Promise<WebSocket>;
   protected abstract heartbeat(socket: WebSocket): void;
 
   async ensureReady(): Promise<void> {
+    captureCryptoCrawlerWorkGuard()();
     if (this.socket?.readyState === WebSocket.OPEN) return;
     if (this.readyPromise) return this.readyPromise;
-    this.readyPromise = requestTimeout(this.open(), CONNECT_TIMEOUT_MS, `${this.venue} private WebSocket connection`)
-      .finally(() => { this.readyPromise = null; });
-    return this.readyPromise;
+    const pending = requestTimeout(this.open(), CONNECT_TIMEOUT_MS, `${this.venue} private WebSocket connection`)
+      .finally(() => { if (this.readyPromise === pending) this.readyPromise = null; });
+    this.readyPromise = pending;
+    return pending;
   }
 
   protected async open(): Promise<void> {
+    const guard = captureCryptoCrawlerWorkGuard();
+    guard();
     const socket = await this.connectAndAuthenticate();
+    try { guard(); } catch (error) { socket.terminate(); throw error; }
+    this.connectingSockets.delete(socket);
     this.socket = socket;
     this.lastTrafficAt = Date.now();
     this.startHeartbeat(socket);
@@ -135,7 +173,7 @@ abstract class PersistentPrivateOrderSocket {
   protected abstract responseKey(payload: Record<string, any>): string | null;
 
   protected sendAndWait(socket: WebSocket, key: string, payload: Record<string, unknown>): Promise<Record<string, any>> {
-    if (socket !== this.socket || socket.readyState !== WebSocket.OPEN) {
+    if (!isCryptoCrawlerMasterPowerOn() || socket !== this.socket || socket.readyState !== WebSocket.OPEN) {
       throw new Error(`${this.venue} private WebSocket is not ready at dispatch`);
     }
     return new Promise((resolve, reject) => {
@@ -173,7 +211,7 @@ abstract class PersistentPrivateOrderSocket {
   private startHeartbeat(socket: WebSocket): void {
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
     this.heartbeatTimer = setInterval(() => {
-      if (socket !== this.socket || socket.readyState !== WebSocket.OPEN) return;
+      if (!isCryptoCrawlerMarketDataAllowed() || socket !== this.socket || socket.readyState !== WebSocket.OPEN) return;
       if (Date.now() - this.lastTrafficAt < 20_000) return;
       try {
         this.heartbeat(socket);
@@ -207,6 +245,8 @@ class KrakenPrivateOrderSocket extends PersistentPrivateOrderSocket {
   private requestSequence = Math.max(1, Date.now() % 2_000_000_000);
 
   protected async connectAndAuthenticate(): Promise<WebSocket> {
+    const guard = captureCryptoCrawlerWorkGuard();
+    guard();
     // WebSocket tokens are minted through the existing Kraken REST nonce/signing
     // authority. The WS transport never implements an alternate Kraken signer.
     const result = await krakenPrivateRequest('/0/private/GetWebSocketsToken', {}, {
@@ -218,11 +258,13 @@ class KrakenPrivateOrderSocket extends PersistentPrivateOrderSocket {
     this.token = token;
 
     const endpoint = process.env.KRAKEN_SPOT_WS_AUTH_URL?.trim() || 'wss://ws-auth.kraken.com/v2';
+    guard();
     const socket = new WebSocket(endpoint, {
       perMessageDeflate: false,
       handshakeTimeout: CONNECT_TIMEOUT_MS,
       maxPayload: 1024 * 1024,
     });
+    this.trackConnectingSocket(socket);
     await new Promise<void>((resolve, reject) => {
       const onError = (error: Error) => { cleanup(); reject(error); };
       const onOpen = () => { cleanup(); resolve(); };
@@ -235,6 +277,7 @@ class KrakenPrivateOrderSocket extends PersistentPrivateOrderSocket {
     });
     this.installFrameRouter(socket, payload => consumePrivateCexExecutionFrame('kraken', payload));
     const subscribeReqId = ++this.requestSequence;
+    guard();
     socket.send(JSON.stringify({
       method: 'subscribe',
       params: {
@@ -332,6 +375,8 @@ class OkxPrivateOrderSocket extends PersistentPrivateOrderSocket {
   }
 
   protected async connectAndAuthenticate(): Promise<WebSocket> {
+    const guard = captureCryptoCrawlerWorkGuard();
+    guard();
     const baseUrl = await getOkxExecutionRestBaseUrl();
     this.currentBaseUrl = baseUrl;
     const endpoint = this.websocketEndpoint(baseUrl);
@@ -343,11 +388,13 @@ class OkxPrivateOrderSocket extends PersistentPrivateOrderSocket {
       .update(`${timestamp}GET/users/self/verify`)
       .digest('base64');
 
+    guard();
     const socket = new WebSocket(endpoint, {
       perMessageDeflate: false,
       handshakeTimeout: CONNECT_TIMEOUT_MS,
       maxPayload: 1024 * 1024,
     });
+    this.trackConnectingSocket(socket);
     await new Promise<void>((resolve, reject) => {
       const onError = (error: Error) => { cleanup(); reject(error); };
       const onOpen = () => { cleanup(); resolve(); };
@@ -377,11 +424,13 @@ class OkxPrivateOrderSocket extends PersistentPrivateOrderSocket {
       }
       return consumePrivateCexExecutionFrame('okx', payload);
     });
+    guard();
     socket.send(JSON.stringify({
       op: 'login',
       args: [{ apiKey, passphrase, timestamp, sign }],
     }));
     await requestTimeout(loginPromise, CONNECT_TIMEOUT_MS, 'OKX private WebSocket login');
+    guard();
     socket.send(JSON.stringify({
       id: `orders${Date.now()}`.slice(-32),
       op: 'subscribe',

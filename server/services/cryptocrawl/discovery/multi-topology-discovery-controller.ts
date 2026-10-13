@@ -1,3 +1,5 @@
+import { cryptoCrawlerWorkSignal, isCryptoCrawlerMarketDataAllowed } from '../runtime/manual-power-state.js';
+import { runDiscoveryWork } from '../runtime/discovery-work-context.js';
 import logger from '../../../logger.js';
 import { ensureDynamicRpcProviderWiring } from '../runtime/dynamic-rpc-provider-wiring.js';
 import { adaptiveTopologyOptimizer } from '../optimization/adaptive-topology-optimizer.js';
@@ -119,6 +121,7 @@ class MultiTopologyDiscoveryController {
   private inFlight: Promise<MultiTopologyDiscoveryCycle> | null = null;
   private latest: MultiTopologyDiscoveryCycle | null = null;
   private running = false;
+  private lifecycleGeneration = 0;
   private baseIntervalMs = Math.max(5_000, Number(process.env.CRYPTOCRAWL_MULTI_TOPOLOGY_SCAN_INTERVAL_MS || 15_000));
   private cycleSequence = 0;
   private readonly lastTopologyScanAt = new Map<MeasuredOpportunityTopology, number>();
@@ -126,7 +129,7 @@ class MultiTopologyDiscoveryController {
   private readonly topologyTaskGenerations = new Map<TopologyTaskKey, { topology: MeasuredOpportunityTopology; generation: number }>();
 
   start(): void {
-    if (this.running) return;
+    if (this.running || !isCryptoCrawlerMarketDataAllowed()) return;
     this.running = true;
     this.baseIntervalMs = Math.max(5_000, Number(process.env.CRYPTOCRAWL_MULTI_TOPOLOGY_SCAN_INTERVAL_MS || 15_000));
     this.runScheduledCycle();
@@ -159,7 +162,10 @@ class MultiTopologyDiscoveryController {
     });
   }
 
+  isRunning(): boolean { return this.running; }
+
   stop(): void {
+    this.lifecycleGeneration++;
     this.running = false;
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
@@ -171,6 +177,7 @@ class MultiTopologyDiscoveryController {
   }
 
   private runScheduledCycle(): void {
+    const owner = this.lifecycleGeneration;
     void this.scanOnce()
       .catch(error => {
         logger.warn('[OpportunityGraph] Unified adaptive discovery cycle failed closed; recurring schedule continues', {
@@ -180,11 +187,11 @@ class MultiTopologyDiscoveryController {
           executionAuthority: false,
         });
       })
-      .finally(() => this.scheduleNext());
+      .finally(() => { if (owner === this.lifecycleGeneration) this.scheduleNext(); });
   }
 
   private scheduleNext(): void {
-    if (!this.running) return;
+    if (!this.running || !isCryptoCrawlerMarketDataAllowed()) return;
     if (this.timer) clearTimeout(this.timer);
     this.timer = setTimeout(() => {
       this.timer = null;
@@ -206,7 +213,8 @@ class MultiTopologyDiscoveryController {
       const topology = TASK_TO_TOPOLOGY[key];
       const generation = nextCandidatePublicationGeneration(topology);
       let owned!: Promise<T>;
-      owned = runWithCandidatePublicationGeneration(topology, generation, operation)
+      owned = runWithCandidatePublicationGeneration(topology, generation, () =>
+        runDiscoveryWork(`topology:${key}`, topologyTaskWatchdogMs(), async () => operation(), cryptoCrawlerWorkSignal()))
         .finally(() => {
           if (this.topologyTasks.get(key) === owned) {
             this.topologyTasks.delete(key);

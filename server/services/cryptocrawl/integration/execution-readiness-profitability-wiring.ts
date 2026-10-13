@@ -1,3 +1,4 @@
+import { captureCryptoCrawlerWorkGuard, isCryptoCrawlerMarketDataAllowed } from '../runtime/manual-power-state.js';
 import logger from '../../../logger.js';
 import { measuredCandidateRegistry } from '../discovery/measured-candidate-registry.js';
 import { cexInventoryLedger } from '../execution/cex-inventory-ledger.js';
@@ -11,8 +12,8 @@ import { getCexInventoryReadinessSnapshot } from './cex-inventory-readiness-wiri
 
 interface RetainedSymbol {
   symbol: string;
-  buyVenue: 'kraken' | 'okx';
-  sellVenue: 'kraken' | 'okx';
+  buyVenue: 'coinbase' | 'kraken' | 'okx';
+  sellVenue: 'coinbase' | 'kraken' | 'okx';
   bestGapBps: number;
   retainedUntil: number;
   lastObservedAt: number;
@@ -96,7 +97,7 @@ function buildCurrentPlan(now = Date.now()): { plan: ExecutionReadinessProfitabi
   const activeBids = provider.bids.filter(item => !item.temporarilyDeprioritized);
   const providerQuality = activeBids.length > 0 ? activeBids.reduce((sum, item) => sum + item.qualityScore, 0) / activeBids.length : 0;
   const providerFailureRate = activeBids.length > 0 ? Math.max(...activeBids.map(item => item.failureRate)) : 1;
-  const providerLatencyMs = activeBids.length > 0 ? Math.max(...activeBids.map(item => item.p95LatencyMs)) : 1_000;
+  const providerLatencyMs = activeBids.length > 0 ? Math.max(...activeBids.map(item => item.p95LatencyMs ?? 1_000)) : 1_000;
   const state = stageManager.getState();
   const plan = buildExecutionReadinessProfitabilityPlan({
     closestFeeGapBps: negatives.length > 0 ? Math.min(...negatives.map(item => item.bpsToBreakEven)) : null,
@@ -207,6 +208,8 @@ async function triggerCanonicalRevalidation(plan: ExecutionReadinessProfitabilit
 }
 
 async function cycle(): Promise<void> {
+  const guard = captureCryptoCrawlerWorkGuard();
+  guard();
   const now = Date.now();
   const current = buildCurrentPlan(now);
   retainNearEdges(current.modes, current.plan, now);
@@ -223,6 +226,7 @@ async function cycle(): Promise<void> {
     || (bestExpectedGapBps !== null && bestExpectedGapBps <= 0.5)
     || current.eligible > 0
     || current.expiring > 0;
+  guard();
   const canonicalRevalidationTriggered = shouldRevalidate ? await triggerCanonicalRevalidation(current.plan) : false;
   latest = {
     observedAt: Date.now(),
@@ -267,17 +271,23 @@ function intervalMs(): number {
   return Math.max(1_000, Math.min(30_000, Math.round(base / Math.max(0.75, current.plan.candidateRevalidationMultiplier))));
 }
 
+let running = false;
+let generation = 0;
+
 function scheduleNext(): void {
+  if (!running || !isCryptoCrawlerMarketDataAllowed()) return;
+  const owner = generation;
   if (process.env.NO_INTERVALS === 'true') return;
   timer = setTimeout(async () => {
     timer = null;
     await runCycle();
-    scheduleNext();
+    if (owner === generation) scheduleNext();
   }, intervalMs());
   timer.unref?.();
 }
 
 async function runCycle(): Promise<void> {
+  if (!running || !isCryptoCrawlerMarketDataAllowed()) return;
   if (cycleInFlight) return cycleInFlight;
   cycleInFlight = cycle().catch(error => {
     logger.warn('[ExecutionReadinessProfitability] Readiness cycle failed closed', {
@@ -290,8 +300,10 @@ async function runCycle(): Promise<void> {
 }
 
 export function ensureExecutionReadinessProfitabilityWiring(): void {
-  if (timer || cycleInFlight || process.env.CRYPTOCRAWL_EXECUTION_READINESS_OPTIMIZER_ENABLED === 'false') return;
-  void runCycle().finally(scheduleNext);
+  if (running || !isCryptoCrawlerMarketDataAllowed() || process.env.CRYPTOCRAWL_EXECUTION_READINESS_OPTIMIZER_ENABLED === 'false') return;
+  running = true;
+  const owner = generation;
+  void runCycle().finally(() => { if (owner === generation) scheduleNext(); });
   logger.info('[ExecutionReadinessProfitability] 200-rule execution-readiness optimizer installed', {
     component: 'ExecutionReadinessProfitabilityWiring',
     ruleCatalogSize: 200,
@@ -317,4 +329,11 @@ export function getExecutionReadinessProfitabilitySnapshot(): ExecutionReadiness
       activeRuleKeys: [...latest.policy.activeRuleKeys],
     },
   } : null;
+}
+
+export function stopExecutionReadinessProfitabilityWiring(): void {
+  running = false;
+  generation++;
+  if (timer) clearTimeout(timer);
+  timer = null;
 }

@@ -10,31 +10,10 @@ export interface MasterPanelDefinition {
   aliases?: string[];
 }
 
-/**
- * Canonical master-panel traversal order. LegalWhat is intentionally first so
- * master login opens the normal platform and the controls then walk every
- * administrative/advanced surface before wrapping back to LegalWhat.
- */
+/** Master arrows switch only between the microphone page and the command dashboard. */
 export const MASTER_PANELS: MasterPanelDefinition[] = [
-  { label: 'LegalWhat', path: '/lexara-consent' },
-  { label: 'CryptoCrawler Command', path: '/cryptocrawler-dashboard' },
-  { label: 'Administrator', path: '/administrator', aliases: ['/admin'] },
-  { label: 'Platform Dashboard', path: '/dashboard', aliases: ['/home', '/badblue'] },
-  { label: 'CryptoCrawler V2', path: '/cryptocrawler-v2', aliases: ['/cryptocrawler'] },
-  { label: 'Monte Carlo / Orchestrator', path: '/orchestrator-console' },
-  { label: 'Computational Reactor / Control Room', path: '/control-room' },
-  { label: 'PANTHEON', path: '/pantheon' },
-  { label: 'SPECTRA', path: '/spectra' },
-  { label: 'AI Sub-Agent', path: '/admin-subagent', aliases: ['/ai-subagent'] },
-  { label: 'Worker Logs', path: '/admin-worker-logs' },
-  { label: 'Users', path: '/admin-users' },
-  { label: 'Subscriptions', path: '/admin-subscriptions' },
-  { label: 'Evidence Administration', path: '/admin-evidence-hub' },
-  { label: 'Email Administration', path: '/admin-email' },
-  { label: 'Petition Administration', path: '/admin-petitions' },
-  { label: 'Lawsuit Administration', path: '/admin-lawsuits' },
-  { label: 'Complaint Administration', path: '/admin-complaints' },
-  { label: 'FOIA Administration', path: '/admin-foia' },
+  { label: 'Lexara', path: '/lexara-consent' },
+  { label: 'CryptoCrawler', path: '/cryptocrawler-dashboard', aliases: ['/cryptocrawler', '/cryptocrawler-v2'] },
 ];
 
 function pathOnly(location: string): string {
