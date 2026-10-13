@@ -34,12 +34,16 @@ export interface SpectraPublicFeedStatus {
 
 const LEASE_MS = 180_000;
 const TICK_MS = 30_000;
+// Shared public-event feeds change on provider cadence, not each idle scheduler tick.
+const PRUNE_INTERVAL_MS = 60 * 60_000;
 const MAX_BACKOFF_MS = 6 * 60 * 60_000;
 const COVERAGE_LIMITS = new Set(['source_limit', 'record_limit', 'pagination_limit', 'record_too_large', 'invalid_records']);
 let timer: ReturnType<typeof setTimeout> | undefined;
 let activeCycle: Promise<void> | undefined;
 let controller: AbortController | undefined;
 let running = false;
+let sourcesRegistered = false;
+let nextPruneAt = 0;
 
 function boundedInteger(value: unknown, fallback: number, min: number, max: number): number {
   const n = typeof value === 'string' && !value.trim() ? NaN : Number(value);
@@ -89,7 +93,9 @@ async function registerSources(): Promise<void> {
      SELECT provider, endpoint, refresh_interval_ms
      FROM jsonb_to_recordset($1::jsonb) AS x(provider text, endpoint text, refresh_interval_ms integer)
      ON CONFLICT (provider) DO UPDATE SET
-       endpoint = EXCLUDED.endpoint, refresh_interval_ms = EXCLUDED.refresh_interval_ms`,
+       endpoint = EXCLUDED.endpoint, refresh_interval_ms = EXCLUDED.refresh_interval_ms
+     WHERE public.spectra_public_feed_state.endpoint IS DISTINCT FROM EXCLUDED.endpoint
+        OR public.spectra_public_feed_state.refresh_interval_ms IS DISTINCT FROM EXCLUDED.refresh_interval_ms`,
     [JSON.stringify(SPECTRA_PUBLIC_FEED_SOURCES.map(source => ({
       provider: source.id, endpoint: source.endpoint, refresh_interval_ms: refreshInterval(source),
     })))],
@@ -220,7 +226,12 @@ async function pruneFeedRecords(): Promise<void> {
 
 async function runCollectionCycle(signal: AbortSignal): Promise<void> {
   if (signal.aborted || !isDatabaseConfigured) return;
-  await registerSources();
+  // Re-register after a failed attempt or service restart; do not write unchanged
+  // source metadata on every 30-second idle poll.
+  if (!sourcesRegistered) {
+    await registerSources();
+    sourcesRegistered = true;
+  }
   for (const source of SPECTRA_PUBLIC_FEED_SOURCES) {
     if (signal.aborted) break;
     let lease: any;
@@ -243,7 +254,12 @@ async function runCollectionCycle(signal: AbortSignal): Promise<void> {
       // second replica cannot race an uncertain first replica's transaction.
     }
   }
-  if (!signal.aborted) await pruneFeedRecords();
+  // Retention does not need the provider polling cadence. Retry on the next
+  // cycle if the maintenance statement fails; never advance on cancellation.
+  if (!signal.aborted && Date.now() >= nextPruneAt) {
+    await pruneFeedRecords();
+    nextPruneAt = Date.now() + PRUNE_INTERVAL_MS;
+  }
 }
 
 export function startSpectraPublicFeedCollector(): void {
@@ -273,6 +289,8 @@ export async function stopSpectraPublicFeedCollector(): Promise<void> {
   controller?.abort();
   await activeCycle;
   controller = undefined;
+  sourcesRegistered = false;
+  nextPruneAt = 0;
 }
 
 function feedStatuses(rows: any[], errorCode?: string): SpectraPublicFeedStatus[] {

@@ -66,6 +66,7 @@ export function SpectraEvidenceRecords({ sessionId, refreshKey }: { sessionId: s
   useEffect(() => {
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let fetching = false;
     olderController.current?.abort();
     exhaustedOlder.current = false;
     setLoadingMore(false);
@@ -74,8 +75,16 @@ export function SpectraEvidenceRecords({ sessionId, refreshKey }: { sessionId: s
     setFeeds([]);
     setError('');
     setLoading(true);
+    const schedule = () => {
+      clearTimeout(timer);
+      if (!controller.signal.aborted) timer = setTimeout(() => void load(), 60_000);
+    };
     const load = async () => {
+      if (controller.signal.aborted || fetching) return;
       if (scope === 'session' && !sessionId) { setLoading(false); return; }
+      // Stop polling when the document is hidden. Resume immediately on visibility.
+      if (document.visibilityState === 'hidden') { schedule(); return; }
+      fetching = true;
       const url = scope === 'session'
         ? `/api/spectra/sessions/${encodeURIComponent(sessionId!)}/records`
         : `/api/spectra/public-records?limit=25${provider ? `&provider=${encodeURIComponent(provider)}` : ''}`;
@@ -98,14 +107,27 @@ export function SpectraEvidenceRecords({ sessionId, refreshKey }: { sessionId: s
       } catch {
         if (!controller.signal.aborted) setError('Saved records are temporarily unavailable. Displayed records may be stale.');
       } finally {
+        fetching = false;
         if (!controller.signal.aborted) {
           setLoading(false);
-          timer = setTimeout(() => void load(), 60_000);
+          schedule();
         }
       }
     };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && !fetching && !controller.signal.aborted) {
+        clearTimeout(timer);
+        void load();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
     void load();
-    return () => { controller.abort(); olderController.current?.abort(); clearTimeout(timer); };
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      controller.abort();
+      olderController.current?.abort();
+      clearTimeout(timer);
+    };
   }, [scope, sessionId, refreshKey, provider]);
 
   const loadOlder = async () => {
