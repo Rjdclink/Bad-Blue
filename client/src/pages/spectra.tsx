@@ -558,7 +558,7 @@ export default function SpectraPage() {
           ? [`Bluesky discovery: ${payload.acquisition.publicProfileCandidateCount ?? 0} possible profiles, ${payload.acquisition.publicProfileCandidatePostCount ?? 0} public posts; ${payload.acquisition.publicProfileContactMatches ?? 0} public contact matches. Account ownership remains unverified.`]
           : []),
         ...((payload.acquisition?.publicBlueskyImageAttemptCount ?? 0) > 0
-          ? [`Public Bluesky images: ${payload.acquisition?.publicBlueskyImageRecordCount ?? 0} records; ${payload.acquisition?.publicBlueskyImageAttemptCount ?? 0} image download attempts; ${payload.acquisition?.publicBlueskyImageFailureCount ?? 0} failed. No photo proves a current subject position.`]
+          ? [`Public Bluesky images: ${payload.acquisition?.publicBlueskyImageRecordCount ?? 0} records; ${payload.acquisition?.publicBlueskyImageAttemptCount ?? 0} image download attempts; ${payload.acquisition?.publicBlueskyImageFailureCount ?? 0} failed.`]
           : []),
         ...((payload.acquisition?.publicMastodonImageAttemptCount ?? 0) > 0
           ? [`Public Mastodon images: ${payload.acquisition?.publicMastodonImageRecordCount ?? 0} records; ${payload.acquisition?.publicMastodonImageAttemptCount ?? 0} download attempts; ${payload.acquisition?.publicMastodonImageFailureCount ?? 0} failed.`]
