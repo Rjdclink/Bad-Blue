@@ -39,6 +39,15 @@ On success the server issues a finite, HttpOnly, signed master session cookie an
 
 The canonical panel sequence is defined once in `client/src/components/MasterPanelNavigator.tsx`. Aliases may point to an existing panel, but every distinct master/admin operational surface must appear exactly once in the canonical sequence.
 
+The three-panel arrow sequence is:
+
+1. **LEXARA** (microphone and live legal workspace) — `/lexara-consent`
+2. **CryptoCrawler** (existing command dashboard) — `/cryptocrawler-dashboard`
+3. **Master Signups** (private, read-only canonical website registration dashboard) — `/master-signups`
+
+Forward from Master Signups wraps to LEXARA. Back from LEXARA wraps to Master Signups. The signup list is also available in the existing Administrator console; these two views use one shared component and the same master-protected reporting API. Ordinary users cannot access the Master Signups route or its data. No changes to Master sign-in or manual CryptoCrawler controls are required.
+
+
 The master session supersedes client-side feature toggles for master-only operational panels. Server-side authorization remains authoritative for privileged API actions.
 
 ## Ordinary users
