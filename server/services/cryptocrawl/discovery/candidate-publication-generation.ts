@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { assertDiscoveryWorkActive } from '../runtime/discovery-work-context.js';
 import type { MeasuredOpportunityTopology } from './measured-candidate-registry.js';
 
 interface CandidatePublicationContext {
@@ -42,6 +43,7 @@ export function runWithCandidatePublicationGeneration<T>(
 }
 
 export function assertCurrentCandidatePublication(topology: MeasuredOpportunityTopology): void {
+  assertDiscoveryWorkActive();
   const context = publicationContext.getStore();
   if (!context || context.topology !== topology) return;
   const current = currentGeneration.get(topology) ?? null;

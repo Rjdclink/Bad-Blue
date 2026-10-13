@@ -36,7 +36,7 @@ assert.match(gasProof, /APE_SELF_FUNDED_GAS_RUNWAY_MULTIPLIER/);
 assert.match(resourceScheduler, /getCanonicalZeroCapitalGasDecision/);
 assert.doesNotMatch(resourceScheduler, /runtime\.getGasFundingDecision/);
 assert.match(executor, /getProvenZeroCapitalGasFundingDecision/);
-assert.match(executor, /Sole ZERO_CAPITAL_ATOMIC execution route/);
+assert.match(executor, /Sole ZERO_CAPITAL_ATOMIC execution (?:route|entrypoint)/);
 
 console.log('Canonical ZERO_CAPITAL_ATOMIC single-route pipeline verification PASSED');
 console.log(' - one route-composition authority');

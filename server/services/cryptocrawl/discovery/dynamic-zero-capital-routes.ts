@@ -1,10 +1,10 @@
+import { assertDiscoveryWorkActive, runDiscoveryWork } from '../runtime/discovery-work-context.js';
 import type { providers } from 'ethers';
 import logger from '../../../logger.js';
 import { DEFAULT_GAS_LIMIT, SUPPORTED_CHAINS } from '../bridge/chain-config.js';
 import { livePriceMesh } from '../bridge/live-price-mesh.js';
 import { expectedExecutionGasPriceWei, gasUsdToTokenBaseUnits } from './configured-zero-capital-gas-economics.js';
 import { getGasSponsorManager } from '../strategies/gas-sponsorship.js';
-import { gasOracle } from '../bridge/gas-oracle.js';
 import type { ChainId } from '../bridge/types.js';
 import type { GasFundingDecision, GasFundingMode } from '../capital-free/dynamic-gas-funding-engine.js';
 import {
@@ -64,6 +64,7 @@ const state: DynamicZeroCapitalDiscoveryState = {
 };
 
 const cachedGraphlessTemplates = new Map<SupportedExecutionChain, ConfiguredZeroCapitalRoute[]>();
+const cachedGraphlessMetadata = new Map<SupportedExecutionChain, { tokens: number; sources: string[]; triangularTemplates: number }>();
 const DYNAMIC_EXECUTABLE_CHAINS = new Set<SupportedExecutionChain>([
   'ethereum', 'polygon', 'arbitrum', 'optimism', 'bsc', 'avalanche',
 ]);
@@ -353,6 +354,12 @@ async function buildGraphlessProfitSurfaceTemplates(
   if (!config) return { routes: [], tokens: 0, sources: [], triangularTemplates: 0 };
 
   const scout = await discoverGraphlessDexTokens(chain, provider, [config.usdc.address, config.usdt.address]);
+  if (scout.publicScoutAvailable === false && scout.directRpcAvailable === false) {
+    return {
+      routes: getCachedGraphlessDynamicRouteTemplates(chain),
+      ...(cachedGraphlessMetadata.get(chain) ?? { tokens: 0, sources: [], triangularTemplates: 0 }),
+    };
+  }
   const routes: ConfiguredZeroCapitalRoute[] = [];
   const tiers = feeTiers();
   const inputs = [
@@ -439,13 +446,15 @@ async function buildGraphlessProfitSurfaceTemplates(
 
   const deduped = new Map(routes.map(route => [route.id, route]));
   const values = [...deduped.values()];
+  assertDiscoveryWorkActive();
   cachedGraphlessTemplates.set(chain, values);
-  return {
-    routes: values,
+  const metadata = {
     tokens: scout.candidates.length,
     sources: scout.sources,
     triangularTemplates: Math.max(0, values.filter(route => route.id.startsWith('graphless-tri-')).length || (routes.length - beforeTriangles)),
   };
+  cachedGraphlessMetadata.set(chain, metadata);
+  return { routes: values, ...metadata };
 }
 
 export function getCachedGraphlessDynamicRouteTemplates(chain?: SupportedExecutionChain): ConfiguredZeroCapitalRoute[] {
@@ -505,26 +514,23 @@ async function enrichMeasuredGasCost(
     const tariff = 1 + Math.max(0, sponsor.getBillingSurchargeBps()) / 10_000;
     const reserve = chain === 'optimism' ? Math.max(1.75, safetyMultiplier) : safetyMultiplier;
     gasCostUsd = Number(quote.maxFeePerGasWei) * units / 1e18 * Number(nativeUsd) * tariff * reserve;
-  } else if (chain === 'ethereum' || chain === 'optimism') {
+  } else {
+    const nativeSymbol = chain === 'polygon' ? 'POL' : chain === 'bsc' ? 'BNB' : chain === 'avalanche' ? 'AVAX' : 'ETH';
     const [feeData, prices] = await Promise.all([
       provider.getFeeData(),
-      livePriceMesh.getLiveSymbolPrices(['ETH']),
+      livePriceMesh.getLiveSymbolPrices([nativeSymbol]),
     ]);
     const gasPriceWei = expectedExecutionGasPriceWei(feeData);
-    const ethUsd = prices.get('ETH');
+    const nativeUsd = prices.get(nativeSymbol);
     const gasPrice = gasPriceWei ? Number(gasPriceWei.toString()) : Number.NaN;
-    if (!Number.isFinite(gasPrice) || gasPrice <= 0 || !Number.isFinite(ethUsd) || !ethUsd || ethUsd <= 0) {
-      throw new Error(`Measured ${chain} gas or reusable ETH/USD evidence unavailable`);
+    if (!Number.isFinite(gasPrice) || gasPrice <= 0 || !Number.isFinite(nativeUsd) || !nativeUsd || nativeUsd <= 0) {
+      throw new Error(`Measured ${chain} gas or reusable ${nativeSymbol}/USD evidence unavailable`);
     }
     // OP Mainnet has an L1 data-fee component in addition to L2 execution gas.
     // Dynamic discovery is only a pre-trade economic screen, so use a conservative
     // route-local reserve here; exact signed-call/receipt economics remain canonical.
     const chainSafetyMultiplier = chain === 'optimism' ? Math.max(1.75, safetyMultiplier) : safetyMultiplier;
-    gasCostUsd = (gasPrice * estimatedGasUnits / 1e18) * ethUsd * chainSafetyMultiplier;
-  } else {
-    const gas = await gasOracle.getGasPrice(chain as ChainId);
-    if (!Number.isFinite(gas.usdCost) || gas.usdCost < 0) throw new Error(`Measured gas cost unavailable for ${chain}`);
-    gasCostUsd = gas.usdCost * (estimatedGasUnits / DEFAULT_GAS_LIMIT) * safetyMultiplier;
+    gasCostUsd = (gasPrice * estimatedGasUnits / 1e18) * nativeUsd * chainSafetyMultiplier;
   }
 
   if (!Number.isFinite(gasCostUsd) || gasCostUsd <= 0) throw new Error(`Measured ${chain} gas conversion unavailable`);
@@ -561,21 +567,25 @@ export async function discoverDynamicZeroCapitalQuotes(
   chain: SupportedExecutionChain,
   provider: providers.Provider,
   funding: DynamicGasFundingContext = 'unknown',
+  onQuotes?: (quotes: QuotedZeroCapitalRoute[]) => Promise<void>,
 ): Promise<QuotedZeroCapitalRoute[]> {
   const fundingContext = resolveFundingContext(chain, funding);
   const fundingMode = fundingModeFromContext(fundingContext);
   const stableTemplates = buildDynamicZeroCapitalRouteTemplates(chain);
-  let graphless = { routes: [] as ConfiguredZeroCapitalRoute[], tokens: 0, sources: [] as string[], triangularTemplates: 0 };
-  try {
-    graphless = await buildGraphlessProfitSurfaceTemplates(chain, provider);
-  } catch (error) {
-    logger.warn('[DynamicZeroCapital] Graphless DEX scout degraded; stable seed scanner retained', {
-      component: 'DynamicZeroCapitalRouteDiscovery',
-      chain,
-      error: error instanceof Error ? error.message : String(error),
-      noNewApiKeys: true,
+  assertDiscoveryWorkActive();
+  // Structural token discovery refreshes in parallel. Existing templates are
+  // freshly quoted now; only newly discovered structure waits until the next cycle.
+  const graphless = {
+    routes: getCachedGraphlessDynamicRouteTemplates(chain),
+    ...(cachedGraphlessMetadata.get(chain) ?? { tokens: 0, sources: [] as string[], triangularTemplates: 0 }),
+  };
+  const refresh = runDiscoveryWork(`zero-capital ${chain} token discovery`, 5_000,
+    () => buildGraphlessProfitSurfaceTemplates(chain, provider)).catch(error => {
+      logger.warn('[DynamicZeroCapital] Graphless scout degraded; known route quotes continue independently', {
+        component: 'DynamicZeroCapitalRouteDiscovery', chain,
+        error: error instanceof Error ? error.message : String(error),
+      });
     });
-  }
   const templates = [...new Map([...stableTemplates, ...graphless.routes].map(route => [route.id, route])).values()];
   state.cycles++;
   state.observedAt = Date.now();
@@ -603,23 +613,30 @@ export async function discoverDynamicZeroCapitalQuotes(
       topPreScores: [],
       topFormationScores: [],
     };
+    await refresh;
     return [];
   }
 
   try {
     const enriched = await enrichMeasuredGasCost(chain, provider, templates, fundingContext);
+    assertDiscoveryWorkActive();
     const preselection = selectZeroCapitalRoutesForQuote(enriched.routes, enriched.gasCostUsd);
     const selected = preselection.selectedRoutes;
     const primaryQuotes = await quoteConfiguredZeroCapitalRoutesForChain(chain, provider, selected);
+    assertDiscoveryWorkActive();
+    if (onQuotes && primaryQuotes.length > 0) await onQuotes(primaryQuotes);
     let quotes = [...primaryQuotes];
     let recoverySelected: ConfiguredZeroCapitalRoute[] = [];
     let recoveryQuotes: QuotedZeroCapitalRoute[] = [];
 
     const primaryHasPositive = primaryQuotes.some(quote => quote.executablePositive === true && quote.netProfit > 0n);
+    assertDiscoveryWorkActive();
     if (!primaryHasPositive && selected.length > 0) {
       recoverySelected = recoveryQuoteRoutes(enriched.routes, selected);
       if (recoverySelected.length > 0) {
         recoveryQuotes = await quoteConfiguredZeroCapitalRoutesForChain(chain, provider, recoverySelected);
+        assertDiscoveryWorkActive();
+        if (onQuotes && recoveryQuotes.length > 0) await onQuotes(recoveryQuotes);
         quotes = [...primaryQuotes, ...recoveryQuotes];
       }
     }
@@ -720,6 +737,8 @@ export async function discoverDynamicZeroCapitalQuotes(
       error: message,
     });
     return [];
+  } finally {
+    await refresh;
   }
 }
 

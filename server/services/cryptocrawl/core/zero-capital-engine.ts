@@ -1,3 +1,4 @@
+import { assertDiscoveryWorkActive, discoveryProvider } from '../runtime/discovery-work-context.js';
 /**
  * Canonical zero-capital runtime context.
  *
@@ -218,7 +219,8 @@ export class AutonomousZeroCapitalEngine {
     };
   }
 
-  async initialize(): Promise<void> {
+  async initialize(signal?: AbortSignal): Promise<void> {
+    signal?.throwIfAborted();
     if (this.initialized) {
       this.scheduleWalletResourceRefresh();
       this.state.receiverRegistry = this.receiverManager.getRecords();
@@ -263,7 +265,11 @@ export class AutonomousZeroCapitalEngine {
     // selects any live chain provider. Alchemy is not a bootstrap, failover, or
     // paid telemetry dependency for this engine.
     await ensureDynamicRpcProviderWiring();
+    signal?.throwIfAborted();
+    assertDiscoveryWorkActive();
     await multiProviderRpcManager.initialize(chains as RpcSupportedChain[]);
+    signal?.throwIfAborted();
+    assertDiscoveryWorkActive();
 
     // Provider health/chain identity was already established by the canonical RPC
     // manager. Resolve chains concurrently so one slow provider remains local.
@@ -296,6 +302,8 @@ export class AutonomousZeroCapitalEngine {
       }
     });
 
+    assertDiscoveryWorkActive();
+    signal?.throwIfAborted();
     const rawPrivateKey = process.env.WALLET_PRIVATE_KEY;
     const privateKey = normalizePrivateKey(rawPrivateKey) || undefined;
     if (rawPrivateKey && !privateKey) throw new Error('WALLET_PRIVATE_KEY is not a valid 32-byte EVM private key');
@@ -379,34 +387,22 @@ export class AutonomousZeroCapitalEngine {
   async scanChain(
     chain: SupportedChain,
     _provider: providers.JsonRpcProvider,
+    fundingDecision?: GasFundingDecision,
   ): Promise<ZeroCapitalOpportunity[]> {
     if (chain === 'europa') return [];
     const explicitRoutes = this.configuredRoutes.filter(route => route.chain === chain);
     if (explicitRoutes.length === 0) return [];
     const rpcChain = chain as RpcSupportedChain;
-    const activeChain = chain as ActiveExecutionChain;
 
-    // Keep the RPC manager's bounded timeout around one cheap health-capability
-    // probe only. Multi-step gas enrichment and route quoting own their own bounded
-    // work; Atomic transformation is deliberately not duplicated in this helper.
-    const gasProvider = (await multiProviderRpcManager.execute(rpcChain, 'gas', async provider => {
-      await provider.getFeeData();
-      this.adoptLiveProvider(activeChain, provider);
-      return provider;
-    })).result;
-    const funding = await this.getGasFundingDecision(chain);
+    assertDiscoveryWorkActive();
+    const gasProvider = discoveryProvider((await multiProviderRpcManager.getProvider(rpcChain, 'gas')).http);
+    const funding = fundingDecision ?? await this.getGasFundingDecision(chain);
+    assertDiscoveryWorkActive();
     const gasEconomics = await enrichConfiguredZeroCapitalGasEconomics(chain, gasProvider, explicitRoutes, funding);
-
-    const block = (await multiProviderRpcManager.execute(rpcChain, 'blocks', async provider => {
-      this.adoptLiveProvider(activeChain, provider);
-      return provider.getBlock('latest');
-    })).result;
-
-    const quoteProvider = (await multiProviderRpcManager.execute(rpcChain, 'contract_calls', async provider => {
-      await provider.getBlockNumber();
-      this.adoptLiveProvider(activeChain, provider);
-      return provider;
-    })).result;
+    assertDiscoveryWorkActive();
+    const block = (await multiProviderRpcManager.executeRead(rpcChain, 'blocks', provider => provider.getBlock('latest'), 3_000)).result;
+    assertDiscoveryWorkActive();
+    const quoteProvider = gasProvider;
     const quotes = await quoteConfiguredZeroCapitalRoutesForChain(chain, quoteProvider, gasEconomics.routes);
     const accepted = quotes.map(quote => this.fromQuotedRoute(quote, block.timestamp));
     logger.debug('[ZeroCapitalEngine] Configured-route gas economics measured before BPS admission', {
@@ -425,7 +421,7 @@ export class AutonomousZeroCapitalEngine {
   fromQuotedRoute(quote: QuotedZeroCapitalRoute, blockTimestamp: number): ZeroCapitalOpportunity {
     const ttlMs = Math.max(1000, Number(process.env.ZERO_CAPITAL_ROUTE_TTL_MS || 3000));
     const executionCost = quote.estimatedGasCostInInputToken + quote.flashLoanFeeInInputToken + quote.relayFeeInInputToken;
-    const observedAt = Date.now();
+    const observedAt = quote.observedAt ?? (Date.now() - Math.max(0, quote.quoteLatencyMs));
     return {
       id: `${quote.id}-${blockTimestamp}`,
       type: 'arbitrage',
@@ -455,7 +451,7 @@ export class AutonomousZeroCapitalEngine {
       })),
       confidence: Math.min(0.99, 0.55 + Math.min(0.44, quote.netProfitBps / 1000)),
       timestamp: observedAt,
-      expiresAt: observedAt + ttlMs,
+      expiresAt: Math.min(quote.expiresAt ?? (observedAt + ttlMs), observedAt + ttlMs),
     };
   }
 

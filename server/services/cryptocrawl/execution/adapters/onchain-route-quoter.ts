@@ -1,4 +1,5 @@
 import { BigNumber, Contract, providers } from 'ethers';
+import { assertDiscoveryWorkActive, withDiscoverySignal } from '../../runtime/discovery-work-context.js';
 import { multiProviderRpcManager, type SupportedChain as RpcSupportedChain } from '../../api/blockchain-providers.js';
 import type { RoutePlanningSwapStep } from './autonomous-route-planner.js';
 import type {
@@ -96,6 +97,8 @@ export interface QuotedZeroCapitalRoute {
   flashLoanFeeInInputToken: bigint;
   relayFeeInInputToken: bigint;
   quoteLatencyMs: number;
+  observedAt?: number;
+  expiresAt?: number;
   route: RoutePlanningSwapStep[];
 }
 
@@ -356,12 +359,31 @@ function clearBlockScopedLegQuotes(chain: RpcSupportedChain): void {
  * Startup is deliberately non-blocking: the first quote can proceed immediately;
  * reuse begins as soon as block evidence is resident.
  */
+let quoteTrackingController: AbortController | null = null;
+const quoteTrackingSubscriptions = new Map<string, { unsubscribe: () => Promise<void> }>();
+
+export function stopZeroCapitalQuoteTracking(): void {
+  quoteTrackingController?.abort(new Error('CryptoCrawler stopped'));
+  quoteTrackingController = null;
+  for (const subscription of quoteTrackingSubscriptions.values()) void subscription.unsubscribe().catch(() => undefined);
+  quoteTrackingSubscriptions.clear();
+  quoteBlockTrackerStarts.clear();
+  latestQuoteBlockByChain.clear();
+  blockScopedLegQuotes.clear();
+  inFlightMeshLegQuotes.clear();
+  residentBestBpsQuotes.clear();
+  residentExactAmountQuotes.clear();
+}
+
 function ensureQuoteBlockTracker(chain: SupportedExecutionChain): void {
+  assertDiscoveryWorkActive();
   if (chain === 'europa') return;
   const rpcChain = chain as RpcSupportedChain;
   if (quoteBlockTrackerStarts.has(rpcChain)) return;
 
-  const start = (async () => {
+  quoteTrackingController ??= new AbortController();
+  const signal = quoteTrackingController.signal;
+  const start = withDiscoverySignal(signal, async () => {
     try {
       const { result } = await multiProviderRpcManager.execute(rpcChain, 'blocks', rpc => rpc.getBlockNumber());
       if (Number.isInteger(result) && result >= 0) latestQuoteBlockByChain.set(rpcChain, result);
@@ -370,7 +392,9 @@ function ensureQuoteBlockTracker(chain: SupportedExecutionChain): void {
     }
 
     try {
-      await multiProviderRpcManager.subscribe(rpcChain, 'blocks', value => {
+      signal.throwIfAborted();
+      const subscription = await multiProviderRpcManager.subscribe(rpcChain, 'blocks', value => {
+        if (signal.aborted) return;
         if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) return;
         const previous = latestQuoteBlockByChain.get(rpcChain);
         if (previous === value) return;
@@ -378,11 +402,13 @@ function ensureQuoteBlockTracker(chain: SupportedExecutionChain): void {
         clearBlockScopedLegQuotes(rpcChain);
         blockInvalidations += 1;
       });
+      if (signal.aborted) await subscription.unsubscribe();
+      else quoteTrackingSubscriptions.set(rpcChain, subscription);
     } catch {
       // The normal quote path still uses provider failover if a subscription lane
       // is unavailable; no route or chain is removed because reuse could not start.
     }
-  })();
+  });
 
   quoteBlockTrackerStarts.set(rpcChain, start);
   void start.catch(() => undefined);
@@ -520,10 +546,11 @@ async function quoteLegUncached(provider: providers.Provider, chain: SupportedEx
   // eth_call before this route is considered temporarily unquoted. The caller's
   // provider is retained only for retired/non-mesh compatibility paths.
   if (chain !== 'europa') {
-    const { result } = await multiProviderRpcManager.execute(
+    const { result } = await multiProviderRpcManager.executeRead(
       chain as RpcSupportedChain,
       'contract_calls',
       rpcProvider => quoteLegAgainstProvider(rpcProvider, chain, leg, amountIn),
+      maxQuoteLatencyMs(),
     );
     return BigNumber.from(result);
   }
@@ -683,6 +710,8 @@ export async function quoteConfiguredZeroCapitalRoute(route: ConfiguredZeroCapit
     flashLoanFeeInInputToken: flashLoanFee,
     relayFeeInInputToken: relayFee,
     quoteLatencyMs: Date.now() - quoteStartedAt,
+    observedAt: quoteStartedAt,
+    expiresAt: quoteStartedAt + routeTtlMs(),
     route: steps,
   };
 }
@@ -763,14 +792,15 @@ function freshResidentQuote(
 function rememberResidentBestBpsQuote(routeId: string, observed: readonly QuotedZeroCapitalRoute[]): void {
   const best = bestBpsQuote(observed);
   if (!best) return;
-  const observedAt = Date.now();
-  const expiresAt = observedAt + routeTtlMs();
+  const observedAt = best.observedAt ?? (Date.now() - best.quoteLatencyMs);
+  const expiresAt = Math.min(best.expiresAt ?? (observedAt + routeTtlMs()), observedAt + routeTtlMs());
   residentBestBpsQuotes.set(routeId, { quote: best, observedAt, expiresAt });
   for (const quote of observed) {
+    const quoteObservedAt = quote.observedAt ?? (Date.now() - quote.quoteLatencyMs);
     residentExactAmountQuotes.set(exactResidentQuoteKey(routeId, quote.amountIn), {
       quote,
-      observedAt,
-      expiresAt,
+      observedAt: quoteObservedAt,
+      expiresAt: Math.min(quote.expiresAt ?? (quoteObservedAt + routeTtlMs()), quoteObservedAt + routeTtlMs()),
     });
   }
 }

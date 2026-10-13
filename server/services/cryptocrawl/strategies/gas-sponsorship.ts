@@ -1,4 +1,5 @@
 import { BigNumber, Contract, Wallet, ethers, type providers } from 'ethers';
+import { assertDiscoveryWorkActive, discoveryAbortSignal } from '../runtime/discovery-work-context.js';
 
 const ENTRY_POINT_V08 = '0x4337084d9e255ff0702461cf8895ce9e3b5ff108';
 const SIMPLE_7702_ACCOUNT = '0xe6Cae83BdE06E4c305530e199D7217f42808555B';
@@ -316,6 +317,7 @@ export class PimlicoGasSponsorshipManager {
   }
 
   private async rpc<T>(chainId: number, method: string, params: unknown[], timeoutMs = DEFAULT_RPC_TIMEOUT_MS): Promise<T> {
+    assertDiscoveryWorkActive();
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), Math.max(500, timeoutMs));
     timeout.unref?.();
@@ -324,7 +326,7 @@ export class PimlicoGasSponsorshipManager {
         method: 'POST',
         headers: { 'content-type': 'application/json', accept: 'application/json' },
         body: JSON.stringify({ jsonrpc: '2.0', id: Date.now(), method, params }),
-        signal: controller.signal,
+        signal: AbortSignal.any([controller.signal, ...[discoveryAbortSignal()].filter((signal): signal is AbortSignal => !!signal)]),
       });
       const text = await response.text();
       let envelope: JsonRpcEnvelope<T> = {};

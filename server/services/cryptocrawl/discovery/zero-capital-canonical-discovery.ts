@@ -1,3 +1,4 @@
+import { assertDiscoveryWorkActive, awaitDiscoveryWork, discoveryProvider, runDiscoveryWork } from '../runtime/discovery-work-context.js';
 import { BigNumber, type Wallet, type providers } from 'ethers';
 import logger from '../../../logger.js';
 import { zeroCapitalEngine, type SupportedChain, type ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
@@ -11,6 +12,7 @@ import {
 import { getCanonicalZeroCapitalRoutes } from './zero-capital-route-authority.js';
 import {
   zeroCapitalDiscoveryFloorBps,
+  stopZeroCapitalQuoteTracking,
   type ConfiguredZeroCapitalRoute,
   type QuotedZeroCapitalRoute,
 } from '../execution/adapters/onchain-route-quoter.js';
@@ -66,7 +68,7 @@ interface CanonicalZeroCapitalRuntime {
       routes: ConfiguredZeroCapitalRoute[];
     }) => Promise<ReceiverPermissionCall[]>;
   };
-  scanChain: (chain: SupportedChain, provider: providers.JsonRpcProvider) => Promise<ZeroCapitalOpportunity[]>;
+  scanChain: (chain: SupportedChain, provider: providers.JsonRpcProvider, funding?: GasFundingDecision) => Promise<ZeroCapitalOpportunity[]>;
   fromQuotedRoute: (quote: QuotedZeroCapitalRoute, blockTimestamp: number) => ZeroCapitalOpportunity;
 }
 
@@ -78,10 +80,13 @@ class DiscoveryWatchdogTimeoutError extends Error {
 }
 
 let started = false;
+let lifecycleController: AbortController | null = null;
+let startingTask: Promise<void> | null = null;
 let timer: NodeJS.Timeout | null = null;
 let cycleInFlight: Promise<void> | null = null;
 let receiverFleetTask: Promise<void> | null = null;
 let receiverFleetTimedOut = false;
+let receiverFleetObservedTask: Promise<void> | null = null;
 const chainScanTasks = new Map<SupportedChain, Promise<void>>();
 const chainScanGenerations = new Map<SupportedChain, number>();
 let lastCycleAt = 0;
@@ -120,6 +125,10 @@ function receiverFleetWatchdogMs(): number {
   return boundedWatchdogMs(process.env.ZERO_CAPITAL_RECEIVER_FLEET_WATCHDOG_MS, 30_000, 5_000, 120_000);
 }
 
+function receiverSetupTimeoutMs(): number {
+  return boundedWatchdogMs(process.env.ZERO_CAPITAL_SPONSORED_SETUP_TIMEOUT_MS, 90_000, 10_000, 120_000);
+}
+
 function chainScanWatchdogMs(): number {
   return boundedWatchdogMs(process.env.ZERO_CAPITAL_CHAIN_SCAN_WATCHDOG_MS, 45_000, 5_000, 120_000);
 }
@@ -149,7 +158,7 @@ function nextChainScanGeneration(chain: SupportedChain): number {
 }
 
 function isCurrentChainScanGeneration(chain: SupportedChain, generation: number): boolean {
-  return chainScanGenerations.get(chain) === generation;
+  return started && chainScanGenerations.get(chain) === generation;
 }
 
 function invalidateChainScanGeneration(chain: SupportedChain, generation: number): void {
@@ -179,7 +188,7 @@ function executionRoutes(target: CanonicalZeroCapitalRuntime): ConfiguredZeroCap
 }
 
 async function strictFunding(target: CanonicalZeroCapitalRuntime, chain: SupportedChain): Promise<GasFundingDecision> {
-  return getProvenZeroCapitalGasFundingDecision(target, chain);
+  return awaitDiscoveryWork(() => getProvenZeroCapitalGasFundingDecision(target, chain));
 }
 
 async function executeSetupCalls(input: {
@@ -190,17 +199,19 @@ async function executeSetupCalls(input: {
   funding: GasFundingDecision;
   calls: ReceiverPermissionCall[];
 }): Promise<void> {
+  assertDiscoveryWorkActive();
   if (input.funding.strictZeroInitialCapitalEligible !== true || input.funding.operatorMonetaryInputRequired !== false) {
     throw new Error(`Strict zero-capital setup funding is unavailable: ${input.funding.reason}`);
   }
   if (input.funding.mode === 'sponsored') {
     if (input.funding.paymentSource !== 'provider_sponsored') throw new Error('Unproven sponsored setup payment source');
     const network = await input.provider.getNetwork();
+    assertDiscoveryWorkActive();
     await input.target.gasSponsor.execute({
       wallet: input.wallet,
       chainId: network.chainId,
       calls: input.calls.map(call => ({ to: call.to, data: call.data, value: BigNumber.from(call.value || 0) })),
-      timeoutMs: Math.max(10_000, Number(process.env.ZERO_CAPITAL_SPONSORED_SETUP_TIMEOUT_MS || 90_000)),
+      timeoutMs: receiverSetupTimeoutMs(),
     });
     return;
   }
@@ -208,6 +219,7 @@ async function executeSetupCalls(input: {
     throw new Error(`Strict zero-capital setup has no proven system-owned gas path: ${input.funding.reason}`);
   }
   for (let index = 0; index < input.calls.length; index += 1) {
+    assertDiscoveryWorkActive();
     const call = input.calls[index];
     const result = await executeSystemOwnedNativeTransaction({
       chain: input.chain,
@@ -229,19 +241,25 @@ async function ensureReceiverFleet(target: CanonicalZeroCapitalRuntime): Promise
   let ready = 0;
   const failures: string[] = [];
   const compositeFailures: string[] = [];
-  for (const chain of chains) {
-    const provider = target.providers.get(chain);
+  // The 30s fleet warning must not cut short the configured receipt wait after a
+  // setup submission. Each chain still has a finite deadline and stops on OFF.
+  const setupDeadlineMs = Math.max(receiverFleetWatchdogMs(), receiverSetupTimeoutMs() + 30_000);
+  await Promise.allSettled(chains.map(chain => runDiscoveryWork(`zero-capital ${chain} receiver setup`, setupDeadlineMs, async () => {
+    const rawProvider = target.providers.get(chain);
+    const provider = rawProvider ? discoveryProvider(rawProvider) : undefined;
     const wallet = target.executionWallets.get(chain);
-    if (!provider || !wallet) { failures.push(`${chain}:provider_or_wallet_unavailable`); continue; }
+    if (!provider || !wallet) { failures.push(`${chain}:provider_or_wallet_unavailable`); return; }
     try {
       const funding = await strictFunding(target, chain);
       if (funding.mode === 'unavailable') throw new Error(funding.reason);
-      const receiver = await target.receiverManager.ensureReceiver({
+      assertDiscoveryWorkActive();
+      const receiver = await awaitDiscoveryWork(() => target.receiverManager.ensureReceiver({
         chain: chain as any,
         provider,
         wallet,
         fundingMode: funding.mode as ReceiverFundingMode,
-      });
+      }));
+      assertDiscoveryWorkActive();
       const chainRoutes = routes.filter(route => route.chain === chain);
       const calls = await target.receiverManager.buildMissingPermissionCalls({
         chain: chain as any,
@@ -257,6 +275,7 @@ async function ensureReceiverFleet(target: CanonicalZeroCapitalRuntime): Promise
       // intentionally separate so a split-route capability problem cannot demote a
       // fully working standalone receiver on the same chain.
       try {
+        assertDiscoveryWorkActive();
         const compositeCalls = await target.receiverManager.buildMissingCompositePermissionCalls({
           chain: chain as any,
           provider,
@@ -278,11 +297,13 @@ async function ensureReceiverFleet(target: CanonicalZeroCapitalRuntime): Promise
           executionAuthority: false,
         });
       }
+      assertDiscoveryWorkActive();
       ready++;
     } catch (error) {
       failures.push(`${chain}:${error instanceof Error ? error.message : String(error)}`);
     }
-  }
+  }, lifecycleController?.signal)));
+  if (!started) return;
   readyReceiverChains = ready;
   if (ready === 0 && chains.length > 0) {
     logger.debug('[ZeroCapitalDiscovery] No strict zero-capital receiver chain is execution-ready; discovery remains active', {
@@ -323,6 +344,8 @@ function refreshReceiverFleetForCycle(target: CanonicalZeroCapitalRuntime): void
   }
 
   const task = currentReceiverFleetTask(target);
+  if (receiverFleetObservedTask === task) return;
+  receiverFleetObservedTask = task;
   void withWatchdog(task, receiverFleetWatchdogMs(), 'zero-capital receiver fleet').then(
     () => {
       lastObservationOnlyReason = null;
@@ -456,57 +479,66 @@ async function scanOneChain(
 ): Promise<void> {
   if (chain === 'europa') return;
   const target = runtime();
-  const funding = await strictFunding(target, chain);
+  const funding = await runDiscoveryWork(`zero-capital ${chain} funding proof`, 3_000,
+    () => strictFunding(target, chain)).catch(error => ({
+      chain, mode: 'unavailable' as const, nativeBalance: 0n, reserveFloor: 0n,
+      paymentSource: 'unavailable' as const, strictZeroInitialCapitalEligible: false,
+      operatorMonetaryInputRequired: true,
+      reason: `Funding proof unavailable: ${error instanceof Error ? error.message : String(error)}`,
+    }));
   if (!isCurrentChainScanGeneration(chain, generation)) return;
   const receiverReady = Boolean(target.receiverManager.getReceiver(chain));
   const resourceReady = funding.mode !== 'unavailable'
     && funding.strictZeroInitialCapitalEligible === true
-    && funding.operatorMonetaryInputRequired === false
-    && receiverReady;
-  const resourceReason = funding.mode === 'unavailable'
-    ? funding.reason
+    && funding.operatorMonetaryInputRequired === false && receiverReady;
+  const resourceReason = funding.mode === 'unavailable' ? funding.reason
     : receiverReady ? funding.reason : 'verified_execution_receiver_unavailable';
 
-  // Configured and dynamic measurement are independent Stage-One acquisition lanes.
-  // Start both together so dynamic breadth cannot consume the freshness window of
-  // already-known configured routes, and vice versa.
-  const configuredTask = target.scanChain(chain, provider).catch(error => {
-    logger.warn('[ZeroCapitalDiscovery] Configured-route measurement degraded', {
-      component: 'CanonicalZeroCapitalDiscovery', chain,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return [] as ZeroCapitalOpportunity[];
-  });
-  const dynamicTask = discoverDynamicZeroCapitalQuotes(chain, provider, funding.mode).catch(error => {
-    logger.warn('[ZeroCapitalDiscovery] Dynamic graphless measurement degraded', {
-      component: 'CanonicalZeroCapitalDiscovery', chain,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return [] as QuotedZeroCapitalRoute[];
-  });
-  const [configured, dynamicQuotes] = await Promise.all([configuredTask, dynamicTask]);
-  if (!isCurrentChainScanGeneration(chain, generation)) return;
-
-  for (const opportunity of configured) {
+  const accept = async (opportunities: ZeroCapitalOpportunity[], source: 'configured' | 'dynamic', quotes?: QuotedZeroCapitalRoute[]) => {
+    assertDiscoveryWorkActive();
     if (!isCurrentChainScanGeneration(chain, generation)) return;
-    recordPreselectionCandidate({ opportunity, source: 'configured', resourceReady, resourceReason });
-  }
-
-  const block = dynamicQuotes.length > 0 ? await provider.getBlock('latest') : null;
-  if (!isCurrentChainScanGeneration(chain, generation)) return;
-  const dynamic: ZeroCapitalOpportunity[] = [];
-  for (const quote of dynamicQuotes) {
-    if (!isCurrentChainScanGeneration(chain, generation)) return;
-    const opportunity = target.fromQuotedRoute(quote, block?.timestamp || Math.floor(Date.now() / 1000));
-    if (quote.id.startsWith('graphless-')) {
-      const ttl = Math.max(500, Math.min(3000, Number(process.env.ZERO_CAPITAL_GRAPHLESS_ROUTE_TTL_MS || 1500)));
-      opportunity.expiresAt = Math.min(opportunity.expiresAt, Date.now() + ttl);
+    for (let index = 0; index < opportunities.length; index++) {
+      recordPreselectionCandidate({ opportunity: opportunities[index], quote: quotes?.[index], source, resourceReady, resourceReason });
     }
-    recordPreselectionCandidate({ opportunity, quote, source: 'dynamic', resourceReady, resourceReason });
-    dynamic.push(opportunity);
+    await processMeasuredBatch(chain, provider, generation, opportunities);
+  };
+  // Each acquisition lane hands fresh results directly to BPS rescue. A slow
+  // sibling must not hold completed evidence behind Promise.all's final barrier.
+  const configuredTask = target.scanChain(chain, provider, funding)
+    .then(opportunities => accept(opportunities, 'configured'));
+  const dynamicTask = discoverDynamicZeroCapitalQuotes(chain, provider, funding, async quotes => {
+    const opportunities = quotes.map(quote => {
+      const opportunity = target.fromQuotedRoute(
+        quote, Math.floor((quote.observedAt ?? (Date.now() - quote.quoteLatencyMs)) / 1000),
+      );
+      if (quote.id.startsWith('graphless-')) {
+        const ttl = boundedWatchdogMs(process.env.ZERO_CAPITAL_GRAPHLESS_ROUTE_TTL_MS, 1500, 500, 3000);
+        opportunity.expiresAt = Math.min(opportunity.expiresAt, opportunity.timestamp + ttl);
+      }
+      return opportunity;
+    });
+    await accept(opportunities, 'dynamic', quotes);
+  });
+  const results = await Promise.allSettled([configuredTask, dynamicTask]);
+  for (let index = 0; index < results.length; index++) {
+    const result = results[index];
+    if (result.status === 'rejected') logger.warn('[ZeroCapitalDiscovery] Measurement lane failed independently', {
+      component: 'CanonicalZeroCapitalDiscovery', chain,
+      lane: index === 0 ? 'configured' : 'dynamic',
+      error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+    });
   }
+}
 
-  const exact = [...configured, ...dynamic].filter(opportunity =>
+async function processMeasuredBatch(
+  chain: SupportedChain,
+  provider: providers.JsonRpcProvider,
+  generation: number,
+  opportunities: ZeroCapitalOpportunity[],
+): Promise<void> {
+  assertDiscoveryWorkActive();
+  const target = runtime();
+  const exact = opportunities.filter(opportunity =>
     opportunity.expiresAt > Date.now()
     && opportunity.flashLoanAmount > 0n
     && clearsStageOneCandidateOutputFloor(opportunity)
@@ -526,7 +558,7 @@ async function scanOneChain(
       provider,
       opportunities: apeHot,
       configuredRoutes: executionRoutes(target),
-      fromQuotedRoute: target.fromQuotedRoute,
+      fromQuotedRoute: target.fromQuotedRoute.bind(target),
     });
     const rescuedById = new Map(rescuedHot.map(opportunity => [opportunity.id, opportunity]));
     rescueReady = exact.map(opportunity => rescuedById.get(opportunity.id) ?? opportunity);
@@ -544,9 +576,11 @@ async function scanOneChain(
 
   // APE transformations may change economics. Re-assert the strict Stage-One boundary
   // at handoff so 100% of Stage-One outputs remain strictly above -10 BPS.
+  assertDiscoveryWorkActive();
   const rescueReadyBeforeFloor = rescueReady.length;
   rescueReady = rescueReady.filter(clearsStageOneCandidateOutputFloor);
   filteredBelowStageOneFloor += Math.max(0, rescueReadyBeforeFloor - rescueReady.length);
+  rescueReady = rescueReady.filter(opportunity => opportunity.expiresAt > Date.now());
   if (rescueReady.length === 0 || !isCurrentChainScanGeneration(chain, generation)) return;
 
   // Preserve the flash mesh as the first measured capital-source path. A fresh
@@ -616,16 +650,17 @@ async function runChainScanWithWatchdog(
 
   const generation = nextChainScanGeneration(chain);
   let tracked: Promise<void>;
-  tracked = scanOneChain(chain, provider, generation).finally(() => {
+  tracked = runDiscoveryWork(`zero-capital ${chain} chain scan`, chainScanWatchdogMs(),
+    () => scanOneChain(chain, discoveryProvider(provider), generation), lifecycleController?.signal).finally(() => {
     if (chainScanTasks.get(chain) === tracked) chainScanTasks.delete(chain);
   });
   chainScanTasks.set(chain, tracked);
 
   try {
-    await withWatchdog(tracked, chainScanWatchdogMs(), `zero-capital ${chain} chain scan`);
+    await tracked;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    if (error instanceof DiscoveryWatchdogTimeoutError) {
+    if (error instanceof Error && error.message.includes('deadline exceeded')) {
       chainWatchdogExpirations++;
       invalidateChainScanGeneration(chain, generation);
       if (chainScanTasks.get(chain) === tracked) chainScanTasks.delete(chain);
@@ -636,8 +671,8 @@ async function runChainScanWithWatchdog(
       error: message,
       chainWatchdogExpirations,
       duplicateScanSuppressedWhilePending: true,
-      timedOutScanOwnershipReleased: error instanceof DiscoveryWatchdogTimeoutError,
-      lateTimedOutScanGenerationInvalidated: error instanceof DiscoveryWatchdogTimeoutError,
+      timedOutScanOwnershipReleased: error instanceof Error && error.message.includes('deadline exceeded'),
+      lateTimedOutScanGenerationInvalidated: error instanceof Error && error.message.includes('deadline exceeded'),
       executionAuthority: false,
     });
   }
@@ -647,9 +682,16 @@ async function cycle(): Promise<void> {
   const target = runtime();
   try {
     refreshReceiverFleetForCycle(target);
-    await Promise.allSettled([...target.providers.entries()].map(([chain, provider]) =>
-      runChainScanWithWatchdog(chain, provider),
-    ));
+    // Per-chain ownership suppresses overlap. A stalled chain must not stretch
+    // every healthy chain's next scan from milliseconds to its 45-second watchdog.
+    for (const [chain, provider] of target.providers.entries()) {
+      void runChainScanWithWatchdog(chain, provider).catch(error => {
+        logger.warn('[ZeroCapitalDiscovery] Chain dispatch failed', {
+          component: 'CanonicalZeroCapitalDiscovery', chain,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+    }
     lastCycleAt = Date.now();
     lastError = null;
   } catch (error) {
@@ -671,8 +713,14 @@ function schedule(): void {
 }
 
 export async function startCanonicalZeroCapitalDiscovery(): Promise<void> {
+  if (startingTask) return startingTask;
   if (started || cycleInFlight) return;
-  await zeroCapitalEngine.initialize();
+  const controller = new AbortController();
+  lifecycleController = controller;
+  startingTask = zeroCapitalEngine.initialize(controller.signal);
+  try { await startingTask; }
+  finally { startingTask = null; }
+  if (controller.signal.aborted || lifecycleController !== controller) return;
   started = true;
   cycleInFlight = cycle().finally(() => { cycleInFlight = null; schedule(); });
   await cycleInFlight;
@@ -717,6 +765,9 @@ export async function startCanonicalZeroCapitalDiscovery(): Promise<void> {
 
 export function stopCanonicalZeroCapitalDiscovery(): void {
   started = false;
+  lifecycleController?.abort(new Error('CryptoCrawler stopped'));
+  lifecycleController = null;
+  stopZeroCapitalQuoteTracking();
   if (timer) clearTimeout(timer);
   timer = null;
   for (const [chain, generation] of chainScanGenerations.entries()) {

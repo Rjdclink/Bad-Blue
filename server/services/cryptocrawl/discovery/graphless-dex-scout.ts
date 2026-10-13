@@ -1,3 +1,4 @@
+import { assertDiscoveryWorkActive, discoveryAbortSignal, runDiscoveryWork } from '../runtime/discovery-work-context.js';
 import { ethers, type providers } from 'ethers';
 import logger from '../../../logger.js';
 import type { SupportedExecutionChain } from '../execution/adapters/onchain-payload-builder.js';
@@ -128,13 +129,14 @@ async function fetchGeckoCandidates(
   const maxAnchors = Math.min(2, anchorTokens.length);
 
   for (const anchor of anchorTokens.slice(0, maxAnchors)) {
+    assertDiscoveryWorkActive();
     const url = `https://api.geckoterminal.com/api/v2/networks/${network}/tokens/${anchor}/pools?page=1`;
     const response = await fetch(url, {
       headers: {
         accept: 'application/json;version=20230203',
         'user-agent': 'Bad-Blue-CryptoCrawler/Aries-Graphless-DEX',
       },
-      signal: AbortSignal.timeout(2_500),
+      signal: AbortSignal.any([AbortSignal.timeout(2_500), ...[discoveryAbortSignal()].filter((signal): signal is AbortSignal => !!signal)]),
     });
     if (!response.ok) {
       if (response.status === 429) {
@@ -233,6 +235,7 @@ async function scanFactoryLogs(input: {
   const fromBlock = Math.max(0, Math.min(input.currentBlock, priorCursor ?? bootstrapStart));
   const chunk = Math.floor(bounded(process.env.ZERO_CAPITAL_GRAPHLESS_FACTORY_LOG_CHUNK, 512, 64, 10_000));
   for (let start = fromBlock; start <= input.currentBlock; start += chunk) {
+    assertDiscoveryWorkActive();
     const end = Math.min(input.currentBlock, start + chunk - 1);
     const logs = await getLogsWithRecentFallback(
       input.provider,
@@ -250,6 +253,7 @@ async function scanFactoryLogs(input: {
       }
     }
   }
+  assertDiscoveryWorkActive();
   lastFactoryBlock.set(input.chainKey, input.currentBlock + 1);
 }
 
@@ -327,6 +331,7 @@ export async function discoverGraphlessDexTokens(
   provider: providers.Provider,
   anchorTokens: string[],
 ): Promise<GraphlessDexScoutResult> {
+  assertDiscoveryWorkActive();
   const normalizedAnchors = anchorTokens.map(normalizeAddress).filter((value): value is string => !!value);
   const cacheKey = `${chain}:${normalizedAnchors.map(value => value.toLowerCase()).sort().join(',')}`;
   const cached = cache.get(cacheKey);
@@ -338,19 +343,19 @@ export async function discoverGraphlessDexTokens(
   let publicCandidates: GraphlessDexTokenCandidate[] = [];
   let rpcCandidates: GraphlessDexTokenCandidate[] = [];
 
-  try {
-    publicCandidates = await fetchGeckoCandidates(chain, normalizedAnchors);
-    publicScoutAvailable = true;
-  } catch (error) {
-    errors.push(error instanceof Error ? error.message : String(error));
-  }
-
-  try {
-    rpcCandidates = await fetchRecentFactoryCandidates(chain, provider, normalizedAnchors);
-    directRpcAvailable = true;
-  } catch (error) {
-    errors.push(error instanceof Error ? error.message : String(error));
-  }
+  // Independent public and RPC sources start together. Neither is a prerequisite
+  // for the other; both are bounded by the owning discovery scope.
+  await Promise.allSettled([
+    runDiscoveryWork(`${chain} public token scout`, 4_000, () => fetchGeckoCandidates(chain, normalizedAnchors)).then(value => {
+      publicCandidates = value;
+      publicScoutAvailable = true;
+    }).catch(error => { errors.push(error instanceof Error ? error.message : String(error)); }),
+    runDiscoveryWork(`${chain} RPC token scout`, 3_000, () => fetchRecentFactoryCandidates(chain, provider, normalizedAnchors)).then(value => {
+      rpcCandidates = value;
+      directRpcAvailable = true;
+    }).catch(error => { errors.push(error instanceof Error ? error.message : String(error)); }),
+  ]);
+  assertDiscoveryWorkActive();
 
   const merged = new Map<string, GraphlessDexTokenCandidate>();
   for (const candidate of [...publicCandidates, ...rpcCandidates]) {
