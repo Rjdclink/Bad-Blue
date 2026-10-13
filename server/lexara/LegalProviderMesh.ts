@@ -592,6 +592,7 @@ async function freeSearch(
   signal?: AbortSignal,
   _firstUseful = false,
   officialFormQuery = false,
+  allowPaidSearch = true,
 ): Promise<LegalMeshCandidate[]> {
   // Fast mode returns leads for prompt verification; full mode retains all
   // bounded providers. An unverified fast lead triggers a full retry upstream.
@@ -601,7 +602,9 @@ async function freeSearch(
   else signal?.addEventListener('abort', relayAbort, { once: true });
   try {
     const providers = [
-      tavily(query, controller.signal, officialFormQuery ? 5_000 : 2_000),
+      // Tavily requires plan credits, including for standard search; never
+      // call its usage endpoint or reserve credits in free-only investigations.
+      allowPaidSearch ? tavily(query, controller.signal, officialFormQuery ? 5_000 : 2_000) : Promise.resolve([]),
       duckDuckGoInstantAnswer(query, controller.signal),
       searxng(query, controller.signal),
       ddgs(query, controller.signal),
@@ -624,7 +627,7 @@ async function freeSearch(
     }
     const outcomes = await Promise.allSettled(providers);
     if (signal?.aborted) throw signal.reason || new DOMException('Discovery cancelled', 'AbortError');
-    const enabled = [Boolean(process.env.TAVILY_API_KEY?.trim()), true, Boolean(lexaraSearxngBase()), Boolean(lexaraDdgsBase()), Boolean(lexaraOpenserpBase())];
+    const enabled = [allowPaidSearch && Boolean(process.env.TAVILY_API_KEY?.trim()), true, Boolean(lexaraSearxngBase()), Boolean(lexaraDdgsBase()), Boolean(lexaraOpenserpBase())];
     console.info('[LEXARA Discovery Lanes]', JSON.stringify({ requestId: getDiscoveryDiagnostics()?.requestId, statusScope: 'promise-completion-only', results: outcomes.map((outcome, index) => ({ lane: ['tavily', 'duckduckgo-instant-answer', 'searxng', 'ddgs', 'openserp'][index], enabled: enabled[index], candidates: outcome.status === 'fulfilled' ? outcome.value.length : 0, promiseStatus: outcome.status })) }));
     return fuseRankedCandidates(outcomes.flatMap(outcome =>
       outcome.status === 'fulfilled' ? [outcome.value] : []));
@@ -636,6 +639,7 @@ async function freeSearch(
 async function firstUsefulSearchVariants(
   queries: readonly string[],
   signal?: AbortSignal,
+  allowPaidSearch = true,
 ): Promise<LegalMeshCandidate[]> {
   const controller = new AbortController();
   const relayAbort = () => controller.abort(signal?.reason);
@@ -644,7 +648,7 @@ async function firstUsefulSearchVariants(
   try {
     const completed: LegalMeshCandidate[][] = [];
     const first = await Promise.any(queries.map(async query => {
-      const candidates = await freeSearch(query, controller.signal, true);
+      const candidates = await freeSearch(query, controller.signal, true, false, allowPaidSearch);
       if (!candidates.length) throw new Error('LEXARA_NO_QUERY_LEADS');
       completed.push(candidates);
       return candidates;
@@ -664,11 +668,12 @@ async function firstUsefulParallelSearch(
   providerPrefix: 'supplemental' | 'planned',
   signal?: AbortSignal,
   _providerFirstUseful = false,
+  allowPaidSearch = true,
 ): Promise<LegalMeshCandidate[]> {
   const results = _providerFirstUseful
-    ? await firstUsefulSearchVariants(queries, signal)
+    ? await firstUsefulSearchVariants(queries, signal, allowPaidSearch)
     : fuseRankedCandidates((await Promise.allSettled(
-        queries.map(query => freeSearch(query, signal, false)),
+        queries.map(query => freeSearch(query, signal, false, false, allowPaidSearch)),
       )).flatMap(outcome => outcome.status === 'fulfilled' ? [outcome.value] : []));
   return diversify(results
     .filter(item => !seen.has(item.url))
@@ -699,8 +704,8 @@ export async function discoverLegalMeshTier3(
   }
   const uniqueVariants=[...new Set(variants)].slice(0,options.firstUseful ? 2 : 6);
   const groups=options.firstUseful && !options.officialFormQuery
-    ? [await firstUsefulSearchVariants(uniqueVariants,signal)]
-    : await Promise.all(uniqueVariants.map(variant=>freeSearch(variant,signal,false,options.officialFormQuery)));
+    ? [await firstUsefulSearchVariants(uniqueVariants,signal,options.allowPaidSearch !== false)]
+    : await Promise.all(uniqueVariants.map(variant=>freeSearch(variant,signal,false,options.officialFormQuery,options.allowPaidSearch !== false)));
   const learnedSources=await Promise.race([
     getLexaraLearnedSources(options.categories||[],options.jurisdiction,8),
     new Promise<string[]>(resolve=>setTimeout(()=>resolve([]),75)),
@@ -756,6 +761,7 @@ export async function discoverLegalMeshSupplemental(
       'supplemental',
       signal,
       options.firstUseful === true,
+      options.allowPaidSearch !== false,
     );
     if(learnedFresh.length) return learnedFresh;
   }
@@ -778,6 +784,7 @@ export async function discoverLegalMeshSupplemental(
       'planned',
       signal,
       options.firstUseful === true,
+      options.allowPaidSearch !== false,
     );
     if(plannedFresh.length) return plannedFresh;
   }
