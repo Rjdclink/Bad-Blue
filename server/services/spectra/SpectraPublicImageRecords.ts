@@ -279,18 +279,23 @@ async function collect(leads: ImageLead[], options: {
       if (!response) { failed++; return null; }
       // One optional model inspection per collection, and only when deployment
       // is explicitly configured for sending public image bytes to a model.
-      const mayInspectScene = !options.fetchImpl
-        && process.env.SPECTRA_SCENE_ANALYSIS_ENABLED === 'true'
-        && sceneAnalysesScheduled < 1;
-      if (mayInspectScene) sceneAnalysesScheduled++;
+      const sceneEnabled = !options.fetchImpl
+        && process.env.SPECTRA_SCENE_ANALYSIS_ENABLED === 'true';
       const record = await inspectSpectraPublicImageResponse(response, {
         url: imageUrl, sourcePostUrl: lead.post.url, platform: lead.platform,
         publishedAt: lead.post.publishedAt, alt: lead.alt,
-        sceneAnalyzer: mayInspectScene ? (bytes, mimeType) =>
-          inspectSpectraVisualScene(bytes, mimeType, {
-            signal: controller.signal,
+        sceneAnalyzer: sceneEnabled ? (bytes, mimeType) => {
+          if (sceneAnalysesScheduled >= 1) return Promise.resolve(null);
+          sceneAnalysesScheduled++;
+          // Downloaded bytes have already passed the network deadline.
+          // Give the independently bounded optional model its own 6-second
+          // deadline instead of consuming the remaining HTTP timeout.
+          clearTimeout(timer);
+          return inspectSpectraVisualScene(bytes, mimeType, {
+            signal: options.signal,
             allowProvider: true,
-          }) : undefined,
+          });
+        } : undefined,
       });
       if (!record) { failed++; return null; }
       if (!options.fetchImpl) {
