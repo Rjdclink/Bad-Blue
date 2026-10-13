@@ -116,7 +116,8 @@ test('SPECTRA searches public profiles automatically and stops only on actual co
   cityDiscoveryPolicy.includes('assessSpectraCityDiscoveryReadiness') &&
   cityDiscoveryPolicy.includes('chooseSpectraPublicRetrievalUrls') &&
   cityDiscoveryPolicy.includes('Boolean(city)') &&
-  routes.includes('chooseSpectraPublicRetrievalUrls(enrichedResults, 8)') &&
+  routes.includes('chooseSpectraPublicRetrievalUrls(enrichedResults, 16)') &&
+  routes.includes('.filter(url => !attemptedRetrievalUrls.has(url)).slice(0, 8)') &&
   routes.includes('if (readiness.sufficientToStop) break;'));
 
 test('Media GPS remains dated scene context with explicit freshness and uncertainty',
