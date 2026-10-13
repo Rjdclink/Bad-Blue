@@ -10,10 +10,11 @@ export interface MasterPanelDefinition {
   aliases?: string[];
 }
 
-/** Master arrows switch only between the microphone page and the command dashboard. */
+/** The Master arrows cycle LEXARA, CryptoCrawler, and the private signup dashboard. */
 export const MASTER_PANELS: MasterPanelDefinition[] = [
   { label: 'Lexara', path: '/lexara-consent' },
   { label: 'CryptoCrawler', path: '/cryptocrawler-dashboard', aliases: ['/cryptocrawler', '/cryptocrawler-v2'] },
+  { label: 'Master Signups', path: '/master-signups' },
 ];
 
 function pathOnly(location: string): string {
