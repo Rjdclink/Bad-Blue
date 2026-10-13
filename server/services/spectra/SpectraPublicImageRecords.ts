@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import ExifReader from 'exifreader';
 import type { SpectraRetrievedEvidence } from './SpectraPublicRetrieval';
+import { inspectSpectraVisualScene, type SpectraVisualSceneAssessment } from './SpectraVisualSceneAnalysis';
 
 type SocialPlatform = 'Bluesky' | 'Mastodon' | 'Facebook' | 'Instagram' | 'X' | 'Web';
 type ImageLead = { url: string; post: SpectraRetrievedEvidence; platform: SocialPlatform; alt?: string };
@@ -137,7 +138,8 @@ function matchesSignature(bytes: Buffer, mime: string): boolean {
 export async function inspectSpectraPublicImageResponse(
   response: Response,
   input: { url: string; sourcePostUrl: string; platform: SocialPlatform; alt?: string;
-    publishedAt?: string; maxBytes?: number },
+    publishedAt?: string; maxBytes?: number;
+    sceneAnalyzer?: (bytes: Buffer, mimeType: 'image/jpeg' | 'image/png' | 'image/webp') => Promise<SpectraVisualSceneAssessment | null> },
 ): Promise<SpectraRetrievedEvidence | null> {
   if (!response.ok || response.status >= 300 || !response.body) return null;
   const contentType = (response.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
@@ -174,13 +176,37 @@ export async function inspectSpectraPublicImageResponse(
       const value = rawExifValue(tags?.[key]);
       if (value !== undefined) exif[key] = value;
     }
-    const lat = decimalGps(tags?.GPSLatitude, exif.GPSLatitudeRef);
-    const lon = decimalGps(tags?.GPSLongitude, exif.GPSLongitudeRef);
+    // Description strings are human-readable labels such as "West longitude".
+    // Only the raw, validated cardinal directions can set a GPS sign.
+    for (const [name, allowed] of [
+      ['GPSLatitudeRef', ['N', 'S']],
+      ['GPSLongitudeRef', ['E', 'W']],
+    ] as const) {
+      const raw = tags?.[name]?.value;
+      const value = Array.isArray(raw) ? raw[0] : raw;
+      if (typeof value === 'string' && (allowed as readonly string[]).includes(value.toUpperCase())) {
+        exif[name] = value.toUpperCase();
+      } else {
+        delete exif[name];
+      }
+    }
+    const lat = exif.GPSLatitudeRef ? decimalGps(tags?.GPSLatitude, exif.GPSLatitudeRef) : null;
+    const lon = exif.GPSLongitudeRef ? decimalGps(tags?.GPSLongitude, exif.GPSLongitudeRef) : null;
     if (lat !== null && lon !== null && Math.abs(lat) <= 90 && Math.abs(lon) <= 180) {
       gps = { latitude: lat, longitude: lon };
     }
   } catch { /* Many CDN images have no parseable EXIF. */ }
   const time = captureTime(exif);
+  // Model output is opt-in, non-biometric, and explicitly marked unverified.
+  // Failures leave the existing EXIF/byte-hash evidence unaffected.
+  let sceneAnalysis: SpectraVisualSceneAssessment | null = null;
+  if (input.sceneAnalyzer) {
+    try {
+      sceneAnalysis = await input.sceneAnalyzer(
+        bytes, contentType as 'image/jpeg' | 'image/png' | 'image/webp',
+      );
+    } catch { /* A failed optional model cannot invalidate fetched bytes. */ }
+  }
   return {
     url: input.url, requestedUrl: input.url, retrievedAt: new Date().toISOString(),
     publishedAt: input.publishedAt, contentType,
@@ -189,6 +215,7 @@ export async function inspectSpectraPublicImageResponse(
       sourcePostUrl: input.sourcePostUrl,
       contentSha256: createHash('sha256').update(bytes).digest('hex'),
       byteLength: size, exif, ...time,
+      sceneAnalysis: sceneAnalysis || undefined,
       captureGps: gps, evidenceRole: 'media_capture_scene',
       sourcePlatform: input.platform, imageBytesArchived: false,
       captureLocationIsSubjectPosition: false, currentPositionVerified: false,
@@ -202,6 +229,7 @@ async function collect(leads: ImageLead[], options: {
 }, maxImages = MAX_IMAGES_PER_PLATFORM): Promise<SpectraPublicImageCollection> {
   const records: SpectraRetrievedEvidence[] = [];
   let attempted = 0, failed = 0, cached = 0;
+  let sceneAnalysesScheduled = 0;
   const unique = [...new Map(leads.map(lead => [lead.url, lead])).values()]
     .slice(0, Math.max(0, Math.min(12, maxImages)));
   const run = async (lead: ImageLead) => {
@@ -249,9 +277,20 @@ async function collect(leads: ImageLead[], options: {
         break;
       }
       if (!response) { failed++; return null; }
+      // One optional model inspection per collection, and only when deployment
+      // is explicitly configured for sending public image bytes to a model.
+      const mayInspectScene = !options.fetchImpl
+        && process.env.SPECTRA_SCENE_ANALYSIS_ENABLED === 'true'
+        && sceneAnalysesScheduled < 1;
+      if (mayInspectScene) sceneAnalysesScheduled++;
       const record = await inspectSpectraPublicImageResponse(response, {
         url: imageUrl, sourcePostUrl: lead.post.url, platform: lead.platform,
         publishedAt: lead.post.publishedAt, alt: lead.alt,
+        sceneAnalyzer: mayInspectScene ? (bytes, mimeType) =>
+          inspectSpectraVisualScene(bytes, mimeType, {
+            signal: controller.signal,
+            allowProvider: true,
+          }) : undefined,
       });
       if (!record) { failed++; return null; }
       if (!options.fetchImpl) {
