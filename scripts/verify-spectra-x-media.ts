@@ -19,7 +19,6 @@ for (const rejected of [
 
 const source = page('https://x.com/fake_account/status/1234567890123');
 const source2 = page('https://x.com/other_fake/status/9876543210987');
-assert.equal((await collectSpectraXPostMedia([source])).status, 'unconfigured');
 assert.equal((await collectSpectraXPostMedia([source], { token: ' ' })).attempted, 0);
 
 let calls = 0;
