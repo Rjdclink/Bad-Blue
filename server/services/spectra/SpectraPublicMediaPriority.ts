@@ -1,3 +1,5 @@
+import { parseSpectraVisualSceneAssessment } from './SpectraVisualSceneAnalysis';
+
 /** Recency priority for locations embedded in publicly fetched PHOTOGRAPHS.
  * This ranks dated capture scenes, not a person's current or historical presence.
  * Retrieval and post-publication timestamps never substitute for a capture date.
@@ -19,6 +21,7 @@ export interface SpectraPrioritizedMediaScene {
   capturedAt: string | null;
   captureTimeStatus: string;
   captureGps: { latitude: number; longitude: number } | null;
+  sceneAnalysis?: SpectraVisualSceneAssessment;
   recencyWeight: number;
   ageDays: number | null;
   priorityBand: 'recent_scene' | 'historical_scene' | 'undated_scene' | 'no_geotag';
@@ -66,6 +69,16 @@ export function prioritizeSpectraPublicMediaScenes(
     const ageDays = validTime ? Math.max(0, now - originalCaptureTime) / DAY_MS : null;
     const recencyWeight = validGps && ageDays !== null
       ? Math.pow(0.5, ageDays / HALF_LIFE_DAYS) : 0;
+    // Never forward arbitrary source-provided model fields. Rebuild a bounded
+    // allowlisted assessment, validating its byte hash and provenance marker.
+    const sceneCandidate = object(item.sceneAnalysis);
+    const sceneAnalysis = sceneCandidate?.evidenceRole === 'model_interpreted_scene_context'
+      && sceneCandidate?.validation === 'unverified_model_output'
+      && sceneCandidate?.method === 'claude_image_classification'
+      && typeof sceneCandidate?.contentSha256 === 'string'
+      && sceneCandidate.contentSha256.toLowerCase() === sha.toLowerCase()
+      ? parseSpectraVisualSceneAssessment(JSON.stringify(sceneCandidate), sha)
+      : null;
     const scene: SpectraPrioritizedMediaScene = {
       imageUrl: record.url,
       sourcePostUrl: post,
@@ -76,6 +89,7 @@ export function prioritizeSpectraPublicMediaScenes(
       capturedAt: validTime ? new Date(originalCaptureTime).toISOString() : null,
       captureTimeStatus: typeof item.captureTimeStatus === 'string' ? item.captureTimeStatus : 'missing',
       captureGps: gps,
+      ...(sceneAnalysis ? { sceneAnalysis } : {}),
       ageDays,
       recencyWeight,
       priorityBand: !validGps ? 'no_geotag'
@@ -89,7 +103,12 @@ export function prioritizeSpectraPublicMediaScenes(
     // Identical file hashes are one scene, however many posts copied them.
     const prior = collected.get(sha);
     if (!prior) collected.set(sha, scene);
-    else if (!prior.sourcePostUrls.includes(post) && prior.sourcePostUrls.length < 8) prior.sourcePostUrls.push(post);
+    else {
+      if (!prior.sourcePostUrls.includes(post) && prior.sourcePostUrls.length < 8) {
+        prior.sourcePostUrls.push(post);
+      }
+      if (!prior.sceneAnalysis && scene.sceneAnalysis) prior.sceneAnalysis = scene.sceneAnalysis;
+    }
   }
   return [...collected.values()].sort((a, b) =>
     b.recencyWeight - a.recencyWeight
