@@ -8,8 +8,6 @@ export interface SpectraSatelliteScene {
   platform?: string;
   bbox?: number[];
   links: Array<{ rel: string; href: string }>;
-  /** Optional preview asset URL from STAC metadata; it has not been downloaded. */
-  previewUrl?: string;
 }
 
 const STAC_SEARCH = 'https://earth-search.aws.element84.com/v1/search';
@@ -56,26 +54,11 @@ function scene(value: unknown, fromMs: number, toMs: number): SpectraSatelliteSc
   const links = Array.isArray(item.links)
     ? item.links.slice(0, 12).flatMap((link: unknown) => validLink(link) || [])
     : [];
-  // A STAC Item's preview is often an asset rather than a rel=preview link.
-  // Expose the catalog's immutable URL only; don't fetch scene pixels, track
-  // people, or confuse a preview with a time-verified sensor observation.
-  const assets = item.assets && typeof item.assets === 'object'
-    && !Array.isArray(item.assets) ? item.assets as Record<string, any> : {};
-  const previewUrl = ['thumbnail', 'rendered_preview']
-    .map(name => {
-      const raw = assets[name];
-      if (!raw || typeof raw !== 'object') return null;
-      try {
-        const link = new URL(String(raw.href || ''));
-        return link.protocol === 'https:' && !link.username && !link.password
-          && !link.port ? link.toString() : null;
-      } catch { return null; }
-    }).find((value): value is string => value !== null);
   return {
     provider: 'Element 84 Earth Search', id, collection, observedAt,
     cloudCover, platform: typeof item.properties?.platform === 'string'
       ? item.properties.platform.slice(0, 100) : undefined,
-    bbox, links: links.slice(0, 4), ...(previewUrl ? { previewUrl } : {}),
+    bbox, links: links.slice(0, 4),
   };
 }
 
