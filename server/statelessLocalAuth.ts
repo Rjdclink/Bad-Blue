@@ -27,6 +27,25 @@ export interface LocalTrialActivation {
   user: StatelessLocalUser;
 }
 
+/** Customer-facing profile fields only; never exposes password hashes. */
+export interface CanonicalSignupAdminRecord {
+  id: string;
+  email: string;
+  firstName: string | null;
+  lastName: string | null;
+  status: string;
+  hasPaidForAccess: boolean;
+  hasLocalCredentials: boolean;
+  createdAt: string | null;
+  lastLoginAt: string | null;
+}
+
+export interface CanonicalSignupAdminReport {
+  page: number;
+  total: number;
+  signups: CanonicalSignupAdminRecord[];
+}
+
 export interface StatelessLocalSession extends StatelessLocalUser {
   sessionVersion: 2;
 }
@@ -78,6 +97,9 @@ const AUTH_EDGE_FUNCTION = "legalwhat-local-auth";
 
 interface EdgeAuthResponse {
   ok?: boolean;
+  page?: number;
+  total?: number;
+  signups?: CanonicalSignupAdminRecord[];
   user?: StatelessLocalUser | null;
   decision?: { outcome?: TrialActivationOutcome } | null;
   trialSchemaReady?: boolean;
@@ -86,7 +108,7 @@ interface EdgeAuthResponse {
 }
 
 async function edgeAuthRequest(
-  action: "probe" | "login" | "register" | "user" | "set_subscription" | "activate_trial",
+  action: "probe" | "login" | "register" | "user" | "set_subscription" | "activate_trial" | "admin_signups",
   payload: Record<string, unknown> = {},
 ): Promise<EdgeAuthResponse> {
   const url = String(process.env.LEGALWHAT_AUTH_SUPABASE_URL || getConfig().SUPABASE_URL || "").trim();
@@ -359,6 +381,80 @@ export async function probeLocalAuthStoreHttp(): Promise<void> {
 export async function isLocalTrialSchemaReady(): Promise<boolean> {
   await resolveLocalAuthBackend();
   return trialSchemaReady;
+}
+
+function mapCanonicalSignup(row: any, ids: Set<string>): CanonicalSignupAdminRecord {
+  const id = String(row.id);
+  return {
+    id,
+    email: String(row.email || ""),
+    firstName: row.first_name == null ? null : String(row.first_name),
+    lastName: row.last_name == null ? null : String(row.last_name),
+    status: String(row.status || "pending_payment"),
+    hasPaidForAccess: row.has_paid_for_access === true,
+    hasLocalCredentials: ids.has(id) || row.has_local_credentials === true,
+    createdAt: row.created_at == null ? null : String(row.created_at),
+    lastLoginAt: row.last_login_at == null ? null : String(row.last_login_at),
+  };
+}
+
+/**
+ * Master-admin signup reporting follows the SAME selected auth authority
+ * that receives registrations. Never count Neon application users as signups.
+ * The caller is responsible for checking the master-admin session first.
+ */
+export async function getCanonicalSignupAdminReportHttp(requestedPage = 1): Promise<CanonicalSignupAdminReport> {
+  const page = Number.isSafeInteger(requestedPage) && requestedPage >= 1
+    ? Math.min(requestedPage, 10000) : 1;
+  const limit = 50;
+  const offset = (page - 1) * limit;
+  const backend = await resolveLocalAuthBackend();
+
+  if (backend.kind === "edge") {
+    const response = await edgeAuthRequest("admin_signups", { page });
+    if (!Array.isArray(response.signups) || !Number.isSafeInteger(response.total) || response.total! < 0) {
+      throw new Error("Canonical signup authority returned an invalid report");
+    }
+    return { page, total: response.total!, signups: response.signups };
+  }
+
+  if (backend.kind === "postgres") {
+    const [count, rows] = await Promise.all([
+      authDbQuery("SELECT count(*)::int AS total FROM users"),
+      authDbQuery(
+        `SELECT u.id,u.email,u.first_name,u.last_name,u.status,u.has_paid_for_access,
+                u.created_at,u.last_login_at,
+                EXISTS (SELECT 1 FROM auth_accounts a WHERE a.user_id=u.id
+                  AND a.auth_type='local' AND a.password_hash IS NOT NULL AND a.password_hash <> '') AS has_local_credentials
+           FROM users u ORDER BY u.created_at DESC,u.id DESC LIMIT $1 OFFSET $2`,
+        [limit, offset],
+      ),
+    ]);
+    return {
+      page,
+      total: Number(count.rows?.[0]?.total || 0),
+      signups: (rows.rows || []).map((row: any) => mapCanonicalSignup(row, new Set<string>())),
+    };
+  }
+
+  const { data: rows, error, count } = await backend.client.from("users")
+    .select("id,email,first_name,last_name,status,has_paid_for_access,created_at,last_login_at", { count: "exact" })
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
+    .range(offset, offset + limit - 1);
+  if (error || count == null) throw new Error("Canonical signup lookup failed: " + (error?.message || "no count"));
+
+  const ids = (rows || []).map((row: any) => String(row.id));
+  const { data: accounts, error: credentialsError } = ids.length
+    ? await backend.client.from("auth_accounts").select("user_id")
+        .eq("auth_type", "local")
+        .not("password_hash", "is", null)
+        .neq("password_hash", "")
+        .in("user_id", ids)
+    : { data: [] as { user_id: string }[], error: null };
+  if (credentialsError) throw new Error("Credential state lookup failed: " + credentialsError.message);
+  const credentialIds = new Set((accounts || []).map((row: any) => String(row.user_id)));
+  return { page, total: count, signups: (rows || []).map((row: any) => mapCanonicalSignup(row, credentialIds)) };
 }
 
 export async function getLocalUserByIdHttp(userId: string): Promise<StatelessLocalUser | null> {
@@ -1106,83 +1202,3 @@ export function verifyLocalSessionToken(token: string | null | undefined, now = 
 export function getLocalSessionMaxAgeSeconds(): number {
   return Math.floor(LOCAL_SESSION_TTL_MS / 1000);
 }
-
-/**
- * One-time cleanup for pre-existing local signup test accounts. The cutoff is
- * mandatory so a repeated deployment can never remove a user created after the
- * cleanup was authorized.
- */
-export async function purgeLocalTestUsersBeforeHttp(cutoffIso: string): Promise<number> {
-  const cutoff = new Date(cutoffIso);
-  if (!Number.isFinite(cutoff.getTime())) throw new Error("Invalid local-test-user purge cutoff");
-
-  const backend = await resolveLocalAuthBackend();
-
-  if (backend.kind === "edge") {
-    // Maintenance deletion is intentionally not exposed through the public
-    // login Edge Function. This historical cleanup is optional after cutoff.
-    return 0;
-  }
-
-  if (backend.kind === "postgres") {
-    const dbClient = await pool.connect();
-    try {
-      await dbClient.query("BEGIN");
-      await dbClient.query(`SET LOCAL statement_timeout = '${AUTH_DB_QUERY_TIMEOUT_MS}ms'`);
-
-      const candidate = await dbClient.query(
-        `SELECT DISTINCT u.id
-           FROM users u
-           JOIN auth_accounts a ON a.user_id = u.id AND a.auth_type = 'local'
-          WHERE u.created_at < $1`,
-        [cutoff.toISOString()],
-      );
-      const ids = (candidate.rows || []).map((row: any) => String(row.id || "")).filter(Boolean);
-      if (!ids.length) {
-        await dbClient.query("COMMIT");
-        return 0;
-      }
-
-      await dbClient.query("DELETE FROM public_evidence WHERE user_id = ANY($1::varchar[])", [ids]);
-      await dbClient.query("DELETE FROM document_creator_sessions WHERE user_id = ANY($1::varchar[])", [ids]);
-      await dbClient.query("DELETE FROM users WHERE id = ANY($1::varchar[])", [ids]);
-      await dbClient.query("COMMIT");
-      return ids.length;
-    } catch (error) {
-      await dbClient.query("ROLLBACK").catch(() => undefined);
-      throw error;
-    } finally {
-      dbClient.release();
-    }
-  }
-
-  const { data: localAccounts, error: accountError } = await backend.client
-    .from("auth_accounts")
-    .select("user_id")
-    .eq("auth_type", "local");
-  if (accountError) throw new Error(`Local account cleanup lookup failed: ${accountError.message}`);
-
-  const localUserIds = [...new Set((localAccounts || []).map((row: any) => String(row.user_id || "")).filter(Boolean))];
-  if (!localUserIds.length) return 0;
-
-  const { data: candidateUsers, error: userError } = await backend.client
-    .from("users")
-    .select("id,created_at")
-    .in("id", localUserIds)
-    .lt("created_at", cutoff.toISOString());
-  if (userError) throw new Error(`Local account cleanup user lookup failed: ${userError.message}`);
-
-  const ids = (candidateUsers || []).map((row: any) => String(row.id || "")).filter(Boolean);
-  if (!ids.length) return 0;
-
-  for (const table of ["public_evidence", "document_creator_sessions"]) {
-    const { error } = await backend.client.from(table).delete().in("user_id", ids);
-    if (error) throw new Error(`Local account cleanup failed for ${table}: ${error.message}`);
-  }
-
-  const { error: deleteError } = await backend.client.from("users").delete().in("id", ids);
-  if (deleteError) throw new Error(`Local account cleanup user delete failed: ${deleteError.message}`);
-
-  return ids.length;
-}
-

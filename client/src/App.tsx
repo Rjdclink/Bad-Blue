@@ -121,6 +121,7 @@ const CryptoCrawlerCommandDashboard = lazyWithRetry(() => import("@/pages/crypto
 const ControlRoomPage = lazyWithRetry(() => import("@/pages/control-room"), 'ControlRoom');
 const OrchestratorConsole = lazyWithRetry(() => import("@/pages/orchestrator-console"), 'OrchestratorConsole');
 const AdminConsole = lazyWithRetry(() => import("@/pages/admin-console"), 'AdminConsole');
+const MasterSignupsPage = lazyWithRetry(() => import("@/pages/master-signups"), 'MasterSignups');
 const AdminPetitions = lazyWithRetry(() => import("@/pages/admin-petitions"), 'AdminPetitions');
 const AdminLawsuits = lazyWithRetry(() => import("@/pages/admin-lawsuits"), 'AdminLawsuits');
 const AdminComplaints = lazyWithRetry(() => import("@/pages/admin-complaints"), 'AdminComplaints');
@@ -343,6 +344,7 @@ function Router() {
           {isAuthenticated && hasPaidAccess ? (
             <>
               <Route path="/administrator" component={AdminConsole} />
+              {isMasterSession && <Route path="/master-signups" component={MasterSignupsPage} />}
               <Route path="/admin" component={AdminConsole} />
               <Route path="/welcome"><Redirect to="/lexara-consent" /></Route>
               <Route path="/lexara-consent" component={LexaraConsentPage} />

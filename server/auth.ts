@@ -26,8 +26,8 @@ import {
   resetLocalPasswordHttp,
   getLocalSessionMaxAgeSeconds,
   registerLocalUserHttp,
+  getCanonicalSignupAdminReportHttp,
   verifyLocalSessionToken,
-  purgeLocalTestUsersBeforeHttp,
   probeLocalAuthStoreHttp,
   getLocalUserByIdHttp,
   type StatelessLocalSession,
@@ -487,6 +487,22 @@ export async function setupAuth(app: Express) {
     }
   });
 
+  // Canonical LegalWhat signup register. Authenticated master only, not
+  // the Neon application usage database and never public.
+  app.get("/api/admin/legalwhat-signups", async (req, res) => {
+    res.setHeader("Cache-Control", "private, no-store");
+    if (!hasValidMasterCookie(req)) return res.status(403).json({ message: "Master admin access required" });
+    const requestedPage = Number(req.query.page);
+    const page = Number.isSafeInteger(requestedPage) && requestedPage >= 1 ? requestedPage : 1;
+    try {
+      const report = await getCanonicalSignupAdminReportHttp(page);
+      return res.json({ source: "canonical-legalwhat-auth", ...report });
+    } catch (error) {
+      console.error("[AUTH] Master signup report unavailable:", error instanceof Error ? error.message : String(error));
+      return res.status(503).json({ message: "Signup authority temporarily unavailable" });
+    }
+  });
+
   // Resolve canonical identities first. Only a request carrying the old
   // connect.sid cookie is allowed to enter the legacy PostgreSQL/Passport path.
   // This removes database-session work from unauthenticated API traffic and from
@@ -602,23 +618,6 @@ export async function setupAuth(app: Express) {
     return finish();
   });
 
-  const purgeCutoff = String(process.env.PURGE_LOCAL_TEST_USERS_BEFORE || "").trim();
-  if (purgeCutoff) {
-    try {
-      const removed = await purgeLocalTestUsersBeforeHttp(purgeCutoff);
-      console.info("[AUTH] Authorized pre-cutoff local test signup cleanup complete", {
-        removed,
-        cutoff: purgeCutoff,
-      });
-    } catch (error) {
-      // Cleanup is maintenance-only and must not take the public application
-      // offline. The cutoff keeps any later retry bounded to the same old users.
-      console.error("[AUTH] Authorized local test signup cleanup failed", {
-        cutoff: purgeCutoff,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
 }
 
 export const isIdentityAuthenticated: RequestHandler = async (req, res, next) => {
