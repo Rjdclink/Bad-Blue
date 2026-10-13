@@ -14,6 +14,11 @@ for (const file of [
   'server/services/spectra/SpectraPublicImageRecords.ts',
   'server/services/spectra/SpectraVisualSceneAnalysis.ts',
   'server/services/spectra/SpectraXPostMedia.ts',
+  'server/services/spectra/SpectraCameraDirectoryAdapters.ts',
+  'scripts/verify-spectra-public-image-pipeline.ts',
+  'scripts/verify-spectra-x-media.ts',
+  'scripts/verify-spectra-visual-scene.ts',
+  'scripts/verify-spectra-camera-validation.ts',
 ]) {
   assert.doesNotThrow(
     () => esbuild.transformSync(read(file), { loader: 'ts', target: 'es2022', format: 'esm' }),

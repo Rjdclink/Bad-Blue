@@ -101,7 +101,7 @@ assert.equal(failedModel.observations.length, 0);
 // this separate model-only calculation must compare each classified file once.
 const shaB = 'b'.repeat(64), shaC = 'c'.repeat(64);
 const similar = parseSpectraVisualSceneAssessment(text, shaB)!;
-const different = parseSpectraVisualSceneAssessment(JSON.stringify({
+const distinctScene = parseSpectraVisualSceneAssessment(JSON.stringify({
   objects: ['water'], vehicles: [], settings: ['coastal'],
 }), shaC)!;
 const record = (hash: string, labels: unknown) => ({
@@ -114,7 +114,7 @@ const record = (hash: string, labels: unknown) => ({
   },
 });
 const comparison = summarizeSpectraSceneOverlap([
-  record(sha, parsed), record(sha, parsed), record(shaB, similar), record(shaC, different),
+  record(sha, parsed), record(sha, parsed), record(shaB, similar), record(shaC, distinctScene),
 ]);
 assert.equal(comparison.distinctClassifiedScenes, 3);
 assert.equal(comparison.comparedDistinctPairs, 3);
