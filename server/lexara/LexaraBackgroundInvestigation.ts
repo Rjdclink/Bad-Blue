@@ -70,6 +70,8 @@ export interface LexaraBackgroundInvestigationContext {
   claudeResearchModel?: string;
   claudeResearchMaxTokens?: number;
   claudeRetryTruncatedOutput?: boolean;
+  /** Pass through the SPECTRA paid-search budget to native supplemental lanes. */
+  allowPaidSearch?: boolean;
 }
 
 interface AssessedEvidence {
@@ -952,6 +954,7 @@ export async function investigateLexaraBackgroundQuestion(
           subject: subject.name,
           requestedFact: decision.requestedFact,
           firstUseful: false,
+          allowPaidSearch: context.allowPaidSearch,
         }),
       ]);
       const primary = primaryOutcome.status === 'fulfilled' ? primaryOutcome.value : [];
