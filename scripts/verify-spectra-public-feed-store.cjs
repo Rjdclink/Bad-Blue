@@ -147,7 +147,7 @@ const check = async (name, work) => { reset(); await work(); passed++; savedInfo
     assert.equal(claims.length, 4, 'due-feed claims remain checked every cycle');
     assert.equal(fixture.connectCount, 0, 'idle polls must not open a transaction');
   });
-  await check('disabled startup makes no requests; shutdown aborts active work and releases its lease', async () => {
+  await check('independent feeds overlap; disabled startup is idle and shutdown releases active leases', async () => {
     process.env.NO_INTERVALS = 'true'; store.startSpectraPublicFeedCollector(); await store.stopSpectraPublicFeedCollector();
     assert.equal(fixture.queries.length, 0); delete process.env.NO_INTERVALS;
     process.env.SPECTRA_PUBLIC_FEEDS_ENABLED = 'false'; store.startSpectraPublicFeedCollector(); await store.stopSpectraPublicFeedCollector();
@@ -157,12 +157,16 @@ const check = async (name, work) => { reset(); await work(); passed++; savedInfo
     let requests = 0;
     fixture.handler = async sql => ({ rows: sql.includes('RETURNING provider, lease_token') ? [lease] : [] });
     fixture.collect = async (_id, options) => {
-      requests++; assert.equal(fixture.connectCount, 0, 'HTTP must not hold a transaction'); entered();
+      requests++; assert.equal(fixture.connectCount, 0, 'HTTP must not hold a transaction');
+      if (requests === 2) entered();
       return new Promise(resolve => options.signal.addEventListener('abort', () => resolve(result('failed', [], { errorCode: 'aborted' })), { once: true }));
     };
     store.startSpectraPublicFeedCollector(); store.startSpectraPublicFeedCollector();
-    await started; await store.stopSpectraPublicFeedCollector();
-    assert.equal(requests, 1); assert(fixture.queries.some(q => q.sql.includes("error_code = 'cancelled'")));
+    const watchdog = setTimeout(() => entered(new Error('Feeds did not overlap')), 2000);
+    const failure = await started; clearTimeout(watchdog);
+    await store.stopSpectraPublicFeedCollector();
+    if (failure) throw failure;
+    assert.equal(requests, 2); assert(fixture.queries.some(q => q.sql.includes("error_code = 'cancelled'")));
   });
 
   if (process.env.SPECTRA_PGLITE_MODULE) {

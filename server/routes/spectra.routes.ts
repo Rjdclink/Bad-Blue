@@ -161,6 +161,8 @@ const PHONE_CANDIDATE_RE = /(?:\+\d{1,3}[\s().-]*)?(?:\d[\s().-]*){7,15}/;
 const MAC_CANDIDATE_RE = /\b(?:[0-9A-F]{2}[:-]){5}[0-9A-F]{2}\b/i;
 const LABELED_DEVICE_REF_RE = /\b(?:device(?:\s*(?:id|ref))?|imei|meid|bssid|mac(?:\s+address)?)\s*(?::|=|-)\s*([A-Za-z0-9._:-]{4,120})/i;
 
+class SpectraRestoreError extends Error {}
+
 const configuredOsintTimeout = Number(process.env.SPECTRA_OSINT_TIMEOUT_MS);
 const SPECTRA_OSINT_TIMEOUT_MS = Number.isFinite(configuredOsintTimeout)
   ? Math.max(15_000, configuredOsintTimeout)
@@ -1031,12 +1033,14 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
   const resolvedTargetLabel = resolvedName || phone || normalizedTarget;
 
   try {
-    const persistedObservationsPromise = requestedSessionId
-      ? loadSpectraSessionObservations(userId, requestedSessionId).catch(() => [])
-      : Promise.resolve([] as GPSPoint[]);
-    const identityBindingsPromise = requestedSessionId
-      ? loadSpectraSessionIdentityBindings(userId, requestedSessionId).catch(() => [])
-      : Promise.resolve([]);
+    // Restore first: an unavailable store must not launch a replacement search
+    // or let a refresh overwrite an investigation as if its history were empty.
+    const [persistedObservations, identityBindingEvidence] = requestedSessionId
+      ? await Promise.all([
+          loadSpectraSessionObservations(userId, requestedSessionId),
+          loadSpectraSessionIdentityBindings(userId, requestedSessionId),
+        ]).catch(() => { throw new SpectraRestoreError(); })
+      : [[], []];
 
     // The selected target owns identity. Conversation details may contain the
     // assistant's "Open SPECTRA" launch text or unrelated earlier subjects.
@@ -1114,8 +1118,6 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
     const [
       backgroundOutcome,
       firstPass,
-      persistedObservations,
-      identityBindingEvidence,
       activeAcquisition,
       publicAccount,
       publicProfileCandidates,
@@ -1128,8 +1130,6 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
     ] = await Promise.all([
       backgroundPromise,
       firstPassPromise,
-      persistedObservationsPromise,
-      identityBindingsPromise,
       activeAcquisitionPromise,
       publicAccountPromise,
       publicProfileCandidatesPromise,
@@ -2232,10 +2232,11 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       },
     });
   } catch (error) {
-    console.error('[SPECTRA] Acquisition failed', error);
-    return res.status(500).json({
+    const restoreFailed = error instanceof SpectraRestoreError;
+    console.error('[SPECTRA] Acquisition failed', { code: restoreFailed ? 'SESSION_RESTORE_UNAVAILABLE' : 'ACQUISITION_FAILED' });
+    return res.status(restoreFailed ? 503 : 500).json({
       success: false,
-      error: 'SPECTRA could not complete target acquisition.',
+      error: restoreFailed ? 'Saved investigation evidence is temporarily unavailable. Please retry.' : 'SPECTRA could not complete target acquisition.',
       feedDiagnostics: getDiscoveryDiagnostics(),
     });
   }

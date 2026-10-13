@@ -93,7 +93,8 @@ must(proofWiringPath, proofWiring, 'APE_SELF_FUNDED_GAS_RUNWAY_MULTIPLIER', 'Tra
 must(proofWiringPath, proofWiring, 'export async function getProvenZeroCapitalGasFundingDecision', 'Strict gas proof must remain an explicit callable authority');
 
 must(canonicalDiscoveryPath, canonicalDiscovery, 'getProvenZeroCapitalGasFundingDecision', 'Canonical discovery must call the strict gas-proof boundary directly');
-must(canonicalDiscoveryPath, canonicalDiscovery, 'return getProvenZeroCapitalGasFundingDecision(target, chain);', 'Canonical discovery must derive funding eligibility from current durable proof');
+const strictFundingBoundary = section(canonicalDiscoveryPath, canonicalDiscovery, 'async function strictFunding(', 'async function executeSetupCalls(');
+must(canonicalDiscoveryPath, strictFundingBoundary, 'return awaitDiscoveryWork(() => getProvenZeroCapitalGasFundingDecision(target, chain));', 'Canonical discovery must derive funding eligibility from current durable proof through the cancellable work boundary');
 
 must(canonicalExecutorPath, canonicalExecutor, 'getProvenZeroCapitalGasFundingDecision', 'Canonical executor must independently re-check strict gas proof before submission');
 must(canonicalExecutorPath, canonicalExecutor, "funding.mode === 'native' && funding.paymentSource !== 'system_owned_native'", 'Canonical zero-capital executor must reject unproven native payment sources');

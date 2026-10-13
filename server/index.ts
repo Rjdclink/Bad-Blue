@@ -18,6 +18,7 @@ console.log(
   )
 );
 
+import { spectraAccessLogPath } from './services/spectra/SpectraAccessLogging';
 import * as dotenv from 'dotenv';
 dotenv.config();
 
@@ -562,18 +563,19 @@ app.get("/robots.txt", (_req, res) => {
 app.use((req, res, next) => {
   const start = Date.now();
   const path = req.path;
+  const spectraLogPath = spectraAccessLogPath(path);
   let capturedJsonResponse: Record<string, any> | undefined;
 
   const originalResJson = res.json.bind(res);
   res.json = function (bodyJson: any) {
-    capturedJsonResponse = bodyJson;
+    if (spectraLogPath === null) capturedJsonResponse = bodyJson;
     return originalResJson(bodyJson);
   };
 
   res.on("finish", () => {
     const duration = Date.now() - start;
     if (path.startsWith("/api")) {
-      let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
+      let logLine = `${req.method} ${spectraLogPath ?? path} ${res.statusCode} in ${duration}ms`;
       if (capturedJsonResponse) {
         try {
           logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
