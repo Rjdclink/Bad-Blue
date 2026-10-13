@@ -63,7 +63,14 @@ function isPrivateIpv6(address: string): boolean {
     || normalized.startsWith('feb')
   ) return true;
   const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(normalized);
-  return mapped ? isPrivateIpv4(mapped[1]) : false;
+  if (mapped) return isPrivateIpv4(mapped[1]);
+  // IPv4-mapped IPv6 may be written with two hex groups instead of dotted IPv4.
+  const mappedHex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(normalized);
+  if (mappedHex) {
+    const hi = parseInt(mappedHex[1], 16), lo = parseInt(mappedHex[2], 16);
+    return isPrivateIpv4([hi >> 8, hi & 255, lo >> 8, lo & 255].join('.'));
+  }
+  return false;
 }
 
 function isPrivateAddress(address: string): boolean {
@@ -76,7 +83,7 @@ function isPrivateAddress(address: string): boolean {
 async function assertPublicHttps(raw: string): Promise<URL> {
   const url = new URL(raw);
   if (url.protocol !== 'https:') throw new Error('Camera directory adapters require HTTPS.');
-  if (url.username || url.password) throw new Error('Credential-bearing camera URLs are unsupported.');
+  if (url.username || url.password || url.port) throw new Error('Credential-bearing or nonstandard-port camera URLs are unsupported.');
   const host = url.hostname.replace(/^\[|\]$/g, '').toLowerCase();
   if (!host || host === 'localhost' || host.endsWith('.localhost')) {
     throw new Error('Local camera directory targets are unsupported.');
@@ -162,6 +169,23 @@ function interpolateTemplate(
     .replaceAll('{{radiusMiles}}', encodeURIComponent(String(radiusMiles)));
 }
 
+/**
+ * These are camera-directory links, not permission to fetch video frames.
+ * Restrict displayed media links to well-formed public HTTPS destinations.
+ */
+export function spectraPublicCameraAssetUrl(raw: unknown): string | undefined {
+  if (typeof raw !== 'string' || raw.length < 1 || raw.length > 2_200) return undefined;
+  try {
+    const url = new URL(raw);
+    const host = url.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+    if (url.protocol !== 'https:' || url.username || url.password || url.port
+      || !host || host === 'localhost' || host.endsWith('.localhost')
+      || host.endsWith('.local') || host.endsWith('.internal')
+      || (isIP(host) && isPrivateAddress(host))) return undefined;
+    return url.toString();
+  } catch { return undefined; }
+}
+
 function publicCoordinate(value: unknown): number {
   if ((typeof value !== 'string' && typeof value !== 'number')
     || (typeof value === 'string' && !value.trim())) return Number.NaN;
@@ -189,13 +213,17 @@ export async function acquireConfiguredSpectraCameras(
   longitude: number,
   radiusMiles: number,
 ): Promise<SpectraExternalCamera[]> {
+  if (![latitude, longitude, radiusMiles].every(Number.isFinite)
+    || Math.abs(latitude) > 90 || Math.abs(longitude) > 180
+    || radiusMiles <= 0) return [];
   const configs = parseConfigs();
   if (!configs.length) return [];
 
-  const radiusMeters = Math.max(100, Math.min(100_000, radiusMiles * 1609.344));
+  const boundedRadiusMiles = Math.max(0.1, Math.min(100_000 / 1609.344, radiusMiles));
+  const radiusMeters = boundedRadiusMiles * 1609.344;
   const outcomes = await Promise.allSettled(configs.map(async config => {
     const endpoint = await assertPublicHttps(
-      interpolateTemplate(config.urlTemplate, latitude, longitude, radiusMiles),
+      interpolateTemplate(config.urlTemplate, latitude, longitude, boundedRadiusMiles),
     );
     const headers: Record<string, string> = {
       Accept: 'application/json',
@@ -270,8 +298,8 @@ export async function acquireConfiguredSpectraCameras(
         latitude: lat,
         longitude: lon,
         provider: config.provider,
-        imageUrl: /^https?:\/\//i.test(imageUrlRaw) ? imageUrlRaw : undefined,
-        videoUrl: /^https?:\/\//i.test(videoUrlRaw) ? videoUrlRaw : undefined,
+        imageUrl: spectraPublicCameraAssetUrl(imageUrlRaw),
+        videoUrl: spectraPublicCameraAssetUrl(videoUrlRaw),
         observedAt,
         status: {
           disabled: disabledRaw === true || String(disabledRaw).toLowerCase() === 'true',
