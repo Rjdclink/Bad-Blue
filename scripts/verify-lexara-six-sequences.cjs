@@ -125,14 +125,14 @@ if (!legalMesh.includes('isPreferredOfficialCandidate') || !legalMesh.includes('
 }
 if (!legalMesh.includes('async function firstUsefulParallelSearch')
   || !legalMesh.includes('Promise.allSettled(providers)')
-  || !legalMesh.includes('queries.map(query => freeSearch(query, signal, false))')
+  || !legalMesh.includes('queries.map(query => freeSearch(query, signal, false, false, allowPaidSearch))')
   || legalMesh.includes('const learnedOutcomes=await Promise.allSettled')
   || legalMesh.includes('const plannedOutcomes=await Promise.allSettled')) {
   throw new Error('Lexara supplemental discovery must preserve parallel provider evidence until scoring');
 }
 if (!legalMesh.includes('firstUseful?: boolean')
   || !legalMesh.includes('Promise.any(')
-  || !legalMesh.includes('freeSearch(query, controller.signal, true)')
+  || !legalMesh.includes('freeSearch(query, controller.signal, true, false, allowPaidSearch)')
   || !legalMesh.includes('const groups=options.firstUseful')
   || !background.includes('firstUseful: !deepAcquisitionRequested')) {
   throw new Error('Lexara live discovery must race early leads and preserve evidence verification');
