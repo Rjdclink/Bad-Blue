@@ -87,6 +87,8 @@ import { publicProfileContactMatch, publicProfileNameMatch } from '../services/s
 import { publicProfileLeads } from '../services/spectra/SpectraPublicProfileLeads';
 import { collectSpectraPublicBlueskyImages, collectSpectraPublicMastodonImages, collectSpectraPublicSocialPageImages } from '../services/spectra/SpectraPublicImageRecords';
 import { prioritizeSpectraPublicMediaScenes } from '../services/spectra/SpectraPublicMediaPriority';
+import { collectSpectraXPostMedia } from '../services/spectra/SpectraXPostMedia';
+import { summarizeSpectraSceneOverlap } from '../services/spectra/SpectraVisualSceneAnalysis';
 import { collectSpectraEarthSearchScenes } from '../services/spectra/SpectraPublicSatelliteRecords';
 import { shouldRunSpectraClaudeBackground } from '../services/spectra/SpectraClaudeBudget';
 import { takeUnseenSpectraQueries } from '../services/spectra/SpectraDiscoveryDedup';
@@ -1532,7 +1534,13 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
 
     // Only image URLs from retrieved public Facebook, Instagram or X post
     // HTML qualify. Failed/blocked webpages never generate image evidence.
-    const publicSocialImages = await collectSpectraPublicSocialPageImages(retrievedEvidence);
+    // Expand only already-retrieved public X posts using the official API
+    // when an authorized bearer token is configured. Never run an unbounded
+    // account scan or treat posts as subject position observations.
+    const xPostMedia = await collectSpectraXPostMedia(retrievedEvidence);
+    const publicSocialImages = await collectSpectraPublicSocialPageImages([
+      ...xPostMedia.posts, ...retrievedEvidence,
+    ]);
     retrievedEvidence.push(...publicSocialImages.records);
     report.publicRecords.push(...publicSocialImages.records.map(record => ({
       title: record.title, url: record.url, publishedAt: record.publishedAt,
@@ -1540,12 +1548,17 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       identityStatus: 'Public image file metadata inspected',
     })));
 
-    const mediaCaptureScenes = prioritizeSpectraPublicMediaScenes([
+    const inspectedImageRecords = [
       ...publicBlueskyImages.records,
       ...publicMastodonImages.records,
       ...publicSocialImages.records,
       ...retrievedEvidence.filter(record => record.title === 'Public Web image bytes inspected'),
-    ]);
+    ];
+    const mediaCaptureScenes = prioritizeSpectraPublicMediaScenes(inspectedImageRecords);
+    // The existing evidence ledger already deduplicates image hashes. This
+    // independent model-label summary adds only generic comparisons and is
+    // saved privately without modifying the map or client response.
+    const sceneOverlapSummary = summarizeSpectraSceneOverlap(inspectedImageRecords);
 
     if (
       discoveryResults.length === 0
@@ -2070,6 +2083,11 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       evidenceRecords,
       state: {
         pipelineDiagnostics,
+        sceneOverlapSummary,
+        publicXMediaProviderStatus: xPostMedia.status,
+        publicXMediaProviderAttempts: xPostMedia.attempted,
+        publicXMediaProviderRecords: xPostMedia.retrieved,
+        publicXMediaProviderFailures: xPostMedia.failed,
         evidenceAssessmentCounts: {
           sourceRecordCount: evidenceAssessment.sourceRecordCount,
           uniqueContributionCount: evidenceAssessment.uniqueContributionCount,
