@@ -13,7 +13,7 @@ It does not change identity matching, evidence qualification or location inferen
 | SearXNG offline | Deployment history includes removed deployment `741e97e9-6ca5-4692-8df0-432dc7c172ad`; there is no currently serving deployment. Its retained runtime logs are empty. | Restore service on port 8080 with `/healthz`, then check JSON search independently. Do not claim it was never deployed or assert an unsupported startup root cause. |
 | Repeated outage calls | The earlier self-test recorded 164 DNS failures per self-hosted provider. | Temporary provider cooldown for DNS, connection and missing-endpoint errors; bounded cooldown for repeated transient failures; preserve CAPTCHA exclusions and Retry-After. |
 | Queue starvation | The HTTP deadline started before acquiring one of two provider slots. | Separate bounded queue wait from the request deadline; limit waiting jobs to 16 per provider; report admission skips explicitly. |
-| ScrapingBee HTTP 400 | Five failures in the earlier run; adapter used generic HTML page scraping of Google. | Use documented `/api/v1/google`, `search`, bearer authorization and `organic_results`. The exact original HTTP 400 body was not inspected, so endpoint mismatch is a confirmed integration defect, not a proven explanation for every 400. |
+| ScrapingBee HTTP 400 | Five failures in the earlier run; adapter used generic HTML page scraping of Google. | Use documented `/api/v1/google`, `search`, a bearer-token HTTP header and `organic_results`. The exact original HTTP 400 body was not inspected, so endpoint mismatch is a confirmed integration defect, not a proven explanation for every 400. |
 | Error responses treated as empty | Missing arrays, malformed JSON and several upstream error paths silently became zero results. | Validate response contracts; distinguish errors, valid empty results, partial coverage and disabled engines. |
 | Common Crawl | Collection HTTP failures were hidden; the historical-query regex did not match “history” or “historical”; partial results could be lost. | Preserve failures, recognize intended history terms, retain valid rows when another host/row fails, and flag partial coverage. |
 | SerpAPI | HTTP 200 can carry either an upstream error or a documented successful empty response. | Check structured success/empty state before classifying the error field. |
@@ -73,5 +73,5 @@ unverified because the available browser used its rendering fallback.
 - https://docs.searxng.org/admin/installation-docker.html — current container/Granian configuration.
 - https://docs.railway.com/guides/healthchecks — healthcheck port uses `PORT`; startup health is not continuous monitoring.
 - https://docs.railway.com/networking/private-networking — environment-scoped internal service names.
-- https://www.scrapingbee.com/features/google/ — dedicated Google JSON search endpoint and bearer authorization.
+- https://www.scrapingbee.com/features/google/ — dedicated Google JSON search endpoint and bearer-token header.
 - https://serpapi.com/api-status-and-error-codes — successful empty response can include an error field.
