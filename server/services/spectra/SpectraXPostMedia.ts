@@ -115,7 +115,10 @@ export async function collectSpectraXPostMedia(
         signal: controller.signal,
         headers: { Authorization: 'Bearer ' + token, Accept: 'application/json' },
       });
+      if (controller.signal.aborted || requestSignal?.aborted) return;
       const payload = await boundedJson(response);
+      // A cancelled/closed investigation must not admit a late API response.
+      if (controller.signal.aborted || requestSignal?.aborted) return;
       if (!payload || String(payload?.data?.id || '') !== id) { failed++; return; }
       const keys = new Set(
         Array.isArray(payload.data.attachments?.media_keys)
