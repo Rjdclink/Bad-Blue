@@ -35,8 +35,8 @@ const results = await collectSpectraEarthSearchScenes(39.15, -105.15, from, to, 
 });
 assert.equal(requests, 1);
 assert.deepEqual(results.map(item => item.id), ['landsat', 's2', 's2-modern']);
-assert.equal(results[2].previewUrl, 'https://example.org/s2-modern-thumbnail.png',
-  'source-provided STAC thumbnail is catalog metadata, not a downloaded frame');
+assert.equal(Object.hasOwn(results[2], 'previewUrl'), false,
+  'new catalog assets must not change the map-facing presentation payload');
 assert(results.every(item => item.provider === 'Element 84 Earth Search'));
 assert.equal(results[0].links.length, 1);
 assert.equal(results[0].links[0].rel, 'preview');
