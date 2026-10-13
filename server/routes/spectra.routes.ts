@@ -1246,7 +1246,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       })), ...publicMastodonImages.records.map(record => ({
         title: record.title, url: record.url, publishedAt: record.publishedAt,
         snippet: record.textExcerpt, provider: 'Mastodon public image',
-        identityStatus: 'Public image inspected; capture scene and account owner unverified',
+        identityStatus: 'Public image file metadata inspected',
       })), ...publicMastodon.records.map(record => ({
         title: record.title,
         url: record.url,
@@ -1498,7 +1498,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
     report.publicRecords.push(...publicSocialImages.records.map(record => ({
       title: record.title, url: record.url, publishedAt: record.publishedAt,
       snippet: record.textExcerpt, provider: 'Public social image metadata',
-      identityStatus: 'Photo capture scene; account and subject association unverified',
+      identityStatus: 'Public image file metadata inspected',
     })));
 
     const mediaCaptureScenes = prioritizeSpectraPublicMediaScenes([
