@@ -12,6 +12,8 @@ on:
       - 'server/services/spectra/**'
       - 'server/routes/spectra.routes.ts'
       - 'scripts/verify-spectra*'
+      - 'scripts/spectra-crawl4ai*'
+      - 'Dockerfile'
       - 'scripts/test-lexara*'
       - 'package.json'
       - 'package-lock.json'
@@ -34,6 +36,14 @@ jobs:
         with:
           node-version: '20'
           cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install local Crawl4AI extraction runtime
+        run: |
+          python -m venv .spectra-crawl4ai
+          .spectra-crawl4ai/bin/pip install -r scripts/spectra-crawl4ai-requirements.txt
+          echo "SPECTRA_CRAWL4AI_PYTHON=$GITHUB_WORKSPACE/.spectra-crawl4ai/bin/python" >> "$GITHUB_ENV"
       - name: Install locked dependencies
         run: npm ci --no-audit --no-fund
       # One step guarantees that a rerun begins at group one after any failure.

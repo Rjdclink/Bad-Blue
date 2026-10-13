@@ -62,3 +62,6 @@ core.*
 
 # People Search cache
 .cache/people-search/
+
+# Local provider verification environment
+.spectra-crawl4ai/

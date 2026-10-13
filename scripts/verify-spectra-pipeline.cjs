@@ -27,7 +27,7 @@ const discovery = route.slice(route.indexOf('async function runDiscoveryPass'), 
 const fixture = { url: 'https://example.org/document', title: 'Public document', provider: 'fixture' };
 function pass(overrides = {}) {
   const scope = { takeUnseenSpectraQueries,
-    AbortController, setTimeout, clearTimeout,
+    AbortController, Date, setTimeout, clearTimeout,
     discoverLegalMeshTier3: async () => [fixture],
     discoverLegalMeshSupplemental: async () => [],
     discoveryResultFromCandidate: value => ({ ...value }),
@@ -84,7 +84,7 @@ const empty = {
       signal = s; return new Promise(() => {});
     } });
     const pending = run(['public document'], { useClaude: false });
-    await clock.tickAsync(5_000);
+    await clock.tickAsync(8_000);
     const result = await pending;
     assert.equal(signal.aborted, true);
     assert.equal(result.retrieval.deadlineExpiredPasses, 1);
@@ -101,7 +101,7 @@ const empty = {
       record = observer; return new Promise(() => {});
     } });
     const pending = run(['public document'], { useClaude: false });
-    await clock.tickAsync(5_000);
+    await clock.tickAsync(8_000);
     const result = await pending;
     assert.equal(result.retrieval.diagnostics.unreported, 1);
     record({ targetIndex: 0, reason: 'retrieved', httpStatus: 200 });

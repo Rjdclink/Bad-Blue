@@ -49,6 +49,7 @@ ENV ONNXRUNTIME_NODE_INSTALL=skip
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     chromium \
+    python3-venv \
     libimage-exiftool-perl \
     poppler-utils \
     tesseract-ocr \
@@ -57,6 +58,13 @@ RUN apt-get update && apt-get install -y \
     wget \
     --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
+# Crawl4AI runs locally as an HTML extractor in this service; no extra service,
+# cloud key, listening port, browser download or paid LLM is involved.
+COPY scripts/spectra-crawl4ai-requirements.txt /tmp/spectra-crawl4ai-requirements.txt
+RUN python3 -m venv /opt/spectra-crawl4ai && \
+    /opt/spectra-crawl4ai/bin/pip install --no-cache-dir -r /tmp/spectra-crawl4ai-requirements.txt
+ENV SPECTRA_CRAWL4AI_PYTHON=/opt/spectra-crawl4ai/bin/python \
+    SPECTRA_CRAWL4AI_ENABLED=true
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
     PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
@@ -157,6 +165,8 @@ RUN useradd -m appuser && \
     chown appuser:appuser /app && \
     chown -R appuser:appuser /app/dist /app/public /app/scripts /app/contracts /app/artifacts /app/config
 USER appuser
+# Fail the image build if the enabled local provider cannot actually extract.
+RUN /opt/spectra-crawl4ai/bin/python scripts/verify-spectra-crawl4ai.py
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
   CMD node -e "const port = process.env.PORT || 5000; require('http').get('http://localhost:' + port + '/api/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)}).on('error', () => {process.exit(1)})"
 CMD ["npm", "start"]

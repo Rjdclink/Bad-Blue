@@ -51,6 +51,7 @@ interface DiscoveryContext {
 const contexts = new AsyncLocalStorage<DiscoveryContext>();
 const counts = (): Counts => ({ ok: 0, empty: 0, failed: 0, timeout: 0, cancelled: 0, skipped: 0, pending: 0, dispatched: 0, partial: 0 });
 const providerNames: Record<string, string> = {
+  firecrawlKeyless: 'firecrawl-keyless', jinaReader: 'jina-reader', crawl4ai: 'crawl4ai',
   tavily: 'tavily', duckDuckGoInstantAnswer: 'duckduckgo-instant-answer',
   searxng: 'searxng', ddgsBackend: 'ddgs', openserp: 'openserp',
   serpApi: 'serpapi', scrapingBee: 'scrapingbee', commonCrawl: 'common-crawl',

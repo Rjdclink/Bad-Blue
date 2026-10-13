@@ -32,10 +32,14 @@ export interface SpectraRetrievedEvidence {
   /** Image media URLs discovered in fetched public social post HTML, not assumed downloaded. */
   publicImageUrls?: string[];
   textExcerpt?: string;
+  /** Text provenance only; does not establish an observation or publication date. */
+  textExtractionProvider?: 'crawl4ai' | 'jina-reader';
   /** Visible address blocks, separate from prose and subject observations. */
   addressBlocks?: string[];
   observations: SpectraRetrievedObservation[];
 }
+
+export type SpectraHtmlEnhancer = (html: string, evidence: SpectraRetrievedEvidence, signal?: AbortSignal) => Promise<SpectraRetrievedEvidence>;
 
 const MAX_TARGETS = 8;
 const MAX_RESPONSE_BYTES = 2_000_000;
@@ -398,6 +402,7 @@ async function retrieveOne(
   rawUrl: string,
   parentSignal?: AbortSignal,
   report?: (diagnostic: Omit<SpectraRetrievalDiagnostic, 'targetIndex'>) => void,
+  enhanceHtml?: SpectraHtmlEnhancer,
 ): Promise<SpectraRetrievedEvidence | null> {
   let reason: SpectraRetrievalReason = 'network_error';
   let httpStatus: number | undefined;
@@ -492,6 +497,12 @@ async function retrieveOne(
             observations: extracted.observations,
           };
           reason = 'retrieved';
+          clearTimeout(timer);
+          // The caller's acquisition deadline still bounds optional enrichment.
+          // A reader failure must never discard the directly retrieved record.
+          if (enhanceHtml) {
+            try { return await enhanceHtml(text, evidence, parentSignal); } catch { return evidence; }
+          }
           return evidence;
         }
         if (['text/plain', 'text/csv', 'text/markdown'].includes(contentType)) {
@@ -524,12 +535,13 @@ export async function retrieveSpectraPublicEvidence(
   targets: string[],
   signal?: AbortSignal,
   onDiagnostic?: (diagnostic: SpectraRetrievalDiagnostic) => void,
+  enhanceHtml?: SpectraHtmlEnhancer,
 ): Promise<SpectraRetrievedEvidence[]> {
   const uniqueTargets = [...new Set(targets.map(value => value.trim()).filter(Boolean))]
     .slice(0, MAX_TARGETS);
   const settled = await Promise.allSettled(
     uniqueTargets.map((target, targetIndex) => retrieveOne(target, signal,
-      diagnostic => onDiagnostic?.({ targetIndex, ...diagnostic })))
+      diagnostic => onDiagnostic?.({ targetIndex, ...diagnostic }), enhanceHtml))
   );
   return settled.flatMap(result =>
     result.status === 'fulfilled' && result.value ? [result.value] : []

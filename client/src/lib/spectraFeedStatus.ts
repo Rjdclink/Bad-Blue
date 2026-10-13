@@ -23,17 +23,18 @@ export function spectraFeedNotices(diagnostics?: SpectraFeedDiagnostics): string
   if (diagnostics?.scope !== 'discovery-http') return [];
   const notices: string[] = [];
   if (diagnostics.dispatched !== undefined) {
-    notices.push(`Search attempts: ${safeCount(diagnostics.dispatched)} dispatched; ${safeCount(diagnostics.ok)} returned results; ${safeCount(diagnostics.empty)} returned no results; ${safeCount(diagnostics.failed)} failed; ${safeCount(diagnostics.timeout)} timed out; ${safeCount(diagnostics.skipped)} skipped; ${safeCount(diagnostics.cancelled)} cancelled; ${safeCount(diagnostics.pending)} pending when reported.`);
+    notices.push(`Provider attempts: ${safeCount(diagnostics.dispatched)} dispatched; ${safeCount(diagnostics.ok)} returned results; ${safeCount(diagnostics.empty)} returned no results; ${safeCount(diagnostics.failed)} failed; ${safeCount(diagnostics.timeout)} timed out; ${safeCount(diagnostics.skipped)} skipped; ${safeCount(diagnostics.cancelled)} cancelled; ${safeCount(diagnostics.pending)} pending when reported.`);
     notices.push('These are provider attempts, not distinct sources or accepted location evidence. Dispatched means collection work started, not that a source was reached. Partial responses overlap other outcomes.');
   }
   if (safeCount(diagnostics.partial)) notices.push(`${safeCount(diagnostics.partial)} provider attempts returned partial results.`);
   const providers: Record<string, string> = {
+    'firecrawl-keyless': 'Firecrawl Keyless', 'jina-reader': 'Jina Reader', crawl4ai: 'Crawl4AI',
     tavily: 'Tavily', searxng: 'SearXNG', ddgs: 'DDGS', openserp: 'OpenSERP',
     serpapi: 'SerpAPI', scrapingbee: 'ScrapingBee', 'common-crawl': 'Common Crawl',
     'duckduckgo-instant-answer': 'DuckDuckGo Instant Answer', other: 'Other provider',
   };
   const errors: Record<string, string> = {
-    'not-configured': 'not configured', cooldown: 'cooldown active', disabled: 'disabled after challenge',
+    'not-configured': 'not configured', cooldown: 'cooldown active', disabled: 'disabled',
     'quota-exhausted': 'credit budget exhausted', 'budget-unavailable': 'credit budget unverified', 'local-rate-limit': 'local request limit reached',
     'queue-capacity': 'queue full', 'queue-timeout': 'queue wait expired',
     'provider-unavailable': 'provider unavailable (specific cause unconfirmed)',
@@ -48,7 +49,9 @@ export function spectraFeedNotices(diagnostics?: SpectraFeedDiagnostics): string
       return label && safeCount(value) ? [`${safeCount(value)} ${label}`] : [];
     });
     if (row.provider === 'tavily' && (safeCount(row.errors?.['http-432']) || safeCount(row.errors?.['http-433']))) notices.push('Tavily rejected a request at its plan or pay-as-you-go limit. Review account usage before retrying.');
-    if (safeCount(row.errors?.['http-401'])) notices.push(`${providers[row.provider]} rejected authentication. Check the configured API credential and account credit status.`);
+    if (safeCount(row.errors?.['http-401'])) notices.push(['firecrawl-keyless', 'jina-reader'].includes(row.provider)
+      ? `${providers[row.provider]} rejected anonymous access.`
+      : `${providers[row.provider]} rejected authentication. Check the configured API credential and account credit status.`);
     if (row.provider === 'duckduckgo-instant-answer' && safeCount(row.empty)) notices.push('DuckDuckGo Instant Answer supplies limited answers, not a full web-results index. Empty responses do not establish absence of web evidence.');
     if (reasons.length) notices.push(`${providers[row.provider]}: ${reasons.join('; ')}.`);
   }

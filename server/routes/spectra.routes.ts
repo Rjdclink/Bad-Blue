@@ -15,7 +15,7 @@ import {
 import { getPlatformUserId } from '../authIdentity';
 import { callClaudeWebSearch } from '../claude';
 import {
-  discoverLegalMeshTier3,
+  discoverLegalMeshTier3 as discoverSharedMeshTier3,
   discoverLegalMeshSupplemental,
   type LegalMeshCandidate,
 } from '../lexara/LegalProviderMesh';
@@ -54,7 +54,11 @@ import {
   conservativeJointConfidence,
 } from '../services/spectra/SpectraIdentityBinding';
 import { acquireSpectraPlaceContext } from '../services/spectra/SpectraPlaceContext';
-import { retrieveSpectraPublicEvidence, type SpectraRetrievedEvidence } from '../services/spectra/SpectraPublicRetrieval';
+import { retrieveSpectraPublicEvidence as retrieveDirectPublicEvidence, assertPublicUrl, type SpectraRetrievedEvidence } from '../services/spectra/SpectraPublicRetrieval';
+import { createSpectraProviderConnections } from '../services/spectra/SpectraProviderConnections';
+const { discover: discoverLegalMeshTier3, retrieve: retrieveSpectraPublicEvidence } = createSpectraProviderConnections({
+  discover: discoverSharedMeshTier3, retrieve: retrieveDirectPublicEvidence, validate: assertPublicUrl,
+});
 import { createSpectraRetrievalDiagnostics, mergeSpectraRetrievalDiagnostics } from '../services/spectra/SpectraRetrievalDiagnostics';
 import {
   mergePublicRetrievedMetadata,
@@ -407,6 +411,7 @@ async function runDiscoveryPass(
     return { results: [], retrievedEvidence, attempted: 0, failed: 0, claudeNotes: [], retrieval };
   }
 
+  const passDeadline = Date.now() + 15_000;
   const controller = new AbortController();
   // Reserve part of the existing 15-second pass budget for reading pages.
   // A finished search deadline must not pre-cancel the evidence retrieval stage.
@@ -523,15 +528,18 @@ async function runDiscoveryPass(
     if (retrievalTargets.length) {
       const retrievalDiagnostics = createSpectraRetrievalDiagnostics(retrievalTargets.length);
       const retrievalController = new AbortController();
+      // Fast search leaves time for cold reader responses. Slow search retains
+      // the original overall 15-second bound instead of extending the pass.
+      const retrievalBudgetMs = Math.max(1, Math.min(8_000, passDeadline - Date.now() - 250));
       const retrievalTimer = setTimeout(() => {
         retrieval.deadlineExpiredPasses = 1;
         retrievalController.abort(new Error('SPECTRA page retrieval timeout'));
-      }, 4_500);
+      }, Math.max(1, retrievalBudgetMs - 250));
       let retrieved: Awaited<ReturnType<typeof retrieveSpectraPublicEvidence>> = [];
       try {
         const outcome = await settleWithin(
           retrieveSpectraPublicEvidence(retrievalTargets, retrievalController.signal, retrievalDiagnostics.record),
-          5_000,
+          retrievalBudgetMs,
           'SPECTRA page retrieval',
         );
         if (outcome.status === 'fulfilled') retrieved = outcome.value;
