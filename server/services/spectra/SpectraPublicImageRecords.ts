@@ -2,12 +2,15 @@ import { discoveryFetch } from '../../lexara/DiscoveryDiagnostics';
 import { createHash } from 'node:crypto';
 import ExifReader from 'exifreader';
 import type { SpectraRetrievedEvidence } from './SpectraPublicRetrieval';
+import { inspectSpectraVisualScene, type SpectraVisualSceneAssessment } from './SpectraVisualSceneAnalysis';
 
 type SocialPlatform = 'Bluesky' | 'Mastodon' | 'Facebook' | 'Instagram' | 'X' | 'Web';
 type ImageLead = { url: string; post: SpectraRetrievedEvidence; platform: SocialPlatform; alt?: string };
 const MAX_BYTES = 3_000_000;
 const TIMEOUT_MS = 3_500;
 const MAX_IMAGES_PER_PLATFORM = 4;
+// A bounded cross-platform budget; no early platform can use every slot.
+const MAX_SOCIAL_IMAGES_TOTAL = 6;
 const MAX_REDIRECTS = 3;
 const CACHE_MS = 30 * 60_000;
 const CACHE_LIMIT = 100;
@@ -29,7 +32,7 @@ function validUrl(raw: string): URL | null {
   } catch { return null; }
 }
 
-function platformForPage(raw: string): SocialPlatform | null {
+function platformForPage(raw: string): 'Facebook' | 'Instagram' | 'X' | null {
   const url = validUrl(raw);
   if (!url) return null;
   const host = url.hostname.toLowerCase().replace(/^www\./, '');
@@ -139,7 +142,8 @@ function matchesSignature(bytes: Buffer, mime: string): boolean {
 export async function inspectSpectraPublicImageResponse(
   response: Response,
   input: { url: string; sourcePostUrl: string; platform: SocialPlatform; alt?: string;
-    publishedAt?: string; maxBytes?: number },
+    publishedAt?: string; maxBytes?: number;
+    sceneAnalyzer?: (bytes: Buffer, mimeType: 'image/jpeg' | 'image/png' | 'image/webp') => Promise<SpectraVisualSceneAssessment | null> },
 ): Promise<SpectraRetrievedEvidence | null> {
   if (!response.ok || response.status >= 300 || !response.body) return null;
   const contentType = (response.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
@@ -176,13 +180,37 @@ export async function inspectSpectraPublicImageResponse(
       const value = rawExifValue(tags?.[key]);
       if (value !== undefined) exif[key] = value;
     }
-    const lat = decimalGps(tags?.GPSLatitude, tags?.GPSLatitudeRef);
-    const lon = decimalGps(tags?.GPSLongitude, tags?.GPSLongitudeRef);
+    // Description strings are human-readable labels such as "West longitude".
+    // Only the raw, validated cardinal directions can set a GPS sign.
+    for (const [name, allowed] of [
+      ['GPSLatitudeRef', ['N', 'S']],
+      ['GPSLongitudeRef', ['E', 'W']],
+    ] as const) {
+      const raw = tags?.[name]?.value;
+      const value = Array.isArray(raw) ? raw[0] : raw;
+      if (typeof value === 'string' && (allowed as readonly string[]).includes(value.toUpperCase())) {
+        exif[name] = value.toUpperCase();
+      } else {
+        delete exif[name];
+      }
+    }
+    const lat = exif.GPSLatitudeRef ? decimalGps(tags?.GPSLatitude, tags?.GPSLatitudeRef) : null;
+    const lon = exif.GPSLongitudeRef ? decimalGps(tags?.GPSLongitude, tags?.GPSLongitudeRef) : null;
     if (lat !== null && lon !== null && Math.abs(lat) <= 90 && Math.abs(lon) <= 180) {
       gps = { latitude: lat, longitude: lon };
     }
   } catch { /* Many CDN images have no parseable EXIF. */ }
   const time = captureTime(exif);
+  // Model output is opt-in, non-biometric, and explicitly marked unverified.
+  // Failures leave the existing EXIF/byte-hash evidence unaffected.
+  let sceneAnalysis: SpectraVisualSceneAssessment | null = null;
+  if (input.sceneAnalyzer) {
+    try {
+      sceneAnalysis = await input.sceneAnalyzer(
+        bytes, contentType as 'image/jpeg' | 'image/png' | 'image/webp',
+      );
+    } catch { /* A failed optional model cannot invalidate fetched bytes. */ }
+  }
   return {
     url: input.url, requestedUrl: input.url, retrievedAt: new Date().toISOString(),
     publishedAt: input.publishedAt, contentType,
@@ -191,6 +219,7 @@ export async function inspectSpectraPublicImageResponse(
       sourcePostUrl: input.sourcePostUrl,
       contentSha256: createHash('sha256').update(bytes).digest('hex'),
       byteLength: size, exif, ...time,
+      sceneAnalysis: sceneAnalysis || undefined,
       captureGps: gps, evidenceRole: 'media_capture_scene',
       sourcePlatform: input.platform, imageBytesArchived: false,
       captureLocationIsSubjectPosition: false, currentPositionVerified: false,
@@ -201,10 +230,12 @@ export async function inspectSpectraPublicImageResponse(
 
 async function collect(leads: ImageLead[], options: {
   fetchImpl?: typeof fetch; signal?: AbortSignal;
-}): Promise<SpectraPublicImageCollection> {
+}, maxImages = MAX_IMAGES_PER_PLATFORM): Promise<SpectraPublicImageCollection> {
   const records: SpectraRetrievedEvidence[] = [];
   let attempted = 0, failed = 0, cached = 0;
-  const unique = [...new Map(leads.map(lead => [lead.url, lead])).values()].slice(0, MAX_IMAGES_PER_PLATFORM);
+  let sceneAnalysesScheduled = 0;
+  const unique = [...new Map(leads.map(lead => [lead.url, lead])).values()]
+    .slice(0, Math.max(0, Math.min(12, maxImages)));
   const run = async (lead: ImageLead) => {
     // Mocked fetches are independent fixtures; cache only genuine public HTTP results.
     const prior = options.fetchImpl ? undefined : cache.get(lead.url);
@@ -250,9 +281,25 @@ async function collect(leads: ImageLead[], options: {
         break;
       }
       if (!response) { failed++; return null; }
+      // One optional model inspection per collection, and only when deployment
+      // is explicitly configured for sending public image bytes to a model.
+      const sceneEnabled = !options.fetchImpl
+        && process.env.SPECTRA_SCENE_ANALYSIS_ENABLED === 'true';
       const record = await inspectSpectraPublicImageResponse(response, {
         url: imageUrl, sourcePostUrl: lead.post.url, platform: lead.platform,
         publishedAt: lead.post.publishedAt, alt: lead.alt,
+        sceneAnalyzer: sceneEnabled ? (bytes, mimeType) => {
+          if (sceneAnalysesScheduled >= 1) return Promise.resolve(null);
+          sceneAnalysesScheduled++;
+          // Downloaded bytes have already passed the network deadline.
+          // Give the independently bounded optional model its own 6-second
+          // deadline instead of consuming the remaining HTTP timeout.
+          clearTimeout(timer);
+          return inspectSpectraVisualScene(bytes, mimeType, {
+            signal: options.signal,
+            allowProvider: true,
+          });
+        } : undefined,
       });
       if (!record) { failed++; return null; }
       if (!options.fetchImpl) {
@@ -291,7 +338,6 @@ export async function collectSpectraPublicBlueskyImages(
         alt: typeof raw.alt === 'string' ? raw.alt.slice(0, 1_000) : undefined });
       if (leads.length >= MAX_IMAGES_PER_PLATFORM) break;
     }
-    if (leads.length >= MAX_IMAGES_PER_PLATFORM) break;
   }
   return collect(leads, options);
 }
@@ -314,19 +360,37 @@ export async function collectSpectraPublicMastodonImages(
     }
     if (leads.length >= MAX_IMAGES_PER_PLATFORM) break;
   }
-  return collect(leads, options);
+  // Preserve first-seen order inside a platform, but rotate across platforms.
+  // Four Facebook images must not suppress Instagram and X entirely.
+  const leads: ImageLead[] = [];
+  for (let index = 0; index < MAX_IMAGES_PER_PLATFORM
+    && leads.length < MAX_SOCIAL_IMAGES_TOTAL; index++) {
+    for (const platform of platforms) {
+      if (byPlatform[platform][index]) leads.push(byPlatform[platform][index]);
+      if (leads.length >= MAX_SOCIAL_IMAGES_TOTAL) break;
+    }
+  }
+  return collect(leads, options, MAX_SOCIAL_IMAGES_TOTAL);
 }
 
 export async function collectSpectraPublicSocialPageImages(
   pages: readonly SpectraRetrievedEvidence[],
   options: { fetchImpl?: typeof fetch; signal?: AbortSignal } = {},
 ): Promise<SpectraPublicImageCollection> {
-  const leads: ImageLead[] = [];
-  for (const post of pages.slice(0, 80)) {
+  const platforms = ['Facebook', 'Instagram', 'X'] as const;
+  const byPlatform: Record<(typeof platforms)[number], ImageLead[]> = {
+    Facebook: [], Instagram: [], X: [],
+  };
+  const seen = new Set<string>();
+  for (const post of pages.slice(0, 100)) {
     const platform = platformForPage(post.url);
     if (!platform || !Array.isArray(post.publicImageUrls)) continue;
     for (const url of spectraSocialPageImageLeads(post.url, post.publicImageUrls)) {
-      leads.push({ url, post, platform });
+      if (byPlatform[platform].length >= MAX_IMAGES_PER_PLATFORM) break;
+      // The same photo discovered in several posts is fetched once per batch.
+      if (seen.has(url)) continue;
+      seen.add(url);
+      byPlatform[platform].push({ url, post, platform });
     }
     if (leads.length >= MAX_IMAGES_PER_PLATFORM) break;
   }
