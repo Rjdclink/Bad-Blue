@@ -76,6 +76,10 @@ export default function CanonicalSignupsPanel() {
       }
     };
 
+    // Clear the previous page immediately; never present outdated names with
+    // a different page indicator while the new canonical page is loading.
+    setReport(null);
+    setError("");
     setLoading(true);
     void load();
     const interval = window.setInterval(() => void load(), 60_000);
