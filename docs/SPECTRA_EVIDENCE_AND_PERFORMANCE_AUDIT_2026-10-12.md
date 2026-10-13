@@ -35,8 +35,14 @@ The existing types and checks in `SpectraPublicEvidenceProvenance.ts`, `SpectraM
 
 Retain all successfully acquired records in the auditable source archive with publisher, source record ID, content hash, acquisition time, source event/capture time, access basis, and explicit limitations. Build a separate, non-person scene/context timeline for accessible satellite imagery, public environmental events, and voluntarily supplied media. Only opt-in, authenticated first-party device telemetry should enter an individual's live-position fusion. A search-result title, face resemblance, image scene, camera location or repost should not silently become a location measurement.
 
-## Performance change in this branch
+## Repairs in this branch
 
 `SpectraPublicFeedStore.ts` previously executed the feed-source upsert and retention prune on every 30-second collection tick, even when provider `next_due_at` excluded any HTTP collection. This branch registers source metadata once per collector lifecycle (retrying after registration errors), updates provider configuration rows only when fields change, and runs the bounded retention prune at most hourly per process (retrying failed attempts). Provider due-date checks, leases, bounded upserts, backoff, cancellation and feed provenance remain unchanged. The offline fixture adds consecutive idle-cycle assertions.
 
-**Verification status:** The changes were made on a review branch. Offline fixture and full `verify:spectra` execution and production deployment have **not** been independently verified by this review. A previously open PR, #1289, separately addresses an EXIF decoder import/runtime issue; its existence is not evidence that its fix has reached `develop` or production.
+## EXIF decoding repairs and regression
+
+A known failure was reproduced in earlier PR #1289 (still open and not merged into `develop`): the installed ExifReader module's namespace import cannot reliably call `load` in the production ESM runtime, and the reader can emit numeric GPS tag descriptions that the upload parser rejects. This branch ports the minimal default-import and decimal/DMS handling into `server/services/gpsIntelligence.ts` and `MediaMetadataExtractor.ts`, with coordinate bounds and hemisphere validation. It additionally fixes the same import in `SpectraPublicImageRecords.ts`, which PR #1289 did not touch.
+
+A labeled **synthetic**, not person-derived JPEG fixture now exercises both uploaded-media and public-image EXIF extraction using the installed decoder, checks capture time and west-longitude signs, and verifies that geotags remain **scene evidence**, never an identified person's current coordinate. The new regression runs via `npm run verify:spectra`.
+
+**Verification status:** The code and regression fixtures have been committed to this review branch, but neither the new offline fixture nor the full `verify:spectra` command has been executed in this environment. Production deployment and behavior remain unverified; no claim of end-to-end location inference completion is made. The changes overlap PR #1289 and should be coordinated rather than merged twice.
