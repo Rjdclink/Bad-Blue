@@ -61,7 +61,7 @@ function scene(value: unknown, fromMs: number, toMs: number): SpectraSatelliteSc
   // people, or confuse a preview with a time-verified sensor observation.
   const assets = item.assets && typeof item.assets === 'object'
     && !Array.isArray(item.assets) ? item.assets as Record<string, any> : {};
-  const previewUrl = ['thumbnail', 'rendered_preview', 'visual']
+  const previewUrl = ['thumbnail', 'rendered_preview']
     .map(name => {
       const raw = assets[name];
       if (!raw || typeof raw !== 'object') return null;
