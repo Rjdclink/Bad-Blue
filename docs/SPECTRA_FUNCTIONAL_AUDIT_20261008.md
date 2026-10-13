@@ -2,7 +2,7 @@
 
 ## Finding
 
-The production test using only the consenting account owner's name, email and
+The production test using only the account owner's name, email and
 phone completed discovery across six source groups, but produced no timestamped
 coordinate observation sufficient to place that person on the map. The address
 provided separately as ground truth was excluded from all Spectra inputs.
@@ -22,14 +22,14 @@ not evidence of that accuracy, current presence, or subject identity.
 | Layer | Implementation | Observed behavior or gap |
 | --- | --- | --- |
 | Lexara launch | `client/src/components/LexaraConversation.tsx` | Hidden location commands launch Spectra before a paid chat request and carry the current command and bounded conversation context. |
-| Spectra input | `client/src/pages/spectra.tsx` | Map is rendered immediately; clues, uploaded media and location exports enter separate acquisition paths. No private social-account or browser-history connection flow was found here. |
+| Spectra input | `client/src/pages/spectra.tsx` | Map is rendered immediately; clues, uploaded media and location exports enter separate acquisition paths. No connected social-account or browser-history importer was found here. |
 | Discovery | `server/routes/spectra.routes.ts` | Name/email/phone support public discovery queries. Device collectors receive a separately extracted device identifier. A phone clue alone is not an enrolled device identifier. |
 | Active acquisition | `server/services/spectra/SpectraActiveAcquisition.ts` | Managed Android/Apple and Cisco collectors require configured HTTPS endpoints and credentials. Generic collectors require valid configuration and actual provider responses. |
 | Adapter catalog | `server/services/spectra/SpectraAdapterRegistry.ts` | Catalog readiness includes parsers, importers and contextual sources. It does not establish that measurements are being received for a particular subject. |
 | Ingest/persistence | `server/routes/geoconsole.routes.ts` | Authenticated observations are normalized, associated with a session, persisted where storage is available, and pushed to the session stream. Saving availability is returned separately from request success. |
 | Runtime | `client/src/hooks/useGeoRuntime.ts` | Local observations render immediately. Previously, rapid first observations could publish before a canonical session ID existed; failed saving was concealed. |
 | Media | `server/routes/gps.routes.ts` | Uploaded bytes supply metadata. Coordinate evidence requires both position and capture timestamp; metadata extraction is not proof that a person is currently at the capture point. |
-| Location assessment | `server/services/spectra/` | Existing quality, identity, timestamp, correlation and uncertainty gates must be retained. Duplicate or stale clues must not manufacture precision. |
+| Location assessment | `server/services/spectra/` | Existing quality, identity, timestamp, correlation and uncertainty checks remain in place. Duplicate or stale clues must not manufacture precision. |
 
 Production configuration reviewed during this audit did not contain Spectra
 collector endpoints/tokens, a signed telemetry webhook secret, a ranging anchor
@@ -44,10 +44,10 @@ source-availability findings, not estimates of the subject's position.
 | --- | --- | --- |
 | Wi-Fi RTT / UWB / Bluetooth ranging | Fresh ranges or directions, reference coordinates and subject/device association | Existing normalizers and constraint solving need real measurements and anchors. |
 | Wi-Fi / cellular positioning | Observed access-point or cell identifiers and signal data | Lookup adapters need observations; a telephone number is not a radio scan. |
-| Carrier network location | An onboarded provider, authorized device access, returned region and measurement time | CAMARA response normalization is not a live carrier subscription; precision depends on the provider/network. |
+| Carrier network location | A configured provider integration, device association, returned region and measurement time | CAMARA response normalization is not a live carrier subscription; precision depends on the provider/network. |
 | Original photo/video | Original file bytes, metadata or independently established scene location, capture time and subject association | Picker behavior can remove embedded GPS. An old photo establishes a historical capture point. |
 | Downloaded location export | A supported JSON/GeoJSON/GPX/KML/CSV or other location export with observations | Imports exist; a generic downloaded file may contain no spatial information. |
-| Connected account/browser activity | A functioning authorized connection and records containing useful spatial evidence | Signing in confirms identity; it does not itself disclose a live position. The available Opera connection was offline. |
+| Connected account/browser activity | A functioning account connection and records containing useful spatial evidence | Signing in confirms identity; it does not itself disclose a live position. The available Opera connection was offline. |
 
 The cloud test browser is not the account owner's physical device. Its own
 location must not be attached to the account owner as a measurement.
@@ -90,10 +90,10 @@ location was found.
   extraction and documented mobile `accept="image/*"` GPS stripping.
 - [Android Wi-Fi RTT](https://developer.android.com/develop/connectivity/wifi/wifi-rtt):
   measurements from three or more compatible access points can support typical
-  1–2 meter positioning; requires capable hardware, permissions and reference
+  1–2 meter positioning; requires capable hardware, OS-level location access and reference
   positions.
 - [CAMARA DeviceLocation](https://github.com/camaraproject/DeviceLocation/blob/main/code/API_definitions/location-retrieval.yaml):
-  provider onboarding, access authorization, measurement freshness and region
+  provider onboarding, provider credentials, measurement freshness and region
   uncertainty; no guaranteed 7.62 meter result.
 - [Google OpenID Connect](https://developers.google.com/identity/openid-connect/openid-connect):
   identity claims and separately scoped access to other APIs. The documented
