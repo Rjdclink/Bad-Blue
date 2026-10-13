@@ -4,6 +4,7 @@ import {
   compareSpectraPhotoEvidence,
   inspectSpectraVisualScene,
   parseSpectraVisualSceneAssessment,
+  summarizeSpectraSceneOverlap,
 } from '../server/services/spectra/SpectraVisualSceneAnalysis';
 import { inspectSpectraPublicImageResponse } from '../server/services/spectra/SpectraPublicImageRecords';
 
@@ -95,5 +96,37 @@ const failedModel = await inspectSpectraPublicImageResponse(
 assert.ok(failedModel);
 assert.equal((failedModel.structuredRecord as any).sceneAnalysis, undefined);
 assert.equal(failedModel.observations.length, 0);
+
+// Hash repost handling already exists in the Spectra evidence ledger;
+// this separate model-only calculation must compare each classified file once.
+const shaB = 'b'.repeat(64), shaC = 'c'.repeat(64);
+const similar = parseSpectraVisualSceneAssessment(text, shaB)!;
+const different = parseSpectraVisualSceneAssessment(JSON.stringify({
+  objects: ['water'], vehicles: [], settings: ['coastal'],
+}), shaC)!;
+const record = (hash: string, labels: unknown) => ({
+  structuredRecord: {
+    evidenceRole: 'media_capture_scene',
+    captureLocationIsSubjectPosition: false,
+    currentPositionVerified: false,
+    contentSha256: hash,
+    sceneAnalysis: labels,
+  },
+});
+const comparison = summarizeSpectraSceneOverlap([
+  record(sha, parsed), record(sha, parsed), record(shaB, similar), record(shaC, different),
+]);
+assert.equal(comparison.distinctClassifiedScenes, 3);
+assert.equal(comparison.comparedDistinctPairs, 3);
+assert.equal(comparison.highGenericLabelOverlapPairs, 1);
+assert.equal(comparison.strongestGenericLabelOverlap, 1);
+assert.equal(comparison.facialIdentityComparisons, 0);
+assert.equal(comparison.verifiedPersonLocations, 0);
+assert.deepEqual(summarizeSpectraSceneOverlap([
+  { structuredRecord: { ...record(sha, parsed).structuredRecord, currentPositionVerified: true } },
+]), {
+  distinctClassifiedScenes: 0, comparedDistinctPairs: 0, highGenericLabelOverlapPairs: 0,
+  strongestGenericLabelOverlap: null, facialIdentityComparisons: 0, verifiedPersonLocations: 0,
+});
 
 console.log('Spectra visual scenes: opt-in model analysis, strict categories, safe scene-only comparisons and non-fatal model failures.');
