@@ -83,6 +83,7 @@ import { collectSpectraPublicBlueskyImages, collectSpectraPublicMastodonImages, 
 import { prioritizeSpectraPublicMediaScenes } from '../services/spectra/SpectraPublicMediaPriority';
 import { collectSpectraEarthSearchScenes } from '../services/spectra/SpectraPublicSatelliteRecords';
 import { shouldRunSpectraClaudeBackground } from '../services/spectra/SpectraClaudeBudget';
+import { takeUnseenSpectraQueries } from '../services/spectra/SpectraDiscoveryDedup';
 
 const router = Router();
 router.use(isAuthenticated);
@@ -381,6 +382,7 @@ function discoveryResultFromCandidate(candidate: LegalMeshCandidate): SpectraDis
 async function runDiscoveryPass(
   queries: string[],
   context: { subject?: string; location?: string; useClaude?: boolean } = {},
+  attemptedQueries: Set<string> = new Set<string>(),
 ): Promise<{
   results: SpectraDiscoveryResult[];
   retrievedEvidence: SpectraRetrievedEvidence[];
@@ -391,8 +393,7 @@ async function runDiscoveryPass(
 }> {
   const retrieval: SpectraRetrievalCounts = { selected: 0, retrieved: 0, deadlineExpiredPasses: 0 };
   const retrievedEvidence: SpectraRetrievedEvidence[] = [];
-  const uniqueQueries = [...new Set(queries.map(query => query.replace(/\s+/g, ' ').trim()).filter(Boolean))]
-    .slice(0, 6);
+  const uniqueQueries = takeUnseenSpectraQueries(queries, attemptedQueries, 6);
   if (!uniqueQueries.length) {
     return { results: [], retrievedEvidence, attempted: 0, failed: 0, claudeNotes: [], retrieval };
   }
@@ -1087,13 +1088,14 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       'SPECTRA background research',
     );
 
+    const attemptedDiscoveryQueries = new Set<string>();
     const firstPassPromise = runDiscoveryPass(initialQueries, {
       subject: resolvedSubjectName,
       location: discoveryJurisdiction,
       // The native-first background lane owns the paid fallback. Avoid
       // duplicate Claude searches for this same subject in parallel.
       useClaude: false,
-    });
+    }, attemptedDiscoveryQueries);
     const activeAcquisitionPromise = acquireSpectraActiveTelemetry({
       deviceRef,
       sessionId: requestedSessionId,
@@ -1487,7 +1489,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
         subject: resolvedSubjectName,
         location: discoveryJurisdiction,
         useClaude: false,
-      });
+      }, attemptedDiscoveryQueries);
       discoveryQueriesAttempted += nextPass.attempted;
       retrievedEvidence.push(...nextPass.retrievedEvidence);
       searchRetrievedEvidence.push(...nextPass.retrievedEvidence);
