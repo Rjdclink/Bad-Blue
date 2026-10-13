@@ -7,6 +7,7 @@ type ImageLead = { url: string; post: SpectraRetrievedEvidence; platform: Social
 const MAX_BYTES = 3_000_000;
 const TIMEOUT_MS = 3_500;
 const MAX_IMAGES_PER_PLATFORM = 4;
+const MAX_REDIRECTS = 3;
 const CACHE_MS = 30 * 60_000;
 const CACHE_LIMIT = 100;
 const cache = new Map<string, { expiresAt: number; record: SpectraRetrievedEvidence }>();
@@ -22,7 +23,7 @@ function validUrl(raw: string): URL | null {
   if (!raw || raw.length > 2_200) return null;
   try {
     const url = new URL(raw);
-    if (url.protocol !== 'https:' || url.port || url.username || url.password) return null;
+    if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password) return null;
     return url;
   } catch { return null; }
 }
@@ -31,51 +32,20 @@ function platformForPage(raw: string): SocialPlatform | null {
   const url = validUrl(raw);
   if (!url) return null;
   const host = url.hostname.toLowerCase().replace(/^www\./, '');
-  if (host === 'facebook.com' || host === 'm.facebook.com') {
-    return /\/(?:photos?|posts|permalink\.php|photo\.php|story\.php)(?:\/|$|\?)/i.test(url.pathname + url.search)
-      ? 'Facebook' : null;
-  }
-  if (host === 'instagram.com') return /^\/(?:p|reel)\/[a-z0-9_-]+(?:\/|$)/i.test(url.pathname) ? 'Instagram' : null;
-  if (host === 'x.com' || host === 'twitter.com' || host === 'mobile.twitter.com') {
-    return /^\/[a-z0-9_]{1,20}\/status\/\d+(?:\/|$)/i.test(url.pathname) ? 'X' : null;
-  }
+  if (host === 'facebook.com' || host === 'm.facebook.com') return 'Facebook';
+  if (host === 'instagram.com') return 'Instagram';
+  if (host === 'x.com' || host === 'twitter.com' || host === 'mobile.twitter.com') return 'X';
   return null;
 }
 
-/** Public platform media/CDN URLs only. No authenticated URLs or redirected downloads. */
+/** Accept images published with retrieved posts without requiring particular CDN hosts. */
 export function allowedSpectraPublicImageUrl(
   raw: string,
-  platform: SocialPlatform,
+  _platform: SocialPlatform,
   sourcePostUrl: string,
 ): string | null {
   const url = validUrl(raw);
-  const source = validUrl(sourcePostUrl);
-  if (!url || !source) return null;
-  const host = url.hostname.toLowerCase();
-  const sourceHost = source.hostname.toLowerCase();
-  let allowed = false;
-  if (platform === 'Bluesky') {
-    allowed = host === 'cdn.bsky.app' && url.pathname.startsWith('/img/')
-      && sourceHost === 'bsky.app';
-  } else if (platform === 'Mastodon') {
-    allowed = (host === sourceHost || host === 'files.' + sourceHost)
-      && /^\/(?:media_attachments|system|uploads)\//.test(url.pathname);
-  } else if (platform === 'X') {
-    allowed = ['x.com', 'twitter.com', 'mobile.twitter.com', 'www.x.com'].includes(sourceHost)
-      && host === 'pbs.twimg.com' && url.pathname.startsWith('/media/');
-  } else if (platform === 'Instagram') {
-    allowed = ['instagram.com', 'www.instagram.com'].includes(sourceHost)
-      && (host.endsWith('.cdninstagram.com') || host === 'cdninstagram.com'
-        || host.endsWith('.fbcdn.net') || host === 'fbcdn.net');
-  } else if (platform === 'Facebook') {
-    allowed = ['facebook.com', 'www.facebook.com', 'm.facebook.com'].includes(sourceHost)
-      && (host.endsWith('.fbcdn.net') || host === 'fbcdn.net');
-  } else if (platform === 'Web') {
-    // Generic web images are read only after the public-URL/redirect guard in
-    // SpectraPublicRetrieval, not by a social-media search lead.
-    allowed = true;
-  }
-  return allowed ? url.toString() : null;
+  return url && validUrl(sourcePostUrl) ? url.toString() : null;
 }
 
 /** Only a successfully downloaded social POST's image metadata is a media lead. */
@@ -252,12 +222,32 @@ async function collect(leads: ImageLead[], options: {
     try {
       if (options.signal?.aborted) return null;
       attempted++;
-      const response = await (options.fetchImpl || fetch)(lead.url, {
-        method: 'GET', redirect: 'manual', signal: controller.signal,
-        headers: { Accept: 'image/jpeg,image/png,image/webp', 'User-Agent': 'LegalWhat-SPECTRA/1.0' },
-      });
+      let imageUrl = lead.url;
+      let response: Response | null = null;
+      for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+        const url = validUrl(imageUrl);
+        if (!url) break;
+        // Existing public-URL validation is retained for outbound requests,
+        // including each redirect destination; provider host allowlists are gone.
+        const validated = options.fetchImpl ? url
+          : await (await import('./SpectraPublicRetrieval')).assertPublicUrl(url.toString());
+        const fetched = await (options.fetchImpl || fetch)(validated, {
+          method: 'GET', redirect: 'manual', signal: controller.signal,
+          headers: { Accept: 'image/jpeg,image/png,image/webp', 'User-Agent': 'LegalWhat-SPECTRA/1.0' },
+        });
+        if (fetched.status >= 300 && fetched.status < 400) {
+          const location = fetched.headers.get('location');
+          void fetched.body?.cancel().catch(() => undefined);
+          if (!location || hop === MAX_REDIRECTS) break;
+          imageUrl = new URL(location, validated).toString();
+          continue;
+        }
+        response = fetched;
+        break;
+      }
+      if (!response) { failed++; return null; }
       const record = await inspectSpectraPublicImageResponse(response, {
-        url: lead.url, sourcePostUrl: lead.post.url, platform: lead.platform,
+        url: imageUrl, sourcePostUrl: lead.post.url, platform: lead.platform,
         publishedAt: lead.post.publishedAt, alt: lead.alt,
       });
       if (!record) { failed++; return null; }

@@ -57,13 +57,13 @@ let mastodonCalls = 0;
 const mastodonResult = await collectSpectraPublicMastodonImages([mastodon], {
   fetchImpl: async (request, init) => {
     mastodonCalls++;
-    assert.equal(new URL(String(request)).hostname, 'files.social.example');
+    assert.ok(['files.social.example', 'private.example'].includes(new URL(String(request)).hostname));
     assert.equal(new Headers(init?.headers).get('authorization'), null);
     return jpegResponse();
   },
 });
-assert.equal(mastodonCalls, 1);
-assert.equal(mastodonResult.records.length, 1);
+assert.equal(mastodonCalls, 2, 'image URLs are no longer restricted to a configured Mastodon CDN');
+assert.equal(mastodonResult.records.length, 2);
 assert.equal((mastodonResult.records[0].structuredRecord as any).sourcePlatform, 'Mastodon');
 assert.equal((mastodonResult.records[0].structuredRecord as any).sourcePostUrl, mastodon.url);
 
@@ -79,17 +79,21 @@ const pages = social.map(([url, image]) => {
   return { ...post(url, 'Public webpage'), publicImageUrls: page.publicImageUrls };
 });
 assert.equal(spectraSocialPageImageLeads('https://unrelated.example/post', [social[2][1]]).length, 0);
-assert.equal(spectraSocialPageImageLeads('https://x.com/example/status/123', [
-  'https://pbs.twimg.com.evil.example/media/abc.jpg', social[2][1],
-]), [social[2][1]].length);
-assert.equal(allowedSpectraPublicImageUrl('http://pbs.twimg.com/media/abc.jpg', 'X', social[2][0]), null);
-assert.equal(allowedSpectraPublicImageUrl('https://pbs.twimg.com/media/abc.jpg', 'X',
-  'https://unrelated.example/article'), null);
+assert.deepEqual(spectraSocialPageImageLeads('https://x.com/example/status/123', [
+  'https://images.other.example.net/abc.jpg', social[2][1],
+]), ['https://images.other.example.net/abc.jpg', social[2][1]],
+'public image metadata is no longer restricted to hardcoded provider CDN hosts');
+assert.equal(allowedSpectraPublicImageUrl('http://images.other.example.net/photo.jpg', 'X', social[2][0]),
+  'http://images.other.example.net/photo.jpg', 'public HTTP image URLs remain eligible');
+assert.equal(allowedSpectraPublicImageUrl('https://images.other.example.net/photo.jpg', 'Facebook',
+  social[0][0]), 'https://images.other.example.net/photo.jpg');
+assert.equal(allowedSpectraPublicImageUrl('javascript:alert(1)', 'X', social[2][0]), null);
+assert.equal(allowedSpectraPublicImageUrl('http://user:secret@example.net/photo.jpg', 'X', social[2][0]), null);
 let socialCalls = 0;
 const result = await collectSpectraPublicSocialPageImages(pages, {
   fetchImpl: async (_request, init) => {
     socialCalls++;
-    assert.equal(init?.redirect, 'manual', 'redirects to login/private endpoints are never followed');
+    assert.equal(init?.redirect, 'manual', 'image redirects are handled explicitly without credentials');
     return jpegResponse();
   },
 });
@@ -97,6 +101,19 @@ assert.equal(socialCalls, 3);
 assert.equal(result.records.length, 3);
 assert.deepEqual(result.records.map(item => (item.structuredRecord as any).sourcePlatform),
   ['Facebook', 'Instagram', 'X']);
+const followed: string[] = [];
+const redirected = await collectSpectraPublicSocialPageImages([pages[0]], {
+  fetchImpl: async (request, init) => {
+    followed.push(String(request));
+    assert.equal(init?.redirect, 'manual', 'public redirects are evaluated one hop at a time');
+    return followed.length === 1
+      ? new Response(null, { status: 302, headers: { location: 'https://other-cdn.example.net/photo.jpg' } })
+      : jpegResponse();
+  },
+});
+assert.equal(followed.length, 2, 'a public CDN redirect is followed');
+assert.equal(redirected.records.length, 1);
+assert.equal(redirected.records[0].url, 'https://other-cdn.example.net/photo.jpg');
 assert(result.records.every(item => item.observations.length === 0));
 assert(result.records.every(item => (item.structuredRecord as any).currentPositionVerified === false));
 const oversized = await collectSpectraPublicSocialPageImages([pages[0]], {
@@ -116,4 +133,4 @@ const external = htmlEvidence('<meta property="og:image" content="' + social[2][
   'https://unrelated.example/story');
 assert.equal(external.publicImageUrls, undefined, 'a generic site cannot launder social CDN URLs');
 
-console.log('SPECTRA public social image pipeline passed: Bluesky, Mastodon, Facebook, Instagram, X, deduplication, no-EXIF, bounded bytes, source isolation, and no subject observations.');
+console.log('SPECTRA public social image pipeline passed: cross-provider public image URLs and redirects, Bluesky, Mastodon, Facebook, Instagram, X, deduplication, bounded bytes and EXIF metadata.');
