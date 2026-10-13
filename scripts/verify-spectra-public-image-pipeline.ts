@@ -133,4 +133,25 @@ const external = htmlEvidence('<meta property="og:image" content="' + social[2][
   'https://unrelated.example/story');
 assert.equal(external.publicImageUrls, undefined, 'a generic site cannot launder social CDN URLs');
 
+// Four early Facebook results must not consume every image slot before the
+// Instagram and X result pages are processed.
+const crowded: SpectraRetrievedEvidence[] = [
+  ...Array.from({ length: 4 }, (_, i) => post(
+    'https://www.facebook.com/fake/posts/' + (i + 10), 'Public webpage')),
+  ...Array.from({ length: 4 }, (_, i) => post(
+    'https://www.instagram.com/p/example' + (i + 10) + '/', 'Public webpage')),
+  ...Array.from({ length: 4 }, (_, i) => post(
+    'https://x.com/fake/status/' + (123456789100 + i), 'Public webpage')),
+].map((page, i) => ({
+  ...page, publicImageUrls: ['https://images.example.invalid/photo-' + i + '.jpg'],
+}));
+const fair = await collectSpectraPublicSocialPageImages(crowded, {
+  fetchImpl: async () => jpegResponse(),
+});
+assert.equal(fair.attempted, 6, 'bounded cross-platform media budget');
+assert.equal(fair.failed, 0);
+assert.deepEqual(fair.records.map(record => (record.structuredRecord as any).sourcePlatform),
+  ['Facebook', 'Instagram', 'X', 'Facebook', 'Instagram', 'X'],
+  'each public platform receives a share of the bounded retrieval budget');
+
 console.log('SPECTRA public social image pipeline passed: cross-provider public image URLs and redirects, Bluesky, Mastodon, Facebook, Instagram, X, deduplication, bounded bytes and EXIF metadata.');
