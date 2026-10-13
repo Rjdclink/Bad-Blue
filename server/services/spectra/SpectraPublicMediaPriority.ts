@@ -1,4 +1,4 @@
-import { parseSpectraVisualSceneAssessment } from './SpectraVisualSceneAnalysis';
+import { parseSpectraVisualSceneAssessment, type SpectraVisualSceneAssessment } from './SpectraVisualSceneAnalysis';
 
 /** Recency priority for locations embedded in publicly fetched PHOTOGRAPHS.
  * This ranks dated capture scenes, not a person's current or historical presence.
