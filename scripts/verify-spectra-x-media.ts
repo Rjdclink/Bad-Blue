@@ -54,6 +54,43 @@ assert.deepEqual(retrieved.posts[0].observations, [], 'image leads are never loc
 assert.equal(retrieved.posts[0].url, source.url);
 assert.ok(!JSON.stringify(retrieved).includes('synthetic-token'), 'the API credential must never enter records');
 
+const thumbnailPage: SpectraRetrievedEvidence = {
+  ...source, publicImageUrls: ['https://thumbnails.example.org/old-share.jpg'],
+};
+const prioritized = await collectSpectraXPostMedia([thumbnailPage], {
+  token: 'synthetic-token',
+  fetchImpl: async (request) => {
+    const id = new URL(String(request)).pathname.split('/').at(-1);
+    return new Response(JSON.stringify({
+      data: { id, attachments: { media_keys: ['photo_1'] } },
+      includes: { media: [{ type: 'photo', media_key: 'photo_1',
+        url: 'https://pbs.twimg.com/media/source-photo.jpg' }] },
+    }), { headers: { 'content-type': 'application/json' } });
+  },
+});
+assert.deepEqual(prioritized.posts[0].publicImageUrls, [
+  'https://pbs.twimg.com/media/source-photo.jpg',
+  'https://thumbnails.example.org/old-share.jpg',
+], 'official attached post photo must precede incidental share thumbnail');
+
+const lateAbort = new AbortController();
+const ignoredAbort = await collectSpectraXPostMedia([source], {
+  token: 'synthetic-token', signal: lateAbort.signal,
+  fetchImpl: async (request) => {
+    // Provider mock deliberately ignores fetch cancellation and returns late.
+    lateAbort.abort();
+    return new Response(JSON.stringify({
+      data: { id: new URL(String(request)).pathname.split('/').at(-1),
+        attachments: { media_keys: ['photo_1'] } },
+      includes: { media: [{ type: 'photo', media_key: 'photo_1',
+        url: 'https://pbs.twimg.com/media/not-admissible.jpg' }] },
+    }), { headers: { 'content-type': 'application/json' } });
+  },
+});
+assert.equal(ignoredAbort.posts.length, 0,
+  'a cancelled investigation must never admit late image leads');
+assert.equal(ignoredAbort.status, 'partial');
+
 const unavailable = await collectSpectraXPostMedia([source], {
   token: 'synthetic-token',
   fetchImpl: async () => new Response(JSON.stringify({ errors: [{ code: 403 }] }), {
