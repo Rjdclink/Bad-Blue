@@ -70,6 +70,7 @@ assert.match(geo, /cameraPositionNumber\(coordinate\?\.lat\)/);
 assert.match(route, /spectraContextCache\.get\(key\)/);
 assert.match(route, /spectraContextCache\.set\(key/);
 assert.match(route, /collectSpectraEarthSearchScenes\(input\.latitude, input\.longitude, earthFrom, earthTo\)/);
+assert.match(geo, /collectSpectraEarthSearchScenes\(validation\.data\.lat, validation\.data\.lng, from, to\)/);
 assert.match(route, /basis === 'timestamped_observation'/);
 assert.match(route, /candidateLocations\[0\]\.confidence >= 0\.1/);
 assert.match(panel, /Photograph metadata by capture date/);
