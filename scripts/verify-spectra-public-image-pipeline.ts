@@ -93,7 +93,7 @@ let socialCalls = 0;
 const result = await collectSpectraPublicSocialPageImages(pages, {
   fetchImpl: async (_request, init) => {
     socialCalls++;
-    assert.equal(init?.redirect, 'manual', 'redirects to login/private endpoints are never followed');
+    assert.equal(init?.redirect, 'manual', 'image redirects are handled explicitly without credentials');
     return jpegResponse();
   },
 });
