@@ -457,7 +457,7 @@ export class MultiProviderRpcManager {
     for (const chain of chains) {
       if (this.initializedChains.has(chain)) continue;
       const definitions = this.discoverConfiguredProviders ? configuredRpcCandidates(chain) : [];
-      const candidates = definitions.map(definition => ({
+      const candidates: RpcCandidate[] = definitions.map(definition => ({
         ...definition,
         httpProvider: this.httpProviderFactory(definition.httpUrl),
         state: 'connecting' as RpcProviderState,
@@ -1193,7 +1193,7 @@ export class AdvancedRateLimiter {
     logger.warn('Rate limiter recorded error', {
       component: 'AdvancedRateLimiter',
       isRateLimit,
-      errorCount,
+      errorCount: this.errorCount,
       adaptiveMultiplier: this.adaptiveMultiplier
     });
   }

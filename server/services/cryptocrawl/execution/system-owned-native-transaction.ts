@@ -1,4 +1,5 @@
 import { BigNumber, ethers, type Wallet, type providers } from 'ethers';
+import { estimateAdditionalNativeFees, measureReceiptNativeFees, unsignedFeePayload } from './chain-native-fees.js';
 import { withEvmSignerLane } from './evm-signer-lane.js';
 import {
   bindSystemNativeGasSpendSubmission,
@@ -22,7 +23,7 @@ type PreparedEnvelope = {
   transactionHash: string;
   walletAddress: string;
   maximumWei: BigNumber;
-  parsed: ethers.utils.Transaction;
+  parsed: ReturnType<typeof ethers.utils.parseTransaction>;
 };
 
 type SubmittedSystemOwnedTransaction = {
@@ -77,7 +78,17 @@ async function reserveBindAndBroadcastWithinSignerLane(input: {
   signedTransaction: string;
   chainId: number;
   envelope: PreparedEnvelope;
+  validateFeeReservation?: (maximumWei: BigNumber) => Promise<void>;
 }): Promise<SubmittedSystemOwnedTransaction> {
+  const additionalFees = await estimateAdditionalNativeFees({
+    provider: input.provider, chainId: input.chainId,
+    unsignedTransaction: unsignedFeePayload(input.envelope.parsed),
+    gasLimit: input.envelope.parsed.gasLimit,
+  });
+  // OP data/operator fees have no transaction-level cap. Reserve a fluctuation
+  // buffer and reconcile the full receipt cost; do not label this a hard cap.
+  input.envelope.maximumWei = input.envelope.maximumWei.add(additionalFees.mul(2));
+  await input.validateFeeReservation?.(input.envelope.maximumWei);
   const authority = await getSystemNativeGasAuthority({
     chain: input.chain,
     wallet: input.envelope.walletAddress,
@@ -148,12 +159,9 @@ async function waitAndSettleSystemOwnedTransaction(input: {
       throw new Error(`system-owned native transaction ${envelope.transactionHash} has no terminal receipt`);
     }
 
-    const effectiveGasPrice = receipt.effectiveGasPrice || envelope.parsed.gasPrice || envelope.parsed.maxFeePerGas;
-    if (!effectiveGasPrice) {
-      await quarantineSubmittedSystemNativeGasSpend(reservation.spendId, 'receipt missing effective gas price');
-      throw new Error(`system-owned native transaction ${envelope.transactionHash} has no verifiable gas price`);
-    }
-    const actualSpent = receipt.gasUsed.mul(BigNumber.from(effectiveGasPrice));
+    const actualSpent = await measureReceiptNativeFees({
+      provider: input.provider, chainId: input.submitted.chainId, receipt,
+    });
     await settleSystemNativeGasSpend({
       spendId: reservation.spendId,
       transactionHash: envelope.transactionHash,
@@ -163,7 +171,9 @@ async function waitAndSettleSystemOwnedTransaction(input: {
         blockNumber: receipt.blockNumber,
         receiptStatus: receipt.status,
         gasUsed: receipt.gasUsed.toString(),
-        effectiveGasPriceWei: BigNumber.from(effectiveGasPrice).toString(),
+        effectiveGasPriceWei: receipt.effectiveGasPrice.toString(),
+        completeChainNativeFeeWei: actualSpent.toString(),
+        rollupFeeReservationIsEstimate: true,
         rawWalletBalanceAuthority: false,
         exactSignedTransactionRecovery: true,
         signerLaneCoversReservationAndBroadcast: true,
@@ -231,6 +241,7 @@ export async function executeSystemOwnedNativeTransaction(input: {
   transaction: providers.TransactionRequest;
   confirmations?: number;
   preBroadcastCheck?: () => Promise<void>;
+  validateFeeReservation?: (maximumWei: BigNumber) => Promise<void>;
 }): Promise<SystemOwnedNativeTransactionResult> {
   const wallet = input.wallet.connect(input.provider);
   const network = await input.provider.getNetwork();
@@ -262,6 +273,7 @@ export async function executeSystemOwnedNativeTransaction(input: {
         signedTransaction,
         chainId: network.chainId,
         envelope,
+        validateFeeReservation: input.validateFeeReservation,
       });
     },
   });

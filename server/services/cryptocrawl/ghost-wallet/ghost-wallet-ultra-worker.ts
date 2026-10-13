@@ -1,3 +1,4 @@
+import { captureCryptoCrawlerWorkGuard } from '../runtime/manual-power-state.js';
 import os from 'node:os';
 import pg from 'pg';
 import { Contract, ethers, type providers } from 'ethers';
@@ -154,6 +155,7 @@ export async function enqueueGhostWalletPreparedAtomicExecution(input: {
 
 class GhostWalletUltraWorker {
   private running = false;
+  private lifecycleGeneration = 0;
   private listener: InstanceType<typeof Client> | null = null;
   private listenerReconnectTimer: NodeJS.Timeout | null = null;
   private listenerReconnectAttempt = 0;
@@ -169,15 +171,28 @@ class GhostWalletUltraWorker {
 
   async start(): Promise<void> {
     if (this.running) return;
+    const powerGuard = captureCryptoCrawlerWorkGuard();
+    const generation = this.lifecycleGeneration;
+    const active = () => {
+      powerGuard();
+      if (generation !== this.lifecycleGeneration) throw new Error('Ghost worker startup cancelled');
+    };
+    active();
     await ensureCryptocrawlOverflowRuntimeSchema();
+    active();
     await ghostWalletEngine.start();
+    active();
     this.running = true;
     try {
       this.unsubscribeLocalWake = ghostWalletWorkSignal.onWake(reason => this.requestDrain(reason));
       await this.connectListener();
+      active();
       await ghostWalletChainEvents.start();
+      active();
       await syncMeasuredGhostWalletVenues(ghostWalletEngine.getMeasuredCapitalQuotes());
+      active();
       await ghostWalletAutonomousController.start();
+      active();
       this.requestDrain('startup_backlog');
       logger.info('[GhostWalletUltra] Dedicated event-driven Ultra Worker started', {
         component: 'GhostWalletUltraWorker',
@@ -203,12 +218,13 @@ class GhostWalletUltraWorker {
         zeroCapitalExecutionAuthority: false,
       });
     } catch (error) {
-      await this.stop().catch(() => undefined);
+      if (generation === this.lifecycleGeneration) await this.stop().catch(() => undefined);
       throw error;
     }
   }
 
   async stop(): Promise<void> {
+    this.lifecycleGeneration++;
     this.running = false;
     ghostWalletAutonomousController.stop();
     this.unsubscribeLocalWake?.();
@@ -229,11 +245,13 @@ class GhostWalletUltraWorker {
       try { await client.query(`UNLISTEN ${LISTEN_CHANNEL}`); } catch { /* connection may already be gone */ }
       try { await client.end(); } catch { /* best effort */ }
     }
-    ghostWalletEngine.stop();
+    await ghostWalletEngine.stop();
   }
 
   private async connectListener(): Promise<void> {
     if (!this.running || this.listener) return;
+    const generation = this.lifecycleGeneration;
+    const powerGuard = captureCryptoCrawlerWorkGuard();
     const client = new Client({
       connectionString: listenerConnectionUrl(),
       ssl: listenerSsl(),
@@ -252,15 +270,29 @@ class GhostWalletUltraWorker {
     client.on('error', reconnect);
     client.on('end', () => reconnect('listener_end'));
     client.on('notification', message => {
-      if (message.channel !== LISTEN_CHANNEL) return;
+      if (!this.running || generation !== this.lifecycleGeneration || message.channel !== LISTEN_CHANNEL) return;
       void recordGhostWalletRuntimeState({
         chain: 'global', notification: true, metadata: { workId: message.payload || null },
       }).catch(() => undefined);
       ghostWalletAutonomousController.requestEvaluation('explicit_refresh');
       this.requestDrain('postgres_notify');
     });
-    await client.connect();
-    await client.query(`LISTEN ${LISTEN_CHANNEL}`);
+    const active = () => {
+      powerGuard();
+      if (!this.running || generation !== this.lifecycleGeneration) throw new Error('Ghost listener startup cancelled');
+    };
+    try {
+      active();
+      await client.connect();
+      active();
+      await client.query(`LISTEN ${LISTEN_CHANNEL}`);
+      active();
+    } catch (error) {
+      client.removeAllListeners();
+      client.on('error', () => undefined);
+      await client.end().catch(() => undefined);
+      throw error;
+    }
     this.listener = client;
     this.listenerReconnectAttempt = 0;
     await recordGhostWalletRuntimeState({

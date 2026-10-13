@@ -62,6 +62,7 @@ import { stopCryptaraTwoSpeedRevalidationWiring } from './cryptara-two-speed-rev
 
 let installed = false;
 let runtimeActivationAllowed = false;
+let runtimeGeneration = 0;
 let installRetryTimer: NodeJS.Timeout | null = null;
 let overflowSchemaRepairPromise: Promise<void> | null = null;
 let zeroCapitalStartPromise: Promise<void> | null = null;
@@ -69,7 +70,7 @@ let zeroCapitalRetryTimer: NodeJS.Timeout | null = null;
 let zeroCapitalStartAttempts = 0;
 
 type RuntimeComponentStatus = 'pending' | 'ready' | 'degraded';
-type RuntimeComponentInstaller = () => void | Promise<void>;
+type RuntimeComponentInstaller = () => unknown;
 
 interface RuntimeComponentState {
   status: RuntimeComponentStatus;
@@ -126,6 +127,7 @@ function scheduleRuntimeComponentRetry(name: string, installer: RuntimeComponent
 
 function installRuntimeComponent(name: string, installer: RuntimeComponentInstaller): void {
   if (!runtimeActivationAllowed) return;
+  const generation = runtimeGeneration;
   const previous = currentComponentState(name);
   const attempt = previous.attempts + 1;
   runtimeComponentStates.set(name, {
@@ -136,6 +138,7 @@ function installRuntimeComponent(name: string, installer: RuntimeComponentInstal
   });
 
   const markReady = () => {
+    if (!runtimeActivationAllowed || generation !== runtimeGeneration) return;
     runtimeComponentStates.set(name, {
       status: 'ready',
       attempts: attempt,
@@ -149,6 +152,7 @@ function installRuntimeComponent(name: string, installer: RuntimeComponentInstal
   };
 
   const markDegraded = (error: unknown) => {
+    if (!runtimeActivationAllowed || generation !== runtimeGeneration) return;
     const message = error instanceof Error ? error.message : String(error);
     runtimeComponentStates.set(name, {
       status: 'degraded',
@@ -516,6 +520,7 @@ export function activateCanonicalCryptoCrawlerRuntimeWiring(): void {
 }
 
 export async function deactivateCanonicalCryptoCrawlerRuntimeWiring(): Promise<void> {
+  runtimeGeneration++;
   runtimeActivationAllowed = false;
 
   if (installRetryTimer) clearTimeout(installRetryTimer);
@@ -527,36 +532,35 @@ export async function deactivateCanonicalCryptoCrawlerRuntimeWiring(): Promise<v
   for (const timer of runtimeComponentRetryTimers.values()) clearTimeout(timer);
   runtimeComponentRetryTimers.clear();
 
-  stopCanonicalZeroCapitalDiscovery();
-  multiTopologyDiscoveryController.stop();
-  stopPredictionMarketDiscoveryWiring();
-  stopOrderBookEvolutionWiring();
-  stopCexFourModeObservabilityWiring();
-  stopCexInventoryReadinessWiring();
-  stopComputationalReactorWiring();
-  stopBpsCompressionMesh();
-  stopBpsFrontierWave3Wiring();
-  stopBpsDecompositionObservability();
-  stopEconomicTransformationWiring();
-  stopProfitabilityRecoveryCoordinator();
-  stopKalshiBpsOptimizationWiring();
-  stopFilteredMempoolObservability();
-  stopZeroXBudgetObservability();
-  stopAcrossBridgeObservability();
-  stopCryptoRuntimeObservability();
-  stopExpandedNetworkObservability();
-  stopExternalCapitalSelectionObserver();
-  stopZeroCapitalFundingLifecycleObserver();
-  stopCryptaraTwoSpeedRevalidationWiring();
-
-  const { stopTelemetryBootstrap } = await import('./telemetry-bootstrap.js');
-  await Promise.allSettled([
-    ghostWalletUltraWorker.stop(),
-    providerMeshPendingStream.stop(),
-    stopTelemetryBootstrap(),
-    stopLearningLifecycleWiring(),
-    stopMeasuredRebalanceRouteEvidenceWiring(),
-  ]);
+  // A single broken stop hook must not strand later workers or sockets.
+  const stopped = await Promise.allSettled([
+    () => stopCanonicalZeroCapitalDiscovery(),
+    () => multiTopologyDiscoveryController.stop(),
+    () => stopPredictionMarketDiscoveryWiring(),
+    () => stopOrderBookEvolutionWiring(),
+    () => stopCexFourModeObservabilityWiring(),
+    () => stopCexInventoryReadinessWiring(),
+    () => stopComputationalReactorWiring(),
+    () => stopBpsCompressionMesh(),
+    () => stopBpsFrontierWave3Wiring(),
+    () => stopBpsDecompositionObservability(),
+    () => stopEconomicTransformationWiring(),
+    () => stopProfitabilityRecoveryCoordinator(),
+    () => stopKalshiBpsOptimizationWiring(),
+    () => stopFilteredMempoolObservability(),
+    () => stopZeroXBudgetObservability(),
+    () => stopAcrossBridgeObservability(),
+    () => stopCryptoRuntimeObservability(),
+    () => stopExpandedNetworkObservability(),
+    () => stopExternalCapitalSelectionObserver(),
+    () => stopZeroCapitalFundingLifecycleObserver(),
+    () => stopCryptaraTwoSpeedRevalidationWiring(),
+    () => ghostWalletUltraWorker.stop(),
+    () => providerMeshPendingStream.stop(),
+    () => import('./telemetry-bootstrap.js').then(module => module.stopTelemetryBootstrap()),
+    () => stopLearningLifecycleWiring(),
+    () => stopMeasuredRebalanceRouteEvidenceWiring(),
+  ].map(stop => Promise.resolve().then(stop)));
 
   installed = false;
   runtimeComponentStates.clear();
@@ -566,6 +570,8 @@ export async function deactivateCanonicalCryptoCrawlerRuntimeWiring(): Promise<v
     operatorStartRequired: true,
     automaticRestartAllowed: false,
   });
+  const failures = stopped.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
+  if (failures.length) throw new Error(`Canonical teardown incomplete: ${failures.map(result => String(result.reason)).join('; ')}`);
 }
 
 export function getCanonicalCryptoCrawlerActivationState(): {

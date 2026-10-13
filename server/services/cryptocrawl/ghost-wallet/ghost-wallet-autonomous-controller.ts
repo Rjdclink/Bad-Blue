@@ -1,3 +1,4 @@
+import { isCryptoCrawlerMarketDataAllowed, onCryptoCrawlerManualPowerPhaseChange, captureCryptoCrawlerWorkGuard } from '../runtime/manual-power-state.js';
 import { ethers, providers } from 'ethers';
 import logger from '../../../logger.js';
 import { pool } from '../runtime/cryptocrawl-runtime-database.js';
@@ -259,7 +260,7 @@ async function registryMandates(): Promise<StandingBorrowerMandate[]> {
          AND lower(COALESCE(metadata->>'autonomous','false'))='true'
        ORDER BY verified DESC, last_verified_at DESC NULLS LAST, last_observed_at DESC`,
     );
-    const rows = result.rows.flatMap((row: any) => {
+    const rows: StandingBorrowerMandate[] = result.rows.flatMap((row: any) => {
       const parsedChain = chain(row.chain);
       const borrower = address(row.address);
       const metadata = row.metadata && typeof row.metadata === 'object' ? row.metadata : {};
@@ -365,6 +366,11 @@ function routeQuote(base: GhostWalletBorrowerQuoteResult, selected: GhostWalletB
 }
 
 class GhostWalletAutonomousController {
+  constructor() {
+    onCryptoCrawlerManualPowerPhaseChange(() => {
+      if (!isCryptoCrawlerMarketDataAllowed()) this.stop();
+    });
+  }
   private running = false;
   private evaluating = false;
   private pending = false;
@@ -379,7 +385,7 @@ class GhostWalletAutonomousController {
   private localFailures = 0;
 
   async start(): Promise<void> {
-    if (this.running) return;
+    if (this.running || !isCryptoCrawlerMarketDataAllowed()) return;
     this.running = true;
     this.unsubscribeWake = ghostWalletWorkSignal.onWake(reason => this.requestEvaluation(reason));
     this.requestEvaluation('startup_backlog');
@@ -466,6 +472,7 @@ class GhostWalletAutonomousController {
 
   private async evaluate(): Promise<void> {
     if (!this.running || this.evaluating) return;
+    const active = captureCryptoCrawlerWorkGuard();
     this.evaluating = true;
     let hasMandates = false;
     try {
@@ -473,14 +480,17 @@ class GhostWalletAutonomousController {
         this.pending = false;
         this.lastEvaluationAt = Date.now();
         const mandates = await standingMandates();
+        active();
         const executableMandates = mandates.filter(mandate => PIMLICO_EXECUTION_CHAINS.has(mandate.chain));
         this.lastUnsupportedMandateCount = mandates.length - executableMandates.length;
         hasMandates = executableMandates.length > 0;
         this.lastMandateCount = mandates.length;
         this.mandatesSeen += mandates.length;
         if (executableMandates.length === 0) break;
-        await mapBounded(executableMandates, matchConcurrency(), mandate => this.evaluateMandate(mandate));
+        await mapBounded(executableMandates, matchConcurrency(), mandate => { active(); return this.evaluateMandate(mandate); });
       } while (this.running && this.pending);
+    } catch (error) {
+      if (isCryptoCrawlerMarketDataAllowed()) logger.warn('[GhostWalletController] Evaluation deferred', { error: error instanceof Error ? error.message : String(error) });
     } finally {
       this.evaluating = false;
       this.schedule(hasMandates);

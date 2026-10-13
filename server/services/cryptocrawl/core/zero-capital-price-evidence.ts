@@ -29,6 +29,7 @@ export function getFreshZeroCapitalPriceEvidence(
     priceUsd <= 0 ||
     !Number.isFinite(observedAt) ||
     observedAt < 0 ||
+    observedAt > now ||
     !Number.isFinite(expiresAt) ||
     expiresAt <= observedAt ||
     expiresAt <= now ||

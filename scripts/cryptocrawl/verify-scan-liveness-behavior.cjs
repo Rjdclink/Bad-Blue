@@ -168,7 +168,9 @@ async function main() {
     assert.equal(c.getCanonicalZeroCapitalDiscoverySnapshot().started, false); assert.equal(c.recorded.length, 0);
   });
   await check('Stop aborts a sponsor read and prevents any subsequent sponsor request', async () => {
-    const { PimlicoGasSponsorshipManager } = load('strategies/gas-sponsorship.ts');
+    const power = load('runtime/manual-power-state.ts');
+    power.setCryptoCrawlerManualPowerPhase('STARTING');
+    const { PimlicoGasSponsorshipManager } = load('strategies/gas-sponsorship.ts', {'../runtime/manual-power-state.js': power});
     const sponsor = new PimlicoGasSponsorshipManager({ APE_PIMLICO_API_KEY: 'test-only' });
     const controller = new AbortController(); let calls = 0, aborted = false; const savedFetch = global.fetch;
     global.fetch = (_url, options) => { calls++; return new Promise((_resolve, reject) => options.signal.addEventListener('abort', () => { aborted = true; reject(options.signal.reason); }, { once: true })); };

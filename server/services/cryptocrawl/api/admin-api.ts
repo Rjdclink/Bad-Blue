@@ -35,6 +35,7 @@ import {
   uninstallCryptaraSuperWorkerAdmission,
 } from '../integration/cryptara-super-worker.js';
 import { getCryptaraParallelProxySnapshot } from '../integration/cryptara-supabase-overflow-worker.js';
+import { profitLadder } from '../governance/profit-ladder.js';
 import { stageManager } from '../governance/stage-management.js';
 import { GovernanceError } from '../governance/types.js';
 import { autonomousFaucet } from '../faucet/autonomous-faucet.js';
@@ -64,10 +65,10 @@ router.get('/status', (req, res) => {
     lifecycle: systemState.lifecycle,
     lastError: systemState.lastError,
     control: {
+      ...getCanonicalCryptoCrawlerActivationState(),
       operatorStartRequired: true,
       automaticStartEnabled: false,
       manualPowerPhase: getCryptoCrawlerManualPowerPhase(),
-      ...getCanonicalCryptoCrawlerActivationState(),
     },
     cryptoCrawl: cryptoCrawlState.getStatus(),
     database: getCryptocrawlRuntimeDatabaseSnapshot(),
@@ -466,23 +467,11 @@ router.post('/mode', (req, res) => {
 });
 
 async function rollbackCryptoCrawlerManualStart(): Promise<string[]> {
-  const results = await Promise.allSettled([
-    cryptaraGovernance.shutdown(),
-    deactivateCanonicalCryptoCrawlerRuntimeWiring(),
-    uninstallCryptaraSuperWorkerAdmission(),
-  ]);
-  resetGovernanceInitializationForManualStop();
-  await stopCryptaraHyperBridgeBootstrap();
-  await closeCryptocrawlRuntimeDatabasePools();
-  setCryptoCrawlerManualPowerPhase('OFF');
-  systemState.running = false;
-  if (systemState.lifecycle !== 'RUNNING') {
-    systemState.lifecycle = 'STOPPED';
-    systemState.startedAt = 0;
-  }
-  return results
-    .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
-    .map((result) => result.reason instanceof Error ? result.reason.message : String(result.reason));
+  // A failed start can have partially activated any of the ordinary components.
+  // Use the same complete teardown as an explicit stop, including power phase,
+  // pipeline, engine, faucet, workers, telemetry, admission and database pools.
+  const result = await stopCryptoCrawlerRuntime();
+  return result.failures;
 }
 
 export async function stopCryptoCrawlerRuntime(): Promise<{ stopped: boolean; failures: string[] }> {

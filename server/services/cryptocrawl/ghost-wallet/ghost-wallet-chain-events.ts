@@ -1,3 +1,5 @@
+import { isCryptoCrawlerMarketDataAllowed, onCryptoCrawlerManualPowerPhaseChange } from '../runtime/manual-power-state.js';
+import { assertDiscoveryWorkActive, discoveryProvider, runDiscoveryWork } from '../runtime/discovery-work-context.js';
 import { ethers, providers } from 'ethers';
 import WebSocket, { type RawData } from 'ws';
 import logger from '../../../logger.js';
@@ -173,20 +175,24 @@ function providerIdentity(provider: providers.JsonRpcProvider): string {
 }
 
 async function logProviders(chain: GhostWalletChain, preferred: providers.JsonRpcProvider): Promise<providers.JsonRpcProvider[]> {
+  assertDiscoveryWorkActive();
   const available = await ghostWalletProviderMesh.getLogProviders(chain);
+  assertDiscoveryWorkActive();
   const unique = new Map<string, providers.JsonRpcProvider>();
   const allowed = new Set(available.map(providerIdentity));
   for (const provider of [preferred, ...available]) {
     const identity = providerIdentity(provider);
-    if (allowed.has(identity)) unique.set(identity, provider);
+    if (allowed.has(identity)) unique.set(identity, discoveryProvider(provider));
   }
   return [...unique.values()];
 }
 
 async function allProviders(chain: GhostWalletChain, preferred: providers.JsonRpcProvider): Promise<providers.JsonRpcProvider[]> {
+  assertDiscoveryWorkActive();
   const available = await ghostWalletProviderMesh.getProviders(chain);
+  assertDiscoveryWorkActive();
   const unique = new Map<string, providers.JsonRpcProvider>();
-  for (const provider of [preferred, ...available]) unique.set(providerIdentity(provider), provider);
+  for (const provider of [preferred, ...available]) unique.set(providerIdentity(provider), discoveryProvider(provider));
   return [...unique.values()];
 }
 
@@ -273,6 +279,7 @@ async function collectSettlementLogs(input: {
   const uniqueLogs = new Map<string, providers.Log>();
 
   while (pending.length > 0) {
+    assertDiscoveryWorkActive();
     const [fromBlock, toBlock] = pending.shift()!;
     try {
       const logGroups = await Promise.all(input.addresses.map(address => querySettlementLogsWithFailover({
@@ -306,12 +313,15 @@ async function backfillSettlementLogs(input: {
 }): Promise<void> {
   if (input.addresses.length === 0) return;
   const latest = await latestBlockWithFailover(input.chain, input.provider);
+  assertDiscoveryWorkActive();
   const cursor = await getGhostWalletReconciledBlock(input.chain);
+  assertDiscoveryWorkActive();
   const targetState = await deployedMonitoredAddresses({
     chain: input.chain,
     preferred: input.provider,
     addresses: input.addresses,
   });
+  assertDiscoveryWorkActive();
   if (targetState.deployed.length === 0) {
     await recordGhostWalletRuntimeState({
       chain: input.chain,
@@ -338,6 +348,7 @@ async function backfillSettlementLogs(input: {
 
   let fromBlock = Math.max(0, cursor === null ? latest - 64 : cursor + 1);
   while (fromBlock <= latest) {
+    assertDiscoveryWorkActive();
     const toBlock = ghostWalletLogWindowEnd(fromBlock, latest);
     const logs = await collectSettlementLogs({
       chain: input.chain,
@@ -346,7 +357,11 @@ async function backfillSettlementLogs(input: {
       fromBlock,
       toBlock,
     });
-    for (const log of logs) await ingestGhostWalletSettlementLog(input.chain, log);
+    for (const log of logs) {
+      assertDiscoveryWorkActive();
+      await ingestGhostWalletSettlementLog(input.chain, log);
+    }
+    assertDiscoveryWorkActive();
     await recordGhostWalletRuntimeState({
       chain: input.chain,
       reconciledBlock: toBlock,
@@ -385,9 +400,19 @@ class GhostWalletChainEvents {
   }>();
   private readonly backfillRetryTimers = new Map<GhostWalletChain, NodeJS.Timeout>();
   private readonly backfillRetryAttempts = new Map<GhostWalletChain, number>();
-  private stopping = false;
+  private stopping = true;
+  private lifecycle = new AbortController();
+
+  constructor() {
+    onCryptoCrawlerManualPowerPhaseChange(() => {
+      if (!isCryptoCrawlerMarketDataAllowed()) this.stop();
+    });
+  }
 
   async start(): Promise<void> {
+    if (!isCryptoCrawlerMarketDataAllowed()) return;
+    this.lifecycle.abort(new Error('Settlement monitor restarting'));
+    this.lifecycle = new AbortController();
     this.stopping = false;
     const chains = ghostWalletProviderMesh.getReadyChains();
     const settled = await Promise.allSettled(chains.map(chain => this.ensureChain(chain)));
@@ -405,6 +430,7 @@ class GhostWalletChainEvents {
 
   stop(): void {
     this.stopping = true;
+    this.lifecycle.abort(new Error('Settlement monitor stopped'));
     for (const listener of this.listeners.values()) this.closeListener(listener);
     for (const timer of this.backfillRetryTimers.values()) clearTimeout(timer);
     this.listeners.clear();
@@ -435,10 +461,11 @@ class GhostWalletChainEvents {
 
   private async ensureChain(chain: GhostWalletChain): Promise<void> {
     if (this.stopping) return;
+    const signal = this.lifecycle.signal;
     const httpProvider = await ghostWalletProviderMesh.getProvider(chain);
-    if (!httpProvider) return;
+    if (signal.aborted || !httpProvider) return;
     const addresses = await monitoredAddresses(chain);
-    if (addresses.length === 0) return;
+    if (signal.aborted || addresses.length === 0) return;
 
     const urls = ghostWalletWebSocketUrls(chain);
     if (urls.length > 0) await this.ensureStream(chain, urls, 0, addresses, httpProvider);
@@ -474,14 +501,16 @@ class GhostWalletChainEvents {
     const scheduledRetry = this.backfillRetryTimers.get(input.chain);
     if (scheduledRetry) clearTimeout(scheduledRetry);
     this.backfillRetryTimers.delete(input.chain);
-    const work = backfillSettlementLogs({
+    const signal = this.lifecycle.signal;
+    const work = runDiscoveryWork('Ghost settlement reconciliation', 120_000, () => backfillSettlementLogs({
       chain: input.chain,
       addresses: input.addresses,
       provider: input.provider,
       listenerConnected: input.listenerConnected,
-    }).then(() => {
-      this.backfillRetryAttempts.delete(input.chain);
+    }), signal).then(() => {
+      if (!signal.aborted) this.backfillRetryAttempts.delete(input.chain);
     }).catch(error => {
+      if (signal.aborted) return;
       logger.warn('[GhostWalletUltra] Settlement backfill failed; retry remains route-local', {
         component: 'GhostWalletChainEvents',
         chain: input.chain,
@@ -491,6 +520,7 @@ class GhostWalletChainEvents {
       });
       this.scheduleBackfillRetry(input, error);
     }).finally(() => {
+      if (this.backfills.get(input.chain) !== work || signal.aborted) return;
       this.backfills.delete(input.chain);
       const pending = this.pendingBackfills.get(input.chain);
       this.pendingBackfills.delete(input.chain);
@@ -544,8 +574,12 @@ class GhostWalletChainEvents {
       reconnectTimer: null,
       reconnectAttempt,
     };
+    const signal = this.lifecycle.signal;
+    // Track connecting sockets too, so STOP can close them before handshake ends.
+    this.listeners.set(key, listener);
     try {
       await timeout(waitForOpen(socket), INITIAL_HANDSHAKE_TIMEOUT_MS, `Ghost settlement websocket ${chain}`);
+      signal.throwIfAborted();
       const [rawChainId, httpNetwork] = await timeout(
         Promise.all([
           websocketRpc<string>(socket, 1, 'eth_chainId', []),
@@ -554,6 +588,7 @@ class GhostWalletChainEvents {
         INITIAL_HANDSHAKE_TIMEOUT_MS,
         `Ghost settlement websocket identity ${chain}`,
       );
+      signal.throwIfAborted();
       const websocketChainId = Number.parseInt(rawChainId, 16);
       if (!Number.isFinite(websocketChainId) || websocketChainId !== httpNetwork.chainId) {
         throw new Error('GHOST_WALLET_WEBSOCKET_CHAIN_IDENTITY_MISMATCH');
@@ -566,7 +601,7 @@ class GhostWalletChainEvents {
         } catch {
           return;
         }
-        if (payload?.method === 'eth_subscription') this.queueBackfill({
+        if (!signal.aborted && payload?.method === 'eth_subscription') this.queueBackfill({
           chain: listener.chain,
           addresses: listener.addresses,
           provider: httpProvider,
@@ -586,6 +621,7 @@ class GhostWalletChainEvents {
         `Ghost settlement subscription ${chain}:${index}`,
       )));
 
+      signal.throwIfAborted();
       listener.reconnectAttempt = 0;
       this.listeners.set(key, listener);
       logger.info('[GhostWalletUltra] Settlement push stream connected', {
@@ -603,6 +639,7 @@ class GhostWalletChainEvents {
       socket.once('error', reconnect);
     } catch (error) {
       this.disposeTransport(listener);
+      if (signal.aborted) return;
       const delayMs = this.scheduleReconnect(listener, error);
       logger.warn('[GhostWalletUltra] Settlement push stream unavailable', {
         component: 'GhostWalletChainEvents',

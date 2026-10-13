@@ -80,10 +80,31 @@ async function main() {
     const power=load('runtime/manual-power-state.ts');power.setCryptoCrawlerManualPowerPhase('STARTING');
     const client=load('bridge/coingecko-client.ts',{'../runtime/manual-power-state.js':power}).coinGeckoPriceClient;
     let calls=0;const observedAt=Date.now()-10;
-    client.fetchLivePriceMesh=async()=>{calls++;return {pricesByCoinId:{ethereum:2000},canonicalProviderByCoinId:{ethereum:'defillama'},observedAt};};
+    client.fetchLivePriceMesh=async()=>{calls++;return {pricesByCoinId:{ethereum:2000},canonicalProviderByCoinId:{ethereum:'defillama'},observedAt,executionEvidenceByCoinId:{ethereum:{priceUsd:2000,observedAt,acquiredAt:observedAt}}};};
     const a=await client.getLiveSymbolPriceEvidence(['ETH']);const b=await client.getLiveSymbolPriceEvidence(['ETH']);
     assert.equal(a.get('ETH').observedAt,b.get('ETH').observedAt);assert.equal(calls,1);power.setCryptoCrawlerManualPowerPhase('OFF');
     await assert.rejects(client.getLiveSymbolPrices(['ETH']),/MASTER_POWER_OFF/);
+  });
+  await check('upstream market timestamps exclude stale, future and undated prices',async()=>{
+    const prices=load('bridge/coingecko-client.ts',{'../runtime/manual-power-state.js':load('runtime/manual-power-state.ts')});
+    const now=Date.now();
+    const request=[{coinId:'ethereum',key:'coingecko:ethereum'}];
+    const normal=timestamp=>prices.normalizeDefiLlamaPrices({coins:{'coingecko:ethereum':{price:2000,timestamp}}},request);
+    for(const timestamp of [undefined,(now-121000)/1000,(now+60000)/1000]) {
+      assert.equal(Object.keys(prices.selectDatedPriceEvidence(['ethereum'],[{prices:normal(timestamp)}],now)).length,0);
+    }
+    const marketTime=now-60000;
+    const selected=prices.selectDatedPriceEvidence(['ethereum'],[{prices:normal(marketTime/1000)},{prices:{ethereum:99999}}],now);
+    assert.equal(selected.ethereum.observedAt,marketTime);assert.equal(selected.ethereum.priceUsd,2000);
+    assert.equal(selected.ethereum.acquiredAt,now);
+  });
+  await check('fresh acquisition cannot renew an expired upstream market observation',async()=>{
+    const now=Date.now();const {power,mesh}=pricePlane(async()=>new Map());
+    mesh.publishResidentEvidence(new Map([['ETH',{priceUsd:2000,observedAt:now-121000,acquiredAt:now}]]));
+    assert.equal(mesh.peekLiveSymbolPriceEvidence('ETH'),null);
+    mesh.publishResidentEvidence(new Map([['ETH',{priceUsd:2000,observedAt:now-60000,acquiredAt:now}]]));
+    assert.equal(mesh.peekLiveSymbolPriceEvidence('ETH').observedAt,now-60000);
+    power.setCryptoCrawlerManualPowerPhase('OFF');
   });
   await check('price-provider transport aborts at OFF and sends no later calls',async()=>{
     const power=load('runtime/manual-power-state.ts');power.setCryptoCrawlerManualPowerPhase('STARTING');let calls=0;

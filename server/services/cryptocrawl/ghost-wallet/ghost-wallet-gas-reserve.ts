@@ -1,3 +1,4 @@
+import { captureCryptoCrawlerWorkGuard } from '../runtime/manual-power-state.js';
 import logger from '../../../logger.js';
 import { ensureGhostWalletGasReserveSchema } from './ghost-wallet-gas-reserve-schema.js';
 
@@ -12,10 +13,16 @@ import { ensureGhostWalletGasReserveSchema } from './ghost-wallet-gas-reserve-sc
  */
 class GhostWalletGasReserve {
   private running = false;
+  private generation = 0;
 
   async start(): Promise<void> {
     if (this.running) return;
+    const guard = captureCryptoCrawlerWorkGuard();
+    const generation = this.generation;
+    guard();
     await ensureGhostWalletGasReserveSchema();
+    guard();
+    if (generation !== this.generation) throw new Error('Ghost startup cancelled');
     this.running = true;
     logger.info('[GhostWalletGasReserve] Native reserve execution retired; ledger retained for provenance', {
       component: 'GhostWalletGasReserve',
@@ -29,6 +36,7 @@ class GhostWalletGasReserve {
   }
 
   stop(): void {
+    this.generation++;
     this.running = false;
   }
 }

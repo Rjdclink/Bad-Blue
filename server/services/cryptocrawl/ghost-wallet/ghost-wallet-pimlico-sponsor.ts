@@ -1,3 +1,4 @@
+import { cryptoCrawlerWorkSignal } from '../runtime/manual-power-state.js';
 import { BigNumber, Contract, Wallet, ethers, type providers } from 'ethers';
 import type { GhostWalletChain } from './ghost-wallet-provider-mesh.js';
 
@@ -169,6 +170,8 @@ function surchargeBps(): number {
 }
 
 async function rpc<T>(chainId: number, method: string, params: unknown[]): Promise<T> {
+  const powerSignal = cryptoCrawlerWorkSignal();
+  powerSignal.throwIfAborted();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), RPC_TIMEOUT_MS);
   timer.unref?.();
@@ -177,9 +180,10 @@ async function rpc<T>(chainId: number, method: string, params: unknown[]): Promi
       method: 'POST',
       headers: { accept: 'application/json', 'content-type': 'application/json' },
       body: JSON.stringify({ jsonrpc: '2.0', id: Date.now(), method, params }),
-      signal: controller.signal,
+      signal: AbortSignal.any([controller.signal, powerSignal]),
     });
     const text = await response.text();
+    powerSignal.throwIfAborted();
     let parsed: any = {};
     try { parsed = text ? JSON.parse(text) : {}; } catch { /* normalized below */ }
     if (!response.ok) throw new Error(`GHOST_WALLET_PIMLICO_HTTP_${response.status}`);
@@ -532,7 +536,7 @@ export async function getGhostWalletPimlicoReceipt(
   return {
     userOperationHash: String(result.userOpHash || userOperationHashValue),
     transactionHash,
-    success: result.success === true || String(result?.receipt?.status || '').toLowerCase() === '0x1',
+    success: result.success === true && String(result?.receipt?.status || '').toLowerCase() === '0x1',
     actualGasCostWei: optionalQuantity(result.actualGasCost),
     actualGasUsed: optionalQuantity(result.actualGasUsed),
   };

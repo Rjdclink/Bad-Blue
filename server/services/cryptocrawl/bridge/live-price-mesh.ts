@@ -54,15 +54,20 @@ class LivePriceMesh {
     return [...new Set(symbols.map(symbol => symbol.trim().toUpperCase()).filter(Boolean))].sort();
   }
 
-  private publishResidentEvidence(prices: ReadonlyMap<string, { priceUsd: number; observedAt: number }>): void {
+  private publishResidentEvidence(prices: ReadonlyMap<string, { priceUsd: number; observedAt: number; acquiredAt?: number }>): void {
     const receivedAt = Date.now();
 
     for (const [rawSymbol, observation] of prices) {
       const conservativeObservedAt = observation.observedAt;
-      const expiresAt = conservativeObservedAt + this.evidenceMaxAgeMs();
+      // Aggregate USD conversions have their own bounded market-age budget;
+      // exact on-chain swap quotes keep their independent, shorter deadlines.
+      const configuredAge = Number(process.env.ZERO_CAPITAL_USD_MARKET_MAX_AGE_MS || 120_000);
+      const marketAgeMs = Number.isFinite(configuredAge) ? Math.max(1000, Math.min(300_000, configuredAge)) : 120_000;
+      const acquiredAt = observation.acquiredAt ?? conservativeObservedAt;
+      const expiresAt = Math.min(acquiredAt + this.evidenceMaxAgeMs(), conservativeObservedAt + marketAgeMs);
       const symbol = rawSymbol.trim().toUpperCase();
       const priceUsd = Number(observation.priceUsd);
-      if (!symbol || !Number.isFinite(priceUsd) || priceUsd <= 0 || expiresAt <= receivedAt) continue;
+      if (!Number.isFinite(acquiredAt) || acquiredAt > receivedAt || conservativeObservedAt > receivedAt || !symbol || !Number.isFinite(priceUsd) || priceUsd <= 0 || expiresAt <= receivedAt) continue;
       this.residentEvidence.set(symbol, createZeroCapitalPriceEvidence({
         priceUsd,
         observedAt: conservativeObservedAt,

@@ -1,3 +1,4 @@
+import { cryptoCrawlerWorkSignal } from '../runtime/manual-power-state.js';
 import { BigNumber, Contract, Wallet, ethers, type providers } from 'ethers';
 import { assertDiscoveryWorkActive, discoveryAbortSignal } from '../runtime/discovery-work-context.js';
 
@@ -75,7 +76,16 @@ export interface SponsoredExecutionResult {
   transactionHash: string;
   blockNumber?: number;
   gasUsed?: bigint;
+  actualGasCostWei?: bigint;
   receiptStatus: 0 | 1;
+}
+
+export function sponsoredBilledGasCostWei(result: Pick<SponsoredExecutionResult, 'actualGasCostWei'>, surchargeBps: number): bigint {
+  if (result.actualGasCostWei === undefined || result.actualGasCostWei < 0n) {
+    throw new Error('Sponsored receipt lacks individual UserOperation gas cost');
+  }
+  if (!Number.isSafeInteger(surchargeBps) || surchargeBps < 0) throw new Error('Invalid sponsor billing surcharge');
+  return (result.actualGasCostWei * BigInt(10_000 + surchargeBps) + 9_999n) / 10_000n;
 }
 
 interface JsonRpcEnvelope<T> {
@@ -318,6 +328,8 @@ export class PimlicoGasSponsorshipManager {
 
   private async rpc<T>(chainId: number, method: string, params: unknown[], timeoutMs = DEFAULT_RPC_TIMEOUT_MS): Promise<T> {
     assertDiscoveryWorkActive();
+    const powerSignal = cryptoCrawlerWorkSignal();
+    powerSignal.throwIfAborted();
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), Math.max(500, timeoutMs));
     timeout.unref?.();
@@ -326,9 +338,10 @@ export class PimlicoGasSponsorshipManager {
         method: 'POST',
         headers: { 'content-type': 'application/json', accept: 'application/json' },
         body: JSON.stringify({ jsonrpc: '2.0', id: Date.now(), method, params }),
-        signal: AbortSignal.any([controller.signal, ...[discoveryAbortSignal()].filter((signal): signal is AbortSignal => !!signal)]),
+        signal: AbortSignal.any([controller.signal, powerSignal, ...[discoveryAbortSignal()].filter((signal): signal is AbortSignal => !!signal)]),
       });
       const text = await response.text();
+      powerSignal.throwIfAborted();
       let envelope: JsonRpcEnvelope<T> = {};
       try { envelope = text ? JSON.parse(text) as JsonRpcEnvelope<T> : {}; } catch { /* normalized below */ }
       if (!response.ok) throw new Error(`Pimlico ${method} HTTP ${response.status}`);
@@ -449,7 +462,8 @@ export class PimlicoGasSponsorshipManager {
       if (receipt) {
         const transactionHash = String(receipt?.receipt?.transactionHash || '');
         if (!/^0x[a-fA-F0-9]{64}$/.test(transactionHash)) throw new Error('APE_PIMLICO_RECEIPT_TRANSACTION_HASH_INVALID');
-        const success = receipt.success === true || String(receipt?.receipt?.status || '').toLowerCase() === '0x1';
+        // Bundle success does not establish this UserOperation succeeded.
+        const success = receipt.success === true && String(receipt?.receipt?.status || '').toLowerCase() === '0x1';
         if (!success) throw new Error('APE_PIMLICO_SPONSORED_TRANSACTION_REVERTED');
         const blockNumberRaw = receipt?.receipt?.blockNumber;
         return {
@@ -457,6 +471,7 @@ export class PimlicoGasSponsorshipManager {
           transactionHash,
           blockNumber: blockNumberRaw !== undefined ? Number(BigInt(blockNumberRaw)) : undefined,
           gasUsed: optionalQuantity(receipt.actualGasUsed),
+          actualGasCostWei: optionalQuantity(receipt.actualGasCost),
           receiptStatus: 1,
         };
       }

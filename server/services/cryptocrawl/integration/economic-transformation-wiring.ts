@@ -19,7 +19,7 @@ import {
 import { getBpsCompressionMeshSnapshot } from './bps-compression-mesh.js';
 import { getClosestCexNearMissesBySymbol } from './cex-four-mode-observability-wiring.js';
 import { realizeStageTwoCrossChainReduction } from './stage-two-cross-chain-reduction.js';
-import { ensureUniversalBpsRescueCoordinator } from './universal-bps-rescue-coordinator.js';
+import { ensureUniversalBpsRescueCoordinator, stopUniversalBpsRescueCoordinator } from './universal-bps-rescue-coordinator.js';
 
 let timer: NodeJS.Timeout | null = null;
 let candidateRefreshTimer: NodeJS.Timeout | null = null;

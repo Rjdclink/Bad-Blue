@@ -1031,7 +1031,7 @@ export async function prepareAaveLiquidation(input: AaveLiquidationRequest): Pro
         deterministicNetProfitUsd,
         notionalUsd: pair.debtNotionalUsd,
         grossProfitBps,
-        flashLoanFeeBps,
+        flashLoanFeeBps: flashFeeBps,
         gasCostBps,
         allInCostBps,
         netProfitBps,
