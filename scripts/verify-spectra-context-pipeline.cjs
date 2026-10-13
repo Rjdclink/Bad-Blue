@@ -17,6 +17,10 @@ for (const file of [
   'server/routes/geoconsole.routes.ts',
   'server/services/spectra/SpectraPublicRetrieval.ts',
   'server/services/spectra/SpectraPublicImageRecords.ts',
+  'server/services/spectra/SpectraXPostMedia.ts',
+  'server/services/spectra/SpectraVisualSceneAnalysis.ts',
+  'server/services/spectra/SpectraPublicMediaPriority.ts',
+  'server/services/spectra/SpectraPublicSatelliteRecords.ts',
   'server/services/spectra/SpectraCameraDirectoryAdapters.ts',
   'server/services/spectra/SpectraPublicEvidenceProvenance.ts',
   'server/services/spectra/SpectraAcquisitionRecords.ts',
@@ -78,7 +82,11 @@ assert.match(route, /camera\.status\?\.disabled === true/);
 
 // Only actual retrieved HTML can supply social post media URLs.
 assert.match(retrieval, /spectraSocialPageImageLeads\(sourceUrl, ogImages\)/);
-assert.match(route, /collectSpectraPublicSocialPageImages\(retrievedEvidence\)/);
+assert.match(route, /collectSpectraXPostMedia\(retrievedEvidence\)/);
+assert.match(route, /collectSpectraPublicSocialPageImages\(\[\s*\.\.\.xPostMedia\.posts,\s*\.\.\.retrievedEvidence,/);
+assert.match(route, /retrievedEvidence\.push\(\.\.\.publicSocialImages\.records\)/);
+assert.match(route, /const mediaCaptureScenes = prioritizeSpectraPublicMediaScenes\(/);
+assert.match(route, /buildSpectraAcquisitionRecords\(retrievedEvidence\.map/);
 assert.match(route, /collectSpectraPublicMastodonImages/);
 assert.match(images, /redirect: 'manual'/);
 assert.match(images, /MAX_IMAGES_PER_PLATFORM = 4/);
