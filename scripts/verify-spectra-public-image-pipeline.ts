@@ -5,9 +5,22 @@ import {
   collectSpectraPublicMastodonImages,
   collectSpectraPublicSocialPageImages,
   spectraSocialPageImageLeads,
+  spectraExifDecimalGps,
 } from '../server/services/spectra/SpectraPublicImageRecords';
 import { htmlEvidence } from '../server/services/spectra/SpectraPublicRetrieval';
 import type { SpectraRetrievedEvidence } from '../server/services/spectra/SpectraPublicRetrieval';
+
+// The merged EXIF decoder's raw references must be axis-valid.
+assert.equal(spectraExifDecimalGps({ description: 38.9 }, { value: ['N'] }, 'latitude'), 38.9);
+assert.equal(spectraExifDecimalGps({ description: 77.02 }, { value: ['W'] }, 'longitude'), -77.02);
+assert.equal(spectraExifDecimalGps({ description: -77.02 }, { value: ['E'] }, 'longitude'), 77.02);
+assert.equal(spectraExifDecimalGps({ description: 38.9 }, { value: ['E'] }, 'latitude'), null);
+assert.equal(spectraExifDecimalGps({ description: 77.02 }, { value: ['S'] }, 'longitude'), null);
+assert.equal(spectraExifDecimalGps({ description: 77.02 }, { description: 'West longitude' }, 'longitude'), null,
+  'human-readable descriptions may not replace original EXIF direction tags');
+assert.equal(spectraExifDecimalGps({ description: 38.9 }, null, 'latitude'), null,
+  'missing hemisphere metadata must not imply north');
+assert.equal(spectraExifDecimalGps({ description: 'NaN' }, { value: ['N'] }, 'latitude'), null);
 
 const now = new Date().toISOString();
 const jpeg = Buffer.from([255, 216, 255, 217]);
