@@ -453,6 +453,7 @@ async function runDiscoveryPass(
         requestedFact: 'contact-address',
         queryAlreadyPlanned: true,
         allowClaudePlanning: context.useClaude !== false,
+        allowPaidSearch: context.allowPaidSearch === true,
       })
     ));
 
