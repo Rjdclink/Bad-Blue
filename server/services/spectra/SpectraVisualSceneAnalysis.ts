@@ -160,3 +160,75 @@ export function compareSpectraPhotoEvidence(
     locationMatchVerified: false,
   };
 }
+
+
+/** Aggregate only novel scene-label correlations. The existing
+ * SpectraEvidenceAssessment already deduplicates image bytes and preserves
+ * source links; repeating those counts here would be double accounting.
+ * These values remain private analysis metadata, NOT map coordinates.
+ */
+export interface SpectraSceneOverlapSummary {
+  distinctClassifiedScenes: number;
+  comparedDistinctPairs: number;
+  highGenericLabelOverlapPairs: number;
+  strongestGenericLabelOverlap: number | null;
+  facialIdentityComparisons: 0;
+  verifiedPersonLocations: 0;
+}
+
+export function summarizeSpectraSceneOverlap(
+  records: readonly { structuredRecord?: unknown }[],
+): SpectraSceneOverlapSummary {
+  const found = new Map<string, SpectraVisualSceneAssessment>();
+  const hashPattern = /^[a-f0-9]{64}$/i;
+  for (const record of records.slice(0, 80)) {
+    const source = record?.structuredRecord;
+    if (!source || typeof source !== 'object' || Array.isArray(source)) continue;
+    const item = source as Record<string, unknown>;
+    const sha = item.contentSha256;
+    const scene = item.sceneAnalysis;
+    if (item.evidenceRole !== 'media_capture_scene'
+      || item.captureLocationIsSubjectPosition !== false
+      || item.currentPositionVerified !== false
+      || typeof sha !== 'string' || !hashPattern.test(sha)
+      || !scene || typeof scene !== 'object' || Array.isArray(scene)) continue;
+    const attributes = scene as Record<string, unknown>;
+    if (attributes.evidenceRole !== 'model_interpreted_scene_context'
+      || attributes.validation !== 'unverified_model_output'
+      || attributes.method !== 'claude_image_classification'
+      || typeof attributes.contentSha256 !== 'string'
+      || attributes.contentSha256.toLowerCase() !== sha.toLowerCase()) continue;
+    const validated = parseSpectraVisualSceneAssessment(JSON.stringify(attributes), sha);
+    if (!validated) continue;
+    // First validated copy of identical bytes is authoritative for this
+    // bounded calculation; the existing source archive retains each repost.
+    if (!found.has(sha.toLowerCase())) found.set(sha.toLowerCase(), validated);
+    if (found.size >= 24) break;
+  }
+  const unique = [...found.values()];
+  let comparedDistinctPairs = 0;
+  let highGenericLabelOverlapPairs = 0;
+  let strongestGenericLabelOverlap: number | null = null;
+  for (let i = 0; i < unique.length; i++) {
+    for (let j = i + 1; j < unique.length; j++) {
+      const assessment = compareSpectraPhotoEvidence(
+        { contentSha256: unique[i].contentSha256, scene: unique[i] },
+        { contentSha256: unique[j].contentSha256, scene: unique[j] },
+      );
+      if (assessment.genericSceneTagOverlap === null) continue;
+      comparedDistinctPairs++;
+      strongestGenericLabelOverlap = Math.max(
+        strongestGenericLabelOverlap ?? 0, assessment.genericSceneTagOverlap,
+      );
+      if (assessment.genericSceneTagOverlap >= 0.8) highGenericLabelOverlapPairs++;
+    }
+  }
+  return {
+    distinctClassifiedScenes: unique.length,
+    comparedDistinctPairs,
+    highGenericLabelOverlapPairs,
+    strongestGenericLabelOverlap,
+    facialIdentityComparisons: 0,
+    verifiedPersonLocations: 0,
+  };
+}
