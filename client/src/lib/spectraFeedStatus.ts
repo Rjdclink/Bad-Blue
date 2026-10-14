@@ -152,8 +152,24 @@ export function spectraPipelineNotices(diagnostics?: SpectraPipelineDiagnostics)
   if (diagnostics.telemetry.fulfilled !== undefined && diagnostics.telemetry.observations !== undefined) {
     notices.push(`Automatic telemetry: ${count(diagnostics.telemetry.configuredCollectors)} collectors configured; ${count(diagnostics.telemetry.fulfilled)} collection attempts fulfilled; ${count(diagnostics.telemetry.observations)} coordinate observations received. Configuration and fulfilled requests alone do not establish usable measurements.`);
   }
-  const collectorLabels: Record<string, string> = { 'android-managed-lost-mode': 'Android managed device', 'apple-managed-lost-mode': 'Apple supervised device', 'cisco-spaces-location': 'Cisco Spaces', other: 'Other collector' };
-  const collectorReasons: Record<string, string> = { 'not-configured': 'not configured', 'missing-device': 'device identifier missing', 'request-failed': 'request failed', other: 'other reason' };
+  const collectorLabels: Record<string, string> = {
+    'android-managed-lost-mode': 'Android managed device',
+    'apple-managed-lost-mode': 'Apple supervised device',
+    'android-radio-collector': 'Android radio collector',
+    'camara-location-retrieval': 'Carrier location',
+    'cisco-spaces-location': 'Cisco Spaces',
+    'enrolled-device-binding': 'Enrolled device lookup',
+    other: 'Other collector',
+  };
+  const collectorReasons: Record<string, string> = {
+    'not-configured': 'not configured',
+    'not-enrolled': 'phone not enrolled',
+    'missing-device': 'device identifier/binding missing',
+    'identity-mismatch': 'identity or device binding mismatch',
+    'platform-mismatch': 'collector does not apply to this device platform',
+    'request-failed': 'request failed',
+    other: 'other reason',
+  };
   for (const row of diagnostics.telemetry.collectors || []) {
     if (!Object.prototype.hasOwnProperty.call(collectorLabels, row.family)) continue;
     const reasons = Object.entries(collectorReasons).flatMap(([code, label]) => safeCount(row.reasons?.[code]) ? [`${safeCount(row.reasons[code])} ${label}`] : []);
