@@ -29,11 +29,10 @@ export function spectraOwnTracksConfigured(env: NodeJS.ProcessEnv = process.env)
 }
 
 function recorderLocationsEndpoint(base: URL): URL {
-  const path = base.pathname.replace(/\/+$/, '');
-  return joinSpectraEndpoint(
-    base,
-    path.endsWith('/owntracks') ? '/api/0/locations' : '/owntracks/api/0/locations',
-  );
+  // OwnTracks Recorder serves /api/0/locations at its configured base path.
+  // A reverse proxy may place Recorder under /owntracks; joinSpectraEndpoint
+  // preserves that explicit prefix.
+  return joinSpectraEndpoint(base, '/api/0/locations');
 }
 
 function authorization(env: NodeJS.ProcessEnv): Record<string, string> {
