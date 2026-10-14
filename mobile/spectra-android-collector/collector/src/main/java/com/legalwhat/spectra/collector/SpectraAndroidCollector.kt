@@ -318,7 +318,10 @@ class SpectraAndroidCollector(
         output: CopyOnWriteArrayList<JSONObject>,
         done: CountDownLatch,
     ) {
-        if (!granted(Manifest.permission.BLUETOOTH_SCAN)) {
+        if (
+            !granted(Manifest.permission.BLUETOOTH_SCAN)
+            || !granted(Manifest.permission.BLUETOOTH_CONNECT)
+        ) {
             done.countDown()
             return
         }
