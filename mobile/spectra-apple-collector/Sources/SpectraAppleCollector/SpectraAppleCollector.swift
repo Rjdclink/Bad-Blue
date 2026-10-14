@@ -211,17 +211,21 @@ public final class SpectraAppleCollector: NSObject {
             ],
         ]
 
-        let encodedRef = deviceRef.addingPercentEncoding(
-            withAllowedCharacters: .urlPathAllowed
-        ) ?? deviceRef
-        let endpoint = endpointBase
-            .appendingPathComponent("api")
-            .appendingPathComponent("geoconsole")
-            .appendingPathComponent("telemetry")
-            .appendingPathComponent("enrolled")
-            .appendingPathComponent(encodedRef)
-            .appendingPathComponent("normalize")
-            .appendingPathComponent("canonical-telemetry")
+        let devicePathCharacters = CharacterSet.alphanumerics
+            .union(CharacterSet(charactersIn: "-._~"))
+        guard let encodedRef = deviceRef.addingPercentEncoding(
+            withAllowedCharacters: devicePathCharacters
+        ) else {
+            throw CollectorError.invalidEnrollment
+        }
+        let base = endpointBase.absoluteString.trimmingCharacters(
+            in: CharacterSet(charactersIn: "/")
+        )
+        guard let endpoint = URL(
+            string: "\(base)/api/geoconsole/telemetry/enrolled/\(encodedRef)/normalize/canonical-telemetry"
+        ) else {
+            throw CollectorError.invalidEndpoint
+        }
 
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
