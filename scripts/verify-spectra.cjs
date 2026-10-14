@@ -514,6 +514,12 @@ test('SPECTRA resolves enrolled phones before redundant Android and Apple acquis
   adapterRegistry.includes("id: 'traccar-active'") &&
   adapterRegistry.includes("id: 'camara-location-retrieval-active'") &&
   adapterRegistry.includes("id: 'vonage-location-retrieval-active'"));
+test('Existing direct-deviceRef acquisition remains additive when no phone enrollment exists',
+  enrolledAcquisition.includes('Preserve the pre-existing direct-deviceRef acquisition path') &&
+  enrolledAcquisition.includes("resolution.status === 'not-enrolled' || resolution.status === 'unavailable'") &&
+  enrolledAcquisition.includes('const direct = await deps.active({') &&
+  enrolledAcquisition.includes('resolvedDeviceRef: suppliedDeviceRef'));
+
 test('Enrolled native device telemetry is self-authenticated, platform-gated and stored server-side',
   geoconsoleRoutes.includes("router.post('/telemetry/enrolled/:deviceRef/normalize/:kind'") &&
   geoconsoleRoutes.indexOf("router.post('/telemetry/enrolled/:deviceRef/normalize/:kind'")
