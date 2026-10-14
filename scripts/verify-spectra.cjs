@@ -42,6 +42,8 @@ const adapterRegistry = read('server/services/spectra/SpectraAdapterRegistry.ts'
 const activeAcquisition = read('server/services/spectra/SpectraActiveAcquisition.ts');
 const enrolledAcquisition = read('server/services/spectra/SpectraEnrolledAcquisition.ts');
 const enrolledRegistry = read('server/services/spectra/SpectraEnrolledDeviceRegistry.ts');
+const enrolledTelemetryStore = read('server/services/spectra/SpectraEnrolledTelemetryStore.ts');
+const enrolledTelemetryMigration = read('server/migrations/071_spectra_enrolled_device_telemetry.sql');
 const ownTracksAdapter = read('server/services/spectra/SpectraOwnTracksAdapter.ts');
 const traccarAdapter = read('server/services/spectra/SpectraTraccarAdapter.ts');
 const carrierLocationAdapters = read('server/services/spectra/SpectraCarrierLocationAdapters.ts');
@@ -511,6 +513,28 @@ test('SPECTRA resolves enrolled phones before redundant Android and Apple acquis
   adapterRegistry.includes("id: 'traccar-active'") &&
   adapterRegistry.includes("id: 'camara-location-retrieval-active'") &&
   adapterRegistry.includes("id: 'vonage-location-retrieval-active'"));
+test('Enrolled native device telemetry is self-authenticated, platform-gated and stored server-side',
+  geoconsoleRoutes.includes("router.post('/telemetry/enrolled/:deviceRef/normalize/:kind'") &&
+  geoconsoleRoutes.indexOf("router.post('/telemetry/enrolled/:deviceRef/normalize/:kind'")
+    < geoconsoleRoutes.indexOf('router.use(isAuthenticated)') &&
+  geoconsoleRoutes.includes('authorizeSpectraEnrolledDeviceIngest') &&
+  geoconsoleRoutes.includes('persistSpectraEnrolledDeviceTelemetry') &&
+  geoconsoleRoutes.includes("'android-radio-collector'") &&
+  geoconsoleRoutes.includes("'apple-nearby-interaction'") &&
+  enrolledTelemetryStore.includes('ingest_token_hash') &&
+  enrolledTelemetryStore.includes('timingSafeEqual') &&
+  enrolledTelemetryStore.includes('OFFSET 256') &&
+  enrolledTelemetryMigration.includes('CREATE TABLE IF NOT EXISTS public.spectra_enrolled_device_telemetry') &&
+  enrolledTelemetryMigration.includes('ENABLE ROW LEVEL SECURITY') &&
+  enrolledTelemetryMigration.includes('REVOKE ALL ON TABLE public.spectra_enrolled_device_telemetry FROM PUBLIC') &&
+  dockerfile.includes('071_spectra_enrolled_device_telemetry.sql'));
+
+test('Live acquisition consumes only fresh enrolled-device inbox telemetry',
+  enrolledAcquisition.includes('loadLatestSpectraEnrolledDeviceTelemetry') &&
+  enrolledAcquisition.includes('SPECTRA_ENROLLED_TELEMETRY_MAX_AGE_MS') &&
+  enrolledAcquisition.includes("'enrolled-device-inbox-active'") &&
+  enrolledAcquisition.includes("'no-fresh-telemetry'"));
+
 test('Enrolled-device registry remains server-only and ships with production migrations',
   enrolledDeviceMigration.includes('CREATE TABLE IF NOT EXISTS public.spectra_enrolled_devices') &&
   enrolledDeviceMigration.includes('ENABLE ROW LEVEL SECURITY') &&
