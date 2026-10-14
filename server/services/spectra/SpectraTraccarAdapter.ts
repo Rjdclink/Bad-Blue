@@ -76,6 +76,9 @@ export async function acquireSpectraTraccar(
       - Date.parse(String(left?.fixTime || left?.deviceTime || left?.serverTime || ''))
     )[0];
   if (!row) throw new Error('Traccar returned no matching position for the enrolled device.');
+  if (row.valid === false) {
+    throw new Error('Traccar latest position is explicitly marked invalid.');
+  }
   const positionId = Number(row.id);
 
   const latitude = Number(row.latitude);
@@ -114,7 +117,9 @@ export async function acquireSpectraTraccar(
         ? Math.max(0.25, Math.min(0.96, 1 - Math.log10(Math.max(1, accuracy)) / 6))
         : 0.6,
       provider: 'traccar',
-      recordId: String(positionId),
+      recordId: Number.isSafeInteger(positionId) && positionId > 0
+        ? String(positionId)
+        : undefined,
       correlationGroup: `traccar:${device.deviceRef}`,
       metadata: {
         providerKind: 'traccar',
