@@ -527,6 +527,8 @@ test('Enrolled native device telemetry is self-authenticated, platform-gated and
   enrolledTelemetryStore.includes('randomBytes(32)') &&
   geoconsoleRoutes.includes("'android-radio-collector'") &&
   geoconsoleRoutes.includes("'apple-nearby-interaction'") &&
+  geoconsoleRoutes.includes('allowedCanonicalSources') &&
+  geoconsoleRoutes.includes('Canonical telemetry source is not allowed for this enrolled device platform.') &&
   enrolledTelemetryStore.includes('ingest_token_hash') &&
   enrolledTelemetryStore.includes('timingSafeEqual') &&
   enrolledTelemetryStore.includes('OFFSET 256') &&
