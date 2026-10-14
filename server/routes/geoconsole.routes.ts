@@ -26,7 +26,7 @@ import {
 } from '../services/geoconsole/evidence-proof';
 import { getSpectraAdapterCapabilities } from '../services/spectra/SpectraAdapterRegistry';
 import { getSpectraConfigurationDiagnostics, readSpectraEnvironmentValue } from '../services/spectra/SpectraConfigurationDiagnostics';
-import { getSpectraActiveAcquisitionCapabilities } from '../services/spectra/SpectraActiveAcquisition';
+import { getSpectraEnrolledAcquisitionCapabilities } from '../services/spectra/SpectraEnrolledAcquisition';
 import { getConfiguredSpectraAnchorCount } from '../services/spectra/SpectraAnchorRegistry';
 import {
   getSpectraGenericPullAdapters,
@@ -1837,7 +1837,7 @@ router.get('/telemetry-capabilities', (_req: Request, res: Response) => {
       providerWebhookConfigured: Boolean(readSpectraEnvironmentValue(['SPECTRA_TELEMETRY_HMAC_SECRET'])),
       crossReplicaRealtimeConfigured: spectraRealtimeBridgeConfigured(),
       adapters: getSpectraAdapterCapabilities(),
-      activeAcquisitionAdapters: getSpectraActiveAcquisitionCapabilities(),
+      activeAcquisitionAdapters: getSpectraEnrolledAcquisitionCapabilities(),
       configuredAnchorCount: getConfiguredSpectraAnchorCount(),
       genericPullAdapters: getSpectraGenericPullAdapters(),
     },
