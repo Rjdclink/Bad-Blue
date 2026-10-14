@@ -105,7 +105,8 @@ async function check(name, run) { await run(); passed++; console.log('PASS', nam
     assert.equal(result.evidence.length, 1);
     assert.match(result.evidence[0].textExcerpt || '', /Public fixture archive entry/);
     assert.equal(result.evidence[0].contentType, 'application/pdf');
-    assert.deepEqual(result.evidence[0].observations, []);
+    assert.equal(Array.isArray(result.evidence[0].observations), true);
+    assert.equal(result.evidence[0].observations.length, 0);
     assert.equal(result.events[0].reason, 'retrieved');
   });
   await check('malformed PDF is not archived or counted as a retrieved source', async () => {
