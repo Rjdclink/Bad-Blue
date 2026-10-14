@@ -244,7 +244,7 @@ public final class SpectraAppleCollector: NSObject {
             "timestamp": Self.iso8601.string(from: location.timestamp),
             "latitude": location.coordinate.latitude,
             "longitude": location.coordinate.longitude,
-            "confidence": confidence(for: location.horizontalAccuracy),
+            "confidence": Self.confidence(forAccuracy: location.horizontalAccuracy),
             "provider": "apple-core-location",
             "correlationGroup": "apple-core-location:\(deviceRef)",
             "metadata": [
