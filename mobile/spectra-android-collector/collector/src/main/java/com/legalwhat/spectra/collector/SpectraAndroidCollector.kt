@@ -11,6 +11,7 @@ import android.location.GnssMeasurementsEvent
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
+import android.net.Uri
 import android.net.wifi.WifiManager
 import android.net.wifi.rtt.RangingRequest
 import android.net.wifi.rtt.RangingResult
@@ -30,7 +31,6 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URI
-import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.time.Instant
 import java.util.concurrent.CopyOnWriteArrayList
@@ -438,7 +438,7 @@ class SpectraAndroidCollector(
         }
         require(deviceRef.isNotBlank() && ingestToken.length >= 16)
 
-        val encodedRef = URLEncoder.encode(deviceRef, StandardCharsets.UTF_8)
+        val encodedRef = Uri.encode(deviceRef, "-._~")
         val endpoint = URI.create(
             "$endpointBase/api/geoconsole/telemetry/enrolled/$encodedRef/normalize/android-radio-collector"
         ).toURL()
