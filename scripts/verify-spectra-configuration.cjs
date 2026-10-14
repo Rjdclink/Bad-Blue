@@ -133,6 +133,7 @@ check('diagnostics omit unrelated variables and all credential values', () => {
 check('real registry keeps configuration separate from connection and observations', () => {
   const registry = load('server/services/spectra/SpectraAdapterRegistry.ts', { SPECTRA_TELEMETRY_HMAC_SECRET: marker }, {
     './SpectraActiveAcquisition': { getSpectraActiveAcquisitionCapabilities: () => [] },
+    './SpectraEnrolledAcquisition': { getSpectraEnrolledAcquisitionCapabilities: () => [] },
     './SpectraConfigurationDiagnostics': d,
   });
   const adapters = registry.getSpectraAdapterCapabilities();
