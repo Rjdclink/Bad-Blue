@@ -73,6 +73,22 @@ try {
     attempt.status === 'skipped' && /not configured/.test(attempt.reason || '')
   ), 'unconfigured priority providers must be explained rather than silently omitted');
 
+  process.env.SPECTRA_ACTIVE_PROVIDER_ADAPTERS = JSON.stringify([{
+    id: 'android-managed-location-active',
+    label: 'reserved-id-fixture',
+    url: 'https://collector.example/devices/{{deviceRef}}',
+    method: 'GET',
+    normalizerKind: 'canonical-telemetry',
+    target: 'device',
+  }]);
+  assert.equal(
+    getSpectraActiveAcquisitionCapabilities().some(item =>
+      item.id === 'android-managed-location-active'),
+    false,
+    'generic adapter JSON cannot impersonate a reserved built-in collector id',
+  );
+  process.env.SPECTRA_ACTIVE_PROVIDER_ADAPTERS = '[]';
+
   process.env.SPECTRA_ANDROID_MDM_LOCATION_URL_TEMPLATE =
     'https://emm.example/devices/{{deviceRef}}/latest-location';
   process.env.SPECTRA_ANDROID_MDM_LOCATION_TOKEN = 'android-token';
@@ -118,6 +134,11 @@ try {
     (android.batches[0]?.measurements[0]?.metadata as any)?.providerKind,
     'android-managed-lost-mode',
   );
+  assert.ok(android.attempts.some(attempt =>
+    attempt.id === 'apple-managed-location-active'
+    && attempt.status === 'skipped'
+    && attempt.reasonCode === 'not-configured'
+  ), 'an available Android lane must not hide unavailable sibling collectors');
 
   delete process.env.SPECTRA_ANDROID_MDM_LOCATION_URL_TEMPLATE;
   delete process.env.SPECTRA_ANDROID_MDM_LOCATION_TOKEN;
