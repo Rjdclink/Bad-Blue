@@ -34,7 +34,8 @@ assert.match(apple, /CBCentralManager/);
 assert.match(apple, /NINearbyObject/);
 assert.match(apple, /recordNearbyObject/);
 assert.match(apple, /normalize\/canonical-telemetry/);
-assert.match(apple, /Authorization", forHTTPHeaderField: "Authorization"/);
+assert.match(apple, /Bearer \\\(ingestToken\\\)/);
+assert.match(apple, /forHTTPHeaderField: "Authorization"/);
 assert.equal((apple.match(/public static func reportingEndpoint/g) || []).length, 1,
   'Apple collector must expose exactly one reporting endpoint helper');
 assert.equal((apple.match(/public static func confidence\(forAccuracy/g) || []).length, 1,
