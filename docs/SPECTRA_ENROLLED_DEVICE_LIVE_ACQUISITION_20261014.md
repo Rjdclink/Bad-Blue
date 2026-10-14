@@ -119,6 +119,14 @@ lane is invoked.
 One carrier failure does not cancel the other carrier, Android/Apple,
 OwnTracks, Traccar or other active sources.
 
+For Vonage, SPECTRA accepts either a current bearer/access token or server-side
+application credentials. With `SPECTRA_VONAGE_APPLICATION_ID` and
+`SPECTRA_VONAGE_PRIVATE_KEY`, SPECTRA mints a short-lived RS256 application
+JWT. When `SPECTRA_VONAGE_OAUTH_SCOPE` is configured, it also performs the
+documented CIBA authorization-id/access-token exchange for the enrolled phone
+before calling Device Location Retrieval. Provider authentication remains an
+external provider requirement; it is not a SPECTRA consent-form workflow.
+
 ## Failure behavior
 
 A provider that is missing, unconfigured, unavailable, rate-limited or
