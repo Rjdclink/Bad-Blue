@@ -91,6 +91,16 @@ check('enrolled live-source readiness is configuration-only and value-safe', () 
   });
   assert.equal(row(invalidMode, 'camara-location').configured, false);
   assert.equal(invalidMode.enrolledSources.camaraDeviceIdentificationMode, 'invalid');
+
+  const renewableVonage = d.getSpectraConfigurationDiagnostics({
+    SPECTRA_VONAGE_APPLICATION_ID: 'fixture-app-id',
+    SPECTRA_VONAGE_PRIVATE_KEY: marker,
+  });
+  assert.equal(row(renewableVonage, 'vonage-location').configured, true);
+  const incompleteVonage = d.getSpectraConfigurationDiagnostics({
+    SPECTRA_VONAGE_APPLICATION_ID: 'fixture-app-id',
+  });
+  assert.equal(row(incompleteVonage, 'vonage-location').configured, false);
 });
 check('Census key presence does not imply geocoder use', () => {
   const report = d.getSpectraConfigurationDiagnostics({ CENSUS_API_KEY: marker });
