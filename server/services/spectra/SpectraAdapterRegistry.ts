@@ -38,6 +38,8 @@ const activeAdapterConfigured = (id: string) =>
 const builtinActiveAdapterIds = new Set([
   'android-managed-location-active',
   'apple-managed-location-active',
+  'android-radio-collector-active',
+  'apple-device-collector-active',
   'cisco-spaces-active-location',
 ]);
 
@@ -71,6 +73,33 @@ export const SPECTRA_ADAPTER_CAPABILITIES: SpectraAdapterCapability[] = [
     priority: 'critical',
     supportsRealtime: true,
     notes: 'Pulls the latest DeviceLocation response already available from a configured MDM backend for a supervised Apple device.',
+  },
+  {
+    id: 'android-radio-collector-active',
+    label: 'Android enrolled multi-radio collector',
+    mode: 'provider-pull',
+    sourceTypes: [
+      'device_gps','gnss_fix','gnss_raw','cellular','wifi_rtt',
+      'uwb_range','uwb_direction','bluetooth_proximity',
+      'bluetooth_channel_sounding','ble_rssi','ble_aoa','ble_aod',
+    ],
+    configured: () => activeAdapterConfigured('android-radio-collector-active'),
+    priority: 'critical',
+    supportsRealtime: true,
+    notes: 'Pulls telemetry for the enrolled Android device and routes it through the existing Android radio normalizer.',
+  },
+  {
+    id: 'apple-device-collector-active',
+    label: 'Apple enrolled device telemetry collector',
+    mode: 'provider-pull',
+    sourceTypes: [
+      'device_gps','gnss_fix','uwb_range','uwb_direction',
+      'bluetooth_proximity','bluetooth_channel_sounding',
+    ],
+    configured: () => activeAdapterConfigured('apple-device-collector-active'),
+    priority: 'critical',
+    supportsRealtime: true,
+    notes: 'Pulls canonical Core Location and supported Apple ranging telemetry for the enrolled Apple device.',
   },
   {
     id: 'cisco-spaces-active-location',
