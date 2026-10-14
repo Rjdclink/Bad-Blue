@@ -509,6 +509,7 @@ test('SPECTRA resolves enrolled phones before redundant Android and Apple acquis
   adapterRegistry.includes("id: 'android-radio-collector-active'") &&
   adapterRegistry.includes("id: 'apple-device-collector-active'") &&
   adapterRegistry.includes("id: 'cisco-spaces-active-location'") &&
+  adapterRegistry.includes("id: 'enrolled-device-inbox-active'") &&
   adapterRegistry.includes("id: 'owntracks-recorder-active'") &&
   adapterRegistry.includes("id: 'traccar-active'") &&
   adapterRegistry.includes("id: 'camara-location-retrieval-active'") &&
