@@ -543,6 +543,8 @@ test('PhoneInfoga is a remote optional source rather than an installed Bad-Blue 
   phoneInfoga.includes('/api/v2/numbers') &&
   phoneInfoga.includes('/api/v2/scanners/') &&
   phoneInfoga.includes('boundedPhoneInfogaQueries') &&
+  phoneInfoga.includes('nativePhoneQueries') &&
+  phoneInfoga.includes("'native-fallback'") &&
   phoneInfoga.includes('searchQueries') &&
   routes.includes('phoneInfoga.searchQueries') &&
   routes.includes('phoneInfogaExpansion') &&
