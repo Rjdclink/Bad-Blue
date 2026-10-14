@@ -29,13 +29,11 @@ function boundedInteger(
     : fallback;
 }
 
-function camaraDeviceSource(
-  env: NodeJS.ProcessEnv,
-): 'phone' | 'token' | null {
+function camaraPhoneBoundMode(env: NodeJS.ProcessEnv): boolean {
   const raw = String(
     env.SPECTRA_CAMARA_LOCATION_DEVICE_SOURCE || 'phone',
   ).trim().toLowerCase();
-  return raw === 'phone' || raw === 'token' ? raw : null;
+  return raw === 'phone';
 }
 
 function phoneFromDevice(value: unknown): string | null {
@@ -64,8 +62,7 @@ async function camaraBatch(
     env.SPECTRA_CAMARA_LOCATION_RETRIEVAL_URL,
   );
   const token = String(env.SPECTRA_CAMARA_LOCATION_RETRIEVAL_TOKEN || '').trim();
-  const deviceSource = camaraDeviceSource(env);
-  if (!endpoint || !token || !deviceSource) {
+  if (!endpoint || !token || !camaraPhoneBoundMode(env)) {
     throw new Error('CAMARA location retrieval is not configured.');
   }
 
@@ -83,9 +80,7 @@ async function camaraBatch(
       ...bearerHeader(token),
     },
     body: JSON.stringify({
-      ...(deviceSource === 'phone'
-        ? { device: { phoneNumber: phoneE164 } }
-        : {}),
+      device: { phoneNumber: phoneE164 },
       maxAge,
     }),
   }, boundedInteger(env.SPECTRA_CAMARA_LOCATION_TIMEOUT_MS, 7_000, 1_000, 15_000));
@@ -191,7 +186,7 @@ export function getSpectraCarrierLocationCapabilities(
       configured: Boolean(
         configuredSpectraEndpoint(env.SPECTRA_CAMARA_LOCATION_RETRIEVAL_URL)
         && String(env.SPECTRA_CAMARA_LOCATION_RETRIEVAL_TOKEN || '').trim()
-        && camaraDeviceSource(env)
+        && camaraPhoneBoundMode(env)
       ),
     },
     {
