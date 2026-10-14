@@ -305,6 +305,22 @@ try {
   assert.equal(wrongAppleDevice.batches.length, 0);
   assert.match(wrongAppleDevice.attempts[0]?.reason || '', /different device/);
 
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    sessionId: 'fixture-session',
+    subjectLabel: 'managed apple',
+    measurements: [{
+      kind: 'position', source: 'device_gps',
+      timestamp: '2026-10-03T15:00:00Z',
+      latitude: 43.551, longitude: -96.731, accuracy: 5, confidence: 0.94,
+    }],
+  }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  const missingAppleIdentity = await acquireSpectraActiveTelemetry({
+    deviceRef: 'apple-collector-a', platform: 'ios',
+    sessionId: 'fixture-session', subjectLabel: 'managed apple',
+  });
+  assert.equal(missingAppleIdentity.batches.length, 0);
+  assert.match(missingAppleIdentity.attempts[0]?.reason || '', /did not identify the enrolled device/);
+
   delete process.env.SPECTRA_APPLE_DEVICE_COLLECTOR_URL_TEMPLATE;
   delete process.env.SPECTRA_APPLE_DEVICE_COLLECTOR_TOKEN;
   process.env.SPECTRA_CISCO_SPACES_DEVICE_URL_TEMPLATE =
