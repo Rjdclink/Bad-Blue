@@ -540,6 +540,11 @@ test('Recursive search learns new public clues only from retrieved source record
   spectraSources.includes('maxPasses: 5') &&
   spectraSources.includes('maxQueries: 20'));
 
+test('Total public-search outage does not cancel independent live acquisition',
+  routes.includes('const publicDiscoveryUnavailable =') &&
+  routes.includes('continuing independent acquisition lanes') &&
+  !routes.includes("throw new Error('All SPECTRA discovery paths failed')"));
+
 test('Constraint solver is wired before posterior confidence and Futurecast',
   geoconsoleRoutes.includes('solveSpectraConstraintLayer(quality.points)') &&
   geoconsoleRoutes.indexOf('solveSpectraConstraintLayer(quality.points)') <
