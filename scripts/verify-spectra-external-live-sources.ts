@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
+import { generateKeyPairSync } from 'node:crypto';
 import { acquireSpectraOwnTracks } from '../server/services/spectra/SpectraOwnTracksAdapter';
 import { acquireSpectraTraccar } from '../server/services/spectra/SpectraTraccarAdapter';
 import { acquireSpectraCarrierLocations } from '../server/services/spectra/SpectraCarrierLocationAdapters';
+import { getSpectraVonageBearerToken, mintSpectraVonageApplicationJwt } from '../server/services/spectra/SpectraVonageAuth';
 import { collectSpectraPhoneInfoga } from '../server/services/spectra/SpectraPhoneInfoga';
 import {
   buildSpectraRecursiveClueQueries,
@@ -216,6 +218,62 @@ try {
       'one carrier lane may fail without cancelling an independent carrier');
     assert.equal(partial.attempts.some(item => item.status === 'failed'), true);
     assert.equal(partial.attempts.some(item => item.status === 'fulfilled'), true);
+  }
+
+  {
+    const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+    const privatePem = privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
+    const directJwt = mintSpectraVonageApplicationJwt(
+      'fixture-vonage-app',
+      privatePem,
+      1_800_000_000,
+    );
+    const jwtParts = directJwt.split('.');
+    assert.equal(jwtParts.length, 3);
+    const jwtPayload = JSON.parse(Buffer.from(jwtParts[1], 'base64url').toString('utf8'));
+    assert.equal(jwtPayload.application_id, 'fixture-vonage-app');
+    assert.equal(jwtPayload.exp - jwtPayload.iat, 300);
+
+    const env = {
+      SPECTRA_VONAGE_APPLICATION_ID: 'fixture-vonage-app',
+      SPECTRA_VONAGE_PRIVATE_KEY: privatePem,
+      SPECTRA_VONAGE_OAUTH_SCOPE: 'fixture-location-scope',
+      SPECTRA_VONAGE_AUTHORIZATION_URL: 'https://vonage.example/oauth2/bc-authorize',
+      SPECTRA_VONAGE_TOKEN_URL: 'https://vonage.example/oauth2/token',
+      SPECTRA_VONAGE_AUTH_TIMEOUT_MS: '3000',
+    } as NodeJS.ProcessEnv;
+    let authCalls = 0;
+    globalThis.fetch = async (input: any, init?: RequestInit) => {
+      authCalls += 1;
+      const url = String(input);
+      assert.match(
+        String((init?.headers as Record<string, string>)?.Authorization || ''),
+        /^Bearer eyJ/,
+      );
+      if (url.endsWith('/oauth2/bc-authorize')) {
+        const body = new URLSearchParams(String(init?.body || ''));
+        assert.equal(body.get('login_hint'), '+14025550123');
+        assert.equal(body.get('scope'), 'fixture-location-scope');
+        return new Response(JSON.stringify({
+          auth_req_id: 'fixture-auth-request',
+          expires_in: 120,
+          interval: 0,
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      assert.equal(url, 'https://vonage.example/oauth2/token');
+      const body = new URLSearchParams(String(init?.body || ''));
+      assert.equal(body.get('auth_req_id'), 'fixture-auth-request');
+      assert.equal(body.get('grant_type'), 'urn:openid:params:grant-type:ciba');
+      return new Response(JSON.stringify({
+        access_token: 'fixture-network-access-token',
+        token_type: 'Bearer',
+        expires_in: 3600,
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    };
+
+    const accessToken = await getSpectraVonageBearerToken('+14025550123', env);
+    assert.equal(accessToken, 'fixture-network-access-token');
+    assert.equal(authCalls, 2);
   }
 
   {
