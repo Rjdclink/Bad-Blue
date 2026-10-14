@@ -445,6 +445,23 @@ try {
       0,
       'retrieved clues from an unrelated page must not seed a recursive branch',
     );
+
+    const phoneBoundPage: SpectraRetrievedEvidence[] = [{
+      ...records[0],
+      url: 'https://directory.example/record',
+      requestedUrl: 'https://directory.example/record',
+      title: 'Public directory record',
+      textExcerpt: 'Contact +1 (402) 555-0123. Alternate profile @phone_bound_handle.',
+    }];
+    const phoneBoundQueries = buildSpectraRecursiveClueQueries(
+      'Jane Doe',
+      phoneBoundPage,
+      new Set<string>(),
+      4,
+      { phone: '+14025550123' },
+    );
+    assert.ok(phoneBoundQueries.some(query => query.includes('@phone_bound_handle')),
+      'an exact supplied phone match may bind a retrieved page even when the page omits the name');
   }
 
   console.log('SPECTRA OwnTracks, Traccar, carrier, PhoneInfoga and recursive-source verification passed.');
