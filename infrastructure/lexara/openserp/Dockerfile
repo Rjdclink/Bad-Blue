@@ -1,4 +1,4 @@
-FROM karust/openserp:latest
+FROM karust/openserp:v0.8.12
 USER root
 # Upstream omits CA roots; HTTP search must validate remote certificates.
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
