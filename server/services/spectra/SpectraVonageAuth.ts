@@ -96,7 +96,7 @@ async function cibaAccessToken(
           auth_req_id: authRequestId,
           grant_type: 'urn:openid:params:grant-type:ciba',
         }).toString(),
-      }, Number(env.SPECTRA_VONAGE_AUTH_TIMEOUT_MS || 7_000));
+      }, Number(env.SPECTRA_VONAGE_AUTH_TIMEOUT_MS || 7_000), 1);
       const accessToken = String(token?.access_token || '').trim();
       if (!accessToken) throw new Error('Vonage token response did not contain an access token.');
       return accessToken;
