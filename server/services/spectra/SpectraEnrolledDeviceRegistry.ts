@@ -15,6 +15,7 @@ export interface SpectraEnrolledDevice {
 export type SpectraEnrolledDeviceResolution =
   | { status: 'matched'; device: SpectraEnrolledDevice; databaseAvailable: boolean }
   | { status: 'not-enrolled'; databaseAvailable: boolean }
+  | { status: 'unavailable'; databaseAvailable: false }
   | { status: 'ambiguous'; databaseAvailable: boolean; deviceRefs: string[] }
   | {
       status: 'mismatch';
@@ -143,7 +144,11 @@ function resolveUniqueCandidates(
   }
   const unique = [...byRef.values()];
 
-  if (!unique.length) return { status: 'not-enrolled', databaseAvailable };
+  if (!unique.length) {
+    return databaseAvailable
+      ? { status: 'not-enrolled', databaseAvailable }
+      : { status: 'unavailable', databaseAvailable: false };
+  }
   if (unique.length > 1) {
     return {
       status: 'ambiguous',
