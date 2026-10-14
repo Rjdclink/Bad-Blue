@@ -159,7 +159,7 @@ export function getSpectraEnrolledAcquisitionCapabilities(
   env: NodeJS.ProcessEnv = process.env,
 ) {
   return [
-    ...getSpectraActiveAcquisitionCapabilities(),
+    ...getSpectraActiveAcquisitionCapabilities().map(item => ({ ...item, configured: true })),
     {
       id: 'owntracks-recorder-active',
       label: 'OwnTracks Recorder',
