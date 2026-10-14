@@ -30,10 +30,10 @@ function present(env: Environment, name: string): boolean {
   return typeof env[name] === 'string' && Boolean(env[name]?.trim());
 }
 
-function camaraDeviceSource(env: Environment): 'phone' | 'token' | 'invalid' {
+function camaraDeviceSource(env: Environment): 'phone' | 'invalid' {
   const raw = String(env.SPECTRA_CAMARA_LOCATION_DEVICE_SOURCE || 'phone')
     .trim().toLowerCase();
-  return raw === 'phone' || raw === 'token' ? raw : 'invalid';
+  return raw === 'phone' ? 'phone' : 'invalid';
 }
 
 /** Server-only credential selection; callers must not serialize the value. */
