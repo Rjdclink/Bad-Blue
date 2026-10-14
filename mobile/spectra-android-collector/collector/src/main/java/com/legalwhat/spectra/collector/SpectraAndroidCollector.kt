@@ -112,7 +112,7 @@ class SpectraAndroidCollector(
             }
         }
         if (granted(Manifest.permission.ACCESS_FINE_LOCATION)) {
-            runCatching { locationManager.registerGnssMeasurementsCallback(executor, gnssCallback) }
+            runCatching { locationManager.registerGnssMeasurementsCallback(context.mainExecutor, gnssCallback) }
         }
     }
 
@@ -291,7 +291,7 @@ class SpectraAndroidCollector(
 
         val request = RangingRequest.Builder().addAccessPoints(responders).build()
         runCatching {
-            manager.startRanging(request, executor, object : RangingResultCallback() {
+            manager.startRanging(request, context.mainExecutor, object : RangingResultCallback() {
                 override fun onRangingFailure(code: Int) {
                     done.countDown()
                 }
