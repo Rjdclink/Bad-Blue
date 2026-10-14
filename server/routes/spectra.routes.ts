@@ -1621,13 +1621,13 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
     // saved privately without modifying the map or client response.
     const sceneOverlapSummary = summarizeSpectraSceneOverlap(inspectedImageRecords);
 
-    if (
+    const publicDiscoveryUnavailable =
       discoveryResults.length === 0
       && backgroundSources.length === 0
       && discoveryQueriesAttempted > 0
-      && discoveryQueriesFailed >= discoveryQueriesAttempted
-    ) {
-      throw new Error('All SPECTRA discovery paths failed');
+      && discoveryQueriesFailed >= discoveryQueriesAttempted;
+    if (publicDiscoveryUnavailable) {
+      console.warn('[SPECTRA Discovery] all public search lanes unavailable; continuing independent acquisition lanes');
     }
 
     const observations: any[] = [
@@ -2177,6 +2177,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
         discoveryPasses,
         discoveryQueriesAttempted,
         discoveryQueriesFailed,
+        publicDiscoveryUnavailable,
         contextSourceFamilies: contextEvidence.sourceFamilies,
         contextEvidenceItemCount,
         activeAcquisitionAttempts: activeAcquisition.attempts.length,
@@ -2271,6 +2272,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
         discoveryPasses,
         discoveryQueriesAttempted,
         discoveryQueriesFailed,
+        publicDiscoveryUnavailable,
         contextSourceFamilies: contextEvidence.sourceFamilies,
         contextEvidenceItemCount,
         activeAcquisitionAttempts: activeAcquisition.attempts,
