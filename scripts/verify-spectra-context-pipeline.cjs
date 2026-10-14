@@ -18,6 +18,7 @@ for (const file of [
   'server/services/spectra/SpectraSourceRegistry.ts',
   'server/services/spectra/SpectraEnrolledDeviceRegistry.ts',
   'server/services/spectra/SpectraEnrolledAcquisition.ts',
+  'server/services/spectra/SpectraEnrolledTelemetryStore.ts',
   'server/services/spectra/SpectraOwnTracksAdapter.ts',
   'server/services/spectra/SpectraTraccarAdapter.ts',
   'server/services/spectra/SpectraCarrierLocationAdapters.ts',
