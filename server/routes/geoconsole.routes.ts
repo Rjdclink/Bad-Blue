@@ -61,6 +61,7 @@ import { solveSpectraConstraintLayer } from '../services/spectra/SpectraConstrai
 import {
   authorizeSpectraEnrolledDeviceIngest,
   persistSpectraEnrolledDeviceTelemetry,
+  rotateSpectraEnrolledDeviceIngestToken,
 } from '../services/spectra/SpectraEnrolledTelemetryStore';
 
 const router = Router();
@@ -1676,6 +1677,33 @@ router.post('/telemetry/enrolled/:deviceRef/normalize/:kind', async (req: Reques
 
 // Every ordinary GeoConsole/SPECTRA endpoint below remains authenticated.
 router.use(isAuthenticated);
+
+router.post('/enrolled-device/:deviceRef/ingest-token', async (req: Request, res: Response) => {
+  const userId = getPlatformUserId(req.user as any);
+  if (!userId) {
+    return res.status(401).json({ success: false, error: 'Authentication required.' });
+  }
+  const deviceRef = String(req.params.deviceRef || '').trim();
+  if (!deviceRef || deviceRef.length > 300) {
+    return res.status(400).json({ success: false, error: 'Invalid enrolled device reference.' });
+  }
+
+  const rotated = await rotateSpectraEnrolledDeviceIngestToken(userId, deviceRef);
+  if (!rotated) {
+    return res.status(404).json({ success: false, error: 'Enrolled device not found.' });
+  }
+
+  // The plaintext device reporter credential is returned once. Only its hash
+  // remains in SPECTRA storage, and it is never written to logs.
+  return res.json({
+    success: true,
+    data: {
+      deviceRef: rotated.deviceRef,
+      platform: rotated.platform,
+      ingestToken: rotated.token,
+    },
+  });
+});
 
 router.post('/traffic-context', async (req: Request, res: Response) => {
   const userId = getPlatformUserId(req.user as any);
