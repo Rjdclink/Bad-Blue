@@ -37,7 +37,7 @@ assert.match(apple, /source": "device_gps"/);
 assert.match(apple, /source": "uwb_range"/);
 assert.match(apple, /source": "ble_rssi"/);
 assert.match(apple, /normalize\/canonical-telemetry/);
-assert.match(apple, /Bearer \\(ingestToken\)/);
+assert(apple.includes('Bearer \\(ingestToken)'));
 assert.match(applePackage, /platforms: \[\.iOS\(\.v17\)\]/);
 assert.match(applePackage, /SpectraAppleCollectorTests/);
 
