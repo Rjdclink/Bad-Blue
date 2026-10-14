@@ -254,6 +254,7 @@ try {
     const jwtPayload = JSON.parse(Buffer.from(jwtParts[1], 'base64url').toString('utf8'));
     assert.equal(jwtPayload.application_id, 'fixture-vonage-app');
     assert.equal(jwtPayload.exp - jwtPayload.iat, 300);
+    assert.deepEqual(jwtPayload.acl, { paths: {} });
 
     const env = {
       SPECTRA_VONAGE_APPLICATION_ID: 'fixture-vonage-app',
