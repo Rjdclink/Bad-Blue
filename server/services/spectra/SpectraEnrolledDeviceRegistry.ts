@@ -120,55 +120,21 @@ function environmentDevices(env: NodeJS.ProcessEnv, userId: string): SpectraEnro
   }
 }
 
-export async function resolveSpectraEnrolledDevice(
-  userId: string,
-  phoneNumber: string | undefined,
-  options: {
-    suppliedDeviceRef?: string;
-    subjectLabel?: string;
-    query?: Query;
-    env?: NodeJS.ProcessEnv;
-  } = {},
-): Promise<SpectraEnrolledDeviceResolution> {
-  const phoneE164 = normalizeSpectraPhoneE164(phoneNumber);
-  if (!phoneE164) return { status: 'not-enrolled', databaseAvailable: true };
-
-  const query: Query = options.query || (async (
-    sql: string,
-    parameters?: unknown[],
-  ) => {
+function defaultRegistryQuery(): Query {
+  return async (sql: string, parameters?: unknown[]) => {
     // Delay database initialization until a real registry lookup needs it.
     // Pure normalization/tests and environment-only fixtures do not require
     // application database configuration merely by importing this module.
     const { pool } = await import('../../db');
     return pool.query(sql, parameters as any[]);
-  });
-  const env = options.env || process.env;
-  let databaseAvailable = true;
-  const candidates: SpectraEnrolledDevice[] = [];
+  };
+}
 
-  try {
-    const result = await query(
-      `SELECT phone_e164, device_ref, platform, subject_label,
-              owntracks_user, owntracks_device, traccar_device_id, metadata
-       FROM public.spectra_enrolled_devices
-       WHERE user_id = $1 AND phone_e164 = $2 AND active = true
-       ORDER BY updated_at DESC
-       LIMIT 4`,
-      [userId, phoneE164],
-    );
-    for (const row of result.rows || []) {
-      const device = fromRow(row, 'database');
-      if (device) candidates.push(device);
-    }
-  } catch {
-    databaseAvailable = false;
-  }
-
-  candidates.push(
-    ...environmentDevices(env, userId).filter(device => device.phoneE164 === phoneE164),
-  );
-
+function resolveUniqueCandidates(
+  candidates: readonly SpectraEnrolledDevice[],
+  databaseAvailable: boolean,
+  options: { suppliedDeviceRef?: string; subjectLabel?: string } = {},
+): SpectraEnrolledDeviceResolution {
   const byRef = new Map<string, SpectraEnrolledDevice>();
   for (const candidate of candidates) {
     const key = candidate.deviceRef.toLowerCase();
@@ -200,7 +166,6 @@ export async function resolveSpectraEnrolledDevice(
       supplied: suppliedDeviceRef,
     };
   }
-
   if (!subjectsCompatible(device.subjectLabel, options.subjectLabel)) {
     return {
       status: 'mismatch',
@@ -210,6 +175,98 @@ export async function resolveSpectraEnrolledDevice(
       supplied: options.subjectLabel || '',
     };
   }
-
   return { status: 'matched', device, databaseAvailable };
+}
+
+export async function resolveSpectraEnrolledDevice(
+  userId: string,
+  phoneNumber: string | undefined,
+  options: {
+    suppliedDeviceRef?: string;
+    subjectLabel?: string;
+    query?: Query;
+    env?: NodeJS.ProcessEnv;
+  } = {},
+): Promise<SpectraEnrolledDeviceResolution> {
+  const phoneE164 = normalizeSpectraPhoneE164(phoneNumber);
+  if (!phoneE164) return { status: 'not-enrolled', databaseAvailable: true };
+
+  const query: Query = options.query || defaultRegistryQuery();
+  const env = options.env || process.env;
+  let databaseAvailable = true;
+  const candidates: SpectraEnrolledDevice[] = [];
+
+  try {
+    const result = await query(
+      `SELECT phone_e164, device_ref, platform, subject_label,
+              owntracks_user, owntracks_device, traccar_device_id, metadata
+       FROM public.spectra_enrolled_devices
+       WHERE user_id = $1 AND phone_e164 = $2 AND active = true
+       ORDER BY updated_at DESC
+       LIMIT 4`,
+      [userId, phoneE164],
+    );
+    for (const row of result.rows || []) {
+      const device = fromRow(row, 'database');
+      if (device) candidates.push(device);
+    }
+  } catch {
+    databaseAvailable = false;
+  }
+
+  candidates.push(
+    ...environmentDevices(env, userId).filter(device => device.phoneE164 === phoneE164),
+  );
+
+  return resolveUniqueCandidates(candidates, databaseAvailable, {
+    suppliedDeviceRef: options.suppliedDeviceRef,
+    subjectLabel: options.subjectLabel,
+  });
+}
+
+export async function resolveSpectraEnrolledDeviceByRef(
+  userId: string,
+  deviceRef: string | undefined,
+  options: {
+    subjectLabel?: string;
+    query?: Query;
+    env?: NodeJS.ProcessEnv;
+  } = {},
+): Promise<SpectraEnrolledDeviceResolution> {
+  const normalizedRef = text(deviceRef);
+  if (!normalizedRef) return { status: 'not-enrolled', databaseAvailable: true };
+
+  const query: Query = options.query || defaultRegistryQuery();
+  const env = options.env || process.env;
+  let databaseAvailable = true;
+  const candidates: SpectraEnrolledDevice[] = [];
+
+  try {
+    const result = await query(
+      `SELECT phone_e164, device_ref, platform, subject_label,
+              owntracks_user, owntracks_device, traccar_device_id, metadata
+       FROM public.spectra_enrolled_devices
+       WHERE user_id = $1 AND lower(device_ref) = lower($2) AND active = true
+       ORDER BY updated_at DESC
+       LIMIT 4`,
+      [userId, normalizedRef],
+    );
+    for (const row of result.rows || []) {
+      const device = fromRow(row, 'database');
+      if (device) candidates.push(device);
+    }
+  } catch {
+    databaseAvailable = false;
+  }
+
+  candidates.push(
+    ...environmentDevices(env, userId).filter(
+      device => device.deviceRef.toLowerCase() === normalizedRef.toLowerCase(),
+    ),
+  );
+
+  return resolveUniqueCandidates(candidates, databaseAvailable, {
+    suppliedDeviceRef: normalizedRef,
+    subjectLabel: options.subjectLabel,
+  });
 }
