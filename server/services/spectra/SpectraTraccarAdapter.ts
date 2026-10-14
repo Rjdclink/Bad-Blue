@@ -61,25 +61,22 @@ export async function acquireSpectraTraccar(
   if (Number(devicePayload?.id) !== device.traccarDeviceId) {
     throw new Error('Traccar returned a different device.');
   }
-  const positionId = Number(devicePayload?.positionId);
-  if (!Number.isSafeInteger(positionId) || positionId <= 0) {
-    throw new Error('Traccar device has no last known position.');
-  }
-
   const positionUrl = joinSpectraEndpoint(root, '/positions');
-  positionUrl.searchParams.append('id', String(positionId));
+  positionUrl.searchParams.set('deviceId', String(device.traccarDeviceId));
   const positions = await fetchSpectraConfiguredJson(positionUrl, {
     method: 'GET',
     headers,
   }, Number(env.SPECTRA_TRACCAR_TIMEOUT_MS || 7_000));
 
-  const row = Array.isArray(positions)
-    ? positions.find((item: any) =>
-        Number(item?.id) === positionId
-        && Number(item?.deviceId) === device.traccarDeviceId
-      )
-    : null;
+  const rows = Array.isArray(positions) ? positions : [];
+  const row = rows
+    .filter((item: any) => Number(item?.deviceId) === device.traccarDeviceId)
+    .sort((left: any, right: any) =>
+      Date.parse(String(right?.fixTime || right?.deviceTime || right?.serverTime || ''))
+      - Date.parse(String(left?.fixTime || left?.deviceTime || left?.serverTime || ''))
+    )[0];
   if (!row) throw new Error('Traccar returned no matching position for the enrolled device.');
+  const positionId = Number(row.id);
 
   const latitude = Number(row.latitude);
   const longitude = Number(row.longitude);
