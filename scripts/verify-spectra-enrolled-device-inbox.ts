@@ -4,10 +4,32 @@ import {
   authorizeSpectraEnrolledDeviceIngest,
   loadLatestSpectraEnrolledDeviceTelemetry,
   persistSpectraEnrolledDeviceTelemetry,
+  rotateSpectraEnrolledDeviceIngestToken,
 } from '../server/services/spectra/SpectraEnrolledTelemetryStore';
 
 const token = 'fixture-device-token-that-is-long-enough';
 const tokenHash = createHash('sha256').update(token).digest('hex');
+
+let rotatedHash = '';
+const rotated = await rotateSpectraEnrolledDeviceIngestToken(
+  'tenant-a',
+  'ANDROID-DEVICE-A',
+  {
+    query: async (_sql, parameters) => {
+      rotatedHash = String(parameters?.[2] || '');
+      return { rows: [{ device_ref: 'android-device-a', platform: 'android' }] };
+    },
+  },
+);
+assert.equal(rotated?.deviceRef, 'android-device-a');
+assert.equal(rotated?.platform, 'android');
+assert.ok(rotated?.token);
+assert.match(rotatedHash, /^[a-f0-9]{64}$/);
+assert.equal(
+  createHash('sha256').update(rotated!.token).digest('hex'),
+  rotatedHash,
+  'only the hash of the one-time reporter token is stored',
+);
 
 const authorized = await authorizeSpectraEnrolledDeviceIngest(
   'android-device-a',
