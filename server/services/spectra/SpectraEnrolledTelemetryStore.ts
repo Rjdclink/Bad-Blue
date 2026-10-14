@@ -89,7 +89,8 @@ export async function authorizeSpectraEnrolledDeviceIngest(
 function observedAt(batch: SpectraNormalizedProviderBatch): Date | null {
   let latest = Number.NEGATIVE_INFINITY;
   for (const measurement of batch.measurements || []) {
-    const value = Date.parse(String((measurement as any)?.timestamp || ''));
+    const raw = (measurement as any)?.timestamp;
+    const value = raw instanceof Date ? raw.getTime() : Date.parse(String(raw || ''));
     if (Number.isFinite(value)) latest = Math.max(latest, value);
   }
   return Number.isFinite(latest) ? new Date(latest) : null;
