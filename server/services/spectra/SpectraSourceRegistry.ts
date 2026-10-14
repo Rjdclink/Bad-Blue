@@ -42,7 +42,7 @@ export const SPECTRA_DISCOVERY_POLICY: SpectraDiscoveryPolicy = {
   // recursive investigation while retaining hard caps and diminishing-return
   // stops so one lookup cannot run indefinitely.
   maxPasses: 8,
-  maxQueries: 24,
+  maxQueries: 48,
   maxCandidates: 160,
   minIndependentSources: 6,
   sufficientConfidence: 0.78,
