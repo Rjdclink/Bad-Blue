@@ -73,7 +73,24 @@ check('enrolled live-source readiness is configuration-only and value-safe', () 
   assert.equal(report.enrolledSources.enrollmentRegistryConfigured, true);
   assert.equal(report.enrolledSources.ownTracksConfigured, true);
   assert.equal(report.enrolledSources.ownTracksAuthenticationConfigured, true);
+  assert.equal(report.enrolledSources.camaraDeviceIdentificationMode, 'phone');
   assert(!JSON.stringify(report).includes(marker));
+
+  const tokenBound = d.getSpectraConfigurationDiagnostics({
+    SPECTRA_CAMARA_LOCATION_RETRIEVAL_URL: 'https://camara.example/retrieve',
+    SPECTRA_CAMARA_LOCATION_RETRIEVAL_TOKEN: marker,
+    SPECTRA_CAMARA_LOCATION_DEVICE_SOURCE: 'token',
+  });
+  assert.equal(row(tokenBound, 'camara-location').configured, true);
+  assert.equal(tokenBound.enrolledSources.camaraDeviceIdentificationMode, 'token');
+
+  const invalidMode = d.getSpectraConfigurationDiagnostics({
+    SPECTRA_CAMARA_LOCATION_RETRIEVAL_URL: 'https://camara.example/retrieve',
+    SPECTRA_CAMARA_LOCATION_RETRIEVAL_TOKEN: marker,
+    SPECTRA_CAMARA_LOCATION_DEVICE_SOURCE: 'invalid-fixture',
+  });
+  assert.equal(row(invalidMode, 'camara-location').configured, false);
+  assert.equal(invalidMode.enrolledSources.camaraDeviceIdentificationMode, 'invalid');
 });
 check('Census key presence does not imply geocoder use', () => {
   const report = d.getSpectraConfigurationDiagnostics({ CENSUS_API_KEY: marker });
