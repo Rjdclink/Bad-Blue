@@ -23,6 +23,12 @@ function present(env: Environment, name: string): boolean {
   return typeof env[name] === 'string' && Boolean(env[name]?.trim());
 }
 
+function camaraDeviceSource(env: Environment): 'phone' | 'token' | 'invalid' {
+  const raw = String(env.SPECTRA_CAMARA_LOCATION_DEVICE_SOURCE || 'phone')
+    .trim().toLowerCase();
+  return raw === 'phone' || raw === 'token' ? raw : 'invalid';
+}
+
 /** Server-only credential selection; callers must not serialize the value. */
 export function readSpectraEnvironmentValue(names: readonly string[], env: Environment = process.env): string | undefined {
   for (const name of names) {
@@ -40,7 +46,9 @@ export function getSpectraConfigurationDiagnostics(env: Environment = process.en
     connectionStatus: 'not-tested' as const,
     credentials: credentialGroups.map(({ id, groups }) => ({
       integration: id,
-      configured: groups.every(group => group.some(name => present(env, name))),
+      configured:
+        groups.every(group => group.some(name => present(env, name)))
+        && (id !== 'camara-location' || camaraDeviceSource(env) !== 'invalid'),
       requirements: groups.map(group => ({
         acceptedVariableNames: [...group],
         presentVariableNames: group.filter(name => present(env, name)),
@@ -61,6 +69,7 @@ export function getSpectraConfigurationDiagnostics(env: Environment = process.en
       appleManagedLocationConfigured:
         present(env, 'SPECTRA_APPLE_MDM_LOCATION_URL_TEMPLATE')
         && present(env, 'SPECTRA_APPLE_MDM_LOCATION_TOKEN'),
+      camaraDeviceIdentificationMode: camaraDeviceSource(env),
     },
     censusGeocoder: {
       keyRequired: false,
