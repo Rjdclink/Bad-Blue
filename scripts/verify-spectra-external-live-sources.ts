@@ -35,7 +35,7 @@ try {
     } as NodeJS.ProcessEnv;
 
     globalThis.fetch = async (input: any, init?: RequestInit) => {
-      assert.equal(String(input), 'https://owntracks.example/owntracks/api/0/locations');
+      assert.equal(String(input), 'https://owntracks.example/api/0/locations');
       assert.equal(init?.method, 'POST');
       assert.match(String(init?.body), /user=jane/);
       assert.match(String(init?.body), /device=phone/);
@@ -68,6 +68,27 @@ try {
     assert.equal(result.measurements[0]?.source, 'device_gps');
     assert.equal((result.measurements[0]?.metadata as any)?.deviceRef, 'device-a');
     assert.equal(result.measurements[0]?.speed, 5);
+
+    const prefixedEnv = {
+      ...env,
+      SPECTRA_OWNTRACKS_RECORDER_URL: 'https://owntracks.example/owntracks',
+    } as NodeJS.ProcessEnv;
+    globalThis.fetch = async (input: any) => {
+      assert.equal(String(input), 'https://owntracks.example/owntracks/api/0/locations');
+      return new Response(JSON.stringify({
+        data: [{
+          _type: 'location',
+          topic: 'owntracks/jane/phone',
+          lat: 41.25, lon: -95.93, tst: 1791039720, acc: 7,
+        }],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    };
+    const prefixed = await acquireSpectraOwnTracks(
+      device,
+      { sessionId: 's1-prefix', subjectLabel: 'Jane Doe' },
+      prefixedEnv,
+    );
+    assert.equal(prefixed.measurements.length, 1);
   }
 
   {
