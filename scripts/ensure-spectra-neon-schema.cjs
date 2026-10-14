@@ -68,8 +68,17 @@ async function ensureSchema(client, directory, log = console.log) {
     ['public', TABLES],
   );
   if (Number(present.rows[0]?.table_count) === TABLES.length) {
-    log(`[SPECTRA Neon Schema] ${TABLES.length} runtime tables already present; no schema changes`);
-    return;
+    const enrollmentColumn = await client.query(
+      `SELECT count(*) AS column_count
+       FROM information_schema.columns
+       WHERE table_schema = 'public'
+         AND table_name = 'spectra_enrolled_devices'
+         AND column_name = 'ingest_token_hash'`,
+    );
+    if (Number(enrollmentColumn.rows[0]?.column_count) === 1) {
+      log(`[SPECTRA Neon Schema] ${TABLES.length} runtime tables and enrolled-device telemetry column already present; no schema changes`);
+      return;
+    }
   }
   await client.query('BEGIN');
   try {
@@ -89,6 +98,16 @@ async function ensureSchema(client, directory, log = console.log) {
       ['public', TABLES],
     );
     if (Number(verified.rows[0]?.table_count) !== TABLES.length) throw new Error('Spectra schema verification failed.');
+    const verifiedColumn = await client.query(
+      `SELECT count(*) AS column_count
+       FROM information_schema.columns
+       WHERE table_schema = 'public'
+         AND table_name = 'spectra_enrolled_devices'
+         AND column_name = 'ingest_token_hash'`,
+    );
+    if (Number(verifiedColumn.rows[0]?.column_count) !== 1) {
+      throw new Error('Spectra enrolled-device telemetry schema verification failed.');
+    }
     await client.query('COMMIT');
     log(`[SPECTRA Neon Schema] verified all ${TABLES.length} runtime tables; canonical observations and server-only access retained`);
   } catch (error) {
