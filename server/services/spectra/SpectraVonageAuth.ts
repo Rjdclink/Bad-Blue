@@ -28,7 +28,6 @@ export function mintSpectraVonageApplicationJwt(
     iat: nowSeconds,
     nbf: Math.max(0, nowSeconds - 1),
     exp: nowSeconds + 300,
-    acl: { paths: {} },
     jti: randomUUID(),
   }));
   const signingInput = `${header}.${payload}`;
