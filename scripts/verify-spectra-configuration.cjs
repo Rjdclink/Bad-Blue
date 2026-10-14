@@ -95,10 +95,12 @@ check('enrolled live-source readiness is configuration-only and value-safe', () 
   const renewableVonage = d.getSpectraConfigurationDiagnostics({
     SPECTRA_VONAGE_APPLICATION_ID: 'fixture-app-id',
     SPECTRA_VONAGE_PRIVATE_KEY: marker,
+    SPECTRA_VONAGE_OAUTH_SCOPE: 'fixture-location-scope',
   });
   assert.equal(row(renewableVonage, 'vonage-location').configured, true);
   const incompleteVonage = d.getSpectraConfigurationDiagnostics({
     SPECTRA_VONAGE_APPLICATION_ID: 'fixture-app-id',
+    SPECTRA_VONAGE_PRIVATE_KEY: marker,
   });
   assert.equal(row(incompleteVonage, 'vonage-location').configured, false);
 });
