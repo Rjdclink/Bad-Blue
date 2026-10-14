@@ -30,6 +30,17 @@ function present(env: Environment, name: string): boolean {
   return typeof env[name] === 'string' && Boolean(env[name]?.trim());
 }
 
+function hasBootstrapEnrollment(env: Environment): boolean {
+  const raw = String(env.SPECTRA_ENROLLED_DEVICES_JSON || '').trim();
+  if (!raw) return false;
+  try {
+    const value = JSON.parse(raw);
+    return Array.isArray(value) && value.length > 0;
+  } catch {
+    return false;
+  }
+}
+
 function camaraDeviceSource(env: Environment): 'phone' | 'invalid' {
   const raw = String(env.SPECTRA_CAMARA_LOCATION_DEVICE_SOURCE || 'phone')
     .trim().toLowerCase();
@@ -62,7 +73,7 @@ export function getSpectraConfigurationDiagnostics(env: Environment = process.en
       })),
     })),
     enrolledSources: {
-      enrollmentRegistryConfigured: present(env, 'SPECTRA_ENROLLED_DEVICES_JSON')
+      enrollmentRegistryConfigured: hasBootstrapEnrollment(env)
         || present(env, 'NEON_DATABASE_URL')
         || present(env, 'DATABASE_URL')
         || present(env, 'SUPABASE_DATABASE_URL'),
