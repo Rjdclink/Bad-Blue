@@ -212,21 +212,10 @@ public final class SpectraAppleCollector: NSObject {
             ],
         ]
 
-        let devicePathCharacters = CharacterSet.alphanumerics
-            .union(CharacterSet(charactersIn: "-._~"))
-        guard let encodedRef = deviceRef.addingPercentEncoding(
-            withAllowedCharacters: devicePathCharacters
-        ) else {
-            throw CollectorError.invalidEnrollment
-        }
-        let base = endpointBase.absoluteString.trimmingCharacters(
-            in: CharacterSet(charactersIn: "/")
+        let endpoint = try Self.reportingEndpoint(
+            baseURL: endpointBase,
+            deviceRef: deviceRef
         )
-        guard let endpoint = URL(
-            string: "\(base)/api/geoconsole/telemetry/enrolled/\(encodedRef)/normalize/canonical-telemetry"
-        ) else {
-            throw CollectorError.invalidEndpoint
-        }
 
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
@@ -280,9 +269,42 @@ public final class SpectraAppleCollector: NSObject {
         return row
     }
 
-    private func confidence(for accuracy: CLLocationAccuracy) -> Double {
+    static func reportingEndpoint(
+        baseURL: URL,
+        deviceRef: String
+    ) throws -> URL {
+        guard baseURL.scheme?.lowercased() == "https" else {
+            throw CollectorError.invalidEndpoint
+        }
+        let trimmedRef = deviceRef.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedRef.isEmpty else {
+            throw CollectorError.invalidEnrollment
+        }
+        let devicePathCharacters = CharacterSet.alphanumerics
+            .union(CharacterSet(charactersIn: "-._~"))
+        guard let encodedRef = trimmedRef.addingPercentEncoding(
+            withAllowedCharacters: devicePathCharacters
+        ) else {
+            throw CollectorError.invalidEnrollment
+        }
+        let base = baseURL.absoluteString.trimmingCharacters(
+            in: CharacterSet(charactersIn: "/")
+        )
+        guard let endpoint = URL(
+            string: "\(base)/api/geoconsole/telemetry/enrolled/\(encodedRef)/normalize/canonical-telemetry"
+        ) else {
+            throw CollectorError.invalidEndpoint
+        }
+        return endpoint
+    }
+
+    static func confidence(forAccuracy accuracy: CLLocationAccuracy) -> Double {
         guard accuracy > 0 else { return 0.6 }
         return max(0.25, min(0.98, 1 - log10(max(1, accuracy)) / 6))
+    }
+
+    private func confidence(for accuracy: CLLocationAccuracy) -> Double {
+        Self.confidence(forAccuracy: accuracy)
     }
 
     private func startBluetoothScan() {
