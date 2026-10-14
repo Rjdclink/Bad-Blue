@@ -1504,6 +1504,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
     let discoveryQueriesFailed = firstPass.failed;
     let discoveryPasses = firstPass.attempted > 0 ? 1 : 0;
     let stagnationPasses = 0;
+    const recursiveCluesSeen = new Set<string>();
 
     for (let pass = 1; pass < SPECTRA_DISCOVERY_POLICY.maxPasses; pass += 1) {
       const readiness = assessSpectraCityDiscoveryReadiness({
@@ -1541,7 +1542,14 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
           highReliability < 2 ? 'direct source record' : '',
         ].filter(Boolean),
       );
+      const recursiveClueQueries = buildSpectraRecursiveClueQueries(
+        resolvedTargetLabel,
+        searchRetrievedEvidence,
+        recursiveCluesSeen,
+        4,
+      );
       const nextQueries = [...new Set([
+        ...recursiveClueQueries,
         recursiveQuery,
         ...discoveryQueries.secondPass.slice(Math.max(0, pass - 1), pass + 1),
         ...waveQueries.slice(waveOffset, waveOffset + 4),
