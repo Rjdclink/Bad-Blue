@@ -7,12 +7,14 @@ phone completed discovery across six source groups, but produced no timestamped
 coordinate observation sufficient to place that person on the map. The address
 provided separately as ground truth was excluded from all Spectra inputs.
 
-The principal gap is acquisition of a fresh measurement associated with the
-subject. A phone number can identify a search target; it does not expose that
-phone's radio measurements. A location normalizer or solver cannot create a
-measurement which its upstream source has not supplied. Direct GPS sharing is
-not an architectural requirement: radio ranging or other spatial evidence can
-provide the inputs, when available.
+The active-acquisition path now resolves an enrolled phone number to its stable
+device reference before requesting device telemetry. Fresh position or radio
+measurements still come from the enrolled device, tracker, managed-device
+backend, enterprise sensor, or carrier API that observed them; SPECTRA then
+normalizes and fuses those returned measurements. Android and Apple collectors,
+OwnTracks, Traccar, managed-device sources, and configured carrier-location
+providers can run as independent parallel lanes, with mismatched device,
+session, or subject identifiers rejected before their measurements are used.
 
 Twenty-five feet is 7.62 meters. A map coordinate with many decimal places is
 not evidence of that accuracy, current presence, or subject identity.
