@@ -6,6 +6,7 @@ import {
 } from './SpectraActiveAcquisition';
 import {
   resolveSpectraEnrolledDevice,
+  resolveSpectraEnrolledDeviceByRef,
   type SpectraEnrolledDeviceResolution,
 } from './SpectraEnrolledDeviceRegistry';
 import {
@@ -36,6 +37,7 @@ export interface SpectraEnrolledAcquisitionResult extends SpectraActiveAcquisiti
 
 interface Deps {
   resolve: typeof resolveSpectraEnrolledDevice;
+  resolveByRef: typeof resolveSpectraEnrolledDeviceByRef;
   active: typeof acquireSpectraActiveTelemetry;
   ownTracks: typeof acquireSpectraOwnTracks;
   traccar: typeof acquireSpectraTraccar;
@@ -53,7 +55,7 @@ function failedResolutionAttempt(
       normalizerKind: 'enrolled-device-binding',
       measurementCount: 0,
       reasonCode: 'not-enrolled',
-      reason: 'Phone number is not bound to an enrolled SPECTRA device.',
+      reason: 'Phone/device reference is not bound to an enrolled SPECTRA device.',
     };
   }
   if (resolution.status === 'ambiguous') {
@@ -64,7 +66,7 @@ function failedResolutionAttempt(
       normalizerKind: 'enrolled-device-binding',
       measurementCount: 0,
       reasonCode: 'identity-mismatch',
-      reason: 'Phone number resolved to more than one device reference.',
+      reason: 'Enrollment lookup resolved to more than one device reference.',
     };
   }
   if (resolution.status === 'mismatch') {
@@ -76,7 +78,7 @@ function failedResolutionAttempt(
       measurementCount: 0,
       reasonCode: 'identity-mismatch',
       reason: resolution.mismatch === 'device-ref'
-        ? 'Supplied device reference does not match the enrolled phone.'
+        ? 'Supplied device reference does not match the enrolled device binding.'
         : 'Supplied subject does not match the enrolled device binding.',
     };
   }
@@ -192,28 +194,40 @@ export async function acquireSpectraEnrolledTelemetry(
   const env = options.env || process.env;
   const deps: Deps = {
     resolve: options.deps?.resolve || resolveSpectraEnrolledDevice,
+    resolveByRef: options.deps?.resolveByRef || resolveSpectraEnrolledDeviceByRef,
     active: options.deps?.active || acquireSpectraActiveTelemetry,
     ownTracks: options.deps?.ownTracks || acquireSpectraOwnTracks,
     traccar: options.deps?.traccar || acquireSpectraTraccar,
     carrier: options.deps?.carrier || acquireSpectraCarrierLocations,
   };
 
-  // Preserve direct deviceRef workflows that contain no phone number. Once a
-  // phone is supplied, active acquisition is gated by the enrolled mapping so
-  // a caller cannot pair that phone with a different device reference.
-  if (!String(input.phoneNumber || '').trim()) {
-    const direct = await deps.active({
-      deviceRef: input.deviceRef,
-      sessionId: input.sessionId,
-      subjectLabel: input.subjectLabel,
-    });
-    return { ...direct, resolvedDeviceRef: input.deviceRef };
+  const suppliedPhone = String(input.phoneNumber || '').trim();
+  const suppliedDeviceRef = String(input.deviceRef || '').trim();
+  if (!suppliedPhone && !suppliedDeviceRef) {
+    return {
+      batches: [],
+      attempts: [{
+        id: 'enrolled-device-resolution',
+        label: 'Enrolled device resolution',
+        status: 'skipped',
+        normalizerKind: 'enrolled-device-binding',
+        measurementCount: 0,
+        reasonCode: 'missing-device',
+        reason: 'No enrolled phone number or device reference was supplied.',
+      }],
+    };
   }
 
-  const resolution = await deps.resolve(input.userId, input.phoneNumber, {
-    suppliedDeviceRef: input.deviceRef,
-    subjectLabel: input.subjectLabel,
-  });
+  // Every live device pull goes through the tenant-scoped enrollment registry.
+  // A direct deviceRef is not a bypass around the phone -> enrollment path.
+  const resolution = suppliedPhone
+    ? await deps.resolve(input.userId, suppliedPhone, {
+        suppliedDeviceRef: suppliedDeviceRef || undefined,
+        subjectLabel: input.subjectLabel,
+      })
+    : await deps.resolveByRef(input.userId, suppliedDeviceRef, {
+        subjectLabel: input.subjectLabel,
+      });
   if (resolution.status !== 'matched') {
     return {
       batches: [],
