@@ -298,9 +298,10 @@ const unenrolledRef = await acquireSpectraEnrolledTelemetry({
   deps: { resolve, resolveByRef, active, ownTracks, traccar, carrier, inbox },
 });
 assert.equal(unenrolledRef.resolution?.status, 'not-enrolled');
-assert.equal(unenrolledRef.batches.length, 0);
-assert.equal(activeCalls.length, callsBeforeUnenrolledRef,
-  'an unenrolled direct deviceRef must never reach active collectors');
+assert.equal(activeCalls.length, callsBeforeUnenrolledRef + 1,
+  'pre-existing authorized direct-deviceRef acquisition remains available as an additive fallback');
+assert.equal(activeCalls.at(-1)?.deviceRef, 'not-enrolled-device');
+assert.equal(unenrolledRef.resolvedDeviceRef, 'not-enrolled-device');
 
 const callsBeforeMissingIdentifier = activeCalls.length;
 const noIdentifier = await acquireSpectraEnrolledTelemetry({
