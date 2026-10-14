@@ -285,10 +285,20 @@ export async function acquireSpectraEnrolledTelemetry(
           ...batch,
           sessionId: input.sessionId,
           subjectLabel: input.subjectLabel,
+          measurements: batch.measurements.map(measurement => ({
+            ...measurement,
+            metadata: {
+              ...((measurement as any).metadata || {}),
+              deviceRef: device.deviceRef,
+              correlationDomain: device.deviceRef,
+              platform: device.platform,
+            },
+          })),
           metadata: {
             ...(batch.metadata || {}),
             acquisition: 'enrolled-device-inbox',
             deviceRef: device.deviceRef,
+            correlationDomain: device.deviceRef,
             platform: device.platform,
           },
         },
