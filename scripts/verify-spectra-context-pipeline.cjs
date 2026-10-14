@@ -85,7 +85,7 @@ assert.match(mesh, /firstUsefulSearchVariants\(uniqueVariants,signal,options\.al
 assert.match(background, /firstUseful: !deepAcquisitionRequested,\s*allowPaidSearch: context\.allowPaidSearch/);
 assert.match(route, /queryAlreadyPlanned: true,\s*allowClaudePlanning: context\.useClaude !== false,\s*allowPaidSearch: context\.allowPaidSearch === true/);
 assert.match(background, /allowPaidSearch: context\.allowPaidSearch/);
-assert.match(registry, /maxPasses: 8,\s*maxQueries: 24,/);
+assert.match(registry, /maxPasses: 8,\s*maxQueries: 48,/);
 assert.match(retrieval, /contentType === 'application\/pdf'/);
 assert.match(pdfBoundary, /export async function textFromPdf/);
 
