@@ -187,6 +187,7 @@ const ownTracks = async () => {
 const traccar = async () => {
   throw new Error('Traccar must not be called without an enrolled tracker binding');
 };
+const inbox = async () => null;
 
 const android = await acquireSpectraEnrolledTelemetry({
   userId: 'tenant-a',
@@ -195,7 +196,7 @@ const android = await acquireSpectraEnrolledTelemetry({
   subjectLabel: 'Jane Mary Doe',
 }, {
   env,
-  deps: { resolve, resolveByRef, active, ownTracks, traccar, carrier },
+  deps: { resolve, resolveByRef, active, ownTracks, traccar, carrier, inbox },
 });
 assert.equal(android.resolvedDeviceRef, 'android-device-a');
 assert.equal(activeCalls.at(-1)?.deviceRef, 'android-device-a');
@@ -206,6 +207,56 @@ assert.ok(android.attempts.some(item =>
   item.id === 'android-radio-collector-active' && item.status === 'fulfilled'
 ));
 
+const inboxAndroid = await acquireSpectraEnrolledTelemetry({
+  userId: 'tenant-a',
+  phoneNumber: '+14025550123',
+  sessionId: 'session-inbox-android',
+  subjectLabel: 'Jane Mary Doe',
+}, {
+  env,
+  deps: {
+    resolve,
+    resolveByRef,
+    active: async () => ({ batches: [], attempts: [] }),
+    ownTracks,
+    traccar,
+    carrier,
+    inbox: async (_userId: string, ref: string) => ({
+      sourceId: 'enrolled-android-device',
+      measurements: [{
+        kind: 'position',
+        source: 'device_gps',
+        timestamp: '2026-10-03T15:02:30Z',
+        latitude: 41.2585,
+        longitude: -95.9385,
+        accuracy: 4,
+        confidence: 0.95,
+        provider: 'android-location',
+        metadata: { deviceRef: ref, platform: 'android' },
+      }, {
+        kind: 'radio',
+        timestamp: '2026-10-03T15:02:30Z',
+        radioType: 'lte',
+        cellTowers: [{
+          mobileCountryCode: 310,
+          mobileNetworkCode: 260,
+          cellId: 987654,
+          radioType: 'lte',
+          signalStrength: -95,
+        }],
+        metadata: { deviceRef: ref, platform: 'android' },
+      }],
+      metadata: { deviceRef: ref, platform: 'android' },
+    }),
+  },
+});
+assert.equal(inboxAndroid.resolvedDeviceRef, 'android-device-a');
+assert.equal(inboxAndroid.batches.length, 1);
+assert.equal(inboxAndroid.batches[0]?.sessionId, 'session-inbox-android');
+assert.ok(inboxAndroid.batches[0]?.measurements.some(item => item.kind === 'radio'));
+assert.equal(inboxAndroid.attempts[0]?.id, 'enrolled-device-inbox-active');
+assert.equal(inboxAndroid.attempts[0]?.status, 'fulfilled');
+
 const apple = await acquireSpectraEnrolledTelemetry({
   userId: 'tenant-a',
   phoneNumber: '+1 402 555 0124',
@@ -213,7 +264,7 @@ const apple = await acquireSpectraEnrolledTelemetry({
   subjectLabel: 'John Public',
 }, {
   env,
-  deps: { resolve, resolveByRef, active, ownTracks, traccar, carrier },
+  deps: { resolve, resolveByRef, active, ownTracks, traccar, carrier, inbox },
 });
 assert.equal(apple.resolvedDeviceRef, 'apple-device-a');
 assert.equal(activeCalls.at(-1)?.platform, 'ios');
@@ -227,7 +278,7 @@ const directApple = await acquireSpectraEnrolledTelemetry({
   subjectLabel: 'John Public',
 }, {
   env,
-  deps: { resolve, resolveByRef, active, ownTracks, traccar, carrier },
+  deps: { resolve, resolveByRef, active, ownTracks, traccar, carrier, inbox },
 });
 assert.equal(directApple.resolution?.status, 'matched');
 assert.equal(directApple.resolvedDeviceRef, 'apple-device-a');
@@ -244,7 +295,7 @@ const unenrolledRef = await acquireSpectraEnrolledTelemetry({
   subjectLabel: 'Unknown Person',
 }, {
   env,
-  deps: { resolve, resolveByRef, active, ownTracks, traccar, carrier },
+  deps: { resolve, resolveByRef, active, ownTracks, traccar, carrier, inbox },
 });
 assert.equal(unenrolledRef.resolution?.status, 'not-enrolled');
 assert.equal(unenrolledRef.batches.length, 0);
@@ -258,7 +309,7 @@ const noIdentifier = await acquireSpectraEnrolledTelemetry({
   subjectLabel: 'Jane Mary Doe',
 }, {
   env,
-  deps: { resolve, resolveByRef, active, ownTracks, traccar, carrier },
+  deps: { resolve, resolveByRef, active, ownTracks, traccar, carrier, inbox },
 });
 assert.equal(noIdentifier.batches.length, 0);
 assert.equal(noIdentifier.attempts[0]?.reasonCode, 'missing-device');
@@ -275,7 +326,7 @@ const wrongDevice = await acquireSpectraEnrolledTelemetry({
   subjectLabel: 'Jane Mary Doe',
 }, {
   env,
-  deps: { resolve, resolveByRef, active, ownTracks, traccar, carrier },
+  deps: { resolve, resolveByRef, active, ownTracks, traccar, carrier, inbox },
 });
 assert.equal(wrongDevice.batches.length, 0);
 assert.equal(wrongDevice.resolution?.status, 'mismatch');
@@ -293,7 +344,7 @@ const wrongIdentity = await acquireSpectraEnrolledTelemetry({
   subjectLabel: 'Different Person',
 }, {
   env,
-  deps: { resolve, resolveByRef, active, ownTracks, traccar, carrier },
+  deps: { resolve, resolveByRef, active, ownTracks, traccar, carrier, inbox },
 });
 assert.equal(wrongIdentity.batches.length, 0);
 assert.equal(wrongIdentity.resolution?.status, 'mismatch');
@@ -307,7 +358,7 @@ const missing = await acquireSpectraEnrolledTelemetry({
   subjectLabel: 'Unknown Person',
 }, {
   env,
-  deps: { resolve, resolveByRef, active, ownTracks, traccar, carrier },
+  deps: { resolve, resolveByRef, active, ownTracks, traccar, carrier, inbox },
 });
 assert.equal(missing.batches.length, 0);
 assert.equal(missing.resolution?.status, 'not-enrolled');
@@ -339,6 +390,7 @@ const registryOutage = await acquireSpectraEnrolledTelemetry({
     ownTracks,
     traccar,
     carrier,
+    inbox,
   },
 });
 assert.equal(registryOutage.batches.length, 0);
