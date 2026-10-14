@@ -1,5 +1,6 @@
 import { withoutSpectraTimestamps } from '../../shared/spectraTimestampClues';
 import { Router, type Request, type Response } from 'express';
+import { createHash } from 'node:crypto';
 import { getDiscoveryDiagnostics, withDiscoveryDiagnostics, discoveryRequestLifetime, discoverySignal, throwIfDiscoveryCancelled } from '../lexara/DiscoveryDiagnostics';
 import { z } from 'zod';
 import { isAuthenticated } from '../auth';
@@ -40,6 +41,7 @@ import {
   buildSpectraDiscoveryWaves,
   SPECTRA_DISCOVERY_POLICY,
 } from '../services/spectra/SpectraSourceRegistry';
+import { buildSpectraRecursiveClueQueries } from '../services/spectra/SpectraRecursiveClues';
 import {
   loadSpectraSessionIdentityBindings,
   loadSpectraSessionObservations,
@@ -67,6 +69,7 @@ import {
 import { inferCorroboratedRegionalCity, inferProvisionalRegionalCities, inferPublicContactProfileCities, retrievedRegionalSources } from '../services/spectra/SpectraRegionalInference';
 import { inferPublicDirectoryCities } from '../services/spectra/SpectraPublicDirectoryCities';
 import { collectSpectraPhoneOrigin } from '../services/spectra/SpectraPhoneOrigin';
+import { collectSpectraPhoneInfoga } from '../services/spectra/SpectraPhoneInfoga';
 import {
   assessSpectraCityDiscoveryReadiness,
   chooseSpectraPublicRetrievalUrls,
@@ -75,7 +78,7 @@ import {
 import { assessSpectraLiveLocation } from '../services/spectra/SpectraLiveConfidence';
 import { solveSpectraConstraintLayer } from '../services/spectra/SpectraConstraintSolver';
 import { acquireConfiguredSpectraCameras } from '../services/spectra/SpectraCameraDirectoryAdapters';
-import { acquireSpectraActiveTelemetry, getSpectraActiveAcquisitionCapabilities } from '../services/spectra/SpectraActiveAcquisition';
+import { acquireSpectraEnrolledTelemetry, getSpectraEnrolledAcquisitionCapabilities } from '../services/spectra/SpectraEnrolledAcquisition';
 import { buildSpectraPipelineDiagnostics, type SpectraRetrievalCounts } from '../services/spectra/SpectraPipelineDiagnostics';
 import { acquirePublicPlace, isPublicPlaceTarget } from '../services/spectra/SpectraPublicPlace';
 import { collectSpectraPublicAccountRecords, discoverSpectraPublicBlueskyProfiles } from '../services/spectra/SpectraPublicAccountRecords';
@@ -94,6 +97,15 @@ import { shouldRunSpectraClaudeBackground } from '../services/spectra/SpectraCla
 import { takeUnseenSpectraQueries } from '../services/spectra/SpectraDiscoveryDedup';
 
 const router = Router();
+
+// A five-minute page poll is not permission to buy another full investigation.
+// Keep only a bounded, tenant+session+input-scoped successful response in RAM.
+// A manual search bypasses the cache, and a new deploy naturally clears it.
+const SPECTRA_REFRESH_REUSE_MS = 30 * 60_000;
+const spectraRecentAcquisitions = new Map<string, { until: number; result: Record<string, any> }>();
+function spectraRecentAcquisitionKey(userId: string, sessionId: string, target: string, details: string, origin: string): string {
+  return createHash('sha256').update(JSON.stringify([userId, sessionId, target, details, origin])).digest('hex');
+}
 router.use(isAuthenticated);
 router.use((req, res, next) => {
   if (req.method === 'POST' && ['/acquire', '/public-place'].includes(req.path)) {
@@ -396,8 +408,9 @@ function discoveryResultFromCandidate(candidate: LegalMeshCandidate): SpectraDis
 
 async function runDiscoveryPass(
   queries: string[],
-  context: { subject?: string; location?: string; useClaude?: boolean } = {},
+  context: { subject?: string; location?: string; useClaude?: boolean; allowPaidSearch?: boolean } = {},
   attemptedQueries: Set<string> = new Set<string>(),
+  attemptedRetrievalUrls: Set<string> = new Set<string>(),
 ): Promise<{
   results: SpectraDiscoveryResult[];
   retrievedEvidence: SpectraRetrievedEvidence[];
@@ -408,7 +421,9 @@ async function runDiscoveryPass(
 }> {
   const retrieval: SpectraRetrievalCounts = { selected: 0, retrieved: 0, deadlineExpiredPasses: 0 };
   const retrievedEvidence: SpectraRetrievedEvidence[] = [];
-  const uniqueQueries = takeUnseenSpectraQueries(queries, attemptedQueries, 6);
+  // Each planned query fans out across several HTTP providers. Preserve a
+  // representative source mix without turning one user search into 48 calls.
+  const uniqueQueries = takeUnseenSpectraQueries(queries, attemptedQueries, 3);
   if (!uniqueQueries.length) {
     return { results: [], retrievedEvidence, attempted: 0, failed: 0, claudeNotes: [], retrieval };
   }
@@ -440,6 +455,7 @@ async function runDiscoveryPass(
         requestedFact: 'contact-address',
         queryAlreadyPlanned: true,
         allowClaudePlanning: context.useClaude !== false,
+        allowPaidSearch: context.allowPaidSearch === true,
       })
     ));
 
@@ -494,6 +510,7 @@ async function runDiscoveryPass(
           subject: context.subject,
           requestedFact: 'contact-address',
           allowClaudePlanning: context.useClaude !== false,
+          allowPaidSearch: context.allowPaidSearch === true,
         },
       ).catch(() => []);
       results.push(...supplemental.map(discoveryResultFromCandidate));
@@ -524,7 +541,12 @@ async function runDiscoveryPass(
     let enrichedResults = dedupeDiscoveryResults(results);
     // More independent public publishers are better evidence than repeated
     // results from one popular website. Fetch those underlying pages first.
-    const retrievalTargets = chooseSpectraPublicRetrievalUrls(enrichedResults, 8);
+    // One request must never refetch the same publication on subsequent
+    // discovery waves, including prior 403/timeout selections. Fill slots from
+    // alternative publishers instead of simply revisiting old URLs.
+    const retrievalTargets = chooseSpectraPublicRetrievalUrls(enrichedResults, 16)
+      .filter(url => !attemptedRetrievalUrls.has(url)).slice(0, 8);
+    for (const url of retrievalTargets) attemptedRetrievalUrls.add(url);
     retrieval.selected = retrievalTargets.length;
 
     if (retrievalTargets.length) {
@@ -1059,6 +1081,18 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
         ]).catch(() => { throw new SpectraRestoreError(); })
       : [[], []];
 
+    const refreshKey = requestedSessionId && directEvidence.length === 0
+      ? spectraRecentAcquisitionKey(userId, requestedSessionId, target, details, originSessionId || '')
+      : null;
+    if (refreshOnly && refreshKey) {
+      const prior = spectraRecentAcquisitions.get(refreshKey);
+      if (prior && prior.until > Date.now()) {
+        console.info('[SPECTRA Refresh] reused recent session evidence without provider requests');
+        return res.json({ ...prior.result, acquisition: {
+          ...prior.result.acquisition, reusedRecentEvidence: true,
+        } });
+      }
+    }
     // The selected target owns identity. Conversation details may contain the
     // assistant's "Open SPECTRA" launch text or unrelated earlier subjects.
     // They must not replace that target in either discovery or background work.
@@ -1081,8 +1115,16 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
     });
     const sourceWaves = buildSpectraDiscoveryWaves(resolvedTargetLabel, details);
     const waveQueries = sourceWaves.flatMap(wave => wave.targets.map(source => source.query));
+    // Within the narrower budget, reserve the third initial query for a
+    // public social/photo source family rather than spending every slot on
+    // similar address/phone expansions.
+    const mediaWaveQueries = sourceWaves.flatMap(wave => wave.targets)
+      .filter(item => item.clueKinds.includes('social') || item.clueKinds.includes('media'))
+      .map(item => item.query);
     const initialQueries = [...new Set([
-      ...discoveryQueries.firstPass,
+      ...discoveryQueries.firstPass.slice(0, 2),
+      ...mediaWaveQueries.slice(0, 1),
+      ...discoveryQueries.firstPass.slice(2),
       ...waveQueries.slice(0, 4),
     ])];
 
@@ -1103,6 +1145,9 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
           // truncated request followed by the same search again.
           claudeResearchMaxTokens: 2_048,
           claudeRetryTruncatedOutput: false,
+          // SerpApi/ScrapingBee are opt-in for this evidence-heavy endpoint.
+          // Native, keyless and source-direct retrieval remain active.
+          allowPaidSearch: process.env.SPECTRA_PAID_SEARCH_ENABLED === 'true',
           signal: discoverySignal(AbortSignal.timeout(backgroundBudgetMs)),
         },
       ),
@@ -1111,14 +1156,18 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
     );
 
     const attemptedDiscoveryQueries = new Set<string>();
+    const attemptedRetrievalUrls = new Set<string>();
     const firstPassPromise = runDiscoveryPass(initialQueries, {
       subject: resolvedSubjectName,
       location: discoveryJurisdiction,
       // The native-first background lane owns the paid fallback. Avoid
       // duplicate Claude searches for this same subject in parallel.
       useClaude: false,
-    }, attemptedDiscoveryQueries);
-    const activeAcquisitionPromise = acquireSpectraActiveTelemetry({
+      allowPaidSearch: process.env.SPECTRA_PAID_SEARCH_ENABLED === 'true',
+    }, attemptedDiscoveryQueries, attemptedRetrievalUrls);
+    const activeAcquisitionPromise = acquireSpectraEnrolledTelemetry({
+      userId,
+      phoneNumber: phone,
       deviceRef,
       sessionId: requestedSessionId,
       subjectLabel: resolvedTargetLabel,
@@ -1131,6 +1180,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
     const publicNewsPromise = collectSpectraPublicNewsRecords(resolvedName || resolvedSubjectName);
     const publicCourtPromise = collectSpectraPublicCourtRecords(resolvedName || resolvedSubjectName);
     const phoneOriginPromise = collectSpectraPhoneOrigin(phone);
+    const phoneInfogaPromise = collectSpectraPhoneInfoga(phone);
 
     const [
       backgroundOutcome,
@@ -1144,6 +1194,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       publicNews,
       publicCourt,
       phoneOrigin,
+      phoneInfoga,
     ] = await Promise.all([
       backgroundPromise,
       firstPassPromise,
@@ -1156,6 +1207,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       publicNewsPromise,
       publicCourtPromise,
       phoneOriginPromise,
+      phoneInfogaPromise,
     ]);
 
     // Exact public contact matches rank candidates ahead of name-only matches.
@@ -1457,6 +1509,9 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
     let discoveryQueriesFailed = firstPass.failed;
     let discoveryPasses = firstPass.attempted > 0 ? 1 : 0;
     let stagnationPasses = 0;
+    const recursiveCluesSeen = new Set<string>();
+    const phoneInfogaQueries = phoneInfoga.searchQueries.slice(0, 8);
+    let phoneInfogaQueryOffset = 0;
 
     for (let pass = 1; pass < SPECTRA_DISCOVERY_POLICY.maxPasses; pass += 1) {
       const readiness = assessSpectraCityDiscoveryReadiness({
@@ -1494,7 +1549,21 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
           highReliability < 2 ? 'direct source record' : '',
         ].filter(Boolean),
       );
+      const recursiveClueQueries = buildSpectraRecursiveClueQueries(
+        resolvedTargetLabel,
+        searchRetrievedEvidence,
+        recursiveCluesSeen,
+        4,
+        { phone, email },
+      );
+      const phoneInfogaExpansion = phoneInfogaQueries.slice(
+        phoneInfogaQueryOffset,
+        phoneInfogaQueryOffset + 2,
+      );
+      phoneInfogaQueryOffset += phoneInfogaExpansion.length;
       const nextQueries = [...new Set([
+        ...phoneInfogaExpansion,
+        ...recursiveClueQueries,
         recursiveQuery,
         ...discoveryQueries.secondPass.slice(Math.max(0, pass - 1), pass + 1),
         ...waveQueries.slice(waveOffset, waveOffset + 4),
@@ -1507,7 +1576,8 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
         subject: resolvedSubjectName,
         location: discoveryJurisdiction,
         useClaude: false,
-      }, attemptedDiscoveryQueries);
+        allowPaidSearch: process.env.SPECTRA_PAID_SEARCH_ENABLED === 'true',
+      }, attemptedDiscoveryQueries, attemptedRetrievalUrls);
       discoveryQueriesAttempted += nextPass.attempted;
       retrievedEvidence.push(...nextPass.retrievedEvidence);
       searchRetrievedEvidence.push(...nextPass.retrievedEvidence);
@@ -1560,13 +1630,13 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
     // saved privately without modifying the map or client response.
     const sceneOverlapSummary = summarizeSpectraSceneOverlap(inspectedImageRecords);
 
-    if (
+    const publicDiscoveryUnavailable =
       discoveryResults.length === 0
       && backgroundSources.length === 0
       && discoveryQueriesAttempted > 0
-      && discoveryQueriesFailed >= discoveryQueriesAttempted
-    ) {
-      throw new Error('All SPECTRA discovery paths failed');
+      && discoveryQueriesFailed >= discoveryQueriesAttempted;
+    if (publicDiscoveryUnavailable) {
+      console.warn('[SPECTRA Discovery] all public search lanes unavailable; continuing independent acquisition lanes');
     }
 
     const observations: any[] = [
@@ -1989,7 +2059,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
     const pipelineDiagnostics = buildSpectraPipelineDiagnostics({
       discoveryResults: discoveryResults.length,
       retrieval: retrievalCounts,
-      configuredCollectors: getSpectraActiveAcquisitionCapabilities().length,
+      configuredCollectors: getSpectraEnrolledAcquisitionCapabilities().filter(item => item.configured !== false).length,
       activeAttempts: activeAcquisition.attempts,
       activeBatchOutcomes,
       activeObservations: activeLocationPoints.length,
@@ -2116,6 +2186,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
         discoveryPasses,
         discoveryQueriesAttempted,
         discoveryQueriesFailed,
+        publicDiscoveryUnavailable,
         contextSourceFamilies: contextEvidence.sourceFamilies,
         contextEvidenceItemCount,
         activeAcquisitionAttempts: activeAcquisition.attempts.length,
@@ -2152,6 +2223,10 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
         publicNewsRecordCount: publicNews.records.length,
         publicCourtStatus: publicCourt.status,
         publicCourtRecordCount: publicCourt.records.length,
+        phoneInfogaStatus: phoneInfoga.status,
+        phoneInfogaScannerCount: phoneInfoga.scanners.length,
+        phoneInfogaScannerSuccessCount: phoneInfoga.scanners.filter(item => item.status === 'ok').length,
+        phoneInfogaSearchQueryCount: phoneInfoga.searchQueries.length,
         originSessionId: originSessionId || null,
         lastAcquiredAt: new Date().toISOString(),
       },
@@ -2167,7 +2242,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       };
     });
 
-    return res.json({
+    const responseBody = {
       success: true,
       target,
       details,
@@ -2207,6 +2282,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
         discoveryPasses,
         discoveryQueriesAttempted,
         discoveryQueriesFailed,
+        publicDiscoveryUnavailable,
         contextSourceFamilies: contextEvidence.sourceFamilies,
         contextEvidenceItemCount,
         activeAcquisitionAttempts: activeAcquisition.attempts,
@@ -2238,6 +2314,10 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
         publicNewsStatus: publicNews.status,
         publicNewsArticleLeads: publicNews.articleLeads,
         publicNewsRecordCount: publicNews.records.length,
+        phoneInfogaStatus: phoneInfoga.status,
+        phoneInfogaNormalized: phoneInfoga.normalized,
+        phoneInfogaScanners: phoneInfoga.scanners.map(item => ({ scanner: item.scanner, status: item.status })),
+        phoneInfogaSearchQueryCount: phoneInfoga.searchQueries.length,
         summary: report.summary || '',
         verificationStatus: report.identitySummary?.verificationStatus || 'Unknown',
       },
@@ -2264,7 +2344,15 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
         socialMediaPresence: report.socialMediaPresence || [],
         employmentAndEducation: report.employmentAndEducation || [],
       },
-    });
+    };
+    if (persistence.available && responseBody.sessionId && directEvidence.length === 0) {
+      const key = spectraRecentAcquisitionKey(userId, responseBody.sessionId, target, details, originSessionId || '');
+      if (spectraRecentAcquisitions.size >= 32) {
+        spectraRecentAcquisitions.delete(spectraRecentAcquisitions.keys().next().value!);
+      }
+      spectraRecentAcquisitions.set(key, { until: Date.now() + SPECTRA_REFRESH_REUSE_MS, result: responseBody });
+    }
+    return res.json(responseBody);
   } catch (error) {
     const restoreFailed = error instanceof SpectraRestoreError;
     console.error('[SPECTRA] Acquisition failed', { code: restoreFailed ? 'SESSION_RESTORE_UNAVAILABLE' : 'ACQUISITION_FAILED' });

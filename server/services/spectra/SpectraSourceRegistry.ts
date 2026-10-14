@@ -38,6 +38,9 @@ export interface SpectraDiscoveryPolicy {
 }
 
 export const SPECTRA_DISCOVERY_POLICY: SpectraDiscoveryPolicy = {
+  // Each query fans out to multiple provider lanes. Permit a genuinely broad
+  // recursive investigation while retaining hard caps and diminishing-return
+  // stops so one lookup cannot run indefinitely.
   maxPasses: 8,
   maxQueries: 48,
   maxCandidates: 160,

@@ -12,7 +12,7 @@ interface PipelineInput {
   discoveryResults: number;
   retrieval: SpectraRetrievalCounts;
   configuredCollectors: number;
-  activeAttempts: ReadonlyArray<{ status: string; normalizerKind?: string; reasonCode?: string; measurementCount?: number }>;
+  activeAttempts: ReadonlyArray<{ id?: string; status: string; normalizerKind?: string; reasonCode?: string; measurementCount?: number }>;
   activeBatchOutcomes: ReadonlyArray<{ status: string }>;
   activeObservations: number;
   suppliedObservations: number;
@@ -53,12 +53,26 @@ export function buildSpectraPipelineDiagnostics(input: PipelineInput) {
   }
   const collectors = new Map<string, { family: string; fulfilled: number; failed: number; skipped: number; measurements: number; reasons: Record<string, number> }>();
   for (const row of input.activeAttempts) {
-    const family = ['android-managed-lost-mode', 'apple-managed-lost-mode', 'cisco-spaces-location'].includes(row.normalizerKind || '') ? row.normalizerKind! : 'other';
+    const family =
+      row.id === 'enrolled-device-inbox-active' ? 'enrolled-device-inbox'
+      : row.id === 'apple-device-collector-active' ? 'apple-device-collector'
+      : row.id === 'owntracks-recorder-active' ? 'owntracks-recorder'
+      : row.id === 'traccar-active' ? 'traccar'
+      : [
+          'android-managed-lost-mode', 'apple-managed-lost-mode',
+          'android-radio-collector', 'camara-location-retrieval',
+          'cisco-spaces-location', 'enrolled-device-binding',
+        ].includes(row.normalizerKind || '')
+        ? row.normalizerKind!
+        : 'other';
     const entry = collectors.get(family) || { family, fulfilled: 0, failed: 0, skipped: 0, measurements: 0, reasons: {} };
     if (row.status === 'fulfilled' || row.status === 'failed' || row.status === 'skipped') entry[row.status]++;
     entry.measurements += count(row.measurementCount || 0);
     if (row.reasonCode) {
-      const code = ['not-configured', 'missing-device', 'request-failed'].includes(row.reasonCode) ? row.reasonCode : 'other';
+      const code = [
+        'not-configured', 'not-enrolled', 'registry-unavailable', 'no-fresh-telemetry', 'missing-device',
+        'identity-mismatch', 'platform-mismatch', 'request-failed',
+      ].includes(row.reasonCode) ? row.reasonCode : 'other';
       entry.reasons[code] = (entry.reasons[code] || 0) + 1;
     }
     collectors.set(family, entry);

@@ -11,6 +11,22 @@ const images = read('server/services/spectra/SpectraPublicImageRecords.ts');
 // TypeScript transpileModule alone does not reject same-scope duplicate lexical
 // declarations. Run the real bundler's parser on the source modules too.
 for (const file of [
+  'server/routes/spectra.routes.ts',
+  'server/lexara/LegalProviderMesh.ts',
+  'server/lexara/LexaraBackgroundInvestigation.ts',
+  'server/lexara/LexaraRetrievalBoundary.ts',
+  'server/services/spectra/SpectraSourceRegistry.ts',
+  'server/services/spectra/SpectraEnrolledDeviceRegistry.ts',
+  'server/services/spectra/SpectraEnrolledAcquisition.ts',
+  'server/services/spectra/SpectraEnrolledTelemetryStore.ts',
+  'server/services/spectra/SpectraOwnTracksAdapter.ts',
+  'server/services/spectra/SpectraTraccarAdapter.ts',
+  'server/services/spectra/SpectraCarrierLocationAdapters.ts',
+  'server/services/spectra/SpectraVonageAuth.ts',
+  'server/services/spectra/SpectraPhoneInfoga.ts',
+  'server/services/spectra/SpectraRecursiveClues.ts',
+  'server/services/spectra/SpectraExternalSourceHttp.ts',
+  'server/services/spectra/SpectraPublicRetrieval.ts',
   'server/services/spectra/SpectraPublicImageRecords.ts',
   'server/services/spectra/SpectraVisualSceneAnalysis.ts',
   'server/services/spectra/SpectraXPostMedia.ts',
@@ -52,6 +68,27 @@ for (const file of [
   assert.equal(syntactic.length, 0, file + ': ' +
     syntactic.map(item => ts.flattenDiagnosticMessageText(item.messageText, '\n')).join('; '));
 }
+
+// A repeated page poll must reuse already persisted evidence. Paid SerpApi
+// and ScrapingBee fallback require explicit SPECTRA operator opt-in.
+const mesh = read('server/lexara/LegalProviderMesh.ts');
+const background = read('server/lexara/LexaraBackgroundInvestigation.ts');
+const registry = read('server/services/spectra/SpectraSourceRegistry.ts');
+const pdfBoundary = read('server/lexara/LexaraRetrievalBoundary.ts');
+assert.match(route, /SPECTRA_REFRESH_REUSE_MS = 30 \* 60_000/);
+assert.match(route, /refreshOnly && refreshKey/);
+assert.match(route, /reusedRecentEvidence: true/);
+assert.match(route, /SPECTRA_PAID_SEARCH_ENABLED === 'true'/);
+assert.match(route, /attemptedRetrievalUrls\.add\(url\)/);
+assert.match(mesh, /if \(options\.allowPaidSearch === false\) return \[\]/);
+assert.match(mesh, /allowPaidSearch \? tavily\(query, controller\.signal/);
+assert.match(mesh, /firstUsefulSearchVariants\(uniqueVariants,signal,options\.allowPaidSearch !== false\)/);
+assert.match(background, /firstUseful: !deepAcquisitionRequested,\s*allowPaidSearch: context\.allowPaidSearch/);
+assert.match(route, /queryAlreadyPlanned: true,\s*allowClaudePlanning: context\.useClaude !== false,\s*allowPaidSearch: context\.allowPaidSearch === true/);
+assert.match(background, /allowPaidSearch: context\.allowPaidSearch/);
+assert.match(registry, /maxPasses: 8,\s*maxQueries: 48,/);
+assert.match(retrieval, /contentType === 'application\/pdf'/);
+assert.match(pdfBoundary, /export async function textFromPdf/);
 
 // An acquisition's environmental result has to reach the Spectra UI.
 assert.match(route, /locationObservations,\s*candidateLocations,\s*mediaCaptureScenes,\s*contextEvidence,\s*liveLocationAssessment/);

@@ -39,6 +39,8 @@ export interface LegalMeshSearchOptions {
   // A caller with its own bounded query waves must retain its contact clues
   // and source objectives instead of expanding the same subject again.
   queryAlreadyPlanned?: boolean;
+  /** Call-site budget guard: skip SerpApi and ScrapingBee when explicitly disabled. */
+  allowPaidSearch?: boolean;
 }
 
 const clean = (v: unknown) => {
@@ -89,10 +91,11 @@ function recordProviderFailure(lane: string, error: unknown): void {
   laneFailures.set(lane, failures);
   const unavailable = category === 'dns' || category === 'connection' || category === 'http-404';
   const credentials = category === 'http-401' || category === 'http-403';
+  const billing = category === 'http-402' || category === 'http-432' || category === 'http-433';
   const transient = category === 'timeout' || category === 'invalid-response'
     || category === 'upstream-error' || /^http-5\d\d$/.test(category);
-  if (unavailable || credentials || (transient && failures >= 3)) {
-    const retryAfterMs = credentials ? 300_000 : 30_000;
+  if (unavailable || credentials || billing || (transient && failures >= 2)) {
+    const retryAfterMs = credentials || billing ? 24 * 60 * 60_000 : 30_000;
     engineCooldownUntil.set(lane, Math.max(engineCooldownUntil.get(lane) || 0, Date.now() + retryAfterMs));
     console.warn('[LEXARA Search Availability]', JSON.stringify({ lane, status: 'provider-cooldown', category, retryAfterMs }));
   }
@@ -106,7 +109,7 @@ function recordEngineFailure(engine: string, reason: string, retryAfterMs = 180_
   if (/captcha|human verification|verify you are human/i.test(reason)) {
     captchaDisabledEngines.add(engine);
     console.warn('[LEXARA Search Availability]', JSON.stringify({ engine, status: 'disabled-captcha' }));
-  } else if (/HTTP\s+43[23]\b|plan\s+limit\s+exceeded/i.test(reason)) {
+  } else if (/HTTP\s+(?:402|43[23])\b|payment\s+required|insufficient\s+(?:credit|quota)|plan\s+limit\s+exceeded/i.test(reason)) {
     const budgetCooldownMs = Math.max(6 * 60 * 60_000, retryAfterMs);
     engineCooldownUntil.set(engine, Math.max(engineCooldownUntil.get(engine) || 0, Date.now() + budgetCooldownMs));
     console.warn('[LEXARA Search Availability]', JSON.stringify({ engine, status: 'plan-limit-cooldown', retryAfterMs: budgetCooldownMs }));
@@ -148,7 +151,7 @@ async function checkDiscoveryResponse(response: Response, engine: string | strin
   for (const name of Array.isArray(engine) ? engine : [engine]) {
     recordEngineFailure(name, `HTTP ${response.status}`, Number.isFinite(retryAfterMs) ? retryAfterMs : 180_000);
   }
-  if ([401, 429, 432, 433].includes(response.status)) {
+  if ([401, 402, 403, 429, 432, 433].includes(response.status)) {
     if (response.body) void response.body.cancel().catch(() => undefined);
     throw new Error(`Discovery HTTP ${response.status}`);
   }
@@ -590,6 +593,7 @@ async function freeSearch(
   signal?: AbortSignal,
   _firstUseful = false,
   officialFormQuery = false,
+  allowPaidSearch = true,
 ): Promise<LegalMeshCandidate[]> {
   // Fast mode returns leads for prompt verification; full mode retains all
   // bounded providers. An unverified fast lead triggers a full retry upstream.
@@ -599,7 +603,9 @@ async function freeSearch(
   else signal?.addEventListener('abort', relayAbort, { once: true });
   try {
     const providers = [
-      tavily(query, controller.signal, officialFormQuery ? 5_000 : 2_000),
+      // Tavily requires plan credits, including for standard search; never
+      // call its usage endpoint or reserve credits in free-only investigations.
+      allowPaidSearch ? tavily(query, controller.signal, officialFormQuery ? 5_000 : 2_000) : Promise.resolve([]),
       duckDuckGoInstantAnswer(query, controller.signal),
       searxng(query, controller.signal),
       ddgs(query, controller.signal),
@@ -622,7 +628,7 @@ async function freeSearch(
     }
     const outcomes = await Promise.allSettled(providers);
     if (signal?.aborted) throw signal.reason || new DOMException('Discovery cancelled', 'AbortError');
-    const enabled = [Boolean(process.env.TAVILY_API_KEY?.trim()), true, Boolean(lexaraSearxngBase()), Boolean(lexaraDdgsBase()), Boolean(lexaraOpenserpBase())];
+    const enabled = [allowPaidSearch && Boolean(process.env.TAVILY_API_KEY?.trim()), true, Boolean(lexaraSearxngBase()), Boolean(lexaraDdgsBase()), Boolean(lexaraOpenserpBase())];
     console.info('[LEXARA Discovery Lanes]', JSON.stringify({ requestId: getDiscoveryDiagnostics()?.requestId, statusScope: 'promise-completion-only', results: outcomes.map((outcome, index) => ({ lane: ['tavily', 'duckduckgo-instant-answer', 'searxng', 'ddgs', 'openserp'][index], enabled: enabled[index], candidates: outcome.status === 'fulfilled' ? outcome.value.length : 0, promiseStatus: outcome.status })) }));
     return fuseRankedCandidates(outcomes.flatMap(outcome =>
       outcome.status === 'fulfilled' ? [outcome.value] : []));
@@ -634,6 +640,7 @@ async function freeSearch(
 async function firstUsefulSearchVariants(
   queries: readonly string[],
   signal?: AbortSignal,
+  allowPaidSearch = true,
 ): Promise<LegalMeshCandidate[]> {
   const controller = new AbortController();
   const relayAbort = () => controller.abort(signal?.reason);
@@ -642,7 +649,7 @@ async function firstUsefulSearchVariants(
   try {
     const completed: LegalMeshCandidate[][] = [];
     const first = await Promise.any(queries.map(async query => {
-      const candidates = await freeSearch(query, controller.signal, true);
+      const candidates = await freeSearch(query, controller.signal, true, false, allowPaidSearch);
       if (!candidates.length) throw new Error('LEXARA_NO_QUERY_LEADS');
       completed.push(candidates);
       return candidates;
@@ -662,11 +669,12 @@ async function firstUsefulParallelSearch(
   providerPrefix: 'supplemental' | 'planned',
   signal?: AbortSignal,
   _providerFirstUseful = false,
+  allowPaidSearch = true,
 ): Promise<LegalMeshCandidate[]> {
   const results = _providerFirstUseful
-    ? await firstUsefulSearchVariants(queries, signal)
+    ? await firstUsefulSearchVariants(queries, signal, allowPaidSearch)
     : fuseRankedCandidates((await Promise.allSettled(
-        queries.map(query => freeSearch(query, signal, false)),
+        queries.map(query => freeSearch(query, signal, false, false, allowPaidSearch)),
       )).flatMap(outcome => outcome.status === 'fulfilled' ? [outcome.value] : []));
   return diversify(results
     .filter(item => !seen.has(item.url))
@@ -697,8 +705,8 @@ export async function discoverLegalMeshTier3(
   }
   const uniqueVariants=[...new Set(variants)].slice(0,options.firstUseful ? 2 : 6);
   const groups=options.firstUseful && !options.officialFormQuery
-    ? [await firstUsefulSearchVariants(uniqueVariants,signal)]
-    : await Promise.all(uniqueVariants.map(variant=>freeSearch(variant,signal,false,options.officialFormQuery)));
+    ? [await firstUsefulSearchVariants(uniqueVariants,signal,options.allowPaidSearch !== false)]
+    : await Promise.all(uniqueVariants.map(variant=>freeSearch(variant,signal,false,options.officialFormQuery,options.allowPaidSearch !== false)));
   const learnedSources=await Promise.race([
     getLexaraLearnedSources(options.categories||[],options.jurisdiction,8),
     new Promise<string[]>(resolve=>setTimeout(()=>resolve([]),75)),
@@ -754,6 +762,7 @@ export async function discoverLegalMeshSupplemental(
       'supplemental',
       signal,
       options.firstUseful === true,
+      options.allowPaidSearch !== false,
     );
     if(learnedFresh.length) return learnedFresh;
   }
@@ -776,10 +785,15 @@ export async function discoverLegalMeshSupplemental(
       'planned',
       signal,
       options.firstUseful === true,
+      options.allowPaidSearch !== false,
     );
     if(plannedFresh.length) return plannedFresh;
   }
 
+  // Exhausted quotas must not be spent by an investigation that explicitly
+  // requests free-only supplemental discovery. Other Lexara callers keep
+  // their existing behavior unless they opt into this restriction.
+  if (options.allowPaidSearch === false) return [];
   const paid=await serpApi(query,existingUrls,signal);
   if(paid.length) return diversify(paid,12);
   return diversify(await scrapingBee(query,existingUrls,signal),12);
