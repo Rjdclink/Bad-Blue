@@ -11,6 +11,12 @@ const credentialGroups = [
   { id: 'opencellid', groups: [['OPENCELLID_API_KEY']] },
   { id: 'trafficland', groups: [['TRAFFICLAND_API_KEY'], ['TRAFFICLAND_SYSTEM']] },
   { id: 'telemetry-ingestion', groups: [['SPECTRA_TELEMETRY_HMAC_SECRET']] },
+  { id: 'android-radio-collector', groups: [['SPECTRA_ANDROID_RADIO_COLLECTOR_URL_TEMPLATE'], ['SPECTRA_ANDROID_RADIO_COLLECTOR_TOKEN']] },
+  { id: 'apple-device-collector', groups: [['SPECTRA_APPLE_DEVICE_COLLECTOR_URL_TEMPLATE'], ['SPECTRA_APPLE_DEVICE_COLLECTOR_TOKEN']] },
+  { id: 'traccar', groups: [['SPECTRA_TRACCAR_URL'], ['SPECTRA_TRACCAR_TOKEN']] },
+  { id: 'camara-location', groups: [['SPECTRA_CAMARA_LOCATION_RETRIEVAL_URL'], ['SPECTRA_CAMARA_LOCATION_RETRIEVAL_TOKEN']] },
+  { id: 'vonage-location', groups: [['SPECTRA_VONAGE_LOCATION_TOKEN']] },
+  { id: 'phoneinfoga', groups: [['SPECTRA_PHONEINFOGA_URL']] },
 ] as const;
 
 function present(env: Environment, name: string): boolean {
@@ -40,6 +46,22 @@ export function getSpectraConfigurationDiagnostics(env: Environment = process.en
         presentVariableNames: group.filter(name => present(env, name)),
       })),
     })),
+    enrolledSources: {
+      enrollmentRegistryConfigured: present(env, 'SPECTRA_ENROLLED_DEVICES_JSON')
+        || present(env, 'NEON_DATABASE_URL')
+        || present(env, 'DATABASE_URL')
+        || present(env, 'SUPABASE_DATABASE_URL'),
+      ownTracksConfigured: present(env, 'SPECTRA_OWNTRACKS_RECORDER_URL'),
+      ownTracksAuthenticationConfigured:
+        present(env, 'SPECTRA_OWNTRACKS_AUTHORIZATION')
+        || (present(env, 'SPECTRA_OWNTRACKS_USERNAME') && present(env, 'SPECTRA_OWNTRACKS_PASSWORD')),
+      androidManagedLocationConfigured:
+        present(env, 'SPECTRA_ANDROID_MDM_LOCATION_URL_TEMPLATE')
+        && present(env, 'SPECTRA_ANDROID_MDM_LOCATION_TOKEN'),
+      appleManagedLocationConfigured:
+        present(env, 'SPECTRA_APPLE_MDM_LOCATION_URL_TEMPLATE')
+        && present(env, 'SPECTRA_APPLE_MDM_LOCATION_TOKEN'),
+    },
     censusGeocoder: {
       keyRequired: false,
       censusDataKeyPresent: present(env, 'CENSUS_API_KEY'),
