@@ -34,7 +34,7 @@ assert.match(apple, /CBCentralManager/);
 assert.match(apple, /NINearbyObject/);
 assert.match(apple, /recordNearbyObject/);
 assert.match(apple, /normalize\/canonical-telemetry/);
-assert(apple.includes('Bearer \\\\(ingestToken)'),
+assert(apple.includes('Bearer \\(ingestToken)'),
   'Apple collector must send the enrolled device bearer token');
 assert.match(apple, /forHTTPHeaderField: "Authorization"/);
 assert.equal((apple.match(/public static func reportingEndpoint/g) || []).length, 1,
