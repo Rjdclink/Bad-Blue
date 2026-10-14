@@ -5,9 +5,16 @@ let package = Package(
     name: "SpectraAppleCollector",
     platforms: [.iOS(.v17)],
     products: [
-        .library(name: "SpectraAppleCollector", targets: ["SpectraAppleCollector"]),
+        .library(
+            name: "SpectraAppleCollector",
+            targets: ["SpectraAppleCollector"]
+        ),
     ],
     targets: [
         .target(name: "SpectraAppleCollector"),
+        .testTarget(
+            name: "SpectraAppleCollectorTests",
+            dependencies: ["SpectraAppleCollector"]
+        ),
     ]
 )
