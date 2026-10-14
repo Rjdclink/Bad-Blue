@@ -39,14 +39,24 @@ function urlKind(url: URL): SpectraRecursiveClueKind {
 function recordSupportsSubject(
   subject: string,
   record: SpectraRetrievedEvidence,
+  anchors: { phone?: string; email?: string } = {},
 ): boolean {
-  const subjectText = clean(subject).toLowerCase();
-  if (!subjectText) return false;
   const recordText = clean(
     [record.title, record.textExcerpt].filter(Boolean).join(' '),
   ).toLowerCase();
   if (!recordText) return false;
 
+  const anchorEmail = String(anchors.email || '').trim().toLowerCase();
+  if (anchorEmail && recordText.includes(anchorEmail)) return true;
+
+  const anchorPhoneDigits = String(anchors.phone || '').replace(/\D/g, '');
+  if (
+    anchorPhoneDigits.length >= 7
+    && recordText.replace(/\D/g, '').includes(anchorPhoneDigits)
+  ) return true;
+
+  const subjectText = clean(subject).toLowerCase();
+  if (!subjectText) return false;
   const email = subjectText.match(
     /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i,
   )?.[0]?.toLowerCase();
@@ -122,13 +132,16 @@ export function buildSpectraRecursiveClueQueries(
   records: readonly SpectraRetrievedEvidence[],
   seenClues: Set<string>,
   limit = 4,
+  anchors: { phone?: string; email?: string } = {},
 ): string[] {
   const quotedSubject = subject.trim()
     ? `"${subject.replace(/"/g, '')}"`
     : '';
   const queries: string[] = [];
 
-  const subjectBoundRecords = records.filter(record => recordSupportsSubject(subject, record));
+  const subjectBoundRecords = records.filter(record =>
+    recordSupportsSubject(subject, record, anchors)
+  );
   for (const clue of extractSpectraRecursiveClues(subjectBoundRecords, 32)) {
     const key = `${clue.kind}:${clue.value.toLowerCase()}`;
     if (seenClues.has(key)) continue;
