@@ -309,6 +309,39 @@ assert.equal(missing.batches.length, 0);
 assert.equal(missing.resolution?.status, 'not-enrolled');
 assert.equal(missing.attempts[0]?.reasonCode, 'not-enrolled');
 
+const unavailableResolution = await resolveSpectraEnrolledDevice(
+  'tenant-a',
+  '+14025550126',
+  {
+    query: async () => { throw new Error('fixture database unavailable'); },
+    env: {} as NodeJS.ProcessEnv,
+  },
+);
+assert.equal(unavailableResolution.status, 'unavailable',
+  'database failure without a server-side fallback must not be mislabeled as not enrolled');
+
+const callsBeforeRegistryOutage = activeCalls.length;
+const registryOutage = await acquireSpectraEnrolledTelemetry({
+  userId: 'tenant-a',
+  phoneNumber: '+14025550126',
+  sessionId: 'session-registry-outage',
+  subjectLabel: 'Unknown Person',
+}, {
+  env: {} as NodeJS.ProcessEnv,
+  deps: {
+    resolve: async () => unavailableResolution,
+    resolveByRef,
+    active,
+    ownTracks,
+    traccar,
+    carrier,
+  },
+});
+assert.equal(registryOutage.batches.length, 0);
+assert.equal(registryOutage.attempts[0]?.reasonCode, 'registry-unavailable');
+assert.equal(activeCalls.length, callsBeforeRegistryOutage,
+  'registry outage must skip live acquisition rather than guessing enrollment');
+
 const ambiguousEnv = {
   SPECTRA_ENROLLED_DEVICES_JSON: JSON.stringify([
     { userId: 'tenant-a', phoneNumber: '+14025550125', deviceRef: 'device-x', platform: 'android' },
