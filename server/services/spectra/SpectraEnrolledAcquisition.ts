@@ -252,8 +252,6 @@ export async function acquireSpectraEnrolledTelemetry(
     };
   }
 
-  // Every live device pull goes through the tenant-scoped enrollment registry.
-  // A direct deviceRef is not a bypass around the phone -> enrollment path.
   const resolution = suppliedPhone
     ? await deps.resolve(input.userId, suppliedPhone, {
         suppliedDeviceRef: suppliedDeviceRef || undefined,
@@ -262,6 +260,26 @@ export async function acquireSpectraEnrolledTelemetry(
     : await deps.resolveByRef(input.userId, suppliedDeviceRef, {
         subjectLabel: input.subjectLabel,
       });
+
+  // Preserve the pre-existing direct-deviceRef acquisition path. Enrollment
+  // enriches it when a mapping exists, but an older authorized deviceRef-only
+  // integration is not disabled merely because it predates the phone registry.
+  // A known conflicting/ambiguous binding is still rejected.
+  if (!suppliedPhone && suppliedDeviceRef && (
+    resolution.status === 'not-enrolled' || resolution.status === 'unavailable'
+  )) {
+    const direct = await deps.active({
+      deviceRef: suppliedDeviceRef,
+      sessionId: input.sessionId,
+      subjectLabel: input.subjectLabel,
+    });
+    return {
+      ...direct,
+      resolvedDeviceRef: suppliedDeviceRef,
+      resolution,
+    };
+  }
+
   if (resolution.status !== 'matched') {
     return {
       batches: [],
