@@ -139,6 +139,34 @@ try {
     assert.equal(result.measurements[0]?.source, 'device_gps');
     assert.equal(result.measurements[0]?.speed, 5.14444);
     assert.equal((result.measurements[0]?.metadata as any)?.traccarDeviceId, 44);
+
+    let invalidCalls = 0;
+    globalThis.fetch = async (input: any) => {
+      invalidCalls += 1;
+      if (String(input) === 'https://traccar.example/api/devices/44') {
+        return new Response(JSON.stringify({ id: 44, positionId: 100, status: 'online' }), {
+          status: 200, headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response(JSON.stringify([{
+        id: 100,
+        deviceId: 44,
+        fixTime: '2026-10-03T15:04:05Z',
+        valid: false,
+        latitude: 41.26,
+        longitude: -95.94,
+      }]), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    };
+    await assert.rejects(
+      () => acquireSpectraTraccar(
+        device,
+        { sessionId: 's2-invalid', subjectLabel: 'Jane Doe' },
+        env,
+      ),
+      /explicitly marked invalid/,
+      'an invalid Traccar latest fix must not become a SPECTRA position',
+    );
+    assert.equal(invalidCalls, 2);
   }
 
   {
