@@ -12,6 +12,10 @@ import {
   configuredSpectraEndpoint,
   fetchSpectraConfiguredJson,
 } from './SpectraExternalSourceHttp';
+import {
+  getSpectraVonageBearerToken,
+  spectraVonageAuthenticationConfigured,
+} from './SpectraVonageAuth';
 
 function boundedInteger(
   value: unknown,
@@ -140,8 +144,7 @@ async function vonageBatch(
   input: { sessionId?: string; subjectLabel?: string },
   env: NodeJS.ProcessEnv,
 ): Promise<SpectraNormalizedProviderBatch> {
-  const token = String(env.SPECTRA_VONAGE_LOCATION_TOKEN || '').trim();
-  if (!token) throw new Error('Vonage Device Location Retrieval is not configured.');
+  const token = await getSpectraVonageBearerToken(phoneE164, env);
   const endpoint = configuredSpectraEndpoint(
     env.SPECTRA_VONAGE_LOCATION_RETRIEVAL_URL
       || 'https://api-eu.vonage.com/network-location/v0.1/retrieval',
@@ -194,7 +197,7 @@ export function getSpectraCarrierLocationCapabilities(
     {
       id: 'vonage-location-retrieval-active',
       label: 'Vonage Device Location Retrieval',
-      configured: Boolean(String(env.SPECTRA_VONAGE_LOCATION_TOKEN || '').trim()),
+      configured: spectraVonageAuthenticationConfigured(env),
     },
   ];
 }
