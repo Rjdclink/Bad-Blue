@@ -58,6 +58,17 @@ function failedResolutionAttempt(
       reason: 'Phone/device reference is not bound to an enrolled SPECTRA device.',
     };
   }
+  if (resolution.status === 'unavailable') {
+    return {
+      id: 'enrolled-device-resolution',
+      label: 'Enrolled device resolution',
+      status: 'skipped',
+      normalizerKind: 'enrolled-device-binding',
+      measurementCount: 0,
+      reasonCode: 'registry-unavailable',
+      reason: 'Enrollment registry is unavailable; live device acquisition was skipped.',
+    };
+  }
   if (resolution.status === 'ambiguous') {
     return {
       id: 'enrolled-device-resolution',
