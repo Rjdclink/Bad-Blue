@@ -238,13 +238,18 @@ export async function acquireSpectraEnrolledTelemetry(
   const suppliedPhone = String(input.phoneNumber || '').trim();
   const suppliedDeviceRef = String(input.deviceRef || '').trim();
   if (!suppliedPhone && !suppliedDeviceRef) {
-    // Additive compatibility: the original active-acquisition pipeline may
-    // still contain untargeted/context adapters. Do not suppress those simply
-    // because no enrolled-device identifier was supplied.
-    return deps.active({
-      sessionId: input.sessionId,
-      subjectLabel: input.subjectLabel,
-    });
+    return {
+      batches: [],
+      attempts: [{
+        id: 'enrolled-device-resolution',
+        label: 'Enrolled device resolution',
+        status: 'skipped',
+        normalizerKind: 'enrolled-device-binding',
+        measurementCount: 0,
+        reasonCode: 'missing-device',
+        reason: 'No enrolled phone number or device reference was supplied.',
+      }],
+    };
   }
 
   const resolution = suppliedPhone
@@ -255,27 +260,6 @@ export async function acquireSpectraEnrolledTelemetry(
     : await deps.resolveByRef(input.userId, suppliedDeviceRef, {
         subjectLabel: input.subjectLabel,
       });
-
-  // Preserve the pre-existing direct-deviceRef acquisition path. Enrollment
-  // enriches it when a mapping exists, but an older authorized deviceRef-only
-  // integration is not disabled merely because it predates the phone registry.
-  // A known conflicting/ambiguous binding is still rejected.
-  if (
-    resolution.status === 'not-enrolled'
-    || resolution.status === 'unavailable'
-  ) {
-    const direct = await deps.active({
-      deviceRef: suppliedDeviceRef || undefined,
-      sessionId: input.sessionId,
-      subjectLabel: input.subjectLabel,
-    });
-    return {
-      batches: direct.batches,
-      attempts: [failedResolutionAttempt(resolution), ...direct.attempts],
-      resolvedDeviceRef: suppliedDeviceRef || undefined,
-      resolution,
-    };
-  }
 
   if (resolution.status !== 'matched') {
     return {
