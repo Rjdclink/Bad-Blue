@@ -28,6 +28,7 @@ export function mintSpectraVonageApplicationJwt(
     iat: nowSeconds,
     nbf: Math.max(0, nowSeconds - 1),
     exp: nowSeconds + 300,
+    acl: { paths: {} },
     jti: randomUUID(),
   }));
   const signingInput = `${header}.${payload}`;
@@ -80,7 +81,7 @@ async function cibaAccessToken(
 
   let lastError: unknown;
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    if (attempt > 0 && intervalSeconds > 0) {
+    if (intervalSeconds > 0) {
       await sleep(intervalSeconds * 1000);
     }
     try {
