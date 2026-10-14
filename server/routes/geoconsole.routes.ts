@@ -1684,6 +1684,7 @@ router.post('/telemetry/enrolled/:deviceRef/normalize/:kind', async (req: Reques
   if (kind === 'canonical-telemetry') {
     const allowedCanonicalSources: Record<string, Set<string>> = {
       android: new Set([
+        'radio',
         'device_gps', 'gnss_fix', 'gnss_raw',
         'wifi_rtt', 'wifi_rssi', 'wifi_fingerprint',
         'cellular', 'cell_serving', 'cell_neighbor', 'nr_positioning',
@@ -1702,9 +1703,14 @@ router.post('/telemetry/enrolled/:deviceRef/normalize/:kind', async (req: Reques
       ]),
       other: new Set(['device_gps', 'gnss_fix']),
     };
-    const disallowed = validation.data.measurements.find(measurement =>
-      !allowedCanonicalSources[enrolled.platform]?.has(measurement.source)
-    );
+    const disallowed = validation.data.measurements.find(measurement => {
+      const source = measurement.kind === 'radio'
+        ? 'radio'
+        : 'source' in measurement && typeof measurement.source === 'string'
+          ? measurement.source
+          : '';
+      return !allowedCanonicalSources[enrolled.platform]?.has(source);
+    });
     if (disallowed) {
       return res.status(400).json({
         success: false,
