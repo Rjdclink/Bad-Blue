@@ -399,15 +399,11 @@ class SpectraAndroidCollector(
                 .put("cn0DbHz", measurement.cn0DbHz)
                 .put("state", measurement.state)
                 .put("accumulatedDeltaRangeState", measurement.accumulatedDeltaRangeState)
-            if (measurement.hasAccumulatedDeltaRangeMeters()) {
-                row.put("accumulatedDeltaRangeMeters", measurement.accumulatedDeltaRangeMeters)
-            }
-            if (measurement.hasAccumulatedDeltaRangeUncertaintyMeters()) {
-                row.put(
-                    "accumulatedDeltaRangeUncertaintyMeters",
-                    measurement.accumulatedDeltaRangeUncertaintyMeters,
-                )
-            }
+            row.put("accumulatedDeltaRangeMeters", measurement.accumulatedDeltaRangeMeters)
+            row.put(
+                "accumulatedDeltaRangeUncertaintyMeters",
+                measurement.accumulatedDeltaRangeUncertaintyMeters,
+            )
             if (measurement.hasCarrierFrequencyHz()) {
                 row.put("carrierFrequencyHz", measurement.carrierFrequencyHz)
             }
