@@ -71,14 +71,15 @@ function httpsUrl(value: string): URL | null {
     const url = new URL(value);
     if (url.username || url.password) return null;
     const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, '');
-    const secure = url.protocol === 'https:'
-      || (url.protocol === 'http:' && host.endsWith('.railway.internal'));
+    const railwayPrivate =
+      url.protocol === 'http:' && host.endsWith('.railway.internal');
+    const secure = url.protocol === 'https:' || railwayPrivate;
     if (!secure) return null;
     if (
       host === 'localhost' ||
       host.endsWith('.localhost') ||
       host.endsWith('.local') ||
-      host.endsWith('.internal') ||
+      (!railwayPrivate && host.endsWith('.internal')) ||
       host.includes(':')
     ) return null;
     const octets = host.split('.').map(Number);
@@ -108,7 +109,7 @@ function httpsUrl(value: string): URL | null {
 function validProviderTemplate(raw: string): boolean {
   // The requested device reference may appear in a path or query, never
   // in a hostname/authority where it could redirect provider credentials.
-  const authority = /^https:\/\/([^/?#]+)/i.exec(raw)?.[1] || '';
+  const authority = /^https?:\/\/([^/?#]+)/i.exec(raw)?.[1] || '';
   if (!authority || authority.includes('{{') || authority.includes('}}')) return false;
   const substituted = raw
     .replace(/\{\{deviceRef\}\}/g, 'managed-device')
