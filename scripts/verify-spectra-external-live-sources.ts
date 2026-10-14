@@ -313,6 +313,47 @@ try {
 
   {
     const env = {
+      SPECTRA_PHONEINFOGA_URL: 'https://retry-phoneinfoga.example',
+      SPECTRA_PHONEINFOGA_SCANNERS: 'local',
+    } as NodeJS.ProcessEnv;
+    let transientNumberCalls = 0;
+    globalThis.fetch = async (input: any) => {
+      const url = String(input);
+      if (url.endsWith('/api/v2/numbers')) {
+        transientNumberCalls += 1;
+        if (transientNumberCalls === 1) {
+          return new Response('temporary outage', { status: 503 });
+        }
+        return new Response(JSON.stringify({
+          valid: true,
+          e164: '+14025550123',
+          country: 'United States',
+          carrier: 'Fixture',
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      return new Response(JSON.stringify({ result: {} }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    };
+    const recovered = await collectSpectraPhoneInfoga('+14025550123', env);
+    assert.equal(recovered.status, 'ok');
+    assert.equal(transientNumberCalls, 2,
+      'transient configured-provider failure gets exactly one recovery attempt');
+
+    let permanentCalls = 0;
+    globalThis.fetch = async () => {
+      permanentCalls += 1;
+      return new Response('unauthorized', { status: 401 });
+    };
+    const permanent = await collectSpectraPhoneInfoga('+14025550123', env);
+    assert.equal(permanent.status, 'failed');
+    assert.equal(permanentCalls, 1,
+      'authentication failure is skipped without a pointless retry');
+  }
+
+  {
+    const env = {
       SPECTRA_PHONEINFOGA_URL: 'https://phoneinfoga.example',
       SPECTRA_PHONEINFOGA_SCANNERS: 'local,ovh',
     } as NodeJS.ProcessEnv;
