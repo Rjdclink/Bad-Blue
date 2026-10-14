@@ -348,8 +348,14 @@ function configuredAdapters(): ActiveProviderConfig[] {
       const method = String(item?.method || 'POST').trim().toUpperCase();
       const target = String(item?.target || 'device').trim().toLowerCase();
       const platforms = Array.isArray(item?.platforms)
-        ? [...new Set(item.platforms.map((value: unknown) => String(value).trim().toLowerCase()))]
-            .filter((value): value is SpectraDevicePlatform => ['android', 'ios', 'other'].includes(value))
+        ? [...new Set<string>(
+            item.platforms.map(
+              (value: unknown): string => String(value).trim().toLowerCase(),
+            ),
+          )].filter(
+            (value): value is SpectraDevicePlatform =>
+              value === 'android' || value === 'ios' || value === 'other',
+          )
         : undefined;
       const hasBoundDevice = target !== 'device'
         || method === 'POST'
