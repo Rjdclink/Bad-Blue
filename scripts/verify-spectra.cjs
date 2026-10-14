@@ -550,9 +550,10 @@ test('Enrolled-device registry remains server-only and ships with production mig
   dockerfile.includes('070_spectra_enrolled_devices.sql'));
 
 test('OwnTracks and Traccar pull only enrolled tracker identities into canonical GPS evidence',
-  ownTracksAdapter.includes('/owntracks/api/0/locations') &&
+  ownTracksAdapter.includes("'/api/0/locations'") &&
   ownTracksAdapter.includes('ownTracksUser') &&
   ownTracksAdapter.includes('ownTracksDevice') &&
+  ownTracksAdapter.includes("limit: '8'") &&
   ownTracksAdapter.includes("source: 'device_gps'") &&
   traccarAdapter.includes('/devices/') &&
   traccarAdapter.includes('/positions') &&
