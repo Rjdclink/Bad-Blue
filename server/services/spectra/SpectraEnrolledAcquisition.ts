@@ -238,18 +238,13 @@ export async function acquireSpectraEnrolledTelemetry(
   const suppliedPhone = String(input.phoneNumber || '').trim();
   const suppliedDeviceRef = String(input.deviceRef || '').trim();
   if (!suppliedPhone && !suppliedDeviceRef) {
-    return {
-      batches: [],
-      attempts: [{
-        id: 'enrolled-device-resolution',
-        label: 'Enrolled device resolution',
-        status: 'skipped',
-        normalizerKind: 'enrolled-device-binding',
-        measurementCount: 0,
-        reasonCode: 'missing-device',
-        reason: 'No enrolled phone number or device reference was supplied.',
-      }],
-    };
+    // Additive compatibility: the original active-acquisition pipeline may
+    // still contain untargeted/context adapters. Do not suppress those simply
+    // because no enrolled-device identifier was supplied.
+    return deps.active({
+      sessionId: input.sessionId,
+      subjectLabel: input.subjectLabel,
+    });
   }
 
   const resolution = suppliedPhone
@@ -265,17 +260,19 @@ export async function acquireSpectraEnrolledTelemetry(
   // enriches it when a mapping exists, but an older authorized deviceRef-only
   // integration is not disabled merely because it predates the phone registry.
   // A known conflicting/ambiguous binding is still rejected.
-  if (!suppliedPhone && suppliedDeviceRef && (
-    resolution.status === 'not-enrolled' || resolution.status === 'unavailable'
-  )) {
+  if (
+    resolution.status === 'not-enrolled'
+    || resolution.status === 'unavailable'
+  ) {
     const direct = await deps.active({
-      deviceRef: suppliedDeviceRef,
+      deviceRef: suppliedDeviceRef || undefined,
       sessionId: input.sessionId,
       subjectLabel: input.subjectLabel,
     });
     return {
-      ...direct,
-      resolvedDeviceRef: suppliedDeviceRef,
+      batches: direct.batches,
+      attempts: [failedResolutionAttempt(resolution), ...direct.attempts],
+      resolvedDeviceRef: suppliedDeviceRef || undefined,
       resolution,
     };
   }
