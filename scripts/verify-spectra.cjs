@@ -45,6 +45,7 @@ const enrolledRegistry = read('server/services/spectra/SpectraEnrolledDeviceRegi
 const ownTracksAdapter = read('server/services/spectra/SpectraOwnTracksAdapter.ts');
 const traccarAdapter = read('server/services/spectra/SpectraTraccarAdapter.ts');
 const carrierLocationAdapters = read('server/services/spectra/SpectraCarrierLocationAdapters.ts');
+const vonageAuth = read('server/services/spectra/SpectraVonageAuth.ts');
 const phoneInfoga = read('server/services/spectra/SpectraPhoneInfoga.ts');
 const recursiveClues = read('server/services/spectra/SpectraRecursiveClues.ts');
 const anchorRegistry = read('server/services/spectra/SpectraAnchorRegistry.ts');
@@ -527,7 +528,11 @@ test('CAMARA and Vonage carrier location lanes are parallel and bounded outside 
   carrierLocationAdapters.includes('vonageBatch') &&
   carrierLocationAdapters.includes('Promise.all(lanes.map') &&
   carrierLocationAdapters.includes('SPECTRA_CAMARA_LOCATION_RETRIEVAL_URL') &&
-  carrierLocationAdapters.includes('SPECTRA_VONAGE_LOCATION_TOKEN') &&
+  carrierLocationAdapters.includes('getSpectraVonageBearerToken') &&
+  vonageAuth.includes('SPECTRA_VONAGE_APPLICATION_ID') &&
+  vonageAuth.includes('SPECTRA_VONAGE_PRIVATE_KEY') &&
+  vonageAuth.includes('SPECTRA_VONAGE_OAUTH_SCOPE') &&
+  vonageAuth.includes('urn:openid:params:grant-type:ciba') &&
   carrierLocationAdapters.includes('SPECTRA_CAMARA_LOCATION_DEVICE_SOURCE') &&
   carrierLocationAdapters.includes("deviceSource === 'phone'") &&
   carrierLocationAdapters.includes("'camara-location-retrieval'") &&
