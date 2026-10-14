@@ -175,6 +175,41 @@ public final class SpectraAppleCollector: NSObject {
      is the Apple absolute-position source; BLE and Nearby Interaction remain
      ranging/context unless an anchor position is actually known.
      */
+    public static func reportingEndpoint(
+        baseURL: URL,
+        deviceRef: String
+    ) throws -> URL {
+        guard baseURL.scheme?.lowercased() == "https" else {
+            throw CollectorError.invalidEndpoint
+        }
+        let trimmedRef = deviceRef.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedRef.isEmpty else {
+            throw CollectorError.invalidEnrollment
+        }
+        let allowed = CharacterSet.alphanumerics.union(
+            CharacterSet(charactersIn: "-._~")
+        )
+        guard let encodedRef = trimmedRef.addingPercentEncoding(
+            withAllowedCharacters: allowed
+        ) else {
+            throw CollectorError.invalidEnrollment
+        }
+        let base = baseURL.absoluteString.trimmingCharacters(
+            in: CharacterSet(charactersIn: "/")
+        )
+        guard let endpoint = URL(
+            string: "\(base)/api/geoconsole/telemetry/enrolled/\(encodedRef)/normalize/canonical-telemetry"
+        ) else {
+            throw CollectorError.invalidEndpoint
+        }
+        return endpoint
+    }
+
+    public static func confidence(forAccuracy accuracy: CLLocationAccuracy) -> Double {
+        guard accuracy > 0 else { return 0.6 }
+        return max(0.25, min(0.98, 1 - log10(max(1, accuracy)) / 6))
+    }
+
     public func collectAndUpload() async throws -> UploadResult {
         guard endpointBase.scheme?.lowercased() == "https" else {
             throw CollectorError.invalidEndpoint
