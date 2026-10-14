@@ -164,7 +164,7 @@ export function spectraPipelineNotices(diagnostics?: SpectraPipelineDiagnostics)
   const collectorReasons: Record<string, string> = {
     'not-configured': 'not configured',
     'not-enrolled': 'phone not enrolled',
-    'missing-device': 'device identifier/binding missing',
+    'missing-device': 'device identifier missing or tracker binding unavailable',
     'identity-mismatch': 'identity or device binding mismatch',
     'platform-mismatch': 'collector does not apply to this device platform',
     'request-failed': 'request failed',
