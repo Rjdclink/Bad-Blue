@@ -68,7 +68,7 @@ export async function acquireSpectraOwnTracks(
   }
 
   const endpoint = recorderLocationsEndpoint(base);
-  const body = new URLSearchParams({ user, device: tracker });
+  const body = new URLSearchParams({ user, device: tracker, limit: '8' });
   const payload = await fetchSpectraConfiguredJson(endpoint, {
     method: 'POST',
     headers: {
