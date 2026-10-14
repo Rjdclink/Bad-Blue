@@ -21,7 +21,7 @@ assert(sql.includes('pg_roles WHERE rolname IN'), 'API role revocations must tol
 assert(!sql.includes('FROM PUBLIC, anon, authenticated'), 'Neon must not require Supabase roles');
 assert(!/CREATE ROLE|DROP TABLE|TRUNCATE|DELETE FROM|cryptocrawl/i.test(sql));
 
-function fixture({ alreadyPresent = false, schema = 'public', fail = false, verified = true } = {}) {
+function fixture({ alreadyPresent = false, schema = 'public', fail = false, verified = true, columnPresent = true } = {}) {
   const queries = [];
   let countQueries = 0;
   let extensionCreated = false;
@@ -29,6 +29,9 @@ function fixture({ alreadyPresent = false, schema = 'public', fail = false, veri
     queries,
     async query(sql, values) {
       queries.push({ sql, values });
+      if (sql.includes('information_schema.columns')) {
+        return { rows: [{ column_count: columnPresent ? 1 : 0 }] };
+      }
       if (sql.startsWith('SELECT count(*)')) {
         countQueries++;
         return { rows: [{ table_count: alreadyPresent || (countQueries > 1 && verified) ? TABLES.length : 0 }] };
@@ -44,7 +47,12 @@ function fixture({ alreadyPresent = false, schema = 'public', fail = false, veri
 (async () => {
   const healthy = fixture({ alreadyPresent: true });
   await ensureSchema(healthy, directory, () => {});
-  assert.equal(healthy.queries.length, 1, 'healthy databases must avoid schema mutation');
+  assert.equal(healthy.queries.length, 2, 'healthy databases must verify tables plus enrolled telemetry column without mutation');
+  const missingColumn = fixture({ alreadyPresent: true, columnPresent: false });
+  await ensureSchema(missingColumn, directory, () => {});
+  assert.equal(missingColumn.queries.at(-1).sql, 'COMMIT',
+    'missing enrolled telemetry column must trigger the idempotent migration');
+
   const existingExtension = fixture();
   await ensureSchema(existingExtension, directory, () => {});
   assert.equal(existingExtension.queries.at(-1).sql, 'COMMIT');
