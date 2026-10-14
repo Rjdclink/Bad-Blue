@@ -6,6 +6,7 @@ import {
   type SpectraNormalizedProviderBatch,
 } from './SpectraProviderTelemetryNormalizer';
 import type { SpectraDevicePlatform } from './SpectraEnrolledDeviceRegistry';
+import { readSpectraJsonResponse } from './SpectraExternalSourceHttp';
 
 export type SpectraActiveAcquisitionTarget = 'device' | 'none';
 
@@ -68,8 +69,11 @@ function timeoutMs(value: unknown): number {
 function httpsUrl(value: string): URL | null {
   try {
     const url = new URL(value);
-    if (url.protocol !== 'https:' || url.username || url.password) return null;
+    if (url.username || url.password) return null;
     const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+    const secure = url.protocol === 'https:'
+      || (url.protocol === 'http:' && host.endsWith('.railway.internal'));
+    if (!secure) return null;
     if (
       host === 'localhost' ||
       host.endsWith('.localhost') ||
@@ -222,14 +226,20 @@ function normalizeProviderResponse(
   // or an Android EMM resource path, before admitting measurements.
   if (config.target === 'device' && input.deviceRef) {
     const identifiers: unknown[] = [];
-    const candidates = [outer, body, ...(
-      config.normalizerKind === 'cisco-spaces-location' && Array.isArray(body.results)
-        ? body.results.slice(0, 200)
-        : []
-    )];
+    const candidates = [
+      outer,
+      body,
+      ...(Array.isArray(body.measurements) ? body.measurements.slice(0, 2000) : []),
+      ...(
+        config.normalizerKind === 'cisco-spaces-location' && Array.isArray(body.results)
+          ? body.results.slice(0, 200)
+          : []
+      ),
+    ];
     for (const candidate of candidates) {
       const item = record(candidate);
-      identifiers.push(item.deviceRef, item.deviceId);
+      const metadata = record(item.metadata);
+      identifiers.push(item.deviceRef, item.deviceId, metadata.deviceRef, metadata.deviceId);
       if (config.normalizerKind === 'android-managed-lost-mode') {
         identifiers.push(
           typeof item.device === 'string' ? item.device : record(item.device).id,
@@ -449,6 +459,7 @@ function acquisitionBody(
     deviceRef: normalizeDeviceRef(input.deviceRef),
     sessionId: input.sessionId,
     subjectLabel: input.subjectLabel,
+    platform: input.platform,
     requestedAt: new Date().toISOString(),
   };
 }
@@ -489,7 +500,7 @@ async function fetchAdapter(
     throw new Error(`Active provider returned HTTP ${response.status}.`);
   }
 
-  const payload = await response.json();
+  const payload = await readSpectraJsonResponse(response);
   return normalizeProviderResponse(payload, config, input);
 }
 
@@ -523,6 +534,8 @@ export async function acquireSpectraActiveTelemetry(
   const adapters = [
     builtInAndroidMdmAdapter(),
     builtInAppleMdmAdapter(),
+    builtInAndroidRadioCollectorAdapter(),
+    builtInAppleDeviceCollectorAdapter(),
     builtInCiscoSpacesAdapter(),
     ...configuredAdapters(),
   ].filter((item): item is ActiveProviderConfig => Boolean(item));
