@@ -277,6 +277,19 @@ try {
   }
 
   {
+    const nativeFallback = await collectSpectraPhoneInfoga(
+      '+1 (402) 555-0123',
+      {} as NodeJS.ProcessEnv,
+    );
+    assert.equal(nativeFallback.status, 'native-fallback');
+    assert.equal(nativeFallback.normalized?.e164, '+14025550123');
+    assert.ok(nativeFallback.searchQueries.length >= 5);
+    assert.ok(nativeFallback.searchQueries.every(query =>
+      query.includes('4025550123') || query.includes('+14025550123')
+    ), 'native fallback queries remain bound to the normalized phone');
+  }
+
+  {
     const env = {
       SPECTRA_PHONEINFOGA_URL: 'https://phoneinfoga.example',
       SPECTRA_PHONEINFOGA_SCANNERS: 'local,ovh',
