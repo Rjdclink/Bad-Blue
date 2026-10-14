@@ -39,11 +39,17 @@ separate collector service:
 
 `POST /api/geoconsole/telemetry/enrolled/:deviceRef/normalize/:kind`
 
-The device uses its operational enrollment bearer token. SPECTRA stores only
-the SHA-256 token hash in `spectra_enrolled_devices.ingest_token_hash`; the
-plain reporting token is not returned by SPECTRA. This token authenticates the
-enrolled device reporter. It is not a consent form, authorization form, or
-integration with a separate authorization application.
+The device uses its operational enrollment bearer token. An authenticated
+Bad-Blue user who already owns that enrolled-device record can rotate/issue the
+reporter credential at:
+
+`POST /api/geoconsole/enrolled-device/:deviceRef/ingest-token`
+
+The plaintext credential is returned once to configure the native reporter.
+SPECTRA stores only its SHA-256 hash in
+`spectra_enrolled_devices.ingest_token_hash`; subsequent device reports use
+that bearer token. This is a technical device credential, not a consent form,
+authorization form, or integration with a separate authorization application.
 
 The endpoint verifies the token against the durable enrolled-device registry,
 checks that the requested normalizer is valid for the enrolled platform,
@@ -161,3 +167,18 @@ direct evidence or saved observations.
 Search engines and paid providers retain bounded deadlines and cooldowns.
 Providers without usable budget or authentication do not become prerequisites
 for an acquisition.
+
+
+## Reference native collectors
+
+The repository now includes native reference collectors that speak the enrolled
+device inbox protocol directly:
+
+- `mobile/spectra-android-collector`: Android GNSS/raw GNSS, cellular,
+  Wi-Fi RTT, BLE and host-supplied UWB session measurements.
+- `mobile/spectra-apple-collector`: Apple Core Location, Core Bluetooth and
+  host-supplied Nearby Interaction measurements.
+
+The Apple collector deliberately does not claim Android-only raw cellular or
+Wi-Fi RTT access. Both collectors omit measurements that the operating system
+or hardware does not make available.
