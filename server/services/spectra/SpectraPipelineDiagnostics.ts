@@ -69,7 +69,7 @@ export function buildSpectraPipelineDiagnostics(input: PipelineInput) {
     entry.measurements += count(row.measurementCount || 0);
     if (row.reasonCode) {
       const code = [
-        'not-configured', 'not-enrolled', 'missing-device',
+        'not-configured', 'not-enrolled', 'registry-unavailable', 'missing-device',
         'identity-mismatch', 'platform-mismatch', 'request-failed',
       ].includes(row.reasonCode) ? row.reasonCode : 'other';
       entry.reasons[code] = (entry.reasons[code] || 0) + 1;
