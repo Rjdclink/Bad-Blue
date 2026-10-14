@@ -1681,6 +1681,38 @@ router.post('/telemetry/enrolled/:deviceRef/normalize/:kind', async (req: Reques
     });
   }
 
+  if (kind === 'canonical-telemetry') {
+    const allowedCanonicalSources: Record<string, Set<string>> = {
+      android: new Set([
+        'device_gps', 'gnss_fix', 'gnss_raw',
+        'wifi_rtt', 'wifi_rssi', 'wifi_fingerprint',
+        'cellular', 'cell_serving', 'cell_neighbor', 'nr_positioning',
+        'uwb_range', 'uwb_direction', 'bluetooth_proximity',
+        'bluetooth_channel_sounding', 'ble_rssi', 'ble_aoa', 'ble_aod',
+        'accelerometer', 'imu_gyro', 'magnetometer', 'barometer',
+        'wifi_rtt_context', 'cellular_signal', 'uwb_context',
+        'ble_gateway', 'radio_context', 'gnss_corrections',
+      ]),
+      ios: new Set([
+        'device_gps', 'gnss_fix',
+        'uwb_range', 'uwb_direction', 'bluetooth_proximity',
+        'bluetooth_channel_sounding', 'ble_rssi', 'ble_aoa', 'ble_aod',
+        'accelerometer', 'imu_gyro', 'magnetometer', 'barometer',
+        'uwb_context', 'ble_gateway', 'radio_context',
+      ]),
+      other: new Set(['device_gps', 'gnss_fix']),
+    };
+    const disallowed = validation.data.measurements.find(measurement =>
+      !allowedCanonicalSources[enrolled.platform]?.has(measurement.source)
+    );
+    if (disallowed) {
+      return res.status(400).json({
+        success: false,
+        error: 'Canonical telemetry source is not allowed for this enrolled device platform.',
+      });
+    }
+  }
+
   const stored = await persistSpectraEnrolledDeviceTelemetry(
     enrolled,
     kind,
