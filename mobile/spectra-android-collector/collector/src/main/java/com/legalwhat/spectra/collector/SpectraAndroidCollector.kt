@@ -61,7 +61,7 @@ class SpectraAndroidCollector(
             }
             require(deviceRef.isNotBlank()) { "Enrolled deviceRef is required." }
             val encodedRef = URLEncoder
-                .encode(deviceRef.trim(), StandardCharsets.UTF_8)
+                .encode(deviceRef.trim(), StandardCharsets.UTF_8.name())
                 .replace("+", "%20")
             return URI.create(
                 "$base/api/geoconsole/telemetry/enrolled/$encodedRef/normalize/android-radio-collector"
