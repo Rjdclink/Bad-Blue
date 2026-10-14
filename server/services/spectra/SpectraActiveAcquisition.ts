@@ -188,6 +188,14 @@ function canonicalBatch(
   };
 }
 
+const REQUIRES_RETURNED_DEVICE_ASSERTION = new Set([
+  'android-managed-location-active',
+  'apple-managed-location-active',
+  'android-radio-collector-active',
+  'apple-device-collector-active',
+  'cisco-spaces-active-location',
+]);
+
 function requestedDeviceMatches(reported: string, requested: string): boolean {
   const fromProvider = reported.trim().toLowerCase().split('/').pop() || '';
   const supplied = requested.trim().toLowerCase();
@@ -256,6 +264,12 @@ function normalizeProviderResponse(
     const asserted = identifiers.filter((id): id is string =>
       typeof id === 'string' && id.trim().length > 0
     );
+    if (
+      REQUIRES_RETURNED_DEVICE_ASSERTION.has(config.id)
+      && asserted.length === 0
+    ) {
+      throw new Error('Active provider did not identify the enrolled device in its response.');
+    }
     if (asserted.some(id => !requestedDeviceMatches(id, input.deviceRef!))) {
       throw new Error('Active provider returned telemetry for a different device.');
     }
