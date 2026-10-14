@@ -1,0 +1,23 @@
+plugins {
+  id("com.android.library")
+}
+
+android {
+  namespace = "com.legalwhat.spectra.collector"
+  compileSdk = 36
+
+  defaultConfig {
+    minSdk = 31
+    consumerProguardFiles("consumer-rules.pro")
+  }
+
+  compileOptions {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+  }
+}
+
+
+dependencies {
+  testImplementation("junit:junit:4.13.2")
+}

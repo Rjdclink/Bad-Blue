@@ -49,6 +49,74 @@ check('multi-part provider configuration requires both parts', () => {
   assert.equal(row(d.getSpectraConfigurationDiagnostics({ TRAFFICLAND_API_KEY: marker }), 'trafficland').configured, false);
   assert.equal(row(d.getSpectraConfigurationDiagnostics({ TRAFFICLAND_API_KEY: marker, TRAFFICLAND_SYSTEM: marker }), 'trafficland').configured, true);
 });
+check('enrolled live-source readiness is configuration-only and value-safe', () => {
+  const report = d.getSpectraConfigurationDiagnostics({
+    SPECTRA_ANDROID_RADIO_COLLECTOR_URL_TEMPLATE: 'https://collector.example/{{deviceRef}}',
+    SPECTRA_ANDROID_RADIO_COLLECTOR_TOKEN: marker,
+    SPECTRA_APPLE_DEVICE_COLLECTOR_URL_TEMPLATE: 'https://apple.example/{{deviceRef}}',
+    SPECTRA_APPLE_DEVICE_COLLECTOR_TOKEN: marker,
+    SPECTRA_OWNTRACKS_RECORDER_URL: 'https://owntracks.example',
+    SPECTRA_OWNTRACKS_USERNAME: 'fixture-user',
+    SPECTRA_OWNTRACKS_PASSWORD: marker,
+    SPECTRA_TRACCAR_URL: 'https://traccar.example',
+    SPECTRA_TRACCAR_TOKEN: marker,
+    SPECTRA_CAMARA_LOCATION_RETRIEVAL_URL: 'https://camara.example/retrieve',
+    SPECTRA_CAMARA_LOCATION_RETRIEVAL_TOKEN: marker,
+    SPECTRA_VONAGE_LOCATION_TOKEN: marker,
+    SPECTRA_PHONEINFOGA_URL: 'https://phoneinfoga.example',
+    NEON_DATABASE_URL: marker,
+  });
+  for (const id of [
+    'android-radio-collector', 'apple-device-collector', 'traccar',
+    'camara-location', 'vonage-location', 'phoneinfoga',
+  ]) assert.equal(row(report, id).configured, true);
+  assert.equal(report.enrolledSources.enrollmentRegistryConfigured, true);
+  assert.equal(report.enrolledSources.ownTracksConfigured, true);
+  assert.equal(report.enrolledSources.ownTracksAuthenticationConfigured, true);
+  assert.equal(report.enrolledSources.camaraDeviceIdentificationMode, 'phone');
+  assert(!JSON.stringify(report).includes(marker));
+
+  const tokenBound = d.getSpectraConfigurationDiagnostics({
+    SPECTRA_CAMARA_LOCATION_RETRIEVAL_URL: 'https://camara.example/retrieve',
+    SPECTRA_CAMARA_LOCATION_RETRIEVAL_TOKEN: marker,
+    SPECTRA_CAMARA_LOCATION_DEVICE_SOURCE: 'token',
+  });
+  assert.equal(row(tokenBound, 'camara-location').configured, false);
+  assert.equal(tokenBound.enrolledSources.camaraDeviceIdentificationMode, 'invalid');
+
+  const invalidMode = d.getSpectraConfigurationDiagnostics({
+    SPECTRA_CAMARA_LOCATION_RETRIEVAL_URL: 'https://camara.example/retrieve',
+    SPECTRA_CAMARA_LOCATION_RETRIEVAL_TOKEN: marker,
+    SPECTRA_CAMARA_LOCATION_DEVICE_SOURCE: 'invalid-fixture',
+  });
+  assert.equal(row(invalidMode, 'camara-location').configured, false);
+  assert.equal(invalidMode.enrolledSources.camaraDeviceIdentificationMode, 'invalid');
+
+  const renewableVonage = d.getSpectraConfigurationDiagnostics({
+    SPECTRA_VONAGE_APPLICATION_ID: 'fixture-app-id',
+    SPECTRA_VONAGE_PRIVATE_KEY: marker,
+    SPECTRA_VONAGE_OAUTH_SCOPE: 'fixture-location-scope',
+  });
+  assert.equal(row(renewableVonage, 'vonage-location').configured, true);
+  const incompleteVonage = d.getSpectraConfigurationDiagnostics({
+    SPECTRA_VONAGE_APPLICATION_ID: 'fixture-app-id',
+    SPECTRA_VONAGE_PRIVATE_KEY: marker,
+  });
+  assert.equal(row(incompleteVonage, 'vonage-location').configured, false);
+});
+check('empty enrollment bootstrap does not claim a configured registry', () => {
+  const emptyBootstrap = d.getSpectraConfigurationDiagnostics({
+    SPECTRA_ENROLLED_DEVICES_JSON: '[]',
+  });
+  assert.equal(emptyBootstrap.enrolledSources.enrollmentRegistryConfigured, false);
+  const populatedBootstrap = d.getSpectraConfigurationDiagnostics({
+    SPECTRA_ENROLLED_DEVICES_JSON: JSON.stringify([{
+      userId: 'fixture-user', phoneNumber: '+14025550123',
+      deviceRef: 'fixture-device', platform: 'android',
+    }]),
+  });
+  assert.equal(populatedBootstrap.enrolledSources.enrollmentRegistryConfigured, true);
+});
 check('Census key presence does not imply geocoder use', () => {
   const report = d.getSpectraConfigurationDiagnostics({ CENSUS_API_KEY: marker });
   assert.equal(report.censusGeocoder.censusDataKeyPresent, true);
@@ -65,6 +133,7 @@ check('diagnostics omit unrelated variables and all credential values', () => {
 check('real registry keeps configuration separate from connection and observations', () => {
   const registry = load('server/services/spectra/SpectraAdapterRegistry.ts', { SPECTRA_TELEMETRY_HMAC_SECRET: marker }, {
     './SpectraActiveAcquisition': { getSpectraActiveAcquisitionCapabilities: () => [] },
+    './SpectraEnrolledAcquisition': { getSpectraEnrolledAcquisitionCapabilities: () => [] },
     './SpectraConfigurationDiagnostics': d,
   });
   const adapters = registry.getSpectraAdapterCapabilities();
@@ -92,7 +161,7 @@ check('authenticated capabilities handler exposes only configuration diagnostics
     getSpectraConfigurationDiagnostics: () => d.getSpectraConfigurationDiagnostics(env),
     readSpectraEnvironmentValue: names => d.readSpectraEnvironmentValue(names, env),
     spectraRealtimeBridgeConfigured: () => false, getSpectraAdapterCapabilities: () => [],
-    getSpectraActiveAcquisitionCapabilities: () => [], getConfiguredSpectraAnchorCount: () => 0,
+    getSpectraEnrolledAcquisitionCapabilities: () => [], getConfiguredSpectraAnchorCount: () => 0,
     getSpectraGenericPullAdapters: () => [],
   });
   let response;

@@ -15,6 +15,10 @@ const savedEnv = {
   appleToken: process.env.SPECTRA_APPLE_MDM_LOCATION_TOKEN,
   ciscoUrl: process.env.SPECTRA_CISCO_SPACES_DEVICE_URL_TEMPLATE,
   ciscoToken: process.env.SPECTRA_CISCO_SPACES_TOKEN,
+  androidRadioUrl: process.env.SPECTRA_ANDROID_RADIO_COLLECTOR_URL_TEMPLATE,
+  androidRadioToken: process.env.SPECTRA_ANDROID_RADIO_COLLECTOR_TOKEN,
+  appleCollectorUrl: process.env.SPECTRA_APPLE_DEVICE_COLLECTOR_URL_TEMPLATE,
+  appleCollectorToken: process.env.SPECTRA_APPLE_DEVICE_COLLECTOR_TOKEN,
   activeAdapters: process.env.SPECTRA_ACTIVE_PROVIDER_ADAPTERS,
   anchors: process.env.SPECTRA_ANCHOR_CATALOG_JSON,
 };
@@ -29,6 +33,8 @@ try {
     ['android-managed-location-active', 'SPECTRA_ANDROID_MDM_LOCATION_URL_TEMPLATE', 'SPECTRA_ANDROID_MDM_LOCATION_TOKEN'],
     ['apple-managed-location-active', 'SPECTRA_APPLE_MDM_LOCATION_URL_TEMPLATE', 'SPECTRA_APPLE_MDM_LOCATION_TOKEN'],
     ['cisco-spaces-active-location', 'SPECTRA_CISCO_SPACES_DEVICE_URL_TEMPLATE', 'SPECTRA_CISCO_SPACES_TOKEN'],
+    ['android-radio-collector-active', 'SPECTRA_ANDROID_RADIO_COLLECTOR_URL_TEMPLATE', 'SPECTRA_ANDROID_RADIO_COLLECTOR_TOKEN'],
+    ['apple-device-collector-active', 'SPECTRA_APPLE_DEVICE_COLLECTOR_URL_TEMPLATE', 'SPECTRA_APPLE_DEVICE_COLLECTOR_TOKEN'],
   ]) {
     const adapter = SPECTRA_ADAPTER_CAPABILITIES.find(item => item.id === id)!;
     delete process.env[urlName];
@@ -66,6 +72,22 @@ try {
     attempt.id === 'android-managed-location-active' &&
     attempt.status === 'skipped' && /not configured/.test(attempt.reason || '')
   ), 'unconfigured priority providers must be explained rather than silently omitted');
+
+  process.env.SPECTRA_ACTIVE_PROVIDER_ADAPTERS = JSON.stringify([{
+    id: 'android-managed-location-active',
+    label: 'reserved-id-fixture',
+    url: 'https://collector.example/devices/{{deviceRef}}',
+    method: 'GET',
+    normalizerKind: 'canonical-telemetry',
+    target: 'device',
+  }]);
+  assert.equal(
+    getSpectraActiveAcquisitionCapabilities().some(item =>
+      item.id === 'android-managed-location-active'),
+    false,
+    'generic adapter JSON cannot impersonate a reserved built-in collector id',
+  );
+  process.env.SPECTRA_ACTIVE_PROVIDER_ADAPTERS = '[]';
 
   process.env.SPECTRA_ANDROID_MDM_LOCATION_URL_TEMPLATE =
     'https://emm.example/devices/{{deviceRef}}/latest-location';
@@ -112,6 +134,11 @@ try {
     (android.batches[0]?.measurements[0]?.metadata as any)?.providerKind,
     'android-managed-lost-mode',
   );
+  assert.ok(android.attempts.some(attempt =>
+    attempt.id === 'apple-managed-location-active'
+    && attempt.status === 'skipped'
+    && attempt.reasonCode === 'not-configured'
+  ), 'an available Android lane must not hide unavailable sibling collectors');
 
   delete process.env.SPECTRA_ANDROID_MDM_LOCATION_URL_TEMPLATE;
   delete process.env.SPECTRA_ANDROID_MDM_LOCATION_TOKEN;
@@ -153,6 +180,194 @@ try {
 
   delete process.env.SPECTRA_APPLE_MDM_LOCATION_URL_TEMPLATE;
   delete process.env.SPECTRA_APPLE_MDM_LOCATION_TOKEN;
+
+  process.env.SPECTRA_ANDROID_RADIO_COLLECTOR_URL_TEMPLATE =
+    'https://radio.example/devices/{{deviceRef}}/measurements';
+  process.env.SPECTRA_ANDROID_RADIO_COLLECTOR_TOKEN = 'radio-token';
+  delete process.env.SPECTRA_APPLE_DEVICE_COLLECTOR_URL_TEMPLATE;
+  delete process.env.SPECTRA_APPLE_DEVICE_COLLECTOR_TOKEN;
+
+  let androidRadioFetches = 0;
+  globalThis.fetch = async (input: any, init?: RequestInit) => {
+    androidRadioFetches++;
+    assert.equal(String(input), 'https://radio.example/devices/android-radio-a/measurements');
+    assert.equal(init?.method, 'POST');
+    assert.equal((init?.headers as Record<string, string>)?.Authorization, 'Bearer radio-token');
+    const request = JSON.parse(String(init?.body || '{}'));
+    assert.equal(request.deviceRef, 'android-radio-a');
+    assert.equal(request.platform, 'android');
+    return new Response(JSON.stringify({
+      deviceRef: 'android-radio-a',
+      cells: [{
+        timestamp: '2026-10-03T14:59:30Z',
+        type: 'lte', mcc: 310, mnc: 260, tac: 44, ci: 123456, pci: 12,
+        signal: { rsrp: -94, rsrq: -9, rssnr: 20 },
+      }],
+      wifiRtt: [{
+        timestamp: '2026-10-03T14:59:30Z',
+        distanceMeters: 6.2,
+        responderLocation: { latitude: 43.55, longitude: -96.73 },
+      }],
+      bleScans: [{
+        timestamp: '2026-10-03T14:59:30Z',
+        gateway: { latitude: 43.5501, longitude: -96.7301 },
+        rssiDbm: -61, txPowerAtOneMeterDbm: -59,
+      }],
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  };
+
+  const androidPlatformSkip = await acquireSpectraActiveTelemetry({
+    deviceRef: 'android-radio-a', platform: 'ios',
+    sessionId: 'fixture-session', subjectLabel: 'managed device',
+  });
+  assert.equal(androidPlatformSkip.batches.length, 0);
+  assert.equal(androidPlatformSkip.attempts[0]?.reasonCode, 'platform-mismatch');
+  assert.equal(androidRadioFetches, 0, 'platform mismatch must skip before network acquisition');
+
+  const androidRadio = await acquireSpectraActiveTelemetry({
+    deviceRef: 'android-radio-a', platform: 'android',
+    sessionId: 'fixture-session', subjectLabel: 'managed device',
+  });
+  assert.equal(androidRadio.batches.length, 1);
+  assert.ok(androidRadio.batches[0].measurements.some(item => item.kind === 'radio'));
+  assert.ok(androidRadio.batches[0].measurements.some(item => item.kind === 'ranging'));
+  assert.equal(androidRadio.attempts[0]?.status, 'fulfilled');
+
+  let transientActiveCalls = 0;
+  const retryRequestIds: string[] = [];
+  const retryBodies: string[] = [];
+  globalThis.fetch = async (_input: any, init?: RequestInit) => {
+    transientActiveCalls += 1;
+    retryRequestIds.push(String((init?.headers as Record<string, string>)?.['X-Spectra-Acquisition-Id'] || ''));
+    retryBodies.push(String(init?.body || ''));
+    if (transientActiveCalls === 1) {
+      return new Response('temporary upstream outage', { status: 503 });
+    }
+    return new Response(JSON.stringify({
+      deviceRef: 'android-radio-a',
+      cells: [{
+        timestamp: '2026-10-03T14:59:31Z',
+        type: 'lte', mcc: 310, mnc: 260, tac: 44, ci: 123456, pci: 12,
+        signal: { rsrp: -94, rsrq: -9, rssnr: 20 },
+      }],
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  };
+  const recoveredAndroid = await acquireSpectraActiveTelemetry({
+    deviceRef: 'android-radio-a', platform: 'android',
+    sessionId: 'fixture-session', subjectLabel: 'managed device',
+  });
+  assert.equal(recoveredAndroid.batches.length, 1);
+  assert.equal(transientActiveCalls, 2,
+    'active collector gets exactly one recovery attempt after a transient 5xx');
+  assert.ok(retryRequestIds[0]);
+  assert.equal(retryRequestIds[0], retryRequestIds[1],
+    'transient retries keep one acquisition id');
+  assert.equal(retryBodies[0], retryBodies[1],
+    'transient retries keep an identical idempotent request body');
+
+  let permanentActiveCalls = 0;
+  globalThis.fetch = async () => {
+    permanentActiveCalls += 1;
+    return new Response('unauthorized', { status: 401 });
+  };
+  const rejectedAndroidAuth = await acquireSpectraActiveTelemetry({
+    deviceRef: 'android-radio-a', platform: 'android',
+    sessionId: 'fixture-session', subjectLabel: 'managed device',
+  });
+  assert.equal(rejectedAndroidAuth.batches.length, 0);
+  assert.equal(permanentActiveCalls, 1,
+    'active collector authentication failure must not be retried');
+
+  delete process.env.SPECTRA_ANDROID_RADIO_COLLECTOR_URL_TEMPLATE;
+  delete process.env.SPECTRA_ANDROID_RADIO_COLLECTOR_TOKEN;
+  process.env.SPECTRA_APPLE_DEVICE_COLLECTOR_URL_TEMPLATE =
+    'https://apple-collector.example/devices/{{deviceRef}}/measurements';
+  process.env.SPECTRA_APPLE_DEVICE_COLLECTOR_TOKEN = 'apple-collector-token';
+
+  let appleCollectorFetches = 0;
+  globalThis.fetch = async (input: any, init?: RequestInit) => {
+    appleCollectorFetches++;
+    assert.equal(String(input), 'https://apple-collector.example/devices/apple-collector-a/measurements');
+    const request = JSON.parse(String(init?.body || '{}'));
+    assert.equal(request.deviceRef, 'apple-collector-a');
+    assert.equal(request.platform, 'ios');
+    return new Response(JSON.stringify({
+      deviceRef: 'apple-collector-a',
+      sessionId: 'fixture-session',
+      subjectLabel: 'managed apple',
+      measurements: [{
+        kind: 'position',
+        source: 'device_gps',
+        timestamp: '2026-10-03T15:00:00Z',
+        latitude: 43.551,
+        longitude: -96.731,
+        accuracy: 5,
+        confidence: 0.94,
+        provider: 'apple-core-location',
+        metadata: { deviceRef: 'apple-collector-a', platform: 'ios' },
+      }, {
+        kind: 'ranging',
+        source: 'uwb_range',
+        timestamp: '2026-10-03T15:00:00Z',
+        provider: 'apple-nearby-interaction',
+        anchors: [{
+          id: 'peer-a', latitude: 43.5511, longitude: -96.7311,
+          distanceMeters: 2.4, uncertaintyMeters: 0.2,
+        }],
+        metadata: { deviceRef: 'apple-collector-a', platform: 'ios' },
+      }],
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  };
+
+  const applePlatformSkip = await acquireSpectraActiveTelemetry({
+    deviceRef: 'apple-collector-a', platform: 'android',
+    sessionId: 'fixture-session', subjectLabel: 'managed apple',
+  });
+  assert.equal(applePlatformSkip.batches.length, 0);
+  assert.equal(applePlatformSkip.attempts[0]?.reasonCode, 'platform-mismatch');
+  assert.equal(appleCollectorFetches, 0);
+
+  const appleCollector = await acquireSpectraActiveTelemetry({
+    deviceRef: 'apple-collector-a', platform: 'ios',
+    sessionId: 'fixture-session', subjectLabel: 'managed apple',
+  });
+  assert.equal(appleCollector.batches.length, 1);
+  assert.equal(appleCollector.batches[0].measurements[0]?.source, 'device_gps');
+  assert.equal(appleCollector.batches[0].measurements[1]?.source, 'uwb_range');
+
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    measurements: [{
+      kind: 'position', source: 'device_gps',
+      timestamp: '2026-10-03T15:00:00Z',
+      latitude: 43.551, longitude: -96.731, accuracy: 5, confidence: 0.94,
+      metadata: { deviceRef: 'different-apple-device' },
+    }],
+  }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  const wrongAppleDevice = await acquireSpectraActiveTelemetry({
+    deviceRef: 'apple-collector-a', platform: 'ios',
+    sessionId: 'fixture-session', subjectLabel: 'managed apple',
+  });
+  assert.equal(wrongAppleDevice.batches.length, 0);
+  assert.match(wrongAppleDevice.attempts[0]?.reason || '', /different device/);
+
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    sessionId: 'fixture-session',
+    subjectLabel: 'managed apple',
+    measurements: [{
+      kind: 'position', source: 'device_gps',
+      timestamp: '2026-10-03T15:00:00Z',
+      latitude: 43.551, longitude: -96.731, accuracy: 5, confidence: 0.94,
+    }],
+  }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  const missingAppleIdentity = await acquireSpectraActiveTelemetry({
+    deviceRef: 'apple-collector-a', platform: 'ios',
+    sessionId: 'fixture-session', subjectLabel: 'managed apple',
+  });
+  assert.equal(missingAppleIdentity.batches.length, 0);
+  assert.match(missingAppleIdentity.attempts[0]?.reason || '', /did not identify the enrolled device/);
+
+  delete process.env.SPECTRA_APPLE_DEVICE_COLLECTOR_URL_TEMPLATE;
+  delete process.env.SPECTRA_APPLE_DEVICE_COLLECTOR_TOKEN;
   process.env.SPECTRA_CISCO_SPACES_DEVICE_URL_TEMPLATE =
     'https://dnaspaces.example/api/location/v1/clients/{{deviceRef}}';
   process.env.SPECTRA_CISCO_SPACES_TOKEN = 'fixture-cisco-token';
@@ -402,6 +617,22 @@ try {
   restoreEnv(
     'SPECTRA_CISCO_SPACES_TOKEN',
     savedEnv.ciscoToken,
+  );
+  restoreEnv(
+    'SPECTRA_ANDROID_RADIO_COLLECTOR_URL_TEMPLATE',
+    savedEnv.androidRadioUrl,
+  );
+  restoreEnv(
+    'SPECTRA_ANDROID_RADIO_COLLECTOR_TOKEN',
+    savedEnv.androidRadioToken,
+  );
+  restoreEnv(
+    'SPECTRA_APPLE_DEVICE_COLLECTOR_URL_TEMPLATE',
+    savedEnv.appleCollectorUrl,
+  );
+  restoreEnv(
+    'SPECTRA_APPLE_DEVICE_COLLECTOR_TOKEN',
+    savedEnv.appleCollectorToken,
   );
   restoreEnv(
     'SPECTRA_ACTIVE_PROVIDER_ADAPTERS',

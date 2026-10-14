@@ -1,4 +1,5 @@
 import { getSpectraActiveAcquisitionCapabilities } from './SpectraActiveAcquisition';
+import { getSpectraEnrolledAcquisitionCapabilities } from './SpectraEnrolledAcquisition';
 import { describeSpectraAdapterConfiguration } from './SpectraConfigurationDiagnostics';
 
 export type SpectraAdapterMode =
@@ -34,10 +35,14 @@ const anyEnv = (...names: string[]) =>
   names.some(name => Boolean(String(process.env[name] || '').trim()));
 const activeAdapterConfigured = (id: string) =>
   getSpectraActiveAcquisitionCapabilities().some(item => item.id === id);
+const enrolledAdapterConfigured = (id: string) =>
+  getSpectraEnrolledAcquisitionCapabilities().some(item => item.id === id && item.configured !== false);
 
 const builtinActiveAdapterIds = new Set([
   'android-managed-location-active',
   'apple-managed-location-active',
+  'android-radio-collector-active',
+  'apple-device-collector-active',
   'cisco-spaces-active-location',
 ]);
 
@@ -73,6 +78,33 @@ export const SPECTRA_ADAPTER_CAPABILITIES: SpectraAdapterCapability[] = [
     notes: 'Pulls the latest DeviceLocation response already available from a configured MDM backend for a supervised Apple device.',
   },
   {
+    id: 'android-radio-collector-active',
+    label: 'Android enrolled multi-radio collector',
+    mode: 'provider-pull',
+    sourceTypes: [
+      'device_gps','gnss_fix','gnss_raw','cellular','wifi_rtt',
+      'uwb_range','uwb_direction','bluetooth_proximity',
+      'bluetooth_channel_sounding','ble_rssi','ble_aoa','ble_aod',
+    ],
+    configured: () => activeAdapterConfigured('android-radio-collector-active'),
+    priority: 'critical',
+    supportsRealtime: true,
+    notes: 'Pulls telemetry for the enrolled Android device and routes it through the existing Android radio normalizer.',
+  },
+  {
+    id: 'apple-device-collector-active',
+    label: 'Apple enrolled device telemetry collector',
+    mode: 'provider-pull',
+    sourceTypes: [
+      'device_gps','gnss_fix','uwb_range','uwb_direction',
+      'bluetooth_proximity','bluetooth_channel_sounding',
+    ],
+    configured: () => activeAdapterConfigured('apple-device-collector-active'),
+    priority: 'critical',
+    supportsRealtime: true,
+    notes: 'Pulls canonical Core Location and supported Apple ranging telemetry for the enrolled Apple device.',
+  },
+  {
     id: 'cisco-spaces-active-location',
     label: 'Cisco Spaces active device location',
     mode: 'provider-pull',
@@ -96,6 +128,60 @@ export const SPECTRA_ADAPTER_CAPABILITIES: SpectraAdapterCapability[] = [
     priority: 'critical',
     supportsRealtime: true,
     notes: 'Configured HTTPS provider/device collectors can be queried during acquisition and routed through an existing SPECTRA normalizer or the canonical telemetry schema.',
+  },
+  {
+    id: 'enrolled-device-inbox-active',
+    label: 'Enrolled Android/Apple device telemetry inbox',
+    mode: 'live-telemetry',
+    sourceTypes: [
+      'device_gps','gnss_fix','gnss_raw','cellular','wifi_rtt',
+      'uwb_range','uwb_direction','bluetooth_proximity',
+      'bluetooth_channel_sounding','ble_rssi','ble_aoa','ble_aod',
+    ],
+    configured: () => enrolledAdapterConfigured('enrolled-device-inbox-active'),
+    priority: 'critical',
+    supportsRealtime: true,
+    notes: 'Accepts per-device authenticated Android/Apple reports and admits only fresh telemetry after the lookup resolves the same enrollment.',
+  },
+  {
+    id: 'owntracks-recorder-active',
+    label: 'OwnTracks Recorder enrolled-device location',
+    mode: 'provider-pull',
+    sourceTypes: ['device_gps'],
+    configured: () => enrolledAdapterConfigured('owntracks-recorder-active'),
+    priority: 'high',
+    supportsRealtime: true,
+    notes: 'Pulls the latest bounded position history only for the enrolled OwnTracks user/device binding.',
+  },
+  {
+    id: 'traccar-active',
+    label: 'Traccar enrolled-device location',
+    mode: 'provider-pull',
+    sourceTypes: ['device_gps'],
+    configured: () => enrolledAdapterConfigured('traccar-active'),
+    priority: 'high',
+    supportsRealtime: true,
+    notes: 'Verifies the enrolled Traccar device before retrieving that device latest valid position.',
+  },
+  {
+    id: 'camara-location-retrieval-active',
+    label: 'CAMARA active carrier location retrieval',
+    mode: 'provider-pull',
+    sourceTypes: ['network_region'],
+    configured: () => enrolledAdapterConfigured('camara-location-retrieval-active'),
+    priority: 'critical',
+    supportsRealtime: true,
+    notes: 'Dedicated phone-bound carrier lane; generic active-provider JSON cannot impersonate this integration.',
+  },
+  {
+    id: 'vonage-location-retrieval-active',
+    label: 'Vonage Device Location Retrieval',
+    mode: 'provider-pull',
+    sourceTypes: ['network_region'],
+    configured: () => enrolledAdapterConfigured('vonage-location-retrieval-active'),
+    priority: 'critical',
+    supportsRealtime: true,
+    notes: 'Uses a configured bearer token or renewable Network Features application/CIBA credentials for the enrolled phone.',
   },
   {
     id: 'configured-anchor-catalog',
@@ -260,11 +346,11 @@ export const SPECTRA_ADAPTER_CAPABILITIES: SpectraAdapterCapability[] = [
     id: 'android-radio-collector-ingest',
     label: 'Android multi-radio collector ingest',
     mode: 'provider-webhook',
-    sourceTypes: ['cellular','gnss_raw','gnss_fix','wifi_rtt','bluetooth_proximity','bluetooth_channel_sounding','ble_rssi','ble_aoa','ble_aod'],
+    sourceTypes: ['cellular','gnss_raw','gnss_fix','wifi_rtt','uwb_range','uwb_direction','bluetooth_proximity','bluetooth_channel_sounding','ble_rssi','ble_aoa','ble_aod'],
     configured: () => anyEnv('SPECTRA_TELEMETRY_HMAC_SECRET'),
     priority: 'critical',
     supportsRealtime: true,
-    notes: 'One signed collector envelope can carry cellular, GNSS, Wi-Fi RTT and Bluetooth observations into the same telemetry batch.',
+    notes: 'One signed collector envelope can carry cellular, GNSS, Wi-Fi RTT, UWB and Bluetooth observations into the same telemetry batch.',
   },
   {
     id: 'ble-gateway-ingest',
