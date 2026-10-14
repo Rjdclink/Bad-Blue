@@ -26,6 +26,14 @@ export function spectraPhoneInfogaConfigured(
   return Boolean(configuredBase(env));
 }
 
+function phoneInfogaPath(base: URL, path: string): URL {
+  const prefix = base.pathname.replace(/\/+$/, '');
+  return joinSpectraEndpoint(
+    base,
+    prefix.endsWith('/api') ? path.replace(/^\/api/, '') : path,
+  );
+}
+
 function headers(env: NodeJS.ProcessEnv): Record<string, string> {
   return {
     Accept: 'application/json',
@@ -59,7 +67,7 @@ export async function collectSpectraPhoneInfoga(
   );
 
   try {
-    const endpoint = joinSpectraEndpoint(base, '/api/v2/numbers');
+    const endpoint = phoneInfogaPath(base, '/api/v2/numbers');
     const normalized = await fetchSpectraConfiguredJson(endpoint, {
       method: 'POST',
       headers: headers(env),
@@ -68,7 +76,7 @@ export async function collectSpectraPhoneInfoga(
 
     const scanners = await Promise.all(scannerNames(env).map(async scanner => {
       try {
-        const scannerUrl = joinSpectraEndpoint(
+        const scannerUrl = phoneInfogaPath(
           base,
           `/api/v2/scanners/${encodeURIComponent(scanner)}/run`,
         );
