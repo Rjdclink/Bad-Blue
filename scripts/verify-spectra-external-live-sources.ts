@@ -39,6 +39,7 @@ try {
       assert.equal(init?.method, 'POST');
       assert.match(String(init?.body), /user=jane/);
       assert.match(String(init?.body), /device=phone/);
+      assert.match(String(init?.body), /limit=8/);
       assert.match(
         String((init?.headers as Record<string, string>)?.Authorization),
         /^Basic /,
