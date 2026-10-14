@@ -40,6 +40,13 @@ const locationQuality = read('server/services/geoconsole/location-quality.ts');
 const geoconsoleRoutes = read('server/routes/geoconsole.routes.ts');
 const adapterRegistry = read('server/services/spectra/SpectraAdapterRegistry.ts');
 const activeAcquisition = read('server/services/spectra/SpectraActiveAcquisition.ts');
+const enrolledAcquisition = read('server/services/spectra/SpectraEnrolledAcquisition.ts');
+const enrolledRegistry = read('server/services/spectra/SpectraEnrolledDeviceRegistry.ts');
+const ownTracksAdapter = read('server/services/spectra/SpectraOwnTracksAdapter.ts');
+const traccarAdapter = read('server/services/spectra/SpectraTraccarAdapter.ts');
+const carrierLocationAdapters = read('server/services/spectra/SpectraCarrierLocationAdapters.ts');
+const phoneInfoga = read('server/services/spectra/SpectraPhoneInfoga.ts');
+const recursiveClues = read('server/services/spectra/SpectraRecursiveClues.ts');
 const anchorRegistry = read('server/services/spectra/SpectraAnchorRegistry.ts');
 const providerNormalizer = read('server/services/spectra/SpectraProviderTelemetryNormalizer.ts');
 const advancedRadioNormalizer = read('server/services/spectra/SpectraAdvancedRadioNormalizer.ts');
@@ -67,6 +74,7 @@ const motionContextMigration = read('server/migrations/067_spectra_motion_contex
 const motionContextAccessMigration = read('server/migrations/068_spectra_motion_context_server_only_access.sql');
 const spectraAccessMigration = read('server/migrations/065_spectra_server_only_access.sql');
 const spectraIndexMigration = read('server/migrations/066_spectra_foreign_key_indexes.sql');
+const enrolledDeviceMigration = read('server/migrations/070_spectra_enrolled_devices.sql');
 const landing = read('client/src/pages/landing.tsx');
 const login = read('client/src/pages/login.tsx');
 
@@ -469,22 +477,69 @@ test('Cisco Spaces Cartesian coordinates cannot masquerade as latitude/longitude
   !externalLocationNormalizer.includes('location.lat ?? coordinates[0]') &&
   activeAcquisition.includes('Active provider returned telemetry for a different device.'));
 
-test('SPECTRA active acquisition uses managed-device identifiers and canonical telemetry processing',
-  routes.includes('acquireSpectraActiveTelemetry') &&
+test('SPECTRA resolves enrolled phones before redundant Android and Apple acquisition',
+  routes.includes('acquireSpectraEnrolledTelemetry') &&
   routes.includes('resolveSpectraNormalizedTelemetryBatch') &&
   routes.includes('activeAcquisitionPositionCount') &&
+  enrolledAcquisition.includes('resolveSpectraEnrolledDevice') &&
+  enrolledAcquisition.includes('Promise.all([') &&
+  enrolledAcquisition.includes('acquireSpectraOwnTracks') &&
+  enrolledAcquisition.includes('acquireSpectraTraccar') &&
+  enrolledAcquisition.includes('acquireSpectraCarrierLocations') &&
+  enrolledRegistry.includes('spectra_enrolled_devices') &&
+  enrolledRegistry.includes('suppliedDeviceRef') &&
+  enrolledRegistry.includes("mismatch: 'device-ref'") &&
   activeAcquisition.includes("target: 'device'") &&
   activeAcquisition.includes("'canonical-telemetry'") &&
-  activeAcquisition.includes('SPECTRA_ACTIVE_PROVIDER_ADAPTERS') &&
-  activeAcquisition.includes('SPECTRA_CISCO_SPACES_DEVICE_URL_TEMPLATE') &&
+  activeAcquisition.includes('SPECTRA_ANDROID_RADIO_COLLECTOR_URL_TEMPLATE') &&
+  activeAcquisition.includes('SPECTRA_APPLE_DEVICE_COLLECTOR_URL_TEMPLATE') &&
+  activeAcquisition.includes('SPECTRA_ANDROID_MDM_LOCATION_URL_TEMPLATE') &&
+  activeAcquisition.includes('SPECTRA_APPLE_MDM_LOCATION_URL_TEMPLATE') &&
   !activeAcquisition.includes("target: 'phone'") &&
-  !activeAcquisition.includes('SPECTRA_CAMARA_LOCATION_RETRIEVAL_URL') &&
   adapterRegistry.includes("id: 'android-managed-location-active'") &&
   adapterRegistry.includes("id: 'apple-managed-location-active'") &&
-  adapterRegistry.includes("id: 'cisco-spaces-active-location'") &&
-  adapterRegistry.includes("id: 'active-provider-adapters'") &&
-  activeAcquisition.includes('SPECTRA_ANDROID_MDM_LOCATION_URL_TEMPLATE') &&
-  activeAcquisition.includes('SPECTRA_APPLE_MDM_LOCATION_URL_TEMPLATE'));
+  adapterRegistry.includes("id: 'android-radio-collector-active'") &&
+  adapterRegistry.includes("id: 'apple-device-collector-active'") &&
+  adapterRegistry.includes("id: 'cisco-spaces-active-location'"));
+test('Enrolled-device registry remains server-only and ships with production migrations',
+  enrolledDeviceMigration.includes('CREATE TABLE IF NOT EXISTS public.spectra_enrolled_devices') &&
+  enrolledDeviceMigration.includes('ENABLE ROW LEVEL SECURITY') &&
+  enrolledDeviceMigration.includes('REVOKE ALL ON TABLE public.spectra_enrolled_devices FROM PUBLIC') &&
+  dockerfile.includes('070_spectra_enrolled_devices.sql'));
+
+test('OwnTracks and Traccar pull only enrolled tracker identities into canonical GPS evidence',
+  ownTracksAdapter.includes('/owntracks/api/0/locations') &&
+  ownTracksAdapter.includes('ownTracksUser') &&
+  ownTracksAdapter.includes('ownTracksDevice') &&
+  ownTracksAdapter.includes("source: 'device_gps'") &&
+  traccarAdapter.includes('/devices/') &&
+  traccarAdapter.includes('/positions') &&
+  traccarAdapter.includes('traccarDeviceId') &&
+  traccarAdapter.includes("source: 'device_gps'"));
+
+test('CAMARA and Vonage carrier location lanes are parallel and bounded outside generic adapters',
+  carrierLocationAdapters.includes('camaraBatch') &&
+  carrierLocationAdapters.includes('vonageBatch') &&
+  carrierLocationAdapters.includes('Promise.all(lanes.map') &&
+  carrierLocationAdapters.includes('SPECTRA_CAMARA_LOCATION_RETRIEVAL_URL') &&
+  carrierLocationAdapters.includes('SPECTRA_VONAGE_LOCATION_TOKEN') &&
+  carrierLocationAdapters.includes("'camara-location-retrieval'") &&
+  !activeAcquisition.includes('SPECTRA_CAMARA_LOCATION_RETRIEVAL_URL'));
+
+test('PhoneInfoga is a remote optional source rather than an installed Bad-Blue dependency',
+  phoneInfoga.includes('SPECTRA_PHONEINFOGA_URL') &&
+  phoneInfoga.includes('/api/v2/numbers') &&
+  phoneInfoga.includes('/api/v2/scanners/') &&
+  !dockerfile.toLowerCase().includes('phoneinfoga'));
+
+test('Recursive search learns new public clues only from retrieved source records',
+  recursiveClues.includes('extractSpectraRecursiveClues') &&
+  recursiveClues.includes('buildSpectraRecursiveClueQueries') &&
+  routes.includes('buildSpectraRecursiveClueQueries(') &&
+  routes.includes('searchRetrievedEvidence') &&
+  spectraSources.includes('maxPasses: 5') &&
+  spectraSources.includes('maxQueries: 20'));
+
 test('Constraint solver is wired before posterior confidence and Futurecast',
   geoconsoleRoutes.includes('solveSpectraConstraintLayer(quality.points)') &&
   geoconsoleRoutes.indexOf('solveSpectraConstraintLayer(quality.points)') <
