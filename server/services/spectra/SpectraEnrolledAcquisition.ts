@@ -21,6 +21,9 @@ import {
   acquireSpectraCarrierLocations,
   getSpectraCarrierLocationCapabilities,
 } from './SpectraCarrierLocationAdapters';
+import {
+  loadLatestSpectraEnrolledDeviceTelemetry,
+} from './SpectraEnrolledTelemetryStore';
 
 export interface SpectraEnrolledAcquisitionInput {
   userId: string;
@@ -42,6 +45,7 @@ interface Deps {
   ownTracks: typeof acquireSpectraOwnTracks;
   traccar: typeof acquireSpectraTraccar;
   carrier: typeof acquireSpectraCarrierLocations;
+  inbox: typeof loadLatestSpectraEnrolledDeviceTelemetry;
 }
 
 function failedResolutionAttempt(
@@ -172,6 +176,13 @@ export function getSpectraEnrolledAcquisitionCapabilities(
   env: NodeJS.ProcessEnv = process.env,
 ) {
   return [
+    {
+      id: 'enrolled-device-inbox-active',
+      label: 'Enrolled Android/Apple device telemetry inbox',
+      normalizerKind: 'canonical-telemetry',
+      target: 'device' as const,
+      configured: true,
+    },
     ...getSpectraActiveAcquisitionCapabilities().map(item => ({ ...item, configured: true })),
     {
       id: 'owntracks-recorder-active',
@@ -210,6 +221,7 @@ export async function acquireSpectraEnrolledTelemetry(
     ownTracks: options.deps?.ownTracks || acquireSpectraOwnTracks,
     traccar: options.deps?.traccar || acquireSpectraTraccar,
     carrier: options.deps?.carrier || acquireSpectraCarrierLocations,
+    inbox: options.deps?.inbox || loadLatestSpectraEnrolledDeviceTelemetry,
   };
 
   const suppliedPhone = String(input.phoneNumber || '').trim();
@@ -248,6 +260,48 @@ export async function acquireSpectraEnrolledTelemetry(
   }
 
   const device = resolution.device;
+  const inboxPromise = deps.inbox(input.userId, device.deviceRef, {
+    maxAgeMs: Math.max(
+      5_000,
+      Math.min(
+        24 * 60 * 60_000,
+        Number(env.SPECTRA_ENROLLED_TELEMETRY_MAX_AGE_MS || 5 * 60_000),
+      ),
+    ),
+  }).then(batch => batch
+    ? {
+        batch: {
+          ...batch,
+          sessionId: input.sessionId,
+          subjectLabel: input.subjectLabel,
+          metadata: {
+            ...(batch.metadata || {}),
+            acquisition: 'enrolled-device-inbox',
+            deviceRef: device.deviceRef,
+            platform: device.platform,
+          },
+        },
+        attempt: {
+          id: 'enrolled-device-inbox-active',
+          label: 'Enrolled Android/Apple device telemetry inbox',
+          status: 'fulfilled' as const,
+          normalizerKind: 'canonical-telemetry',
+          measurementCount: batch.measurements.length,
+        },
+      }
+    : {
+        batch: null,
+        attempt: {
+          id: 'enrolled-device-inbox-active',
+          label: 'Enrolled Android/Apple device telemetry inbox',
+          status: 'skipped' as const,
+          normalizerKind: 'canonical-telemetry',
+          measurementCount: 0,
+          reasonCode: 'no-fresh-telemetry' as const,
+          reason: 'No fresh device-reported telemetry is available for this enrolled device.',
+        },
+      });
+
   const activePromise = deps.active({
     deviceRef: device.deviceRef,
     platform: device.platform,
@@ -281,7 +335,8 @@ export async function acquireSpectraEnrolledTelemetry(
     subjectLabel: input.subjectLabel,
   }, env);
 
-  const [active, ownTracks, traccar, carrier] = await Promise.all([
+  const [inbox, active, ownTracks, traccar, carrier] = await Promise.all([
+    inboxPromise,
     activePromise,
     ownTracksPromise,
     traccarPromise,
@@ -290,12 +345,14 @@ export async function acquireSpectraEnrolledTelemetry(
 
   return {
     batches: [
+      ...(inbox.batch ? [inbox.batch] : []),
       ...active.batches,
       ...(ownTracks.batch ? [ownTracks.batch] : []),
       ...(traccar.batch ? [traccar.batch] : []),
       ...carrier.batches,
     ],
     attempts: [
+      inbox.attempt,
       ...active.attempts,
       ownTracks.attempt,
       traccar.attempt,
