@@ -1468,35 +1468,7 @@ router.post('/telemetry/provider/:providerId/normalize/:kind', async (req: Reque
     });
   }
 
-  const normalizedRecord =
-    normalized && typeof normalized === 'object' && !Array.isArray(normalized)
-      ? normalized as Record<string, any>
-      : {};
-  const normalizedMeasurements = Array.isArray(normalizedRecord.measurements)
-    ? normalizedRecord.measurements.map((measurement: any) => ({
-        ...measurement,
-        metadata: {
-          ...(measurement?.metadata && typeof measurement.metadata === 'object'
-            ? measurement.metadata
-            : {}),
-          deviceRef: enrolled.deviceRef,
-          platform: enrolled.platform,
-        },
-      }))
-    : [];
-  const validation = telemetryBatchSchema.safeParse({
-    ...normalizedRecord,
-    sessionId: undefined,
-    subjectLabel: undefined,
-    measurements: normalizedMeasurements,
-    metadata: {
-      ...(normalizedRecord.metadata && typeof normalizedRecord.metadata === 'object'
-        ? normalizedRecord.metadata
-        : {}),
-      deviceRef: enrolled.deviceRef,
-      platform: enrolled.platform,
-    },
-  });
+  const validation = telemetryBatchSchema.safeParse(normalized);
   if (!validation.success) {
     return res.status(400).json({
       success: false,
@@ -1672,7 +1644,35 @@ router.post('/telemetry/enrolled/:deviceRef/normalize/:kind', async (req: Reques
     });
   }
 
-  const validation = telemetryBatchSchema.safeParse(normalized);
+  const normalizedRecord =
+    normalized && typeof normalized === 'object' && !Array.isArray(normalized)
+      ? normalized as Record<string, any>
+      : {};
+  const normalizedMeasurements = Array.isArray(normalizedRecord.measurements)
+    ? normalizedRecord.measurements.map((measurement: any) => ({
+        ...measurement,
+        metadata: {
+          ...(measurement?.metadata && typeof measurement.metadata === 'object'
+            ? measurement.metadata
+            : {}),
+          deviceRef: enrolled.deviceRef,
+          platform: enrolled.platform,
+        },
+      }))
+    : [];
+  const validation = telemetryBatchSchema.safeParse({
+    ...normalizedRecord,
+    sessionId: undefined,
+    subjectLabel: undefined,
+    measurements: normalizedMeasurements,
+    metadata: {
+      ...(normalizedRecord.metadata && typeof normalizedRecord.metadata === 'object'
+        ? normalizedRecord.metadata
+        : {}),
+      deviceRef: enrolled.deviceRef,
+      platform: enrolled.platform,
+    },
+  });
   if (!validation.success) {
     return res.status(400).json({
       success: false,
