@@ -142,6 +142,22 @@ assert.equal(latestParameters?.[0], 'tenant-a');
 assert.equal(latestParameters?.[1], 'ANDROID-DEVICE-A');
 assert.equal(latestParameters?.[2], 120_000);
 
+const futureBatch = {
+  ...batch,
+  measurements: [{
+    ...(batch.measurements[0] as any),
+    timestamp: new Date(Date.now() + 10 * 60_000).toISOString(),
+  }],
+};
+const futureStored = await persistSpectraEnrolledDeviceTelemetry(
+  authorized!,
+  'canonical-telemetry',
+  futureBatch as any,
+  { query: async () => ({ rows: [] }) },
+);
+assert.equal(futureStored, false,
+  'implausibly future device telemetry must not enter the enrolled inbox');
+
 const missing = await loadLatestSpectraEnrolledDeviceTelemetry(
   'tenant-a',
   'android-device-a',
