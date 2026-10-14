@@ -1,4 +1,5 @@
 import { getSpectraActiveAcquisitionCapabilities } from './SpectraActiveAcquisition';
+import { getSpectraEnrolledAcquisitionCapabilities } from './SpectraEnrolledAcquisition';
 import { describeSpectraAdapterConfiguration } from './SpectraConfigurationDiagnostics';
 
 export type SpectraAdapterMode =
@@ -34,6 +35,8 @@ const anyEnv = (...names: string[]) =>
   names.some(name => Boolean(String(process.env[name] || '').trim()));
 const activeAdapterConfigured = (id: string) =>
   getSpectraActiveAcquisitionCapabilities().some(item => item.id === id);
+const enrolledAdapterConfigured = (id: string) =>
+  getSpectraEnrolledAcquisitionCapabilities().some(item => item.id === id && item.configured !== false);
 
 const builtinActiveAdapterIds = new Set([
   'android-managed-location-active',
@@ -125,6 +128,46 @@ export const SPECTRA_ADAPTER_CAPABILITIES: SpectraAdapterCapability[] = [
     priority: 'critical',
     supportsRealtime: true,
     notes: 'Configured HTTPS provider/device collectors can be queried during acquisition and routed through an existing SPECTRA normalizer or the canonical telemetry schema.',
+  },
+  {
+    id: 'owntracks-recorder-active',
+    label: 'OwnTracks Recorder enrolled-device location',
+    mode: 'provider-pull',
+    sourceTypes: ['device_gps'],
+    configured: () => enrolledAdapterConfigured('owntracks-recorder-active'),
+    priority: 'high',
+    supportsRealtime: true,
+    notes: 'Pulls the latest bounded position history only for the enrolled OwnTracks user/device binding.',
+  },
+  {
+    id: 'traccar-active',
+    label: 'Traccar enrolled-device location',
+    mode: 'provider-pull',
+    sourceTypes: ['device_gps'],
+    configured: () => enrolledAdapterConfigured('traccar-active'),
+    priority: 'high',
+    supportsRealtime: true,
+    notes: 'Verifies the enrolled Traccar device before retrieving that device latest valid position.',
+  },
+  {
+    id: 'camara-location-retrieval-active',
+    label: 'CAMARA active carrier location retrieval',
+    mode: 'provider-pull',
+    sourceTypes: ['network_region'],
+    configured: () => enrolledAdapterConfigured('camara-location-retrieval-active'),
+    priority: 'critical',
+    supportsRealtime: true,
+    notes: 'Dedicated phone-bound carrier lane; generic active-provider JSON cannot impersonate this integration.',
+  },
+  {
+    id: 'vonage-location-retrieval-active',
+    label: 'Vonage Device Location Retrieval',
+    mode: 'provider-pull',
+    sourceTypes: ['network_region'],
+    configured: () => enrolledAdapterConfigured('vonage-location-retrieval-active'),
+    priority: 'critical',
+    supportsRealtime: true,
+    notes: 'Uses a configured bearer token or renewable Network Features application/CIBA credentials for the enrolled phone.',
   },
   {
     id: 'configured-anchor-catalog',
