@@ -16,6 +16,7 @@ node scripts/verify-spectra-feed-diagnostics.cjs
 node scripts/verify-spectra-pipeline.cjs
 node --import tsx scripts/verify-spectra-enrolled-acquisition.ts
 node --import tsx scripts/verify-spectra-enrolled-device-inbox.ts
+node scripts/verify-spectra-mobile-collectors.cjs
 node --import tsx scripts/verify-spectra-external-live-sources.ts
 node scripts/verify-spectra-provider-runtime.cjs
 node scripts/verify-spectra-provider-smoke.cjs
