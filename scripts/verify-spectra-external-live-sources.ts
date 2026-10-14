@@ -222,29 +222,15 @@ try {
       SPECTRA_CAMARA_LOCATION_DEVICE_SOURCE: 'token',
       SPECTRA_VONAGE_LOCATION_TOKEN: '',
     } as NodeJS.ProcessEnv;
-    globalThis.fetch = async (input: any, init?: RequestInit) => {
-      assert.equal(String(input), 'https://camara.example/retrieve');
-      const body = JSON.parse(String(init?.body || '{}'));
-      assert.equal(body.device, undefined,
-        'CAMARA three-legged/token-bound mode must not redundantly send a device identifier');
-      assert.equal(body.maxAge, 90);
-      return new Response(JSON.stringify({
-        lastLocationTime: '2026-10-03T15:05:02Z',
-        area: {
-          areaType: 'CIRCLE',
-          center: { latitude: 41.2705, longitude: -95.9505 },
-          radius: 450,
-        },
-      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
-    };
     const tokenBound = await acquireSpectraCarrierLocations(
       '+14025550123',
       { sessionId: 's3-token', subjectLabel: 'Jane Doe' },
       tokenBoundEnv,
     );
-    assert.equal(tokenBound.batches.length, 1);
+    assert.equal(tokenBound.batches.length, 0);
     assert.equal(tokenBound.attempts.find(item =>
-      item.id === 'camara-location-retrieval-active')?.status, 'fulfilled');
+      item.id === 'camara-location-retrieval-active')?.reasonCode, 'not-configured',
+      'a static token-bound CAMARA lane must not be reused across enrolled phones');
 
     globalThis.fetch = async (input: any) => {
       if (String(input).includes('camara.example')) {
