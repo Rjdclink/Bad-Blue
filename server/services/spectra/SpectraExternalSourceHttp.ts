@@ -106,14 +106,16 @@ export async function fetchSpectraConfiguredJson(
   url: URL,
   init: RequestInit,
   timeoutMs = 7_000,
+  maxAttempts = 2,
 ): Promise<any> {
   const boundedTimeout = Math.max(1_000, Math.min(15_000, timeoutMs));
+  const attemptLimit = Math.max(1, Math.min(2, Math.floor(maxAttempts)));
   let lastError: unknown;
 
   // At most two attempts. Permanent client/auth/quota/rate-limit responses are
   // never retried; transient network, 5xx and malformed-response failures get
   // one bounded recovery attempt and then the caller skips this source.
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+  for (let attempt = 0; attempt < attemptLimit; attempt += 1) {
     try {
       const response = await discoveryFetch(fetch, url, {
         ...init,
@@ -127,7 +129,7 @@ export async function fetchSpectraConfiguredJson(
           configuredProviderCategory(response.status),
           response.status,
         );
-        if (!transientConfiguredProviderError(error) || attempt === 1) throw error;
+        if (!transientConfiguredProviderError(error) || attempt === attemptLimit - 1) throw error;
         lastError = error;
       } else {
         try {
@@ -139,7 +141,7 @@ export async function fetchSpectraConfiguredJson(
                 'Configured provider returned invalid JSON.',
                 'invalid-response',
               );
-          if (attempt === 1) throw normalized;
+          if (attempt === attemptLimit - 1) throw normalized;
           lastError = normalized;
         }
       }
@@ -150,7 +152,7 @@ export async function fetchSpectraConfiguredJson(
             'Configured provider request failed.',
             'network',
           );
-      if (!transientConfiguredProviderError(normalized) || attempt === 1) throw normalized;
+      if (!transientConfiguredProviderError(normalized) || attempt === attemptLimit - 1) throw normalized;
       lastError = normalized;
     }
     await sleep(150);
