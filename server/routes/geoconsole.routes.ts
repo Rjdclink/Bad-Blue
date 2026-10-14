@@ -1612,11 +1612,36 @@ router.post('/telemetry/enrolled/:deviceRef/normalize/:kind', async (req: Reques
   let normalized: unknown;
   try {
     if (kind === 'canonical-telemetry') {
+      const rawMeasurements = Array.isArray(requestBody.measurements)
+        ? requestBody.measurements
+        : [];
+      const conflictingMeasurement = rawMeasurements.some((measurement: any) => {
+        const claimed = typeof measurement?.metadata?.deviceRef === 'string'
+          ? measurement.metadata.deviceRef.trim()
+          : '';
+        return claimed && claimed.toLowerCase() !== enrolled.deviceRef.toLowerCase();
+      });
+      if (conflictingMeasurement) {
+        return res.status(409).json({
+          success: false,
+          error: 'Telemetry measurement device reference does not match the enrolled device.',
+        });
+      }
       normalized = {
         ...requestBody,
         sessionId: undefined,
         subjectLabel: undefined,
         sourceId: String(requestBody.sourceId || `enrolled-${enrolled.platform}-device`).slice(0, 200),
+        measurements: rawMeasurements.map((measurement: any) => ({
+          ...measurement,
+          metadata: {
+            ...(measurement?.metadata && typeof measurement.metadata === 'object'
+              ? measurement.metadata
+              : {}),
+            deviceRef: enrolled.deviceRef,
+            platform: enrolled.platform,
+          },
+        })),
         metadata: {
           ...(requestBody.metadata && typeof requestBody.metadata === 'object'
             ? requestBody.metadata as Record<string, unknown>
