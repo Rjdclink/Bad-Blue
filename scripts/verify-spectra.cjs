@@ -571,7 +571,7 @@ test('CAMARA and Vonage carrier location lanes are parallel and bounded outside 
   vonageAuth.includes('SPECTRA_VONAGE_OAUTH_SCOPE') &&
   vonageAuth.includes('urn:openid:params:grant-type:ciba') &&
   carrierLocationAdapters.includes('SPECTRA_CAMARA_LOCATION_DEVICE_SOURCE') &&
-  carrierLocationAdapters.includes("deviceSource === 'phone'") &&
+  carrierLocationAdapters.includes('camaraPhoneBoundMode') &&
   carrierLocationAdapters.includes("'camara-location-retrieval'") &&
   !activeAcquisition.includes('SPECTRA_CAMARA_LOCATION_RETRIEVAL_URL'));
 
