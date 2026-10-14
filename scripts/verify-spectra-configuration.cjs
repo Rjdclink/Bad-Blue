@@ -104,6 +104,19 @@ check('enrolled live-source readiness is configuration-only and value-safe', () 
   });
   assert.equal(row(incompleteVonage, 'vonage-location').configured, false);
 });
+check('empty enrollment bootstrap does not claim a configured registry', () => {
+  const emptyBootstrap = d.getSpectraConfigurationDiagnostics({
+    SPECTRA_ENROLLED_DEVICES_JSON: '[]',
+  });
+  assert.equal(emptyBootstrap.enrolledSources.enrollmentRegistryConfigured, false);
+  const populatedBootstrap = d.getSpectraConfigurationDiagnostics({
+    SPECTRA_ENROLLED_DEVICES_JSON: JSON.stringify([{
+      userId: 'fixture-user', phoneNumber: '+14025550123',
+      deviceRef: 'fixture-device', platform: 'android',
+    }]),
+  });
+  assert.equal(populatedBootstrap.enrolledSources.enrollmentRegistryConfigured, true);
+});
 check('Census key presence does not imply geocoder use', () => {
   const report = d.getSpectraConfigurationDiagnostics({ CENSUS_API_KEY: marker });
   assert.equal(report.censusGeocoder.censusDataKeyPresent, true);
