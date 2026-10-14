@@ -316,9 +316,9 @@ try {
       url: 'https://publisher.example/article',
       requestedUrl: 'https://publisher.example/article',
       retrievedAt: '2026-10-03T15:06:00Z',
-      title: 'Public profile',
+      title: 'Jane Doe public profile',
       textExcerpt: [
-        'Contact jane@example.test or +1 (402) 555-0123.',
+        'Jane Doe can be reached at jane@example.test or +1 (402) 555-0123.',
         'Public profile @jane_example.',
         'See https://bsky.app/profile/jane.example and https://portfolio.example/about.',
       ].join(' '),
@@ -340,6 +340,19 @@ try {
     );
     const exhausted = buildSpectraRecursiveClueQueries('Jane Doe', records, seen, 4);
     assert.equal(exhausted.length, 0, 'all retrieved clues are exhausted without duplicates');
+
+    const unrelated: SpectraRetrievedEvidence[] = [{
+      ...records[0],
+      url: 'https://unrelated.example/profile',
+      requestedUrl: 'https://unrelated.example/profile',
+      title: 'Another Person',
+      textExcerpt: 'Contact other@example.test or +1 202 555 0199.',
+    }];
+    assert.equal(
+      buildSpectraRecursiveClueQueries('Jane Doe', unrelated, new Set<string>(), 4).length,
+      0,
+      'retrieved clues from an unrelated page must not seed a recursive branch',
+    );
   }
 
   console.log('SPECTRA OwnTracks, Traccar, carrier, PhoneInfoga and recursive-source verification passed.');
