@@ -58,6 +58,7 @@ const resolveByRef = (
 
 let activeCalls: SpectraActiveAcquisitionInput[] = [];
 let carrierCalls = 0;
+const carrierPhones: string[] = [];
 
 const active = async (
   input: SpectraActiveAcquisitionInput,
@@ -164,8 +165,9 @@ const active = async (
   return { batches: [], attempts: [] };
 };
 
-const carrier = async () => {
+const carrier = async (phoneNumber: string) => {
   carrierCalls += 1;
+  carrierPhones.push(phoneNumber);
   return {
     batches: [],
     attempts: [{
@@ -231,6 +233,8 @@ assert.equal(directApple.resolution?.status, 'matched');
 assert.equal(directApple.resolvedDeviceRef, 'apple-device-a');
 assert.equal(activeCalls.at(-1)?.platform, 'ios',
   'direct deviceRef lookup must inherit the enrolled platform');
+assert.equal(carrierPhones.at(-1), '+14025550124',
+  'direct deviceRef lookup must recover the enrolled phone for carrier lanes');
 
 const callsBeforeUnenrolledRef = activeCalls.length;
 const unenrolledRef = await acquireSpectraEnrolledTelemetry({
