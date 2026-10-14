@@ -172,6 +172,17 @@ async function optionalDeviceLane(
   }
 }
 
+function durableEnrollmentStoreConfigured(env: NodeJS.ProcessEnv): boolean {
+  return Boolean(
+    String(
+      env.NEON_DATABASE_URL
+      || env.DATABASE_URL
+      || env.SUPABASE_DATABASE_URL
+      || ''
+    ).trim()
+  );
+}
+
 export function getSpectraEnrolledAcquisitionCapabilities(
   env: NodeJS.ProcessEnv = process.env,
 ) {
@@ -181,7 +192,7 @@ export function getSpectraEnrolledAcquisitionCapabilities(
       label: 'Enrolled Android/Apple device telemetry inbox',
       normalizerKind: 'canonical-telemetry',
       target: 'device' as const,
-      configured: true,
+      configured: durableEnrollmentStoreConfigured(env),
     },
     ...getSpectraActiveAcquisitionCapabilities().map(item => ({ ...item, configured: true })),
     {
