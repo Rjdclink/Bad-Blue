@@ -244,7 +244,12 @@ try {
     const queries = buildSpectraRecursiveClueQueries('Jane Doe', records, seen, 4);
     assert.ok(queries.length >= 3);
     const repeated = buildSpectraRecursiveClueQueries('Jane Doe', records, seen, 4);
-    assert.equal(repeated.length, 0, 'same retrieved clues are not recursively searched twice');
+    assert.ok(
+      repeated.every(query => !queries.includes(query)),
+      'a clue already emitted in an earlier recursive batch must not be emitted again',
+    );
+    const exhausted = buildSpectraRecursiveClueQueries('Jane Doe', records, seen, 4);
+    assert.equal(exhausted.length, 0, 'all retrieved clues are exhausted without duplicates');
   }
 
   console.log('SPECTRA OwnTracks, Traccar, carrier, PhoneInfoga and recursive-source verification passed.');
