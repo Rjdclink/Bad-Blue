@@ -107,6 +107,15 @@ configuration cannot silently turn a carrier operation into an arbitrary
 target. When configured, both carrier lanes run independently in parallel with
 device and tracker acquisition.
 
+CAMARA supports both standard subject-identification patterns. With
+`SPECTRA_CAMARA_LOCATION_DEVICE_SOURCE=phone` (the default), SPECTRA sends the
+enrolled E.164 number in the request for a two-legged access-token integration.
+With `SPECTRA_CAMARA_LOCATION_DEVICE_SOURCE=token`, SPECTRA omits the
+`device` object so a three-legged CAMARA access token can identify the device
+without triggering the specification's unnecessary-identifier error. The
+enrolled phone mapping still gates the SPECTRA acquisition before this carrier
+lane is invoked.
+
 One carrier failure does not cancel the other carrier, Android/Apple,
 OwnTracks, Traccar or other active sources.
 
