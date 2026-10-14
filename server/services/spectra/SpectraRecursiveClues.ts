@@ -36,6 +36,38 @@ function urlKind(url: URL): SpectraRecursiveClueKind {
     : 'linked-url';
 }
 
+function recordSupportsSubject(subject: string, record: SpectraRetrievedEvidence): boolean {
+  const subjectText = clean(subject).toLowerCase();
+  if (!subjectText) return false;
+  const recordText = clean([record.title, record.textExcerpt].filter(Boolean).join(' ')).toLowerCase();
+  if (!recordText) return false;
+
+  const email = subjectText.match(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i)?.[0]?.toLowerCase();
+  if (email) return recordText.includes(email);
+
+  const subjectDigits = subjectText.replace(/\D/g, '');
+  if (subjectDigits.length >= 7) {
+    return recordText.replace(/\D/g, '').includes(subjectDigits);
+  }
+
+  const tokens = subjectText
+    .replace(/[^a-z0-9]+/g, ' ')
+    .split(/\s+/)
+    .filter(token => token.length >= 2);
+  if (!tokens.length) return false;
+  const matched = tokens.filter(token =>
+    new RegExp(`(?:^|[^a-z0-9])${token.replace(/[.*+?^$\{\}()|[\]\\]/g, '\\function urlKind(url: URL): SpectraRecursiveClueKind {
+  const host = url.hostname.toLowerCase().replace(/^www\./, '');
+  return /(?:facebook\.com|instagram\.com|linkedin\.com|tiktok\.com|x\.com|twitter\.com|bsky\.app|mastodon)/i.test(host)
+    ? 'profile-url'
+    : 'linked-url';
+}
+')}(?:$|[^a-z0-9])`, 'i')
+      .test(recordText)
+  );
+  return tokens.length === 1 ? matched.length === 1 : matched.length >= 2;
+}
+
 export function extractSpectraRecursiveClues(
   records: readonly SpectraRetrievedEvidence[],
   limit = 24,
@@ -89,7 +121,8 @@ export function buildSpectraRecursiveClueQueries(
     : '';
   const queries: string[] = [];
 
-  for (const clue of extractSpectraRecursiveClues(records, 32)) {
+  const subjectBoundRecords = records.filter(record => recordSupportsSubject(subject, record));
+  for (const clue of extractSpectraRecursiveClues(subjectBoundRecords, 32)) {
     const key = `${clue.kind}:${clue.value.toLowerCase()}`;
     if (seenClues.has(key)) continue;
     seenClues.add(key);
