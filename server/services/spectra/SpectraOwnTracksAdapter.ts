@@ -28,6 +28,14 @@ export function spectraOwnTracksConfigured(env: NodeJS.ProcessEnv = process.env)
   return Boolean(configuredBase(env));
 }
 
+function recorderLocationsEndpoint(base: URL): URL {
+  const path = base.pathname.replace(/\/+$/, '');
+  return joinSpectraEndpoint(
+    base,
+    path.endsWith('/owntracks') ? '/api/0/locations' : '/owntracks/api/0/locations',
+  );
+}
+
 function authorization(env: NodeJS.ProcessEnv): Record<string, string> {
   const explicit = String(env.SPECTRA_OWNTRACKS_AUTHORIZATION || '').trim();
   if (explicit) return bearerHeader(explicit);
@@ -60,7 +68,7 @@ export async function acquireSpectraOwnTracks(
     throw new Error('Enrolled device has no OwnTracks user/device binding.');
   }
 
-  const endpoint = joinSpectraEndpoint(base, '/owntracks/api/0/locations');
+  const endpoint = recorderLocationsEndpoint(base);
   const body = new URLSearchParams({ user, device: tracker });
   const payload = await fetchSpectraConfiguredJson(endpoint, {
     method: 'POST',
