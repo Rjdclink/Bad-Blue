@@ -488,13 +488,18 @@ test('SPECTRA resolves enrolled phones before redundant Android and Apple acquis
   enrolledAcquisition.includes('acquireSpectraCarrierLocations') &&
   enrolledRegistry.includes('spectra_enrolled_devices') &&
   enrolledRegistry.includes('suppliedDeviceRef') &&
+  enrolledRegistry.includes('resolveSpectraEnrolledDeviceByRef') &&
   enrolledRegistry.includes("mismatch: 'device-ref'") &&
+  enrolledAcquisition.includes('resolveByRef') &&
+  enrolledAcquisition.includes('No enrolled phone number or device reference was supplied.') &&
   activeAcquisition.includes("target: 'device'") &&
   activeAcquisition.includes("'canonical-telemetry'") &&
   activeAcquisition.includes('SPECTRA_ANDROID_RADIO_COLLECTOR_URL_TEMPLATE') &&
   activeAcquisition.includes('SPECTRA_APPLE_DEVICE_COLLECTOR_URL_TEMPLATE') &&
   activeAcquisition.includes('SPECTRA_ANDROID_MDM_LOCATION_URL_TEMPLATE') &&
   activeAcquisition.includes('SPECTRA_APPLE_MDM_LOCATION_URL_TEMPLATE') &&
+  activeAcquisition.includes('notConfiguredAttempts') &&
+  activeAcquisition.includes('RESERVED_BUILTIN_ACTIVE_IDS') &&
   !activeAcquisition.includes("target: 'phone'") &&
   adapterRegistry.includes("id: 'android-managed-location-active'") &&
   adapterRegistry.includes("id: 'apple-managed-location-active'") &&
@@ -523,6 +528,8 @@ test('CAMARA and Vonage carrier location lanes are parallel and bounded outside 
   carrierLocationAdapters.includes('Promise.all(lanes.map') &&
   carrierLocationAdapters.includes('SPECTRA_CAMARA_LOCATION_RETRIEVAL_URL') &&
   carrierLocationAdapters.includes('SPECTRA_VONAGE_LOCATION_TOKEN') &&
+  carrierLocationAdapters.includes('SPECTRA_CAMARA_LOCATION_DEVICE_SOURCE') &&
+  carrierLocationAdapters.includes("deviceSource === 'phone'") &&
   carrierLocationAdapters.includes("'camara-location-retrieval'") &&
   !activeAcquisition.includes('SPECTRA_CAMARA_LOCATION_RETRIEVAL_URL'));
 
@@ -530,6 +537,10 @@ test('PhoneInfoga is a remote optional source rather than an installed Bad-Blue 
   phoneInfoga.includes('SPECTRA_PHONEINFOGA_URL') &&
   phoneInfoga.includes('/api/v2/numbers') &&
   phoneInfoga.includes('/api/v2/scanners/') &&
+  phoneInfoga.includes('boundedPhoneInfogaQueries') &&
+  phoneInfoga.includes('searchQueries') &&
+  routes.includes('phoneInfoga.searchQueries') &&
+  routes.includes('phoneInfogaExpansion') &&
   !dockerfile.toLowerCase().includes('phoneinfoga'));
 
 test('Recursive search learns new public clues only from retrieved source records',
