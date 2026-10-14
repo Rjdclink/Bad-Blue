@@ -234,8 +234,12 @@ try {
   assert.equal(androidRadio.attempts[0]?.status, 'fulfilled');
 
   let transientActiveCalls = 0;
-  globalThis.fetch = async () => {
+  const retryRequestIds: string[] = [];
+  const retryBodies: string[] = [];
+  globalThis.fetch = async (_input: any, init?: RequestInit) => {
     transientActiveCalls += 1;
+    retryRequestIds.push(String((init?.headers as Record<string, string>)?.['X-Spectra-Acquisition-Id'] || ''));
+    retryBodies.push(String(init?.body || ''));
     if (transientActiveCalls === 1) {
       return new Response('temporary upstream outage', { status: 503 });
     }
@@ -255,6 +259,11 @@ try {
   assert.equal(recoveredAndroid.batches.length, 1);
   assert.equal(transientActiveCalls, 2,
     'active collector gets exactly one recovery attempt after a transient 5xx');
+  assert.ok(retryRequestIds[0]);
+  assert.equal(retryRequestIds[0], retryRequestIds[1],
+    'transient retries keep one acquisition id');
+  assert.equal(retryBodies[0], retryBodies[1],
+    'transient retries keep an identical idempotent request body');
 
   let permanentActiveCalls = 0;
   globalThis.fetch = async () => {
