@@ -54,7 +54,8 @@ export function buildSpectraPipelineDiagnostics(input: PipelineInput) {
   const collectors = new Map<string, { family: string; fulfilled: number; failed: number; skipped: number; measurements: number; reasons: Record<string, number> }>();
   for (const row of input.activeAttempts) {
     const family =
-      row.id === 'apple-device-collector-active' ? 'apple-device-collector'
+      row.id === 'enrolled-device-inbox-active' ? 'enrolled-device-inbox'
+      : row.id === 'apple-device-collector-active' ? 'apple-device-collector'
       : row.id === 'owntracks-recorder-active' ? 'owntracks-recorder'
       : row.id === 'traccar-active' ? 'traccar'
       : [
@@ -69,7 +70,7 @@ export function buildSpectraPipelineDiagnostics(input: PipelineInput) {
     entry.measurements += count(row.measurementCount || 0);
     if (row.reasonCode) {
       const code = [
-        'not-configured', 'not-enrolled', 'registry-unavailable', 'missing-device',
+        'not-configured', 'not-enrolled', 'registry-unavailable', 'no-fresh-telemetry', 'missing-device',
         'identity-mismatch', 'platform-mismatch', 'request-failed',
       ].includes(row.reasonCode) ? row.reasonCode : 'other';
       entry.reasons[code] = (entry.reasons[code] || 0) + 1;
