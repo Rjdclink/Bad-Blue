@@ -498,6 +498,7 @@ async function fetchAdapter(
   });
 
   if (!response.ok) {
+    void response.body?.cancel().catch(() => undefined);
     throw new Error(`Active provider returned HTTP ${response.status}.`);
   }
 
