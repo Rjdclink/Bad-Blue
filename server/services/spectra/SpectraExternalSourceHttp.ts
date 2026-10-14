@@ -37,11 +37,21 @@ function transientConfiguredProviderError(error: unknown): boolean {
     return error.category === 'upstream' || error.category === 'network'
       || error.category === 'invalid-response';
   }
-  const candidate = error as { name?: string; code?: string };
-  return candidate?.name === 'TimeoutError'
-    || candidate?.name === 'AbortError'
-    || ['ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'EAI_AGAIN', 'ENOTFOUND']
-      .includes(String(candidate?.code || ''));
+  const seen = new Set<unknown>();
+  let candidate: any = error;
+  for (let depth = 0; candidate && depth < 5 && !seen.has(candidate); depth += 1) {
+    seen.add(candidate);
+    if (
+      candidate.name === 'TimeoutError'
+      || candidate.name === 'AbortError'
+      || candidate.name === 'SyntaxError'
+      || ['ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'EAI_AGAIN', 'ENOTFOUND',
+        'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT']
+        .includes(String(candidate.code || ''))
+    ) return true;
+    candidate = candidate.cause;
+  }
+  return false;
 }
 
 function sleep(milliseconds: number): Promise<void> {
