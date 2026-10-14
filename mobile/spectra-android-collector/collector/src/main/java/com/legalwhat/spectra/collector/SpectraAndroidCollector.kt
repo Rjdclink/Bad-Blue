@@ -11,7 +11,6 @@ import android.location.GnssMeasurementsEvent
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
-import android.net.Uri
 import android.net.wifi.WifiManager
 import android.net.wifi.rtt.RangingRequest
 import android.net.wifi.rtt.RangingResult
@@ -30,6 +29,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URI
+import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.time.Instant
 import java.util.concurrent.CopyOnWriteArrayList
@@ -52,6 +52,22 @@ class SpectraAndroidCollector(
     private val ingestToken: String,
     private val executor: ExecutorService = Executors.newSingleThreadExecutor(),
 ) {
+    companion object {
+        fun reportingEndpoint(endpointBaseUrl: String, deviceRef: String): URI {
+            val base = endpointBaseUrl.trim().trimEnd('/')
+            require(base.startsWith("https://")) {
+                "SPECTRA enrolled-device reporting requires HTTPS."
+            }
+            require(deviceRef.isNotBlank()) { "Enrolled deviceRef is required." }
+            val encodedRef = URLEncoder
+                .encode(deviceRef.trim(), StandardCharsets.UTF_8)
+                .replace("+", "%20")
+            return URI.create(
+                "$base/api/geoconsole/telemetry/enrolled/$encodedRef/normalize/android-radio-collector"
+            )
+        }
+    }
+
     data class UploadResult(val statusCode: Int, val accepted: Boolean, val response: String)
 
     private val endpointBase = endpointBaseUrl.trimEnd('/')
@@ -435,10 +451,7 @@ class SpectraAndroidCollector(
         }
         require(deviceRef.isNotBlank() && ingestToken.length >= 16)
 
-        val encodedRef = Uri.encode(deviceRef, "-._~")
-        val endpoint = URI.create(
-            "$endpointBase/api/geoconsole/telemetry/enrolled/$encodedRef/normalize/android-radio-collector"
-        ).toURL()
+        val endpoint = reportingEndpoint(endpointBase, deviceRef).toURL()
         val connection = endpoint.openConnection() as HttpURLConnection
         return try {
             connection.requestMethod = "POST"
