@@ -15,6 +15,10 @@ const savedEnv = {
   appleToken: process.env.SPECTRA_APPLE_MDM_LOCATION_TOKEN,
   ciscoUrl: process.env.SPECTRA_CISCO_SPACES_DEVICE_URL_TEMPLATE,
   ciscoToken: process.env.SPECTRA_CISCO_SPACES_TOKEN,
+  androidRadioUrl: process.env.SPECTRA_ANDROID_RADIO_COLLECTOR_URL_TEMPLATE,
+  androidRadioToken: process.env.SPECTRA_ANDROID_RADIO_COLLECTOR_TOKEN,
+  appleCollectorUrl: process.env.SPECTRA_APPLE_DEVICE_COLLECTOR_URL_TEMPLATE,
+  appleCollectorToken: process.env.SPECTRA_APPLE_DEVICE_COLLECTOR_TOKEN,
   activeAdapters: process.env.SPECTRA_ACTIVE_PROVIDER_ADAPTERS,
   anchors: process.env.SPECTRA_ANCHOR_CATALOG_JSON,
 };
@@ -29,6 +33,8 @@ try {
     ['android-managed-location-active', 'SPECTRA_ANDROID_MDM_LOCATION_URL_TEMPLATE', 'SPECTRA_ANDROID_MDM_LOCATION_TOKEN'],
     ['apple-managed-location-active', 'SPECTRA_APPLE_MDM_LOCATION_URL_TEMPLATE', 'SPECTRA_APPLE_MDM_LOCATION_TOKEN'],
     ['cisco-spaces-active-location', 'SPECTRA_CISCO_SPACES_DEVICE_URL_TEMPLATE', 'SPECTRA_CISCO_SPACES_TOKEN'],
+    ['android-radio-collector-active', 'SPECTRA_ANDROID_RADIO_COLLECTOR_URL_TEMPLATE', 'SPECTRA_ANDROID_RADIO_COLLECTOR_TOKEN'],
+    ['apple-device-collector-active', 'SPECTRA_APPLE_DEVICE_COLLECTOR_URL_TEMPLATE', 'SPECTRA_APPLE_DEVICE_COLLECTOR_TOKEN'],
   ]) {
     const adapter = SPECTRA_ADAPTER_CAPABILITIES.find(item => item.id === id)!;
     delete process.env[urlName];
@@ -153,6 +159,133 @@ try {
 
   delete process.env.SPECTRA_APPLE_MDM_LOCATION_URL_TEMPLATE;
   delete process.env.SPECTRA_APPLE_MDM_LOCATION_TOKEN;
+
+  process.env.SPECTRA_ANDROID_RADIO_COLLECTOR_URL_TEMPLATE =
+    'https://radio.example/devices/{{deviceRef}}/measurements';
+  process.env.SPECTRA_ANDROID_RADIO_COLLECTOR_TOKEN = 'radio-token';
+  delete process.env.SPECTRA_APPLE_DEVICE_COLLECTOR_URL_TEMPLATE;
+  delete process.env.SPECTRA_APPLE_DEVICE_COLLECTOR_TOKEN;
+
+  let androidRadioFetches = 0;
+  globalThis.fetch = async (input: any, init?: RequestInit) => {
+    androidRadioFetches++;
+    assert.equal(String(input), 'https://radio.example/devices/android-radio-a/measurements');
+    assert.equal(init?.method, 'POST');
+    assert.equal((init?.headers as Record<string, string>)?.Authorization, 'Bearer radio-token');
+    const request = JSON.parse(String(init?.body || '{}'));
+    assert.equal(request.deviceRef, 'android-radio-a');
+    assert.equal(request.platform, 'android');
+    return new Response(JSON.stringify({
+      deviceRef: 'android-radio-a',
+      cells: [{
+        timestamp: '2026-10-03T14:59:30Z',
+        type: 'lte', mcc: 310, mnc: 260, tac: 44, ci: 123456, pci: 12,
+        signal: { rsrp: -94, rsrq: -9, rssnr: 20 },
+      }],
+      wifiRtt: [{
+        timestamp: '2026-10-03T14:59:30Z',
+        distanceMeters: 6.2,
+        responderLocation: { latitude: 43.55, longitude: -96.73 },
+      }],
+      bleScans: [{
+        timestamp: '2026-10-03T14:59:30Z',
+        gateway: { latitude: 43.5501, longitude: -96.7301 },
+        rssiDbm: -61, txPowerAtOneMeterDbm: -59,
+      }],
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  };
+
+  const androidPlatformSkip = await acquireSpectraActiveTelemetry({
+    deviceRef: 'android-radio-a', platform: 'ios',
+    sessionId: 'fixture-session', subjectLabel: 'managed device',
+  });
+  assert.equal(androidPlatformSkip.batches.length, 0);
+  assert.equal(androidPlatformSkip.attempts[0]?.reasonCode, 'platform-mismatch');
+  assert.equal(androidRadioFetches, 0, 'platform mismatch must skip before network acquisition');
+
+  const androidRadio = await acquireSpectraActiveTelemetry({
+    deviceRef: 'android-radio-a', platform: 'android',
+    sessionId: 'fixture-session', subjectLabel: 'managed device',
+  });
+  assert.equal(androidRadio.batches.length, 1);
+  assert.ok(androidRadio.batches[0].measurements.some(item => item.kind === 'radio'));
+  assert.ok(androidRadio.batches[0].measurements.some(item => item.kind === 'ranging'));
+  assert.equal(androidRadio.attempts[0]?.status, 'fulfilled');
+
+  delete process.env.SPECTRA_ANDROID_RADIO_COLLECTOR_URL_TEMPLATE;
+  delete process.env.SPECTRA_ANDROID_RADIO_COLLECTOR_TOKEN;
+  process.env.SPECTRA_APPLE_DEVICE_COLLECTOR_URL_TEMPLATE =
+    'https://apple-collector.example/devices/{{deviceRef}}/measurements';
+  process.env.SPECTRA_APPLE_DEVICE_COLLECTOR_TOKEN = 'apple-collector-token';
+
+  let appleCollectorFetches = 0;
+  globalThis.fetch = async (input: any, init?: RequestInit) => {
+    appleCollectorFetches++;
+    assert.equal(String(input), 'https://apple-collector.example/devices/apple-collector-a/measurements');
+    const request = JSON.parse(String(init?.body || '{}'));
+    assert.equal(request.deviceRef, 'apple-collector-a');
+    assert.equal(request.platform, 'ios');
+    return new Response(JSON.stringify({
+      deviceRef: 'apple-collector-a',
+      sessionId: 'fixture-session',
+      subjectLabel: 'managed apple',
+      measurements: [{
+        kind: 'position',
+        source: 'device_gps',
+        timestamp: '2026-10-03T15:00:00Z',
+        latitude: 43.551,
+        longitude: -96.731,
+        accuracy: 5,
+        confidence: 0.94,
+        provider: 'apple-core-location',
+        metadata: { deviceRef: 'apple-collector-a', platform: 'ios' },
+      }, {
+        kind: 'ranging',
+        source: 'uwb_range',
+        timestamp: '2026-10-03T15:00:00Z',
+        provider: 'apple-nearby-interaction',
+        anchors: [{
+          id: 'peer-a', latitude: 43.5511, longitude: -96.7311,
+          distanceMeters: 2.4, uncertaintyMeters: 0.2,
+        }],
+        metadata: { deviceRef: 'apple-collector-a', platform: 'ios' },
+      }],
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  };
+
+  const applePlatformSkip = await acquireSpectraActiveTelemetry({
+    deviceRef: 'apple-collector-a', platform: 'android',
+    sessionId: 'fixture-session', subjectLabel: 'managed apple',
+  });
+  assert.equal(applePlatformSkip.batches.length, 0);
+  assert.equal(applePlatformSkip.attempts[0]?.reasonCode, 'platform-mismatch');
+  assert.equal(appleCollectorFetches, 0);
+
+  const appleCollector = await acquireSpectraActiveTelemetry({
+    deviceRef: 'apple-collector-a', platform: 'ios',
+    sessionId: 'fixture-session', subjectLabel: 'managed apple',
+  });
+  assert.equal(appleCollector.batches.length, 1);
+  assert.equal(appleCollector.batches[0].measurements[0]?.source, 'device_gps');
+  assert.equal(appleCollector.batches[0].measurements[1]?.source, 'uwb_range');
+
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    measurements: [{
+      kind: 'position', source: 'device_gps',
+      timestamp: '2026-10-03T15:00:00Z',
+      latitude: 43.551, longitude: -96.731, accuracy: 5, confidence: 0.94,
+      metadata: { deviceRef: 'different-apple-device' },
+    }],
+  }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  const wrongAppleDevice = await acquireSpectraActiveTelemetry({
+    deviceRef: 'apple-collector-a', platform: 'ios',
+    sessionId: 'fixture-session', subjectLabel: 'managed apple',
+  });
+  assert.equal(wrongAppleDevice.batches.length, 0);
+  assert.match(wrongAppleDevice.attempts[0]?.reason || '', /different device/);
+
+  delete process.env.SPECTRA_APPLE_DEVICE_COLLECTOR_URL_TEMPLATE;
+  delete process.env.SPECTRA_APPLE_DEVICE_COLLECTOR_TOKEN;
   process.env.SPECTRA_CISCO_SPACES_DEVICE_URL_TEMPLATE =
     'https://dnaspaces.example/api/location/v1/clients/{{deviceRef}}';
   process.env.SPECTRA_CISCO_SPACES_TOKEN = 'fixture-cisco-token';
@@ -402,6 +535,22 @@ try {
   restoreEnv(
     'SPECTRA_CISCO_SPACES_TOKEN',
     savedEnv.ciscoToken,
+  );
+  restoreEnv(
+    'SPECTRA_ANDROID_RADIO_COLLECTOR_URL_TEMPLATE',
+    savedEnv.androidRadioUrl,
+  );
+  restoreEnv(
+    'SPECTRA_ANDROID_RADIO_COLLECTOR_TOKEN',
+    savedEnv.androidRadioToken,
+  );
+  restoreEnv(
+    'SPECTRA_APPLE_DEVICE_COLLECTOR_URL_TEMPLATE',
+    savedEnv.appleCollectorUrl,
+  );
+  restoreEnv(
+    'SPECTRA_APPLE_DEVICE_COLLECTOR_TOKEN',
+    savedEnv.appleCollectorToken,
   );
   restoreEnv(
     'SPECTRA_ACTIVE_PROVIDER_ADAPTERS',
