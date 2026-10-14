@@ -15,7 +15,13 @@ const credentialGroups = [
   { id: 'apple-device-collector', groups: [['SPECTRA_APPLE_DEVICE_COLLECTOR_URL_TEMPLATE'], ['SPECTRA_APPLE_DEVICE_COLLECTOR_TOKEN']] },
   { id: 'traccar', groups: [['SPECTRA_TRACCAR_URL'], ['SPECTRA_TRACCAR_TOKEN']] },
   { id: 'camara-location', groups: [['SPECTRA_CAMARA_LOCATION_RETRIEVAL_URL'], ['SPECTRA_CAMARA_LOCATION_RETRIEVAL_TOKEN']] },
-  { id: 'vonage-location', groups: [['SPECTRA_VONAGE_LOCATION_TOKEN']] },
+  {
+    id: 'vonage-location',
+    groups: [
+      ['SPECTRA_VONAGE_LOCATION_TOKEN', 'SPECTRA_VONAGE_APPLICATION_ID'],
+      ['SPECTRA_VONAGE_LOCATION_TOKEN', 'SPECTRA_VONAGE_PRIVATE_KEY'],
+    ],
+  },
   { id: 'phoneinfoga', groups: [['SPECTRA_PHONEINFOGA_URL']] },
 ] as const;
 
