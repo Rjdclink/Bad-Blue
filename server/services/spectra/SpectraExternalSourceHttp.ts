@@ -2,6 +2,52 @@ import { discoveryFetch } from '../../lexara/DiscoveryDiagnostics';
 
 const MAX_JSON_BYTES = 2_000_000;
 
+export type SpectraConfiguredProviderErrorCategory =
+  | 'authentication'
+  | 'authorization'
+  | 'quota'
+  | 'rate-limit'
+  | 'client'
+  | 'upstream'
+  | 'network'
+  | 'invalid-response';
+
+export class SpectraConfiguredProviderError extends Error {
+  constructor(
+    message: string,
+    public readonly category: SpectraConfiguredProviderErrorCategory,
+    public readonly status?: number,
+  ) {
+    super(message);
+    this.name = 'SpectraConfiguredProviderError';
+  }
+}
+
+function configuredProviderCategory(status: number): SpectraConfiguredProviderErrorCategory {
+  if (status === 401) return 'authentication';
+  if (status === 403) return 'authorization';
+  if ([402, 432, 433].includes(status)) return 'quota';
+  if (status === 429) return 'rate-limit';
+  if (status >= 500) return 'upstream';
+  return 'client';
+}
+
+function transientConfiguredProviderError(error: unknown): boolean {
+  if (error instanceof SpectraConfiguredProviderError) {
+    return error.category === 'upstream' || error.category === 'network'
+      || error.category === 'invalid-response';
+  }
+  const candidate = error as { name?: string; code?: string };
+  return candidate?.name === 'TimeoutError'
+    || candidate?.name === 'AbortError'
+    || ['ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'EAI_AGAIN', 'ENOTFOUND']
+      .includes(String(candidate?.code || ''));
+}
+
+function sleep(milliseconds: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, milliseconds));
+}
+
 export function configuredSpectraEndpoint(value: string | undefined): URL | null {
   const raw = String(value || '').trim();
   if (!raw) return null;
@@ -61,16 +107,61 @@ export async function fetchSpectraConfiguredJson(
   init: RequestInit,
   timeoutMs = 7_000,
 ): Promise<any> {
-  const response = await discoveryFetch(fetch, url, {
-    ...init,
-    redirect: 'error',
-    signal: AbortSignal.timeout(Math.max(1_000, Math.min(15_000, timeoutMs))),
-  });
-  if (!response.ok) {
-    void response.body?.cancel().catch(() => undefined);
-    throw new Error(`Configured provider returned HTTP ${response.status}.`);
+  const boundedTimeout = Math.max(1_000, Math.min(15_000, timeoutMs));
+  let lastError: unknown;
+
+  // At most two attempts. Permanent client/auth/quota/rate-limit responses are
+  // never retried; transient network, 5xx and malformed-response failures get
+  // one bounded recovery attempt and then the caller skips this source.
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const response = await discoveryFetch(fetch, url, {
+        ...init,
+        redirect: 'error',
+        signal: AbortSignal.timeout(boundedTimeout),
+      });
+      if (!response.ok) {
+        void response.body?.cancel().catch(() => undefined);
+        const error = new SpectraConfiguredProviderError(
+          `Configured provider returned HTTP ${response.status}.`,
+          configuredProviderCategory(response.status),
+          response.status,
+        );
+        if (!transientConfiguredProviderError(error) || attempt === 1) throw error;
+        lastError = error;
+      } else {
+        try {
+          return await readSpectraJsonResponse(response);
+        } catch (error) {
+          const normalized = error instanceof SpectraConfiguredProviderError
+            ? error
+            : new SpectraConfiguredProviderError(
+                'Configured provider returned invalid JSON.',
+                'invalid-response',
+              );
+          if (attempt === 1) throw normalized;
+          lastError = normalized;
+        }
+      }
+    } catch (error) {
+      const normalized = error instanceof SpectraConfiguredProviderError
+        ? error
+        : new SpectraConfiguredProviderError(
+            'Configured provider request failed.',
+            'network',
+          );
+      if (!transientConfiguredProviderError(normalized) || attempt === 1) throw normalized;
+      lastError = normalized;
+    }
+    await sleep(150);
   }
-  return readSpectraJsonResponse(response);
+
+  throw lastError instanceof Error
+    ? lastError
+    : new SpectraConfiguredProviderError(
+        'Configured provider request failed.',
+        'network',
+      );
 }
 
 export function bearerHeader(token: string | undefined): Record<string, string> {
