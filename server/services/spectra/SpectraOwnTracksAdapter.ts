@@ -79,7 +79,11 @@ export async function acquireSpectraOwnTracks(
     body: body.toString(),
   }, Number(env.SPECTRA_OWNTRACKS_TIMEOUT_MS || 7_000));
 
-  const rows = Array.isArray(payload?.data) ? payload.data : [];
+  const rows = Array.isArray(payload)
+    ? payload
+    : Array.isArray(payload?.data)
+      ? payload.data
+      : [];
   const measurements = rows.flatMap((row: any) => {
     if (!row || row._type !== 'location') return [];
     if (!matchingTopic(row.topic, user, tracker)) return [];
