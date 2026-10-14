@@ -43,7 +43,6 @@ function transientConfiguredProviderError(error: unknown): boolean {
     seen.add(candidate);
     if (
       candidate.name === 'TimeoutError'
-      || candidate.name === 'AbortError'
       || candidate.name === 'SyntaxError'
       || ['ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'EAI_AGAIN', 'ENOTFOUND',
         'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT']
