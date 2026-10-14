@@ -346,11 +346,11 @@ export const SPECTRA_ADAPTER_CAPABILITIES: SpectraAdapterCapability[] = [
     id: 'android-radio-collector-ingest',
     label: 'Android multi-radio collector ingest',
     mode: 'provider-webhook',
-    sourceTypes: ['cellular','gnss_raw','gnss_fix','wifi_rtt','bluetooth_proximity','bluetooth_channel_sounding','ble_rssi','ble_aoa','ble_aod'],
+    sourceTypes: ['cellular','gnss_raw','gnss_fix','wifi_rtt','uwb_range','uwb_direction','bluetooth_proximity','bluetooth_channel_sounding','ble_rssi','ble_aoa','ble_aod'],
     configured: () => anyEnv('SPECTRA_TELEMETRY_HMAC_SECRET'),
     priority: 'critical',
     supportsRealtime: true,
-    notes: 'One signed collector envelope can carry cellular, GNSS, Wi-Fi RTT and Bluetooth observations into the same telemetry batch.',
+    notes: 'One signed collector envelope can carry cellular, GNSS, Wi-Fi RTT, UWB and Bluetooth observations into the same telemetry batch.',
   },
   {
     id: 'ble-gateway-ingest',
