@@ -506,7 +506,11 @@ test('SPECTRA resolves enrolled phones before redundant Android and Apple acquis
   adapterRegistry.includes("id: 'apple-managed-location-active'") &&
   adapterRegistry.includes("id: 'android-radio-collector-active'") &&
   adapterRegistry.includes("id: 'apple-device-collector-active'") &&
-  adapterRegistry.includes("id: 'cisco-spaces-active-location'"));
+  adapterRegistry.includes("id: 'cisco-spaces-active-location'") &&
+  adapterRegistry.includes("id: 'owntracks-recorder-active'") &&
+  adapterRegistry.includes("id: 'traccar-active'") &&
+  adapterRegistry.includes("id: 'camara-location-retrieval-active'") &&
+  adapterRegistry.includes("id: 'vonage-location-retrieval-active'"));
 test('Enrolled-device registry remains server-only and ships with production migrations',
   enrolledDeviceMigration.includes('CREATE TABLE IF NOT EXISTS public.spectra_enrolled_devices') &&
   enrolledDeviceMigration.includes('ENABLE ROW LEVEL SECURITY') &&
