@@ -519,6 +519,11 @@ test('Enrolled native device telemetry is self-authenticated, platform-gated and
     < geoconsoleRoutes.indexOf('router.use(isAuthenticated)') &&
   geoconsoleRoutes.includes('authorizeSpectraEnrolledDeviceIngest') &&
   geoconsoleRoutes.includes('persistSpectraEnrolledDeviceTelemetry') &&
+  geoconsoleRoutes.includes("router.post('/enrolled-device/:deviceRef/ingest-token'") &&
+  geoconsoleRoutes.indexOf("router.post('/enrolled-device/:deviceRef/ingest-token'")
+    > geoconsoleRoutes.indexOf('router.use(isAuthenticated)') &&
+  geoconsoleRoutes.includes('rotateSpectraEnrolledDeviceIngestToken') &&
+  enrolledTelemetryStore.includes('randomBytes(32)') &&
   geoconsoleRoutes.includes("'android-radio-collector'") &&
   geoconsoleRoutes.includes("'apple-nearby-interaction'") &&
   enrolledTelemetryStore.includes('ingest_token_hash') &&
