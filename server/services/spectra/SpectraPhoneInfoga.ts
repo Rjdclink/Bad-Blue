@@ -14,6 +14,7 @@ export interface SpectraPhoneInfogaResult {
     status: 'ok' | 'failed';
     result?: unknown;
   }>;
+  searchQueries: string[];
 }
 
 function configuredBase(env: NodeJS.ProcessEnv): URL | null {
@@ -42,6 +43,50 @@ function headers(env: NodeJS.ProcessEnv): Record<string, string> {
   };
 }
 
+function boundedPhoneInfogaQueries(
+  phone: string,
+  normalized: Record<string, unknown> | undefined,
+  scanners: SpectraPhoneInfogaResult['scanners'],
+): string[] {
+  const queries = new Set<string>();
+  const add = (value: string) => {
+    const query = value.normalize('NFKC').replace(/\s+/g, ' ').trim().slice(0, 500);
+    if (query.length >= 3) queries.add(query);
+  };
+  const contextValue = (value: unknown) => {
+    if (typeof value !== 'string') return;
+    const text = value.trim().slice(0, 160);
+    if (text.length >= 2) add(`"${phone}" "${text.replace(/"/g, '')}" public profile record location`);
+  };
+  for (const value of [normalized?.carrier, normalized?.country]) contextValue(value);
+
+  const allowedContextKeys = new Set([
+    'city', 'zip_code', 'zipcode', 'location', 'carrier',
+    'country_name', 'country', 'line_type',
+  ]);
+  let visited = 0;
+  const walk = (value: unknown, depth = 0) => {
+    if (depth > 5 || visited >= 150 || queries.size >= 10) return;
+    visited += 1;
+    if (Array.isArray(value)) {
+      for (const item of value.slice(0, 40)) walk(item, depth + 1);
+      return;
+    }
+    if (!value || typeof value !== 'object') return;
+    for (const [key, child] of Object.entries(value as Record<string, unknown>).slice(0, 60)) {
+      const lower = key.toLowerCase();
+      if (lower === 'dork' && typeof child === 'string') add(child);
+      else if (allowedContextKeys.has(lower)) contextValue(child);
+      if (child && typeof child === 'object') walk(child, depth + 1);
+      if (queries.size >= 10) break;
+    }
+  };
+  for (const scanner of scanners) {
+    if (scanner.status === 'ok') walk(scanner.result);
+  }
+  return [...queries].slice(0, 8);
+}
+
 function scannerNames(env: NodeJS.ProcessEnv): string[] {
   return [...new Set(
     String(env.SPECTRA_PHONEINFOGA_SCANNERS || '')
@@ -58,7 +103,7 @@ export async function collectSpectraPhoneInfoga(
   const base = configuredBase(env);
   const phone = normalizeSpectraPhoneE164(phoneNumber);
   if (!base || !phone) {
-    return { status: 'not-configured', scanners: [] };
+    return { status: 'not-configured', scanners: [], searchQueries: [] };
   }
 
   const timeoutMs = Math.max(
@@ -95,21 +140,23 @@ export async function collectSpectraPhoneInfoga(
       }
     }));
 
+    const normalizedContext = normalized && typeof normalized === 'object'
+      ? {
+          valid: normalized.valid,
+          e164: normalized.e164,
+          international: normalized.international,
+          country: normalized.country,
+          countryCode: normalized.countryCode,
+          carrier: normalized.carrier,
+        }
+      : undefined;
     return {
       status: scanners.some(item => item.status === 'failed') ? 'partial' : 'ok',
-      normalized: normalized && typeof normalized === 'object'
-        ? {
-            valid: normalized.valid,
-            e164: normalized.e164,
-            international: normalized.international,
-            country: normalized.country,
-            countryCode: normalized.countryCode,
-            carrier: normalized.carrier,
-          }
-        : undefined,
+      normalized: normalizedContext,
       scanners,
+      searchQueries: boundedPhoneInfogaQueries(phone, normalizedContext, scanners),
     };
   } catch {
-    return { status: 'failed', scanners: [] };
+    return { status: 'failed', scanners: [], searchQueries: [] };
   }
 }
