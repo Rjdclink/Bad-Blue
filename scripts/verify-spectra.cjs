@@ -560,7 +560,7 @@ test('Recursive search learns new public clues only from retrieved source record
   routes.includes('buildSpectraRecursiveClueQueries(') &&
   routes.includes('searchRetrievedEvidence') &&
   spectraSources.includes('maxPasses: 8') &&
-  spectraSources.includes('maxQueries: 24'));
+  spectraSources.includes('maxQueries: 48'));
 
 test('Total public-search outage does not cancel independent live acquisition',
   routes.includes('const publicDiscoveryUnavailable =') &&
