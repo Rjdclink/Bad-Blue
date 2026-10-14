@@ -7,12 +7,14 @@ phone completed discovery across six source groups, but produced no timestamped
 coordinate observation sufficient to place that person on the map. The address
 provided separately as ground truth was excluded from all Spectra inputs.
 
-The principal gap is acquisition of a fresh measurement associated with the
-subject. A phone number can identify a search target; it does not expose that
-phone's radio measurements. A location normalizer or solver cannot create a
-measurement which its upstream source has not supplied. Direct GPS sharing is
-not an architectural requirement: radio ranging or other spatial evidence can
-provide the inputs, when available.
+The active-acquisition path now resolves an enrolled phone number to its stable
+device reference before requesting device telemetry. Fresh position or radio
+measurements still come from the enrolled device, tracker, managed-device
+backend, enterprise sensor, or carrier API that observed them; SPECTRA then
+normalizes and fuses those returned measurements. Android and Apple collectors,
+OwnTracks, Traccar, managed-device sources, and configured carrier-location
+providers can run as independent parallel lanes, with mismatched device,
+session, or subject identifiers rejected before their measurements are used.
 
 Twenty-five feet is 7.62 meters. A map coordinate with many decimal places is
 not evidence of that accuracy, current presence, or subject identity.
@@ -23,8 +25,8 @@ not evidence of that accuracy, current presence, or subject identity.
 | --- | --- | --- |
 | Lexara launch | `client/src/components/LexaraConversation.tsx` | Hidden location commands launch Spectra before a paid chat request and carry the current command and bounded conversation context. |
 | Spectra input | `client/src/pages/spectra.tsx` | Map is rendered immediately; clues, uploaded media and location exports enter separate acquisition paths. No connected social-account or browser-history importer was found here. |
-| Discovery | `server/routes/spectra.routes.ts` | Name/email/phone support public discovery queries. Device collectors receive a separately extracted device identifier. A phone clue alone is not an enrolled device identifier. |
-| Active acquisition | `server/services/spectra/SpectraActiveAcquisition.ts` | Managed Android/Apple and Cisco collectors require configured HTTPS endpoints and credentials. Generic collectors require valid configuration and actual provider responses. |
+| Discovery | `server/routes/spectra.routes.ts` | Name/email/phone support public discovery queries. When a phone is supplied, SPECTRA now resolves the tenant-scoped enrolled-device registry before live acquisition; any separately supplied device reference must match that enrollment. |
+| Active acquisition | `server/services/spectra/SpectraEnrolledAcquisition.ts`, `SpectraActiveAcquisition.ts` | Enrolled Android/Apple collectors, managed-device sources, OwnTracks, Traccar and configured carrier-location lanes run independently. Missing/unavailable sources are skipped or reported without cancelling sibling lanes; returned device/session/subject mismatches are rejected. |
 | Adapter catalog | `server/services/spectra/SpectraAdapterRegistry.ts` | Catalog readiness includes parsers, importers and contextual sources. It does not establish that measurements are being received for a particular subject. |
 | Ingest/persistence | `server/routes/geoconsole.routes.ts` | Authenticated observations are normalized, associated with a session, persisted where storage is available, and pushed to the session stream. Saving availability is returned separately from request success. |
 | Runtime | `client/src/hooks/useGeoRuntime.ts` | Local observations render immediately. Previously, rapid first observations could publish before a canonical session ID existed; failed saving was concealed. |
