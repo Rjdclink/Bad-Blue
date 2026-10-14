@@ -36,7 +36,7 @@ export interface SpectraActiveAcquisitionAttempt {
   normalizerKind: string;
   measurementCount: number;
   reason?: string;
-  reasonCode?: 'not-configured' | 'missing-device' | 'platform-mismatch' | 'request-failed';
+  reasonCode?: 'not-configured' | 'not-enrolled' | 'missing-device' | 'identity-mismatch' | 'platform-mismatch' | 'request-failed';
 }
 
 export interface SpectraActiveAcquisitionResult {
