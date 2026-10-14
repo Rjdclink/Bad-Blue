@@ -11,7 +11,7 @@ const TABLES = [
   'spectra_investigations', 'spectra_clues', 'spectra_telemetry_events',
   'spectra_location_observations', 'spectra_motion_context',
   'spectra_public_feed_state', 'spectra_public_evidence_records',
-  'spectra_acquisition_evidence_records',
+  'spectra_acquisition_evidence_records', 'spectra_enrolled_devices',
 ];
 const TABLE_SQL = TABLES.map(name => `public.${name}`).join(', ');
 
@@ -44,6 +44,7 @@ function migrationSql(directory, postgisSchema) {
     fs.readFileSync(path.join(directory, '066_spectra_foreign_key_indexes.sql'), 'utf8'),
     motion.slice(0, accessStart),
     fs.readFileSync(path.join(directory, '069_spectra_public_evidence_records.sql'), 'utf8'),
+    fs.readFileSync(path.join(directory, '070_spectra_enrolled_devices.sql'), 'utf8'),
     // Neon does not require Supabase API roles. Preserve server-only access
     // without creating roles or failing when those roles are absent.
     `REVOKE ALL ON TABLE ${TABLE_SQL} FROM PUBLIC;
