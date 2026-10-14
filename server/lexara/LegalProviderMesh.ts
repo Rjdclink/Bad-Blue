@@ -93,8 +93,8 @@ function recordProviderFailure(lane: string, error: unknown): void {
   const credentials = category === 'http-401' || category === 'http-403';
   const transient = category === 'timeout' || category === 'invalid-response'
     || category === 'upstream-error' || /^http-5\d\d$/.test(category);
-  if (unavailable || credentials || (transient && failures >= 3)) {
-    const retryAfterMs = credentials ? 300_000 : 30_000;
+  if (unavailable || credentials || (transient && failures >= 2)) {
+    const retryAfterMs = credentials ? 24 * 60 * 60_000 : 30_000;
     engineCooldownUntil.set(lane, Math.max(engineCooldownUntil.get(lane) || 0, Date.now() + retryAfterMs));
     console.warn('[LEXARA Search Availability]', JSON.stringify({ lane, status: 'provider-cooldown', category, retryAfterMs }));
   }
