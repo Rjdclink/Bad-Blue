@@ -20,6 +20,7 @@ const credentialGroups = [
     groups: [
       ['SPECTRA_VONAGE_LOCATION_TOKEN', 'SPECTRA_VONAGE_APPLICATION_ID'],
       ['SPECTRA_VONAGE_LOCATION_TOKEN', 'SPECTRA_VONAGE_PRIVATE_KEY'],
+      ['SPECTRA_VONAGE_LOCATION_TOKEN', 'SPECTRA_VONAGE_OAUTH_SCOPE'],
     ],
   },
   { id: 'phoneinfoga', groups: [['SPECTRA_PHONEINFOGA_URL']] },
