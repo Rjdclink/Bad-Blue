@@ -17,7 +17,6 @@ import android.net.wifi.rtt.RangingRequest
 import android.net.wifi.rtt.RangingResult
 import android.net.wifi.rtt.RangingResultCallback
 import android.net.wifi.rtt.WifiRttManager
-import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.telephony.CellInfo
@@ -77,8 +76,6 @@ class SpectraAndroidCollector(
         }
         override fun onProviderEnabled(provider: String) = Unit
         override fun onProviderDisabled(provider: String) = Unit
-        @Deprecated("Deprecated by Android")
-        override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) = Unit
     }
 
     private val gnssCallback = object : GnssMeasurementsEvent.Callback() {
