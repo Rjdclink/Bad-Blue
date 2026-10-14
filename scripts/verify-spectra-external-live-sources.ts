@@ -112,7 +112,7 @@ try {
           status: 'online',
         }), { status: 200, headers: { 'Content-Type': 'application/json' } });
       }
-      assert.equal(String(input), 'https://traccar.example/api/positions?id=99');
+      assert.equal(String(input), 'https://traccar.example/api/positions?deviceId=44');
       return new Response(JSON.stringify([{
         id: 99,
         deviceId: 44,
