@@ -130,6 +130,20 @@ export const SPECTRA_ADAPTER_CAPABILITIES: SpectraAdapterCapability[] = [
     notes: 'Configured HTTPS provider/device collectors can be queried during acquisition and routed through an existing SPECTRA normalizer or the canonical telemetry schema.',
   },
   {
+    id: 'enrolled-device-inbox-active',
+    label: 'Enrolled Android/Apple device telemetry inbox',
+    mode: 'live-telemetry',
+    sourceTypes: [
+      'device_gps','gnss_fix','gnss_raw','cellular','wifi_rtt',
+      'uwb_range','uwb_direction','bluetooth_proximity',
+      'bluetooth_channel_sounding','ble_rssi','ble_aoa','ble_aod',
+    ],
+    configured: () => enrolledAdapterConfigured('enrolled-device-inbox-active'),
+    priority: 'critical',
+    supportsRealtime: true,
+    notes: 'Accepts per-device authenticated Android/Apple reports and admits only fresh telemetry after the lookup resolves the same enrollment.',
+  },
+  {
     id: 'owntracks-recorder-active',
     label: 'OwnTracks Recorder enrolled-device location',
     mode: 'provider-pull',
