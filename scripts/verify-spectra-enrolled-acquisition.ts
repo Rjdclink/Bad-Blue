@@ -313,9 +313,9 @@ const noIdentifier = await acquireSpectraEnrolledTelemetry({
   deps: { resolve, resolveByRef, active, ownTracks, traccar, carrier, inbox },
 });
 assert.equal(noIdentifier.batches.length, 0);
-assert.equal(noIdentifier.attempts[0]?.reasonCode, 'missing-device');
-assert.equal(activeCalls.length, callsBeforeMissingIdentifier,
-  'a name-only investigation must not start live device acquisition');
+assert.equal(activeCalls.length, callsBeforeMissingIdentifier + 1,
+  'name-only acquisition preserves the original untargeted/context active pipeline');
+assert.equal(activeCalls.at(-1)?.deviceRef, undefined);
 
 const callsBeforeWrongDevice = activeCalls.length;
 const carrierBeforeWrongDevice = carrierCalls;
@@ -396,8 +396,9 @@ const registryOutage = await acquireSpectraEnrolledTelemetry({
 });
 assert.equal(registryOutage.batches.length, 0);
 assert.equal(registryOutage.attempts[0]?.reasonCode, 'registry-unavailable');
-assert.equal(activeCalls.length, callsBeforeRegistryOutage,
-  'registry outage must skip live acquisition rather than guessing enrollment');
+assert.equal(activeCalls.length, callsBeforeRegistryOutage + 1,
+  'registry outage preserves the original untargeted/context active pipeline');
+assert.equal(activeCalls.at(-1)?.deviceRef, undefined);
 
 const ambiguousEnv = {
   SPECTRA_ENROLLED_DEVICES_JSON: JSON.stringify([
