@@ -1,4 +1,4 @@
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { SpectraNormalizedProviderBatch } from './SpectraProviderTelemetryNormalizer';
 import type { SpectraDevicePlatform } from './SpectraEnrolledDeviceRegistry';
 
@@ -185,6 +185,40 @@ export async function loadLatestSpectraEnrolledDeviceTelemetry(
       return null;
     }
     return payload as SpectraNormalizedProviderBatch;
+  } catch {
+    return null;
+  }
+}
+
+
+export async function rotateSpectraEnrolledDeviceIngestToken(
+  userId: string,
+  deviceRef: string,
+  options: { query?: Query } = {},
+): Promise<{ deviceRef: string; platform: SpectraDevicePlatform; token: string } | null> {
+  const user = clean(userId, 300);
+  const ref = clean(deviceRef, 300);
+  if (!user || !ref) return null;
+
+  const token = randomBytes(32).toString('base64url');
+  const tokenHash = digest(token);
+  const query = options.query || defaultQuery();
+  try {
+    const result = await query(
+      `UPDATE public.spectra_enrolled_devices
+       SET ingest_token_hash = $3, updated_at = now()
+       WHERE user_id = $1
+         AND lower(device_ref) = lower($2)
+         AND active = true
+       RETURNING device_ref, platform`,
+      [user, ref, tokenHash],
+    );
+    if (result.rows?.length !== 1) return null;
+    return {
+      deviceRef: String(result.rows[0].device_ref),
+      platform: platform(result.rows[0].platform),
+      token,
+    };
   } catch {
     return null;
   }
