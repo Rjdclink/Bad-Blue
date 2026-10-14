@@ -5,6 +5,7 @@ import {
   type SpectraProviderNormalizerKind,
   type SpectraNormalizedProviderBatch,
 } from './SpectraProviderTelemetryNormalizer';
+import type { SpectraDevicePlatform } from './SpectraEnrolledDeviceRegistry';
 
 export type SpectraActiveAcquisitionTarget = 'device' | 'none';
 
@@ -15,6 +16,7 @@ interface ActiveProviderConfig {
   method: 'GET' | 'POST';
   normalizerKind: SpectraProviderNormalizerKind | 'canonical-telemetry';
   target: SpectraActiveAcquisitionTarget;
+  platforms?: readonly SpectraDevicePlatform[];
   headersFromEnv?: Record<string, string>;
   timeoutMs: number;
 }
@@ -23,6 +25,7 @@ export interface SpectraActiveAcquisitionInput {
   deviceRef?: string;
   sessionId?: string;
   subjectLabel?: string;
+  platform?: SpectraDevicePlatform;
 }
 
 export interface SpectraActiveAcquisitionAttempt {
@@ -32,7 +35,7 @@ export interface SpectraActiveAcquisitionAttempt {
   normalizerKind: string;
   measurementCount: number;
   reason?: string;
-  reasonCode?: 'not-configured' | 'missing-device' | 'request-failed';
+  reasonCode?: 'not-configured' | 'missing-device' | 'platform-mismatch' | 'request-failed';
 }
 
 export interface SpectraActiveAcquisitionResult {
@@ -133,12 +136,21 @@ function headersFromConfig(config: ActiveProviderConfig): Record<string, string>
   return headers;
 }
 
-function targetAvailable(
+function targetUnavailableReason(
   config: ActiveProviderConfig,
   input: SpectraActiveAcquisitionInput,
-): boolean {
-  if (config.target === 'none') return true;
-  return Boolean(normalizeDeviceRef(input.deviceRef));
+): 'missing-device' | 'platform-mismatch' | null {
+  if (config.target === 'device' && !normalizeDeviceRef(input.deviceRef)) {
+    return 'missing-device';
+  }
+  if (
+    config.platforms?.length
+    && input.platform
+    && !config.platforms.includes(input.platform)
+  ) {
+    return 'platform-mismatch';
+  }
+  return null;
 }
 
 function canonicalBatch(
@@ -287,6 +299,10 @@ function configuredAdapters(): ActiveProviderConfig[] {
       const normalizerKind = String(item?.normalizerKind || '').trim();
       const method = String(item?.method || 'POST').trim().toUpperCase();
       const target = String(item?.target || 'device').trim().toLowerCase();
+      const platforms = Array.isArray(item?.platforms)
+        ? [...new Set(item.platforms.map((value: unknown) => String(value).trim().toLowerCase()))]
+            .filter((value): value is SpectraDevicePlatform => ['android', 'ios', 'other'].includes(value))
+        : undefined;
       const hasBoundDevice = target !== 'device'
         || method === 'POST'
         || url.includes('{{deviceRef}}');
@@ -316,6 +332,7 @@ function configuredAdapters(): ActiveProviderConfig[] {
         normalizerKind:
           normalizerKind as SpectraProviderNormalizerKind | 'canonical-telemetry',
         target: target as SpectraActiveAcquisitionTarget,
+        platforms,
         headersFromEnv:
           item?.headersFromEnv && typeof item.headersFromEnv === 'object'
             ? Object.fromEntries(
@@ -344,6 +361,7 @@ function builtInAndroidMdmAdapter(): ActiveProviderConfig | null {
     method: 'GET',
     normalizerKind: 'android-managed-lost-mode',
     target: 'device',
+    platforms: ['android'],
     headersFromEnv: {
       Authorization: 'SPECTRA_ANDROID_MDM_LOCATION_TOKEN',
     },
@@ -363,10 +381,45 @@ function builtInAppleMdmAdapter(): ActiveProviderConfig | null {
     method: 'GET',
     normalizerKind: 'apple-managed-lost-mode',
     target: 'device',
+    platforms: ['ios'],
     headersFromEnv: {
       Authorization: 'SPECTRA_APPLE_MDM_LOCATION_TOKEN',
     },
     timeoutMs: timeoutMs(process.env.SPECTRA_APPLE_MDM_LOCATION_TIMEOUT_MS),
+  };
+}
+
+function builtInAndroidRadioCollectorAdapter(): ActiveProviderConfig | null {
+  const url = String(process.env.SPECTRA_ANDROID_RADIO_COLLECTOR_URL_TEMPLATE || '').trim();
+  const token = String(process.env.SPECTRA_ANDROID_RADIO_COLLECTOR_TOKEN || '').trim();
+  if (!url.includes('{{deviceRef}}') || !validProviderTemplate(url) || !token) return null;
+  return {
+    id: 'android-radio-collector-active',
+    label: 'Android enrolled multi-radio collector',
+    url,
+    method: 'POST',
+    normalizerKind: 'android-radio-collector',
+    target: 'device',
+    platforms: ['android'],
+    headersFromEnv: { Authorization: 'SPECTRA_ANDROID_RADIO_COLLECTOR_TOKEN' },
+    timeoutMs: timeoutMs(process.env.SPECTRA_ANDROID_RADIO_COLLECTOR_TIMEOUT_MS),
+  };
+}
+
+function builtInAppleDeviceCollectorAdapter(): ActiveProviderConfig | null {
+  const url = String(process.env.SPECTRA_APPLE_DEVICE_COLLECTOR_URL_TEMPLATE || '').trim();
+  const token = String(process.env.SPECTRA_APPLE_DEVICE_COLLECTOR_TOKEN || '').trim();
+  if (!url.includes('{{deviceRef}}') || !validProviderTemplate(url) || !token) return null;
+  return {
+    id: 'apple-device-collector-active',
+    label: 'Apple enrolled device telemetry collector',
+    url,
+    method: 'POST',
+    normalizerKind: 'canonical-telemetry',
+    target: 'device',
+    platforms: ['ios'],
+    headersFromEnv: { Authorization: 'SPECTRA_APPLE_DEVICE_COLLECTOR_TOKEN' },
+    timeoutMs: timeoutMs(process.env.SPECTRA_APPLE_DEVICE_COLLECTOR_TIMEOUT_MS),
   };
 }
 
@@ -413,6 +466,8 @@ async function fetchAdapter(
       'cisco-spaces-active-location',
       'android-managed-location-active',
       'apple-managed-location-active',
+      'android-radio-collector-active',
+      'apple-device-collector-active',
     ].includes(config.id)
     && headers.Authorization
     && !/^(?:Bearer|Basic)\s+/i.test(headers.Authorization)
@@ -443,10 +498,13 @@ export function getSpectraActiveAcquisitionCapabilities(): Array<{
   label: string;
   normalizerKind: string;
   target: SpectraActiveAcquisitionTarget;
+  platforms?: readonly SpectraDevicePlatform[];
 }> {
   return [
     builtInAndroidMdmAdapter(),
     builtInAppleMdmAdapter(),
+    builtInAndroidRadioCollectorAdapter(),
+    builtInAppleDeviceCollectorAdapter(),
     builtInCiscoSpacesAdapter(),
     ...configuredAdapters(),
   ].filter((item): item is ActiveProviderConfig => Boolean(item))
@@ -455,6 +513,7 @@ export function getSpectraActiveAcquisitionCapabilities(): Array<{
       label: item.label,
       normalizerKind: item.normalizerKind,
       target: item.target,
+      platforms: item.platforms,
     }));
 }
 
@@ -491,6 +550,24 @@ export async function acquireSpectraActiveTelemetry(
           reason: 'Apple supervised-device location provider is not configured.',
         },
         {
+          id: 'android-radio-collector-active',
+          label: 'Android enrolled multi-radio collector',
+          status: 'skipped',
+          normalizerKind: 'android-radio-collector',
+          measurementCount: 0,
+          reasonCode: 'not-configured',
+          reason: 'Android enrolled radio collector is not configured.',
+        },
+        {
+          id: 'apple-device-collector-active',
+          label: 'Apple enrolled device telemetry collector',
+          status: 'skipped',
+          normalizerKind: 'canonical-telemetry',
+          measurementCount: 0,
+          reasonCode: 'not-configured',
+          reason: 'Apple enrolled device collector is not configured.',
+        },
+        {
           id: 'cisco-spaces-active-location',
           label: 'Cisco Spaces active device location',
           status: 'skipped',
@@ -505,7 +582,8 @@ export async function acquireSpectraActiveTelemetry(
 
   const outcomes = await Promise.all(
     adapters.map(async config => {
-      if (!targetAvailable(config, input)) {
+      const unavailableReason = targetUnavailableReason(config, input);
+      if (unavailableReason) {
         return {
           batch: null,
           attempt: {
@@ -514,8 +592,10 @@ export async function acquireSpectraActiveTelemetry(
             status: 'skipped' as const,
             normalizerKind: config.normalizerKind,
             measurementCount: 0,
-            reasonCode: 'missing-device' as const,
-            reason: 'Required managed-device identifier was not supplied.',
+            reasonCode: unavailableReason,
+            reason: unavailableReason === 'platform-mismatch'
+              ? 'Collector does not apply to the enrolled device platform.'
+              : 'Required managed-device identifier was not supplied.',
           },
         };
       }
