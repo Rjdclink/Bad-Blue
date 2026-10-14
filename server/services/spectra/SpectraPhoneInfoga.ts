@@ -103,6 +103,34 @@ function scannerNames(env: NodeJS.ProcessEnv): string[] {
   )].slice(0, 3);
 }
 
+async function defaultScannerNames(
+  base: URL,
+  env: NodeJS.ProcessEnv,
+  timeoutMs: number,
+): Promise<{ names: string[]; discoveryFailed: boolean }> {
+  const configured = scannerNames(env);
+  if (configured.length) return { names: configured, discoveryFailed: false };
+  try {
+    const endpoint = phoneInfogaPath(base, '/api/v2/scanners');
+    const payload = await fetchSpectraConfiguredJson(endpoint, {
+      method: 'GET',
+      headers: { Accept: 'application/json', ...bearerHeader(env.SPECTRA_PHONEINFOGA_TOKEN) },
+    }, timeoutMs);
+    const available = new Set(
+      (Array.isArray(payload?.scanners) ? payload.scanners : [])
+        .map((item: any) => String(item?.name || '').trim().toLowerCase())
+        .filter((name: string) => /^[a-z0-9_-]{1,50}$/.test(name)),
+    );
+    // These scanners are keyless in upstream PhoneInfoga. Credential-backed
+    // scanners such as numverify/googlecse remain opt-in through the env list.
+    const preferred = ['googlesearch', 'ovh', 'local']
+      .filter(name => available.has(name));
+    return { names: preferred.slice(0, 3), discoveryFailed: false };
+  } catch {
+    return { names: [], discoveryFailed: true };
+  }
+}
+
 export async function collectSpectraPhoneInfoga(
   phoneNumber: string | undefined,
   env: NodeJS.ProcessEnv = process.env,
@@ -126,7 +154,8 @@ export async function collectSpectraPhoneInfoga(
       body: JSON.stringify({ number: phone }),
     }, timeoutMs);
 
-    const scanners = await Promise.all(scannerNames(env).map(async scanner => {
+    const scannerSelection = await defaultScannerNames(base, env, timeoutMs);
+    const scanners = await Promise.all(scannerSelection.names.map(async scanner => {
       try {
         const scannerUrl = phoneInfogaPath(
           base,
@@ -158,7 +187,8 @@ export async function collectSpectraPhoneInfoga(
         }
       : undefined;
     return {
-      status: scanners.some(item => item.status === 'failed') ? 'partial' : 'ok',
+      status: scannerSelection.discoveryFailed
+        || scanners.some(item => item.status === 'failed') ? 'partial' : 'ok',
       normalized: normalizedContext,
       scanners,
       searchQueries: boundedPhoneInfogaQueries(phone, normalizedContext, scanners),
