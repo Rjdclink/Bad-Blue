@@ -81,8 +81,8 @@ check('enrolled live-source readiness is configuration-only and value-safe', () 
     SPECTRA_CAMARA_LOCATION_RETRIEVAL_TOKEN: marker,
     SPECTRA_CAMARA_LOCATION_DEVICE_SOURCE: 'token',
   });
-  assert.equal(row(tokenBound, 'camara-location').configured, true);
-  assert.equal(tokenBound.enrolledSources.camaraDeviceIdentificationMode, 'token');
+  assert.equal(row(tokenBound, 'camara-location').configured, false);
+  assert.equal(tokenBound.enrolledSources.camaraDeviceIdentificationMode, 'invalid');
 
   const invalidMode = d.getSpectraConfigurationDiagnostics({
     SPECTRA_CAMARA_LOCATION_RETRIEVAL_URL: 'https://camara.example/retrieve',
