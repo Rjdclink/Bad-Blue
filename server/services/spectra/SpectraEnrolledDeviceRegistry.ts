@@ -1,5 +1,3 @@
-import { pool } from '../../db';
-
 export type SpectraDevicePlatform = 'android' | 'ios' | 'other';
 
 export interface SpectraEnrolledDevice {
@@ -135,8 +133,16 @@ export async function resolveSpectraEnrolledDevice(
   const phoneE164 = normalizeSpectraPhoneE164(phoneNumber);
   if (!phoneE164) return { status: 'not-enrolled', databaseAvailable: true };
 
-  const query = options.query
-    || ((sql: string, parameters?: unknown[]) => pool.query(sql, parameters as any[]));
+  const query: Query = options.query || (async (
+    sql: string,
+    parameters?: unknown[],
+  ) => {
+    // Delay database initialization until a real registry lookup needs it.
+    // Pure normalization/tests and environment-only fixtures do not require
+    // application database configuration merely by importing this module.
+    const { pool } = await import('../../db');
+    return pool.query(sql, parameters as any[]);
+  });
   const env = options.env || process.env;
   let databaseAvailable = true;
   const candidates: SpectraEnrolledDevice[] = [];
