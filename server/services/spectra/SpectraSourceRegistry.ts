@@ -38,11 +38,11 @@ export interface SpectraDiscoveryPolicy {
 }
 
 export const SPECTRA_DISCOVERY_POLICY: SpectraDiscoveryPolicy = {
-  // Conservative default: each query fans out to multiple provider lanes.
-  // Retain independent source families, but stop paying for dozens of near
-  // duplicate queries after a weak or ambiguous geographic lead.
-  maxPasses: 5,
-  maxQueries: 20,
+  // Each query fans out to multiple provider lanes. Permit a genuinely broad
+  // recursive investigation while retaining hard caps and diminishing-return
+  // stops so one lookup cannot run indefinitely.
+  maxPasses: 8,
+  maxQueries: 24,
   maxCandidates: 160,
   minIndependentSources: 6,
   sufficientConfidence: 0.78,
