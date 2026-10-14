@@ -114,7 +114,8 @@ export function spectraVonageAuthenticationConfigured(
   if (String(env.SPECTRA_VONAGE_LOCATION_TOKEN || '').trim()) return true;
   return Boolean(
     String(env.SPECTRA_VONAGE_APPLICATION_ID || '').trim()
-    && normalizePrivateKey(env.SPECTRA_VONAGE_PRIVATE_KEY),
+    && normalizePrivateKey(env.SPECTRA_VONAGE_PRIVATE_KEY)
+    && String(env.SPECTRA_VONAGE_OAUTH_SCOPE || '').trim(),
   );
 }
 
@@ -131,9 +132,10 @@ export async function getSpectraVonageBearerToken(
     throw new Error('Vonage Device Location Retrieval is not configured.');
   }
 
-  const appJwt = mintSpectraVonageApplicationJwt(applicationId, privateKey);
   const scope = String(env.SPECTRA_VONAGE_OAUTH_SCOPE || '').trim();
-  return scope
-    ? cibaAccessToken(phoneE164, appJwt, scope, env)
-    : appJwt;
+  if (!scope) {
+    throw new Error('Vonage Network Features scope is required when using application credentials.');
+  }
+  const appJwt = mintSpectraVonageApplicationJwt(applicationId, privateKey);
+  return cibaAccessToken(phoneE164, appJwt, scope, env);
 }
