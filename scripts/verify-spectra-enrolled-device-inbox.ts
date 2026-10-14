@@ -41,25 +41,15 @@ const rejected = await authorizeSpectraEnrolledDeviceIngest(
 );
 assert.equal(rejected, null);
 
-const envAuthorized = await authorizeSpectraEnrolledDeviceIngest(
+const unavailableAuth = await authorizeSpectraEnrolledDeviceIngest(
   'apple-device-a',
   'apple-fixture-device-token-long-enough',
   {
-    env: {
-      SPECTRA_ENROLLED_DEVICES_JSON: JSON.stringify([{
-        userId: 'tenant-a',
-        phoneNumber: '+14025550124',
-        deviceRef: 'apple-device-a',
-        platform: 'ios',
-        subjectLabel: 'John Public',
-        ingestToken: 'apple-fixture-device-token-long-enough',
-      }]),
-    } as NodeJS.ProcessEnv,
     query: async () => { throw new Error('fixture database unavailable'); },
   },
 );
-assert.equal(envAuthorized?.platform, 'ios');
-assert.equal(envAuthorized?.source, 'environment');
+assert.equal(unavailableAuth, null,
+  'native device telemetry requires a durable server-side enrollment record');
 
 const now = new Date().toISOString();
 const batch = {
