@@ -240,7 +240,9 @@ try {
       const body = JSON.parse(String(init?.body || '{}'));
       assert.equal(body.number, '+14025550123');
       return new Response(JSON.stringify({
-        result: { fixture: true },
+        result: url.includes('/ovh/')
+          ? { found: true, city: 'Omaha', zip_code: '68102' }
+          : { carrier: 'Fixture Wireless' },
       }), { status: 200, headers: { 'Content-Type': 'application/json' } });
     };
 
@@ -248,6 +250,9 @@ try {
     assert.equal(result.status, 'ok');
     assert.equal(result.normalized?.e164, '+14025550123');
     assert.deepEqual(result.scanners.map(item => item.status), ['ok', 'ok']);
+    assert.ok(result.searchQueries.some(query => query.includes('Omaha')));
+    assert.ok(result.searchQueries.every(query => query.includes('+14025550123')),
+      'PhoneInfoga context expansion remains bound to the normalized phone clue');
   }
 
   {
