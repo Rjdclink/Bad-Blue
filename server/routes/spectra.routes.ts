@@ -1510,6 +1510,8 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
     let discoveryPasses = firstPass.attempted > 0 ? 1 : 0;
     let stagnationPasses = 0;
     const recursiveCluesSeen = new Set<string>();
+    const phoneInfogaQueries = phoneInfoga.searchQueries.slice(0, 8);
+    let phoneInfogaQueryOffset = 0;
 
     for (let pass = 1; pass < SPECTRA_DISCOVERY_POLICY.maxPasses; pass += 1) {
       const readiness = assessSpectraCityDiscoveryReadiness({
@@ -1553,7 +1555,13 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
         recursiveCluesSeen,
         4,
       );
+      const phoneInfogaExpansion = phoneInfogaQueries.slice(
+        phoneInfogaQueryOffset,
+        phoneInfogaQueryOffset + 2,
+      );
+      phoneInfogaQueryOffset += phoneInfogaExpansion.length;
       const nextQueries = [...new Set([
+        ...phoneInfogaExpansion,
         ...recursiveClueQueries,
         recursiveQuery,
         ...discoveryQueries.secondPass.slice(Math.max(0, pass - 1), pass + 1),
@@ -2217,6 +2225,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
         phoneInfogaStatus: phoneInfoga.status,
         phoneInfogaScannerCount: phoneInfoga.scanners.length,
         phoneInfogaScannerSuccessCount: phoneInfoga.scanners.filter(item => item.status === 'ok').length,
+        phoneInfogaSearchQueryCount: phoneInfoga.searchQueries.length,
         originSessionId: originSessionId || null,
         lastAcquiredAt: new Date().toISOString(),
       },
@@ -2307,6 +2316,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
         phoneInfogaStatus: phoneInfoga.status,
         phoneInfogaNormalized: phoneInfoga.normalized,
         phoneInfogaScanners: phoneInfoga.scanners.map(item => ({ scanner: item.scanner, status: item.status })),
+        phoneInfogaSearchQueryCount: phoneInfoga.searchQueries.length,
         summary: report.summary || '',
         verificationStatus: report.identitySummary?.verificationStatus || 'Unknown',
       },
