@@ -26,7 +26,6 @@ import android.telephony.CellInfoLte
 import android.telephony.CellInfoNr
 import android.telephony.CellInfoWcdma
 import android.telephony.TelephonyManager
-import androidx.annotation.RequiresPermission
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
