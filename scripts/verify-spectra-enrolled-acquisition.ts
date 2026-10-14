@@ -395,9 +395,8 @@ const registryOutage = await acquireSpectraEnrolledTelemetry({
 });
 assert.equal(registryOutage.batches.length, 0);
 assert.equal(registryOutage.attempts[0]?.reasonCode, 'registry-unavailable');
-assert.equal(activeCalls.length, callsBeforeRegistryOutage + 1,
-  'registry outage preserves the original untargeted/context active pipeline');
-assert.equal(activeCalls.at(-1)?.deviceRef, undefined);
+assert.equal(activeCalls.length, callsBeforeRegistryOutage,
+  'registry outage must skip live acquisition rather than guessing enrollment');
 
 const ambiguousEnv = {
   SPECTRA_ENROLLED_DEVICES_JSON: JSON.stringify([
