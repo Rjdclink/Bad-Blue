@@ -76,7 +76,7 @@ import {
 import { assessSpectraLiveLocation } from '../services/spectra/SpectraLiveConfidence';
 import { solveSpectraConstraintLayer } from '../services/spectra/SpectraConstraintSolver';
 import { acquireConfiguredSpectraCameras } from '../services/spectra/SpectraCameraDirectoryAdapters';
-import { acquireSpectraActiveTelemetry, getSpectraActiveAcquisitionCapabilities } from '../services/spectra/SpectraActiveAcquisition';
+import { acquireSpectraEnrolledTelemetry, getSpectraEnrolledAcquisitionCapabilities } from '../services/spectra/SpectraEnrolledAcquisition';
 import { buildSpectraPipelineDiagnostics, type SpectraRetrievalCounts } from '../services/spectra/SpectraPipelineDiagnostics';
 import { acquirePublicPlace, isPublicPlaceTarget } from '../services/spectra/SpectraPublicPlace';
 import { collectSpectraPublicAccountRecords, discoverSpectraPublicBlueskyProfiles } from '../services/spectra/SpectraPublicAccountRecords';
@@ -1163,7 +1163,9 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       useClaude: false,
       allowPaidSearch: process.env.SPECTRA_PAID_SEARCH_ENABLED === 'true',
     }, attemptedDiscoveryQueries, attemptedRetrievalUrls);
-    const activeAcquisitionPromise = acquireSpectraActiveTelemetry({
+    const activeAcquisitionPromise = acquireSpectraEnrolledTelemetry({
+      userId,
+      phoneNumber: phone,
       deviceRef,
       sessionId: requestedSessionId,
       subjectLabel: resolvedTargetLabel,
@@ -2035,7 +2037,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
     const pipelineDiagnostics = buildSpectraPipelineDiagnostics({
       discoveryResults: discoveryResults.length,
       retrieval: retrievalCounts,
-      configuredCollectors: getSpectraActiveAcquisitionCapabilities().length,
+      configuredCollectors: getSpectraEnrolledAcquisitionCapabilities().filter(item => item.configured !== false).length,
       activeAttempts: activeAcquisition.attempts,
       activeBatchOutcomes,
       activeObservations: activeLocationPoints.length,
