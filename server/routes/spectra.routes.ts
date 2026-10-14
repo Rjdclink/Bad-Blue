@@ -67,7 +67,7 @@ import {
 } from '../services/spectra/SpectraPublicEvidenceProvenance';
 import { inferCorroboratedRegionalCity, inferProvisionalRegionalCities, inferPublicContactProfileCities, retrievedRegionalSources } from '../services/spectra/SpectraRegionalInference';
 import { inferPublicDirectoryCities } from '../services/spectra/SpectraPublicDirectoryCities';
-import { collectSpectraPhoneOrigin } from '../services/spectra/SpectraPhoneOrigin';
+import { collectSpectraPhoneOrigin } from '../services/spectra/SpectraPhoneOrigin';\nimport { collectSpectraPhoneInfoga } from '../services/spectra/SpectraPhoneInfoga';
 import {
   assessSpectraCityDiscoveryReadiness,
   chooseSpectraPublicRetrievalUrls,
@@ -1178,6 +1178,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
     const publicNewsPromise = collectSpectraPublicNewsRecords(resolvedName || resolvedSubjectName);
     const publicCourtPromise = collectSpectraPublicCourtRecords(resolvedName || resolvedSubjectName);
     const phoneOriginPromise = collectSpectraPhoneOrigin(phone);
+    const phoneInfogaPromise = collectSpectraPhoneInfoga(phone);
 
     const [
       backgroundOutcome,
@@ -1191,6 +1192,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       publicNews,
       publicCourt,
       phoneOrigin,
+      phoneInfoga,
     ] = await Promise.all([
       backgroundPromise,
       firstPassPromise,
@@ -1203,6 +1205,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       publicNewsPromise,
       publicCourtPromise,
       phoneOriginPromise,
+      phoneInfogaPromise,
     ]);
 
     // Exact public contact matches rank candidates ahead of name-only matches.
@@ -2208,6 +2211,9 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
         publicNewsRecordCount: publicNews.records.length,
         publicCourtStatus: publicCourt.status,
         publicCourtRecordCount: publicCourt.records.length,
+        phoneInfogaStatus: phoneInfoga.status,
+        phoneInfogaScannerCount: phoneInfoga.scanners.length,
+        phoneInfogaScannerSuccessCount: phoneInfoga.scanners.filter(item => item.status === 'ok').length,
         originSessionId: originSessionId || null,
         lastAcquiredAt: new Date().toISOString(),
       },
@@ -2294,6 +2300,9 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
         publicNewsStatus: publicNews.status,
         publicNewsArticleLeads: publicNews.articleLeads,
         publicNewsRecordCount: publicNews.records.length,
+        phoneInfogaStatus: phoneInfoga.status,
+        phoneInfogaNormalized: phoneInfoga.normalized,
+        phoneInfogaScanners: phoneInfoga.scanners.map(item => ({ scanner: item.scanner, status: item.status })),
         summary: report.summary || '',
         verificationStatus: report.identitySummary?.verificationStatus || 'Unknown',
       },
