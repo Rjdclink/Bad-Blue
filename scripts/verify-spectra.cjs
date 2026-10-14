@@ -494,7 +494,7 @@ test('SPECTRA resolves enrolled phones before redundant Android and Apple acquis
   enrolledRegistry.includes('resolveSpectraEnrolledDeviceByRef') &&
   enrolledRegistry.includes("mismatch: 'device-ref'") &&
   enrolledAcquisition.includes('resolveByRef') &&
-  enrolledAcquisition.includes('No enrolled phone number or device reference was supplied.') &&
+  enrolledAcquisition.includes('Additive compatibility: the original active-acquisition pipeline') &&
   activeAcquisition.includes("target: 'device'") &&
   activeAcquisition.includes("'canonical-telemetry'") &&
   activeAcquisition.includes('SPECTRA_ANDROID_RADIO_COLLECTOR_URL_TEMPLATE') &&
@@ -514,11 +514,13 @@ test('SPECTRA resolves enrolled phones before redundant Android and Apple acquis
   adapterRegistry.includes("id: 'traccar-active'") &&
   adapterRegistry.includes("id: 'camara-location-retrieval-active'") &&
   adapterRegistry.includes("id: 'vonage-location-retrieval-active'"));
-test('Existing direct-deviceRef acquisition remains additive when no phone enrollment exists',
+test('Existing active acquisition remains additive around the enrollment layer',
   enrolledAcquisition.includes('Preserve the pre-existing direct-deviceRef acquisition path') &&
-  enrolledAcquisition.includes("resolution.status === 'not-enrolled' || resolution.status === 'unavailable'") &&
+  enrolledAcquisition.includes("resolution.status === 'not-enrolled'") &&
+  enrolledAcquisition.includes("resolution.status === 'unavailable'") &&
+  enrolledAcquisition.includes('Additive compatibility: the original active-acquisition pipeline') &&
   enrolledAcquisition.includes('const direct = await deps.active({') &&
-  enrolledAcquisition.includes('resolvedDeviceRef: suppliedDeviceRef'));
+  enrolledAcquisition.includes('resolvedDeviceRef: suppliedDeviceRef || undefined'));
 
 test('Enrolled native device telemetry is self-authenticated, platform-gated and stored server-side',
   geoconsoleRoutes.includes("router.post('/telemetry/enrolled/:deviceRef/normalize/:kind'") &&
