@@ -29,6 +29,9 @@ CREATE INDEX IF NOT EXISTS spectra_enrolled_devices_ref_idx
   ON public.spectra_enrolled_devices (user_id, device_ref)
   WHERE active = true;
 
+CREATE UNIQUE INDEX IF NOT EXISTS spectra_enrolled_devices_ref_ci_uidx
+  ON public.spectra_enrolled_devices (user_id, lower(device_ref));
+
 ALTER TABLE public.spectra_enrolled_devices ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON TABLE public.spectra_enrolled_devices FROM PUBLIC;
 
