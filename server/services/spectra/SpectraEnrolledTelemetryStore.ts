@@ -103,7 +103,7 @@ export async function persistSpectraEnrolledDeviceTelemetry(
   options: { query?: Query } = {},
 ): Promise<boolean> {
   const observed = observedAt(batch);
-  if (!observed) return false;
+  if (!observed || observed.getTime() > Date.now() + 5 * 60_000) return false;
   const canonical = {
     ...batch,
     sessionId: undefined,
