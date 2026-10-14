@@ -75,7 +75,14 @@ function boundedPhoneInfogaQueries(
     if (!value || typeof value !== 'object') return;
     for (const [key, child] of Object.entries(value as Record<string, unknown>).slice(0, 60)) {
       const lower = key.toLowerCase();
-      if (lower === 'dork' && typeof child === 'string') add(child);
+      if (lower === 'dork' && typeof child === 'string') {
+        const dork = child.trim();
+        const phoneDigits = phone.replace(/\D/g, '');
+        const dorkDigits = dork.replace(/\D/g, '');
+        add(dorkDigits.includes(phoneDigits)
+          ? dork
+          : `"${phone}" ${dork}`);
+      }
       else if (allowedContextKeys.has(lower)) contextValue(child);
       if (child && typeof child === 'object') walk(child, depth + 1);
       if (queries.size >= 10) break;
