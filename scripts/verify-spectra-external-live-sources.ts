@@ -256,6 +256,62 @@ try {
   }
 
   {
+    const env = {
+      SPECTRA_PHONEINFOGA_URL: 'https://phoneinfoga.example',
+    } as NodeJS.ProcessEnv;
+    globalThis.fetch = async (input: any, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('/api/v2/numbers')) {
+        return new Response(JSON.stringify({
+          valid: true,
+          e164: '+14025550123',
+          country: 'United States',
+          carrier: 'Fixture',
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      if (url.endsWith('/api/v2/scanners')) {
+        assert.equal(init?.method, 'GET');
+        return new Response(JSON.stringify({
+          scanners: [
+            { name: 'numverify' },
+            { name: 'googlesearch' },
+            { name: 'local' },
+            { name: 'googlecse' },
+            { name: 'ovh' },
+          ],
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      assert.match(url, /\/api\/v2\/scanners\/(?:googlesearch|ovh|local)\/run$/);
+      if (url.includes('/googlesearch/')) {
+        return new Response(JSON.stringify({
+          result: {
+            social_media: [{
+              number: '+14025550123',
+              dork: 'site:linkedin.com intext:"4025550123"',
+            }],
+          },
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      return new Response(JSON.stringify({ result: {} }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    };
+
+    const result = await collectSpectraPhoneInfoga('+14025550123', env);
+    assert.equal(result.status, 'ok');
+    assert.deepEqual(
+      result.scanners.map(item => item.scanner),
+      ['googlesearch', 'ovh', 'local'],
+      'default PhoneInfoga mode must use only upstream keyless scanners',
+    );
+    assert.ok(result.searchQueries.some(query => query.includes('site:linkedin.com')));
+    assert.ok(!result.scanners.some(item =>
+      item.scanner === 'numverify' || item.scanner === 'googlecse'
+    ), 'credential-backed PhoneInfoga scanners remain explicit opt-in');
+  }
+
+  {
     const records: SpectraRetrievedEvidence[] = [{
       url: 'https://publisher.example/article',
       requestedUrl: 'https://publisher.example/article',
