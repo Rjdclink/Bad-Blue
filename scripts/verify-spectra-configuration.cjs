@@ -49,6 +49,32 @@ check('multi-part provider configuration requires both parts', () => {
   assert.equal(row(d.getSpectraConfigurationDiagnostics({ TRAFFICLAND_API_KEY: marker }), 'trafficland').configured, false);
   assert.equal(row(d.getSpectraConfigurationDiagnostics({ TRAFFICLAND_API_KEY: marker, TRAFFICLAND_SYSTEM: marker }), 'trafficland').configured, true);
 });
+check('enrolled live-source readiness is configuration-only and value-safe', () => {
+  const report = d.getSpectraConfigurationDiagnostics({
+    SPECTRA_ANDROID_RADIO_COLLECTOR_URL_TEMPLATE: 'https://collector.example/{{deviceRef}}',
+    SPECTRA_ANDROID_RADIO_COLLECTOR_TOKEN: marker,
+    SPECTRA_APPLE_DEVICE_COLLECTOR_URL_TEMPLATE: 'https://apple.example/{{deviceRef}}',
+    SPECTRA_APPLE_DEVICE_COLLECTOR_TOKEN: marker,
+    SPECTRA_OWNTRACKS_RECORDER_URL: 'https://owntracks.example',
+    SPECTRA_OWNTRACKS_USERNAME: 'fixture-user',
+    SPECTRA_OWNTRACKS_PASSWORD: marker,
+    SPECTRA_TRACCAR_URL: 'https://traccar.example',
+    SPECTRA_TRACCAR_TOKEN: marker,
+    SPECTRA_CAMARA_LOCATION_RETRIEVAL_URL: 'https://camara.example/retrieve',
+    SPECTRA_CAMARA_LOCATION_RETRIEVAL_TOKEN: marker,
+    SPECTRA_VONAGE_LOCATION_TOKEN: marker,
+    SPECTRA_PHONEINFOGA_URL: 'https://phoneinfoga.example',
+    NEON_DATABASE_URL: marker,
+  });
+  for (const id of [
+    'android-radio-collector', 'apple-device-collector', 'traccar',
+    'camara-location', 'vonage-location', 'phoneinfoga',
+  ]) assert.equal(row(report, id).configured, true);
+  assert.equal(report.enrolledSources.enrollmentRegistryConfigured, true);
+  assert.equal(report.enrolledSources.ownTracksConfigured, true);
+  assert.equal(report.enrolledSources.ownTracksAuthenticationConfigured, true);
+  assert(!JSON.stringify(report).includes(marker));
+});
 check('Census key presence does not imply geocoder use', () => {
   const report = d.getSpectraConfigurationDiagnostics({ CENSUS_API_KEY: marker });
   assert.equal(report.censusGeocoder.censusDataKeyPresent, true);
@@ -92,7 +118,7 @@ check('authenticated capabilities handler exposes only configuration diagnostics
     getSpectraConfigurationDiagnostics: () => d.getSpectraConfigurationDiagnostics(env),
     readSpectraEnvironmentValue: names => d.readSpectraEnvironmentValue(names, env),
     spectraRealtimeBridgeConfigured: () => false, getSpectraAdapterCapabilities: () => [],
-    getSpectraActiveAcquisitionCapabilities: () => [], getConfiguredSpectraAnchorCount: () => 0,
+    getSpectraEnrolledAcquisitionCapabilities: () => [], getConfiguredSpectraAnchorCount: () => 0,
     getSpectraGenericPullAdapters: () => [],
   });
   let response;
