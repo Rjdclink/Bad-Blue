@@ -290,15 +290,29 @@ function normalizeProviderResponse(
     throw new Error('Untargeted provider positions cannot establish a subject location.');
   }
 
+  const correlationDomain =
+    config.target === 'device' ? normalizeDeviceRef(input.deviceRef) : undefined;
   return {
     ...normalized,
     sessionId: requestedSession || undefined,
     subjectLabel: requestedSubject || undefined,
     sourceId: config.id,
+    measurements: normalized.measurements.map(measurement => ({
+      ...measurement,
+      metadata: {
+        ...(record((measurement as any).metadata)),
+        ...(correlationDomain
+          ? { deviceRef: correlationDomain, correlationDomain }
+          : {}),
+      },
+    })),
     metadata: {
       ...normalized.metadata,
       acquisition: 'active-provider-pull',
       adapterId: config.id,
+      ...(correlationDomain
+        ? { deviceRef: correlationDomain, correlationDomain }
+        : {}),
     },
   };
 }
