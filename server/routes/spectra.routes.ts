@@ -1554,6 +1554,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
         searchRetrievedEvidence,
         recursiveCluesSeen,
         4,
+        { phone, email },
       );
       const phoneInfogaExpansion = phoneInfogaQueries.slice(
         phoneInfogaQueryOffset,
