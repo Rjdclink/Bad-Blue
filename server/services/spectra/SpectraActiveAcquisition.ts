@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { discoveryFetch } from '../../lexara/DiscoveryDiagnostics';
 import {
   normalizeSpectraProviderPayload,
@@ -525,8 +526,10 @@ function builtInActiveSources(): Array<{
 
 function acquisitionBody(
   input: SpectraActiveAcquisitionInput,
+  requestId: string,
 ): Record<string, unknown> {
   return {
+    requestId,
     deviceRef: normalizeDeviceRef(input.deviceRef),
     sessionId: input.sessionId,
     subjectLabel: input.subjectLabel,
@@ -579,6 +582,10 @@ async function fetchAdapter(
     headers.Authorization = `Bearer ${headers.Authorization}`;
   }
 
+  const requestId = randomUUID();
+  const requestBody = JSON.stringify(acquisitionBody(input, requestId));
+  headers['X-Spectra-Acquisition-Id'] = requestId;
+
   let payload: unknown;
   let lastError: unknown;
   for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -587,9 +594,7 @@ async function fetchAdapter(
         method: config.method,
         headers,
         redirect: 'error',
-        body: config.method === 'POST'
-          ? JSON.stringify(acquisitionBody(input))
-          : undefined,
+        body: config.method === 'POST' ? requestBody : undefined,
         signal: AbortSignal.timeout(config.timeoutMs),
       });
 
