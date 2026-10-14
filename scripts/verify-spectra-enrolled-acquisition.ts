@@ -298,10 +298,9 @@ const unenrolledRef = await acquireSpectraEnrolledTelemetry({
   deps: { resolve, resolveByRef, active, ownTracks, traccar, carrier, inbox },
 });
 assert.equal(unenrolledRef.resolution?.status, 'not-enrolled');
-assert.equal(activeCalls.length, callsBeforeUnenrolledRef + 1,
-  'pre-existing authorized direct-deviceRef acquisition remains available as an additive fallback');
-assert.equal(activeCalls.at(-1)?.deviceRef, 'not-enrolled-device');
-assert.equal(unenrolledRef.resolvedDeviceRef, 'not-enrolled-device');
+assert.equal(unenrolledRef.batches.length, 0);
+assert.equal(activeCalls.length, callsBeforeUnenrolledRef,
+  'an unenrolled direct deviceRef must never reach active collectors');
 
 const callsBeforeMissingIdentifier = activeCalls.length;
 const noIdentifier = await acquireSpectraEnrolledTelemetry({
@@ -313,9 +312,9 @@ const noIdentifier = await acquireSpectraEnrolledTelemetry({
   deps: { resolve, resolveByRef, active, ownTracks, traccar, carrier, inbox },
 });
 assert.equal(noIdentifier.batches.length, 0);
-assert.equal(activeCalls.length, callsBeforeMissingIdentifier + 1,
-  'name-only acquisition preserves the original untargeted/context active pipeline');
-assert.equal(activeCalls.at(-1)?.deviceRef, undefined);
+assert.equal(noIdentifier.attempts[0]?.reasonCode, 'missing-device');
+assert.equal(activeCalls.length, callsBeforeMissingIdentifier,
+  'a name-only investigation must not start live device acquisition');
 
 const callsBeforeWrongDevice = activeCalls.length;
 const carrierBeforeWrongDevice = carrierCalls;
