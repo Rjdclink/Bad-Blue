@@ -233,6 +233,42 @@ try {
   assert.ok(androidRadio.batches[0].measurements.some(item => item.kind === 'ranging'));
   assert.equal(androidRadio.attempts[0]?.status, 'fulfilled');
 
+  let transientActiveCalls = 0;
+  globalThis.fetch = async () => {
+    transientActiveCalls += 1;
+    if (transientActiveCalls === 1) {
+      return new Response('temporary upstream outage', { status: 503 });
+    }
+    return new Response(JSON.stringify({
+      deviceRef: 'android-radio-a',
+      cells: [{
+        timestamp: '2026-10-03T14:59:31Z',
+        type: 'lte', mcc: 310, mnc: 260, tac: 44, ci: 123456, pci: 12,
+        signal: { rsrp: -94, rsrq: -9, rssnr: 20 },
+      }],
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  };
+  const recoveredAndroid = await acquireSpectraActiveTelemetry({
+    deviceRef: 'android-radio-a', platform: 'android',
+    sessionId: 'fixture-session', subjectLabel: 'managed device',
+  });
+  assert.equal(recoveredAndroid.batches.length, 1);
+  assert.equal(transientActiveCalls, 2,
+    'active collector gets exactly one recovery attempt after a transient 5xx');
+
+  let permanentActiveCalls = 0;
+  globalThis.fetch = async () => {
+    permanentActiveCalls += 1;
+    return new Response('unauthorized', { status: 401 });
+  };
+  const rejectedAndroidAuth = await acquireSpectraActiveTelemetry({
+    deviceRef: 'android-radio-a', platform: 'android',
+    sessionId: 'fixture-session', subjectLabel: 'managed device',
+  });
+  assert.equal(rejectedAndroidAuth.batches.length, 0);
+  assert.equal(permanentActiveCalls, 1,
+    'active collector authentication failure must not be retried');
+
   delete process.env.SPECTRA_ANDROID_RADIO_COLLECTOR_URL_TEMPLATE;
   delete process.env.SPECTRA_ANDROID_RADIO_COLLECTOR_TOKEN;
   process.env.SPECTRA_APPLE_DEVICE_COLLECTOR_URL_TEMPLATE =
