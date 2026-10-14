@@ -17,6 +17,3 @@ android {
   }
 }
 
-dependencies {
-  implementation("androidx.annotation:annotation:1.9.1")
-}
