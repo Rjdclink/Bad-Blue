@@ -288,6 +288,14 @@ function normalizeProviderResponse(
   };
 }
 
+const RESERVED_BUILTIN_ACTIVE_IDS = new Set([
+  'android-managed-location-active',
+  'apple-managed-location-active',
+  'android-radio-collector-active',
+  'apple-device-collector-active',
+  'cisco-spaces-active-location',
+]);
+
 function configuredAdapters(): ActiveProviderConfig[] {
   const disallowedActiveNormalizers = new Set<string>([
     'camara-location-retrieval',
@@ -321,6 +329,7 @@ function configuredAdapters(): ActiveProviderConfig[] {
       if (
         !id
         || seen.has(id)
+        || RESERVED_BUILTIN_ACTIVE_IDS.has(id)
         || !validProviderTemplate(url)
         || !hasBoundDevice
         || !['GET', 'POST'].includes(method)
@@ -453,6 +462,53 @@ function builtInCiscoSpacesAdapter(): ActiveProviderConfig | null {
   };
 }
 
+function builtInActiveSources(): Array<{
+  id: string;
+  label: string;
+  normalizerKind: SpectraProviderNormalizerKind | 'canonical-telemetry';
+  config: ActiveProviderConfig | null;
+  notConfiguredReason: string;
+}> {
+  return [
+    {
+      id: 'android-managed-location-active',
+      label: 'Android managed-device latest location',
+      normalizerKind: 'android-managed-lost-mode',
+      config: builtInAndroidMdmAdapter(),
+      notConfiguredReason: 'Android managed-location provider is not configured.',
+    },
+    {
+      id: 'apple-managed-location-active',
+      label: 'Apple supervised-device latest location',
+      normalizerKind: 'apple-managed-lost-mode',
+      config: builtInAppleMdmAdapter(),
+      notConfiguredReason: 'Apple supervised-device location provider is not configured.',
+    },
+    {
+      id: 'android-radio-collector-active',
+      label: 'Android enrolled multi-radio collector',
+      normalizerKind: 'android-radio-collector',
+      config: builtInAndroidRadioCollectorAdapter(),
+      notConfiguredReason: 'Android enrolled radio collector is not configured.',
+    },
+    {
+      id: 'apple-device-collector-active',
+      label: 'Apple enrolled device telemetry collector',
+      normalizerKind: 'canonical-telemetry',
+      config: builtInAppleDeviceCollectorAdapter(),
+      notConfiguredReason: 'Apple enrolled device collector is not configured.',
+    },
+    {
+      id: 'cisco-spaces-active-location',
+      label: 'Cisco Spaces active device location',
+      normalizerKind: 'cisco-spaces-location',
+      config: builtInCiscoSpacesAdapter(),
+      notConfiguredReason: 'Cisco Spaces device-location provider is not configured.',
+    },
+  ];
+}
+
+
 function acquisitionBody(
   input: SpectraActiveAcquisitionInput,
 ): Record<string, unknown> {
@@ -514,84 +570,41 @@ export function getSpectraActiveAcquisitionCapabilities(): Array<{
   platforms?: readonly SpectraDevicePlatform[];
 }> {
   return [
-    builtInAndroidMdmAdapter(),
-    builtInAppleMdmAdapter(),
-    builtInAndroidRadioCollectorAdapter(),
-    builtInAppleDeviceCollectorAdapter(),
-    builtInCiscoSpacesAdapter(),
+    ...builtInActiveSources().flatMap(source => source.config ? [source.config] : []),
     ...configuredAdapters(),
-  ].filter((item): item is ActiveProviderConfig => Boolean(item))
-    .map(item => ({
-      id: item.id,
-      label: item.label,
-      normalizerKind: item.normalizerKind,
-      target: item.target,
-      platforms: item.platforms,
-    }));
+  ].map(item => ({
+    id: item.id,
+    label: item.label,
+    normalizerKind: item.normalizerKind,
+    target: item.target,
+    platforms: item.platforms,
+  }));
 }
 
 export async function acquireSpectraActiveTelemetry(
   input: SpectraActiveAcquisitionInput,
 ): Promise<SpectraActiveAcquisitionResult> {
+  const builtIns = builtInActiveSources();
+  const notConfiguredAttempts: SpectraActiveAcquisitionAttempt[] = builtIns
+    .filter(source => !source.config)
+    .map(source => ({
+      id: source.id,
+      label: source.label,
+      status: 'skipped',
+      normalizerKind: source.normalizerKind,
+      measurementCount: 0,
+      reasonCode: 'not-configured',
+      reason: source.notConfiguredReason,
+    }));
   const adapters = [
-    builtInAndroidMdmAdapter(),
-    builtInAppleMdmAdapter(),
-    builtInAndroidRadioCollectorAdapter(),
-    builtInAppleDeviceCollectorAdapter(),
-    builtInCiscoSpacesAdapter(),
+    ...builtIns.flatMap(source => source.config ? [source.config] : []),
     ...configuredAdapters(),
-  ].filter((item): item is ActiveProviderConfig => Boolean(item));
+  ];
 
   if (!adapters.length) {
     return {
       batches: [],
-      attempts: [
-        {
-          id: 'android-managed-location-active',
-          label: 'Android managed-device latest location',
-          status: 'skipped',
-          normalizerKind: 'android-managed-lost-mode',
-          measurementCount: 0,
-          reasonCode: 'not-configured',
-          reason: 'Android managed-location provider is not configured.',
-        },
-        {
-          id: 'apple-managed-location-active',
-          label: 'Apple supervised-device latest location',
-          status: 'skipped',
-          normalizerKind: 'apple-managed-lost-mode',
-          measurementCount: 0,
-          reasonCode: 'not-configured',
-          reason: 'Apple supervised-device location provider is not configured.',
-        },
-        {
-          id: 'android-radio-collector-active',
-          label: 'Android enrolled multi-radio collector',
-          status: 'skipped',
-          normalizerKind: 'android-radio-collector',
-          measurementCount: 0,
-          reasonCode: 'not-configured',
-          reason: 'Android enrolled radio collector is not configured.',
-        },
-        {
-          id: 'apple-device-collector-active',
-          label: 'Apple enrolled device telemetry collector',
-          status: 'skipped',
-          normalizerKind: 'canonical-telemetry',
-          measurementCount: 0,
-          reasonCode: 'not-configured',
-          reason: 'Apple enrolled device collector is not configured.',
-        },
-        {
-          id: 'cisco-spaces-active-location',
-          label: 'Cisco Spaces active device location',
-          status: 'skipped',
-          normalizerKind: 'cisco-spaces-location',
-          measurementCount: 0,
-          reasonCode: 'not-configured',
-          reason: 'Cisco Spaces device-location provider is not configured.',
-        },
-      ],
+      attempts: notConfiguredAttempts,
     };
   }
 
@@ -646,6 +659,9 @@ export async function acquireSpectraActiveTelemetry(
 
   return {
     batches: outcomes.flatMap(outcome => outcome.batch ? [outcome.batch] : []),
-    attempts: outcomes.map(outcome => outcome.attempt),
+    attempts: [
+      ...outcomes.map(outcome => outcome.attempt),
+      ...notConfiguredAttempts,
+    ],
   };
 }
