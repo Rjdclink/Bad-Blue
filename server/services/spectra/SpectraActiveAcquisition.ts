@@ -535,6 +535,19 @@ function acquisitionBody(
   };
 }
 
+function transientActiveRequestError(error: unknown): boolean {
+  const candidate = error as { name?: string; code?: string };
+  return candidate?.name === 'TimeoutError'
+    || candidate?.name === 'AbortError'
+    || candidate?.name === 'SyntaxError'
+    || ['ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'EAI_AGAIN', 'ENOTFOUND']
+      .includes(String(candidate?.code || ''));
+}
+
+function sleep(milliseconds: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, milliseconds));
+}
+
 async function fetchAdapter(
   config: ActiveProviderConfig,
   input: SpectraActiveAcquisitionInput,
@@ -557,22 +570,51 @@ async function fetchAdapter(
     headers.Authorization = `Bearer ${headers.Authorization}`;
   }
 
-  const response = await discoveryFetch(fetch, url, {
-    method: config.method,
-    headers,
-    redirect: 'error',
-    body: config.method === 'POST'
-      ? JSON.stringify(acquisitionBody(input))
-      : undefined,
-    signal: AbortSignal.timeout(config.timeoutMs),
-  });
+  let payload: unknown;
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const response = await discoveryFetch(fetch, url, {
+        method: config.method,
+        headers,
+        redirect: 'error',
+        body: config.method === 'POST'
+          ? JSON.stringify(acquisitionBody(input))
+          : undefined,
+        signal: AbortSignal.timeout(config.timeoutMs),
+      });
 
-  if (!response.ok) {
-    void response.body?.cancel().catch(() => undefined);
-    throw new Error(`Active provider returned HTTP ${response.status}.`);
+      if (!response.ok) {
+        void response.body?.cancel().catch(() => undefined);
+        const permanent = [400, 401, 402, 403, 404, 409, 422, 429, 432, 433]
+          .includes(response.status);
+        const error = new Error(`Active provider returned HTTP ${response.status}.`);
+        if (permanent || response.status < 500 || attempt === 1) throw error;
+        lastError = error;
+      } else {
+        try {
+          payload = await readSpectraJsonResponse(response);
+          lastError = undefined;
+          break;
+        } catch (error) {
+          if (attempt === 1) throw error;
+          lastError = error;
+        }
+      }
+    } catch (error) {
+      if (!transientActiveRequestError(error) || attempt === 1) throw error;
+      lastError = error;
+    }
+    await sleep(150);
+  }
+  if (payload === undefined) {
+    throw lastError instanceof Error
+      ? lastError
+      : new Error('Active provider request failed.');
   }
 
-  const payload = await readSpectraJsonResponse(response);
+  // Identity/session/subject mismatches and normalization errors are semantic
+  // failures and are deliberately not retried.
   return normalizeProviderResponse(payload, config, input);
 }
 
