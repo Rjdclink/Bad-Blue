@@ -44,8 +44,7 @@ try {
         String((init?.headers as Record<string, string>)?.Authorization),
         /^Basic /,
       );
-      return new Response(JSON.stringify({
-        data: [{
+      return new Response(JSON.stringify([{
           _type: 'location',
           topic: 'owntracks/jane/phone',
           lat: 41.25,
@@ -56,8 +55,7 @@ try {
           vel: 18,
           cog: 90,
           batt: 82,
-        }],
-      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        }]), { status: 200, headers: { 'Content-Type': 'application/json' } });
     };
 
     const result = await acquireSpectraOwnTracks(
@@ -76,13 +74,11 @@ try {
     } as NodeJS.ProcessEnv;
     globalThis.fetch = async (input: any) => {
       assert.equal(String(input), 'https://owntracks.example/owntracks/api/0/locations');
-      return new Response(JSON.stringify({
-        data: [{
+      return new Response(JSON.stringify([{
           _type: 'location',
           topic: 'owntracks/jane/phone',
           lat: 41.25, lon: -95.93, tst: 1791039720, acc: 7,
-        }],
-      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        }]), { status: 200, headers: { 'Content-Type': 'application/json' } });
     };
     const prefixed = await acquireSpectraOwnTracks(
       device,
