@@ -32,6 +32,28 @@ When both a phone and device reference are supplied, they must resolve to the
 same enrollment. Ambiguous phone mappings, a conflicting device reference, or
 a conflicting subject label are rejected before any live provider request.
 
+## Native enrolled-device reporting
+
+An enrolled native device can report telemetry directly to Bad-Blue without a
+separate collector service:
+
+`POST /api/geoconsole/telemetry/enrolled/:deviceRef/normalize/:kind`
+
+The device uses its operational enrollment bearer token. SPECTRA stores only
+the SHA-256 token hash in `spectra_enrolled_devices.ingest_token_hash`; the
+plain reporting token is not returned by SPECTRA. This token authenticates the
+enrolled device reporter. It is not a consent form, authorization form, or
+integration with a separate authorization application.
+
+The endpoint verifies the token against the durable enrolled-device registry,
+checks that the requested normalizer is valid for the enrolled platform,
+rejects a conflicting `deviceRef`, normalizes the measurements, and writes the
+canonical batch to `spectra_enrolled_device_telemetry`. A later lookup of the
+phone resolves the same stable `deviceRef` and reads only fresh device-reported
+telemetry (five minutes by default, configurable with
+`SPECTRA_ENROLLED_TELEMETRY_MAX_AGE_MS`). The inbox retains at most the latest
+256 payloads per device.
+
 ## Android
 
 The dedicated Android collector uses
