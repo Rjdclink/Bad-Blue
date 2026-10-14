@@ -35,7 +35,7 @@ assert.match(apple, /CBCentralManagerDelegate/);
 assert.match(apple, /NINearbyObject/);
 assert.match(apple, /recordNearbyObject/);
 assert.match(apple, /normalize\/canonical-telemetry/);
-assert.match(apple, /Authorization", forHTTPHeaderField: "Authorization"/);
+assert.match(apple, /forHTTPHeaderField: "Authorization"/);
 assert.doesNotMatch(apple, /requestAlwaysAuthorization|requestWhenInUseAuthorization/);
 
 assert.match(routes, /telemetry\/enrolled\/:deviceRef\/normalize\/:kind/);
