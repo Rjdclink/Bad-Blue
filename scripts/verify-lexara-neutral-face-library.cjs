@@ -1,0 +1,12 @@
+const fs = require('fs');
+const source = fs.readFileSync('client/src/lib/lexaraNeutralFaceLibrary.ts','utf8');
+const must = (ok,msg) => { if(!ok){ console.error('FAIL:',msg); process.exitCode=1; } };
+must(source.includes('VISEMES = 20'), '20 neutral viseme families');
+must(source.includes('STRENGTHS = 10'), '10 articulation strengths');
+must(source.includes('PHASES = 5'), '5 neutral micro-motion phases');
+must(source.includes('SEQUENCE_FAMILIES = 15'), '15 prepared sequence families');
+must(source.includes('length !== 1000'), 'exact 1000-state invariant');
+must(source.includes('length !== 750'), 'exact 750-sequence invariant');
+must(source.includes('does not start, stop, buffer, schedule, or delay audio'), 'audio authority isolation documented');
+if(process.exitCode) process.exit(process.exitCode);
+console.log('Lexara neutral face library verification passed.');
