@@ -91,10 +91,11 @@ function recordProviderFailure(lane: string, error: unknown): void {
   laneFailures.set(lane, failures);
   const unavailable = category === 'dns' || category === 'connection' || category === 'http-404';
   const credentials = category === 'http-401' || category === 'http-403';
+  const billing = category === 'http-402' || category === 'http-432' || category === 'http-433';
   const transient = category === 'timeout' || category === 'invalid-response'
     || category === 'upstream-error' || /^http-5\d\d$/.test(category);
-  if (unavailable || credentials || (transient && failures >= 3)) {
-    const retryAfterMs = credentials ? 300_000 : 30_000;
+  if (unavailable || credentials || billing || (transient && failures >= 2)) {
+    const retryAfterMs = credentials || billing ? 24 * 60 * 60_000 : 30_000;
     engineCooldownUntil.set(lane, Math.max(engineCooldownUntil.get(lane) || 0, Date.now() + retryAfterMs));
     console.warn('[LEXARA Search Availability]', JSON.stringify({ lane, status: 'provider-cooldown', category, retryAfterMs }));
   }
@@ -108,7 +109,7 @@ function recordEngineFailure(engine: string, reason: string, retryAfterMs = 180_
   if (/captcha|human verification|verify you are human/i.test(reason)) {
     captchaDisabledEngines.add(engine);
     console.warn('[LEXARA Search Availability]', JSON.stringify({ engine, status: 'disabled-captcha' }));
-  } else if (/HTTP\s+43[23]\b|plan\s+limit\s+exceeded/i.test(reason)) {
+  } else if (/HTTP\s+(?:402|43[23])\b|payment\s+required|insufficient\s+(?:credit|quota)|plan\s+limit\s+exceeded/i.test(reason)) {
     const budgetCooldownMs = Math.max(6 * 60 * 60_000, retryAfterMs);
     engineCooldownUntil.set(engine, Math.max(engineCooldownUntil.get(engine) || 0, Date.now() + budgetCooldownMs));
     console.warn('[LEXARA Search Availability]', JSON.stringify({ engine, status: 'plan-limit-cooldown', retryAfterMs: budgetCooldownMs }));
@@ -150,7 +151,7 @@ async function checkDiscoveryResponse(response: Response, engine: string | strin
   for (const name of Array.isArray(engine) ? engine : [engine]) {
     recordEngineFailure(name, `HTTP ${response.status}`, Number.isFinite(retryAfterMs) ? retryAfterMs : 180_000);
   }
-  if ([401, 429, 432, 433].includes(response.status)) {
+  if ([401, 402, 403, 429, 432, 433].includes(response.status)) {
     if (response.body) void response.body.cancel().catch(() => undefined);
     throw new Error(`Discovery HTTP ${response.status}`);
   }

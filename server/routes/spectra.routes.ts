@@ -41,6 +41,7 @@ import {
   buildSpectraDiscoveryWaves,
   SPECTRA_DISCOVERY_POLICY,
 } from '../services/spectra/SpectraSourceRegistry';
+import { buildSpectraRecursiveClueQueries } from '../services/spectra/SpectraRecursiveClues';
 import {
   loadSpectraSessionIdentityBindings,
   loadSpectraSessionObservations,
@@ -68,6 +69,7 @@ import {
 import { inferCorroboratedRegionalCity, inferProvisionalRegionalCities, inferPublicContactProfileCities, retrievedRegionalSources } from '../services/spectra/SpectraRegionalInference';
 import { inferPublicDirectoryCities } from '../services/spectra/SpectraPublicDirectoryCities';
 import { collectSpectraPhoneOrigin } from '../services/spectra/SpectraPhoneOrigin';
+import { collectSpectraPhoneInfoga } from '../services/spectra/SpectraPhoneInfoga';
 import {
   assessSpectraCityDiscoveryReadiness,
   chooseSpectraPublicRetrievalUrls,
@@ -76,7 +78,7 @@ import {
 import { assessSpectraLiveLocation } from '../services/spectra/SpectraLiveConfidence';
 import { solveSpectraConstraintLayer } from '../services/spectra/SpectraConstraintSolver';
 import { acquireConfiguredSpectraCameras } from '../services/spectra/SpectraCameraDirectoryAdapters';
-import { acquireSpectraActiveTelemetry, getSpectraActiveAcquisitionCapabilities } from '../services/spectra/SpectraActiveAcquisition';
+import { acquireSpectraEnrolledTelemetry, getSpectraEnrolledAcquisitionCapabilities } from '../services/spectra/SpectraEnrolledAcquisition';
 import { buildSpectraPipelineDiagnostics, type SpectraRetrievalCounts } from '../services/spectra/SpectraPipelineDiagnostics';
 import { acquirePublicPlace, isPublicPlaceTarget } from '../services/spectra/SpectraPublicPlace';
 import { collectSpectraPublicAccountRecords, discoverSpectraPublicBlueskyProfiles } from '../services/spectra/SpectraPublicAccountRecords';
@@ -1163,7 +1165,9 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       useClaude: false,
       allowPaidSearch: process.env.SPECTRA_PAID_SEARCH_ENABLED === 'true',
     }, attemptedDiscoveryQueries, attemptedRetrievalUrls);
-    const activeAcquisitionPromise = acquireSpectraActiveTelemetry({
+    const activeAcquisitionPromise = acquireSpectraEnrolledTelemetry({
+      userId,
+      phoneNumber: phone,
       deviceRef,
       sessionId: requestedSessionId,
       subjectLabel: resolvedTargetLabel,
@@ -1176,6 +1180,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
     const publicNewsPromise = collectSpectraPublicNewsRecords(resolvedName || resolvedSubjectName);
     const publicCourtPromise = collectSpectraPublicCourtRecords(resolvedName || resolvedSubjectName);
     const phoneOriginPromise = collectSpectraPhoneOrigin(phone);
+    const phoneInfogaPromise = collectSpectraPhoneInfoga(phone);
 
     const [
       backgroundOutcome,
@@ -1189,6 +1194,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       publicNews,
       publicCourt,
       phoneOrigin,
+      phoneInfoga,
     ] = await Promise.all([
       backgroundPromise,
       firstPassPromise,
@@ -1201,6 +1207,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       publicNewsPromise,
       publicCourtPromise,
       phoneOriginPromise,
+      phoneInfogaPromise,
     ]);
 
     // Exact public contact matches rank candidates ahead of name-only matches.
@@ -1502,6 +1509,9 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
     let discoveryQueriesFailed = firstPass.failed;
     let discoveryPasses = firstPass.attempted > 0 ? 1 : 0;
     let stagnationPasses = 0;
+    const recursiveCluesSeen = new Set<string>();
+    const phoneInfogaQueries = phoneInfoga.searchQueries.slice(0, 8);
+    let phoneInfogaQueryOffset = 0;
 
     for (let pass = 1; pass < SPECTRA_DISCOVERY_POLICY.maxPasses; pass += 1) {
       const readiness = assessSpectraCityDiscoveryReadiness({
@@ -1539,7 +1549,21 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
           highReliability < 2 ? 'direct source record' : '',
         ].filter(Boolean),
       );
+      const recursiveClueQueries = buildSpectraRecursiveClueQueries(
+        resolvedTargetLabel,
+        searchRetrievedEvidence,
+        recursiveCluesSeen,
+        4,
+        { phone, email },
+      );
+      const phoneInfogaExpansion = phoneInfogaQueries.slice(
+        phoneInfogaQueryOffset,
+        phoneInfogaQueryOffset + 2,
+      );
+      phoneInfogaQueryOffset += phoneInfogaExpansion.length;
       const nextQueries = [...new Set([
+        ...phoneInfogaExpansion,
+        ...recursiveClueQueries,
         recursiveQuery,
         ...discoveryQueries.secondPass.slice(Math.max(0, pass - 1), pass + 1),
         ...waveQueries.slice(waveOffset, waveOffset + 4),
@@ -1606,13 +1630,13 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
     // saved privately without modifying the map or client response.
     const sceneOverlapSummary = summarizeSpectraSceneOverlap(inspectedImageRecords);
 
-    if (
+    const publicDiscoveryUnavailable =
       discoveryResults.length === 0
       && backgroundSources.length === 0
       && discoveryQueriesAttempted > 0
-      && discoveryQueriesFailed >= discoveryQueriesAttempted
-    ) {
-      throw new Error('All SPECTRA discovery paths failed');
+      && discoveryQueriesFailed >= discoveryQueriesAttempted;
+    if (publicDiscoveryUnavailable) {
+      console.warn('[SPECTRA Discovery] all public search lanes unavailable; continuing independent acquisition lanes');
     }
 
     const observations: any[] = [
@@ -2035,7 +2059,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
     const pipelineDiagnostics = buildSpectraPipelineDiagnostics({
       discoveryResults: discoveryResults.length,
       retrieval: retrievalCounts,
-      configuredCollectors: getSpectraActiveAcquisitionCapabilities().length,
+      configuredCollectors: getSpectraEnrolledAcquisitionCapabilities().filter(item => item.configured !== false).length,
       activeAttempts: activeAcquisition.attempts,
       activeBatchOutcomes,
       activeObservations: activeLocationPoints.length,
@@ -2162,6 +2186,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
         discoveryPasses,
         discoveryQueriesAttempted,
         discoveryQueriesFailed,
+        publicDiscoveryUnavailable,
         contextSourceFamilies: contextEvidence.sourceFamilies,
         contextEvidenceItemCount,
         activeAcquisitionAttempts: activeAcquisition.attempts.length,
@@ -2198,6 +2223,10 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
         publicNewsRecordCount: publicNews.records.length,
         publicCourtStatus: publicCourt.status,
         publicCourtRecordCount: publicCourt.records.length,
+        phoneInfogaStatus: phoneInfoga.status,
+        phoneInfogaScannerCount: phoneInfoga.scanners.length,
+        phoneInfogaScannerSuccessCount: phoneInfoga.scanners.filter(item => item.status === 'ok').length,
+        phoneInfogaSearchQueryCount: phoneInfoga.searchQueries.length,
         originSessionId: originSessionId || null,
         lastAcquiredAt: new Date().toISOString(),
       },
@@ -2253,6 +2282,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
         discoveryPasses,
         discoveryQueriesAttempted,
         discoveryQueriesFailed,
+        publicDiscoveryUnavailable,
         contextSourceFamilies: contextEvidence.sourceFamilies,
         contextEvidenceItemCount,
         activeAcquisitionAttempts: activeAcquisition.attempts,
@@ -2284,6 +2314,10 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
         publicNewsStatus: publicNews.status,
         publicNewsArticleLeads: publicNews.articleLeads,
         publicNewsRecordCount: publicNews.records.length,
+        phoneInfogaStatus: phoneInfoga.status,
+        phoneInfogaNormalized: phoneInfoga.normalized,
+        phoneInfogaScanners: phoneInfoga.scanners.map(item => ({ scanner: item.scanner, status: item.status })),
+        phoneInfogaSearchQueryCount: phoneInfoga.searchQueries.length,
         summary: report.summary || '',
         verificationStatus: report.identitySummary?.verificationStatus || 'Unknown',
       },

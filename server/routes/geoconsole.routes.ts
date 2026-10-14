@@ -26,7 +26,7 @@ import {
 } from '../services/geoconsole/evidence-proof';
 import { getSpectraAdapterCapabilities } from '../services/spectra/SpectraAdapterRegistry';
 import { getSpectraConfigurationDiagnostics, readSpectraEnvironmentValue } from '../services/spectra/SpectraConfigurationDiagnostics';
-import { getSpectraActiveAcquisitionCapabilities } from '../services/spectra/SpectraActiveAcquisition';
+import { getSpectraEnrolledAcquisitionCapabilities } from '../services/spectra/SpectraEnrolledAcquisition';
 import { getConfiguredSpectraAnchorCount } from '../services/spectra/SpectraAnchorRegistry';
 import {
   getSpectraGenericPullAdapters,
@@ -58,6 +58,11 @@ import {
 } from '../services/spectra/SpectraProviderTelemetryNormalizer';
 import { assessSpectraLiveLocation } from '../services/spectra/SpectraLiveConfidence';
 import { solveSpectraConstraintLayer } from '../services/spectra/SpectraConstraintSolver';
+import {
+  authorizeSpectraEnrolledDeviceIngest,
+  persistSpectraEnrolledDeviceTelemetry,
+  rotateSpectraEnrolledDeviceIngestToken,
+} from '../services/spectra/SpectraEnrolledTelemetryStore';
 
 const router = Router();
 const log = createLogger('GeoconsoleRoutes');
@@ -1550,8 +1555,246 @@ router.post('/telemetry/provider/:providerId', async (req: Request, res: Respons
   }
 });
 
+router.post('/telemetry/enrolled/:deviceRef/normalize/:kind', async (req: Request, res: Response) => {
+  const deviceRef = String(req.params.deviceRef || '').trim().slice(0, 300);
+  const authorization = String(req.get('authorization') || '');
+  const bearerToken = /^Bearer\s+(.+)$/i.exec(authorization)?.[1]?.trim() || '';
+  if (!deviceRef || !bearerToken) {
+    return res.status(401).json({ success: false, error: 'Invalid enrolled-device credentials.' });
+  }
+
+  const enrolled = await authorizeSpectraEnrolledDeviceIngest(deviceRef, bearerToken);
+  if (!enrolled) {
+    return res.status(401).json({ success: false, error: 'Invalid enrolled-device credentials.' });
+  }
+
+  const kind = String(req.params.kind || '').trim();
+  const platformKinds: Record<string, Set<string>> = {
+    android: new Set([
+      'canonical-telemetry',
+      'android-radio-collector',
+      'android-ranging-manager',
+      'android-wifi-ranging',
+      'android-uwb-sensor-fusion',
+      'android-cellular',
+      'android-raw-gnss',
+      'gnss-precision-solution',
+      'bluetooth-channel-sounding',
+      'ble-direction-finding',
+    ]),
+    ios: new Set([
+      'canonical-telemetry',
+      'apple-nearby-interaction',
+      'bluetooth-channel-sounding',
+    ]),
+    other: new Set(['canonical-telemetry']),
+  };
+  if (!platformKinds[enrolled.platform]?.has(kind)) {
+    return res.status(400).json({
+      success: false,
+      error: 'Telemetry normalizer is not allowed for this enrolled device platform.',
+    });
+  }
+
+  const requestBody = req.body && typeof req.body === 'object' && !Array.isArray(req.body)
+    ? req.body as Record<string, unknown>
+    : {};
+  const suppliedDeviceRef = typeof requestBody.deviceRef === 'string'
+    ? requestBody.deviceRef.trim()
+    : '';
+  if (suppliedDeviceRef && suppliedDeviceRef.toLowerCase() !== enrolled.deviceRef.toLowerCase()) {
+    return res.status(409).json({
+      success: false,
+      error: 'Telemetry device reference does not match the enrolled device.',
+    });
+  }
+
+  let normalized: unknown;
+  try {
+    if (kind === 'canonical-telemetry') {
+      const rawMeasurements = Array.isArray(requestBody.measurements)
+        ? requestBody.measurements
+        : [];
+      const conflictingMeasurement = rawMeasurements.some((measurement: any) => {
+        const claimed = typeof measurement?.metadata?.deviceRef === 'string'
+          ? measurement.metadata.deviceRef.trim()
+          : '';
+        return claimed && claimed.toLowerCase() !== enrolled.deviceRef.toLowerCase();
+      });
+      if (conflictingMeasurement) {
+        return res.status(409).json({
+          success: false,
+          error: 'Telemetry measurement device reference does not match the enrolled device.',
+        });
+      }
+      normalized = {
+        ...requestBody,
+        sessionId: undefined,
+        subjectLabel: undefined,
+        sourceId: String(requestBody.sourceId || `enrolled-${enrolled.platform}-device`).slice(0, 200),
+        measurements: rawMeasurements.map((measurement: any) => ({
+          ...measurement,
+          metadata: {
+            ...(measurement?.metadata && typeof measurement.metadata === 'object'
+              ? measurement.metadata
+              : {}),
+            deviceRef: enrolled.deviceRef,
+            platform: enrolled.platform,
+          },
+        })),
+        metadata: {
+          ...(requestBody.metadata && typeof requestBody.metadata === 'object'
+            ? requestBody.metadata as Record<string, unknown>
+            : {}),
+          deviceRef: enrolled.deviceRef,
+          platform: enrolled.platform,
+        },
+      };
+    } else {
+      normalized = normalizeSpectraProviderPayload(
+        kind as SpectraProviderNormalizerKind,
+        `enrolled-${enrolled.platform}-device`,
+        {
+          ...requestBody,
+          deviceRef: enrolled.deviceRef,
+          sessionId: undefined,
+          subjectLabel: undefined,
+        },
+      );
+    }
+  } catch {
+    return res.status(400).json({
+      success: false,
+      error: 'Enrolled-device telemetry could not be normalized.',
+    });
+  }
+
+  const normalizedRecord =
+    normalized && typeof normalized === 'object' && !Array.isArray(normalized)
+      ? normalized as Record<string, any>
+      : {};
+  const normalizedMeasurements = Array.isArray(normalizedRecord.measurements)
+    ? normalizedRecord.measurements.map((measurement: any) => ({
+        ...measurement,
+        metadata: {
+          ...(measurement?.metadata && typeof measurement.metadata === 'object'
+            ? measurement.metadata
+            : {}),
+          deviceRef: enrolled.deviceRef,
+          platform: enrolled.platform,
+        },
+      }))
+    : [];
+  const validation = telemetryBatchSchema.safeParse({
+    ...normalizedRecord,
+    sessionId: undefined,
+    subjectLabel: undefined,
+    measurements: normalizedMeasurements,
+    metadata: {
+      ...(normalizedRecord.metadata && typeof normalizedRecord.metadata === 'object'
+        ? normalizedRecord.metadata
+        : {}),
+      deviceRef: enrolled.deviceRef,
+      platform: enrolled.platform,
+    },
+  });
+  if (!validation.success) {
+    return res.status(400).json({
+      success: false,
+      error: 'Enrolled-device telemetry did not match the canonical SPECTRA schema.',
+      details: validation.error.errors,
+    });
+  }
+
+  if (kind === 'canonical-telemetry') {
+    const allowedCanonicalSources: Record<string, Set<string>> = {
+      android: new Set([
+        'radio',
+        'device_gps', 'gnss_fix', 'gnss_raw',
+        'wifi_rtt', 'wifi_rssi', 'wifi_fingerprint',
+        'cellular', 'cell_serving', 'cell_neighbor', 'nr_positioning',
+        'uwb_range', 'uwb_direction', 'bluetooth_proximity',
+        'bluetooth_channel_sounding', 'ble_rssi', 'ble_aoa', 'ble_aod',
+        'accelerometer', 'imu_gyro', 'magnetometer', 'barometer',
+        'wifi_rtt_context', 'cellular_signal', 'uwb_context',
+        'ble_gateway', 'radio_context', 'gnss_corrections',
+      ]),
+      ios: new Set([
+        'device_gps', 'gnss_fix',
+        'uwb_range', 'uwb_direction', 'bluetooth_proximity',
+        'bluetooth_channel_sounding', 'ble_rssi', 'ble_aoa', 'ble_aod',
+        'accelerometer', 'imu_gyro', 'magnetometer', 'barometer',
+        'uwb_context', 'ble_gateway', 'radio_context',
+      ]),
+      other: new Set(['device_gps', 'gnss_fix']),
+    };
+    const disallowed = validation.data.measurements.find(measurement => {
+      const source = measurement.kind === 'radio'
+        ? 'radio'
+        : 'source' in measurement && typeof measurement.source === 'string'
+          ? measurement.source
+          : '';
+      return !allowedCanonicalSources[enrolled.platform]?.has(source);
+    });
+    if (disallowed) {
+      return res.status(400).json({
+        success: false,
+        error: 'Canonical telemetry source is not allowed for this enrolled device platform.',
+      });
+    }
+  }
+
+  const stored = await persistSpectraEnrolledDeviceTelemetry(
+    enrolled,
+    kind,
+    validation.data as any,
+  );
+  if (!stored) {
+    return res.status(503).json({
+      success: false,
+      error: 'Enrolled-device telemetry storage is temporarily unavailable.',
+    });
+  }
+
+  return res.status(202).json({
+    success: true,
+    data: {
+      deviceRef: enrolled.deviceRef,
+      platform: enrolled.platform,
+      acceptedMeasurements: validation.data.measurements.length,
+    },
+  });
+});
+
 // Every ordinary GeoConsole/SPECTRA endpoint below remains authenticated.
 router.use(isAuthenticated);
+
+router.post('/enrolled-device/:deviceRef/ingest-token', async (req: Request, res: Response) => {
+  const userId = getPlatformUserId(req.user as any);
+  if (!userId) {
+    return res.status(401).json({ success: false, error: 'Authentication required.' });
+  }
+  const deviceRef = String(req.params.deviceRef || '').trim();
+  if (!deviceRef || deviceRef.length > 300) {
+    return res.status(400).json({ success: false, error: 'Invalid enrolled device reference.' });
+  }
+
+  const rotated = await rotateSpectraEnrolledDeviceIngestToken(userId, deviceRef);
+  if (!rotated) {
+    return res.status(404).json({ success: false, error: 'Enrolled device not found.' });
+  }
+
+  // The plaintext device reporter credential is returned once. Only its hash
+  // remains in SPECTRA storage, and it is never written to logs.
+  return res.json({
+    success: true,
+    data: {
+      deviceRef: rotated.deviceRef,
+      platform: rotated.platform,
+      ingestToken: rotated.token,
+    },
+  });
+});
 
 router.post('/traffic-context', async (req: Request, res: Response) => {
   const userId = getPlatformUserId(req.user as any);
@@ -1837,7 +2080,7 @@ router.get('/telemetry-capabilities', (_req: Request, res: Response) => {
       providerWebhookConfigured: Boolean(readSpectraEnvironmentValue(['SPECTRA_TELEMETRY_HMAC_SECRET'])),
       crossReplicaRealtimeConfigured: spectraRealtimeBridgeConfigured(),
       adapters: getSpectraAdapterCapabilities(),
-      activeAcquisitionAdapters: getSpectraActiveAcquisitionCapabilities(),
+      activeAcquisitionAdapters: getSpectraEnrolledAcquisitionCapabilities(),
       configuredAnchorCount: getConfiguredSpectraAnchorCount(),
       genericPullAdapters: getSpectraGenericPullAdapters(),
     },
