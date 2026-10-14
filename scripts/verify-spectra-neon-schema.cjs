@@ -25,12 +25,13 @@ function fixture({ alreadyPresent = false, schema = 'public', fail = false, veri
   const queries = [];
   let countQueries = 0;
   let extensionCreated = false;
+  let columnCreated = false;
   return {
     queries,
     async query(sql, values) {
       queries.push({ sql, values });
       if (sql.includes('information_schema.columns')) {
-        return { rows: [{ column_count: columnPresent ? 1 : 0 }] };
+        return { rows: [{ column_count: columnPresent || columnCreated ? 1 : 0 }] };
       }
       if (sql.startsWith('SELECT count(*)')) {
         countQueries++;
@@ -38,6 +39,7 @@ function fixture({ alreadyPresent = false, schema = 'public', fail = false, veri
       }
       if (sql.includes('FROM pg_extension')) return { rows: schema || extensionCreated ? [{ schema_name: schema || 'extensions' }] : [] };
       if (sql.startsWith('CREATE EXTENSION')) extensionCreated = true;
+      if (sql.includes('ADD COLUMN IF NOT EXISTS ingest_token_hash')) columnCreated = true;
       if (fail && sql.includes('CREATE TABLE IF NOT EXISTS public.spectra_motion_context')) throw new Error('fixture migration failure');
       return { rows: [] };
     },
