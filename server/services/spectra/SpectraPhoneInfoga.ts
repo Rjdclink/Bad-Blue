@@ -7,7 +7,7 @@ import {
 } from './SpectraExternalSourceHttp';
 
 export interface SpectraPhoneInfogaResult {
-  status: 'not-configured' | 'ok' | 'partial' | 'failed';
+  status: 'not-configured' | 'native-fallback' | 'ok' | 'partial' | 'failed';
   normalized?: Record<string, unknown>;
   scanners: Array<{
     scanner: string;
@@ -94,6 +94,23 @@ function boundedPhoneInfogaQueries(
   return [...queries].slice(0, 8);
 }
 
+function nativePhoneQueries(phone: string): string[] {
+  const digits = phone.replace(/\D/g, '');
+  const national = digits.startsWith('1') && digits.length === 11
+    ? digits.slice(1)
+    : digits;
+  return [...new Set([
+    `"${phone}" public profile address location`,
+    `"${digits}" public record profile location`,
+    national !== digits ? `"${national}" public record profile` : '',
+    `site:linkedin.com "${national}"`,
+    `site:facebook.com "${national}"`,
+    `site:instagram.com "${national}"`,
+    `site:x.com "${national}"`,
+    `(ext:pdf OR ext:doc OR ext:docx OR ext:csv) "${national}"`,
+  ].filter(Boolean))].slice(0, 8);
+}
+
 function scannerNames(env: NodeJS.ProcessEnv): string[] {
   return [...new Set(
     String(env.SPECTRA_PHONEINFOGA_SCANNERS || '')
@@ -137,8 +154,16 @@ export async function collectSpectraPhoneInfoga(
 ): Promise<SpectraPhoneInfogaResult> {
   const base = configuredBase(env);
   const phone = normalizeSpectraPhoneE164(phoneNumber);
-  if (!base || !phone) {
+  if (!phone) {
     return { status: 'not-configured', scanners: [], searchQueries: [] };
+  }
+  if (!base) {
+    return {
+      status: 'native-fallback',
+      normalized: { e164: phone, valid: true },
+      scanners: [],
+      searchQueries: nativePhoneQueries(phone),
+    };
   }
 
   const timeoutMs = Math.max(
