@@ -42,42 +42,6 @@ function defaultQuery(): Query {
   };
 }
 
-function environmentAuthorizedDevice(
-  deviceRef: string,
-  suppliedHash: string,
-  env: NodeJS.ProcessEnv,
-): AuthorizedDeviceIngest | null {
-  const raw = String(env.SPECTRA_ENROLLED_DEVICES_JSON || '').trim();
-  if (!raw) return null;
-  try {
-    const rows = JSON.parse(raw);
-    if (!Array.isArray(rows)) return null;
-    for (const row of rows) {
-      const ref = clean(row?.deviceRef, 300);
-      const token = clean(row?.ingestToken, 2_000);
-      const userId = clean(row?.userId, 300);
-      const phoneE164 = clean(row?.phoneE164 ?? row?.phoneNumber, 40);
-      if (
-        !ref || !token || !userId || !phoneE164
-        || ref.toLowerCase() !== deviceRef.toLowerCase()
-      ) continue;
-      const expected = digest(token);
-      if (!safeHashEqual(expected, suppliedHash)) continue;
-      return {
-        userId,
-        phoneE164,
-        deviceRef: ref,
-        platform: platform(row?.platform),
-        subjectLabel: clean(row?.subjectLabel),
-        source: 'environment',
-      };
-    }
-  } catch {
-    return null;
-  }
-  return null;
-}
-
 export async function authorizeSpectraEnrolledDeviceIngest(
   deviceRef: string,
   bearerToken: string,
@@ -87,7 +51,6 @@ export async function authorizeSpectraEnrolledDeviceIngest(
   const token = clean(bearerToken, 2_000);
   if (!ref || !token || token.length < 16) return null;
 
-  const env = options.env || process.env;
   const suppliedHash = digest(token);
   const query = options.query || defaultQuery();
 
@@ -115,11 +78,12 @@ export async function authorizeSpectraEnrolledDeviceIngest(
     }
     if ((result.rows?.length || 0) > 1) return null;
   } catch {
-    // Environment enrollment can keep a pre-provisioned device reporting while
-    // database connectivity is temporarily unavailable.
+    // Device telemetry must be durably tied to the server-side enrollment
+    // registry. A database outage therefore rejects the push rather than
+    // accepting telemetry that cannot be durably associated with its device.
   }
 
-  return environmentAuthorizedDevice(ref, suppliedHash, env);
+  return null;
 }
 
 function observedAt(batch: SpectraNormalizedProviderBatch): Date | null {
