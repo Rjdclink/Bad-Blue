@@ -494,7 +494,8 @@ test('SPECTRA resolves enrolled phones before redundant Android and Apple acquis
   enrolledRegistry.includes('resolveSpectraEnrolledDeviceByRef') &&
   enrolledRegistry.includes("mismatch: 'device-ref'") &&
   enrolledAcquisition.includes('resolveByRef') &&
-  enrolledAcquisition.includes('Additive compatibility: the original active-acquisition pipeline') &&
+  enrolledAcquisition.includes('No enrolled phone number or device reference was supplied.') &&
+  enrolledAcquisition.includes("if (resolution.status !== 'matched')") &&
   activeAcquisition.includes("target: 'device'") &&
   activeAcquisition.includes("'canonical-telemetry'") &&
   activeAcquisition.includes('SPECTRA_ANDROID_RADIO_COLLECTOR_URL_TEMPLATE') &&
@@ -514,13 +515,15 @@ test('SPECTRA resolves enrolled phones before redundant Android and Apple acquis
   adapterRegistry.includes("id: 'traccar-active'") &&
   adapterRegistry.includes("id: 'camara-location-retrieval-active'") &&
   adapterRegistry.includes("id: 'vonage-location-retrieval-active'"));
-test('Existing active acquisition remains additive around the enrollment layer',
-  enrolledAcquisition.includes('Preserve the pre-existing direct-deviceRef acquisition path') &&
+test('Every phone or direct deviceRef live pull is enrollment-gated before providers',
+  enrolledAcquisition.includes('const resolution = suppliedPhone') &&
+  enrolledAcquisition.includes('await deps.resolve(input.userId, suppliedPhone') &&
+  enrolledAcquisition.includes('await deps.resolveByRef(input.userId, suppliedDeviceRef') &&
+  enrolledAcquisition.includes("if (resolution.status !== 'matched')") &&
   enrolledAcquisition.includes("resolution.status === 'not-enrolled'") &&
   enrolledAcquisition.includes("resolution.status === 'unavailable'") &&
-  enrolledAcquisition.includes('Additive compatibility: the original active-acquisition pipeline') &&
-  enrolledAcquisition.includes('const direct = await deps.active({') &&
-  enrolledAcquisition.includes('resolvedDeviceRef: suppliedDeviceRef || undefined'));
+  !enrolledAcquisition.includes('const direct = await deps.active({') &&
+  !enrolledAcquisition.includes('resolvedDeviceRef: suppliedDeviceRef || undefined'));
 
 test('Enrolled native device telemetry is self-authenticated, platform-gated and stored server-side',
   geoconsoleRoutes.includes("router.post('/telemetry/enrolled/:deviceRef/normalize/:kind'") &&
