@@ -16,6 +16,7 @@ import android.net.wifi.rtt.RangingRequest
 import android.net.wifi.rtt.RangingResult
 import android.net.wifi.rtt.RangingResultCallback
 import android.net.wifi.rtt.WifiRttManager
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.telephony.CellInfo
@@ -287,7 +288,11 @@ class SpectraAndroidCollector(
         val manager = wifiRttManager
         if (
             manager == null || !manager.isAvailable ||
-            !granted(Manifest.permission.ACCESS_FINE_LOCATION)
+            !granted(Manifest.permission.ACCESS_FINE_LOCATION) ||
+            (
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                !granted(Manifest.permission.NEARBY_WIFI_DEVICES)
+            )
         ) {
             done.countDown()
             return
