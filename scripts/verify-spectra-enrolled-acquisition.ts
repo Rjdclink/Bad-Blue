@@ -5,6 +5,7 @@ import {
 import {
   normalizeSpectraPhoneE164,
   resolveSpectraEnrolledDevice,
+  resolveSpectraEnrolledDeviceByRef,
 } from '../server/services/spectra/SpectraEnrolledDeviceRegistry';
 import { normalizeSpectraProviderPayload } from '../server/services/spectra/SpectraProviderTelemetryNormalizer';
 import type {
@@ -41,6 +42,15 @@ const resolve = (
   phoneNumber: string | undefined,
   options: any = {},
 ) => resolveSpectraEnrolledDevice(userId, phoneNumber, {
+  ...options,
+  query,
+  env,
+});
+const resolveByRef = (
+  userId: string,
+  deviceRef: string | undefined,
+  options: any = {},
+) => resolveSpectraEnrolledDeviceByRef(userId, deviceRef, {
   ...options,
   query,
   env,
@@ -183,7 +193,7 @@ const android = await acquireSpectraEnrolledTelemetry({
   subjectLabel: 'Jane Mary Doe',
 }, {
   env,
-  deps: { resolve, active, ownTracks, traccar, carrier },
+  deps: { resolve, resolveByRef, active, ownTracks, traccar, carrier },
 });
 assert.equal(android.resolvedDeviceRef, 'android-device-a');
 assert.equal(activeCalls.at(-1)?.deviceRef, 'android-device-a');
@@ -201,12 +211,55 @@ const apple = await acquireSpectraEnrolledTelemetry({
   subjectLabel: 'John Public',
 }, {
   env,
-  deps: { resolve, active, ownTracks, traccar, carrier },
+  deps: { resolve, resolveByRef, active, ownTracks, traccar, carrier },
 });
 assert.equal(apple.resolvedDeviceRef, 'apple-device-a');
 assert.equal(activeCalls.at(-1)?.platform, 'ios');
 assert.equal(apple.batches[0]?.measurements[0]?.source, 'device_gps');
 assert.equal(apple.batches[0]?.measurements[1]?.source, 'uwb_range');
+
+const directApple = await acquireSpectraEnrolledTelemetry({
+  userId: 'tenant-a',
+  deviceRef: 'APPLE-DEVICE-A',
+  sessionId: 'session-direct-apple',
+  subjectLabel: 'John Public',
+}, {
+  env,
+  deps: { resolve, resolveByRef, active, ownTracks, traccar, carrier },
+});
+assert.equal(directApple.resolution?.status, 'matched');
+assert.equal(directApple.resolvedDeviceRef, 'apple-device-a');
+assert.equal(activeCalls.at(-1)?.platform, 'ios',
+  'direct deviceRef lookup must inherit the enrolled platform');
+
+const callsBeforeUnenrolledRef = activeCalls.length;
+const unenrolledRef = await acquireSpectraEnrolledTelemetry({
+  userId: 'tenant-a',
+  deviceRef: 'not-enrolled-device',
+  sessionId: 'session-unenrolled-ref',
+  subjectLabel: 'Unknown Person',
+}, {
+  env,
+  deps: { resolve, resolveByRef, active, ownTracks, traccar, carrier },
+});
+assert.equal(unenrolledRef.resolution?.status, 'not-enrolled');
+assert.equal(unenrolledRef.batches.length, 0);
+assert.equal(activeCalls.length, callsBeforeUnenrolledRef,
+  'an unenrolled direct deviceRef must never reach active collectors');
+
+const callsBeforeMissingIdentifier = activeCalls.length;
+const noIdentifier = await acquireSpectraEnrolledTelemetry({
+  userId: 'tenant-a',
+  sessionId: 'session-no-identifier',
+  subjectLabel: 'Jane Mary Doe',
+}, {
+  env,
+  deps: { resolve, resolveByRef, active, ownTracks, traccar, carrier },
+});
+assert.equal(noIdentifier.batches.length, 0);
+assert.equal(noIdentifier.attempts[0]?.reasonCode, 'missing-device');
+assert.equal(activeCalls.length, callsBeforeMissingIdentifier,
+  'a name-only investigation must not start live device acquisition');
 
 const callsBeforeWrongDevice = activeCalls.length;
 const carrierBeforeWrongDevice = carrierCalls;
@@ -218,7 +271,7 @@ const wrongDevice = await acquireSpectraEnrolledTelemetry({
   subjectLabel: 'Jane Mary Doe',
 }, {
   env,
-  deps: { resolve, active, ownTracks, traccar, carrier },
+  deps: { resolve, resolveByRef, active, ownTracks, traccar, carrier },
 });
 assert.equal(wrongDevice.batches.length, 0);
 assert.equal(wrongDevice.resolution?.status, 'mismatch');
@@ -236,7 +289,7 @@ const wrongIdentity = await acquireSpectraEnrolledTelemetry({
   subjectLabel: 'Different Person',
 }, {
   env,
-  deps: { resolve, active, ownTracks, traccar, carrier },
+  deps: { resolve, resolveByRef, active, ownTracks, traccar, carrier },
 });
 assert.equal(wrongIdentity.batches.length, 0);
 assert.equal(wrongIdentity.resolution?.status, 'mismatch');
@@ -250,7 +303,7 @@ const missing = await acquireSpectraEnrolledTelemetry({
   subjectLabel: 'Unknown Person',
 }, {
   env,
-  deps: { resolve, active, ownTracks, traccar, carrier },
+  deps: { resolve, resolveByRef, active, ownTracks, traccar, carrier },
 });
 assert.equal(missing.batches.length, 0);
 assert.equal(missing.resolution?.status, 'not-enrolled');
@@ -273,4 +326,4 @@ const otherTenant = await resolveSpectraEnrolledDevice(
 assert.equal(otherTenant.status, 'not-enrolled',
   'enrollment mappings are tenant-scoped');
 
-console.log('SPECTRA enrolled phone -> deviceRef -> Android/Apple telemetry routing verification passed.');
+console.log('SPECTRA enrolled phone/deviceRef -> Android/Apple telemetry routing verification passed.');
