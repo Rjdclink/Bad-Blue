@@ -21,6 +21,7 @@ for (const file of [
   'server/services/spectra/SpectraOwnTracksAdapter.ts',
   'server/services/spectra/SpectraTraccarAdapter.ts',
   'server/services/spectra/SpectraCarrierLocationAdapters.ts',
+  'server/services/spectra/SpectraVonageAuth.ts',
   'server/services/spectra/SpectraPhoneInfoga.ts',
   'server/services/spectra/SpectraRecursiveClues.ts',
   'server/services/spectra/SpectraExternalSourceHttp.ts',
