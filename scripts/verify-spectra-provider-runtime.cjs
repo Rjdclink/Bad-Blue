@@ -206,6 +206,36 @@ const workFor = ms => signal => new Promise((resolve, reject) => {
     const { result, stats } = await capture(() => d.searxng('fixture'));
     assert.equal(result.length, 1); assert.equal(stats.ok, 1); assert.equal(stats.partial, 1); assert.equal(stats.incomplete, true);
   });
+  await test('SearXNG retains all original engines and supplements them with Yahoo', async () => {
+    const previous = process.env.LEXARA_SEARXNG_ENGINES;
+    delete process.env.LEXARA_SEARXNG_ENGINES;
+    try {
+      global.fetch = async raw => {
+        assert.equal(new URL(raw).searchParams.get('engines'), 'google cse,brave,bing,yahoo');
+        return json({ results: [{ url: 'https://example.test/docs' }], unresponsive_engines: [] });
+      };
+      const { result, stats } = await capture(() => d.searxng('fixture'));
+      assert.equal(result.length, 1); assert.equal(stats.ok, 1); assert.equal(stats.partial, 0);
+    } finally {
+      if (previous === undefined) delete process.env.LEXARA_SEARXNG_ENGINES;
+      else process.env.LEXARA_SEARXNG_ENGINES = previous;
+    }
+  });
+  await test('SearXNG overrides reject unknown engines, deduplicate, and retain explicit Brave access', async () => {
+    const previous = process.env.LEXARA_SEARXNG_ENGINES;
+    process.env.LEXARA_SEARXNG_ENGINES = 'brave,bing,bing,duckduckgo,unknown';
+    try {
+      global.fetch = async raw => {
+        assert.equal(new URL(raw).searchParams.get('engines'), 'brave,bing');
+        return json({ results: [{ url: 'https://example.test/docs' }], unresponsive_engines: [] });
+      };
+      const { result } = await capture(() => d.searxng('fixture'));
+      assert.equal(result.length, 1);
+    } finally {
+      if (previous === undefined) delete process.env.LEXARA_SEARXNG_ENGINES;
+      else process.env.LEXARA_SEARXNG_ENGINES = previous;
+    }
+  });
   await test('OpenSERP engine failure with no results is not a clean empty search', async () => {
     global.fetch = async () => json({ results: [], meta: { engines_failed: ['baidu'], engine_errors: [{ engine: 'baidu', error: 'DO_NOT_LOG' }] } });
     const { stats } = await capture(() => d.openserp('fixture'));
