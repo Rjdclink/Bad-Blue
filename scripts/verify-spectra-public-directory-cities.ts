@@ -27,4 +27,21 @@ const reverse = inferPublicDirectoryCities(subject, [{
 assert.equal(reverse[0]?.city, 'Cedar Rapids');
 assert.equal(reverse[0]?.supportingClaims[0]?.identityStatus, 'public_contact_match_unverified');
 assert.equal(reverse[0]?.currentPositionVerified, false);
+const ranked = inferPublicDirectoryCities(subject, [
+  { url: 'https://name-only.example/entry', metadata: {
+    fetchedExcerpt: 'Taylor Avery Morgan lives in Boise, ID. Public listing.',
+  } },
+  { url: 'https://phone-bound.example/entry', metadata: {
+    fetchedExcerpt: 'Taylor Avery Morgan lives in Cedar Rapids, IA. Phone: (319) 555-0173.',
+  } },
+], { phone: '+1 319 555 0173' });
+assert.equal(ranked[0]?.city, 'Cedar Rapids',
+  'the exact E.164 phone match ranks ahead of an otherwise equal name-only city');
+assert.equal(ranked[0]?.supportingClaims[0]?.identityStatus, 'public_contact_match_unverified');
+const unrelatedDigits = inferPublicDirectoryCities(subject, [{
+  url: 'https://unrelated-digits.example/entry',
+  metadata: { fetchedExcerpt: 'Taylor Avery Morgan lives in Salem, OR. Age 31. ZIP 95550. Record 173.' },
+}], { phone: '+13195550173' });
+assert.equal(unrelatedDigits[0]?.supportingClaims[0]?.identityStatus, 'name_mention_unverified',
+  'age, ZIP and record digits must not combine into a phone match');
 console.log('SPECTRA public directory city and reverse-number inference verified.');
