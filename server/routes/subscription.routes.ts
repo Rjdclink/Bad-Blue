@@ -9,11 +9,13 @@ import {
   issueLocalSessionCookie,
 } from "../auth";
 import {
+  activateLocalTrialHttp,
   getLocalUserByIdHttp,
   updateLocalUserSubscriptionHttp,
   type StatelessLocalUser,
 } from "../statelessLocalAuth";
 import { sendAdminEmail } from "../emailService";
+import { getLegalWhatAccessState } from "../trialAccess";
 
 const SUBSCRIPTION_NAME = "LegalWhat Subscription";
 const SUBSCRIPTION_PRICE_CENTS = 1999;
@@ -377,6 +379,22 @@ export function setupSubscriptionRoutes(app: Express): void {
       }
       if (hasPaidServiceAccess(current)) {
         return res.json({ alreadyActive: true, redirectUrl: "/lexara-consent" });
+      }
+
+      // An old browser tab may still request Square automatically after signup.
+      // Only an explicit subscribe-now request may create a payment link.
+      if (req.body?.subscribeNow !== true) {
+        const trialUser = current.trialEligible && !current.trialStartedAt
+          ? (await activateLocalTrialHttp(current.id)).user
+          : current;
+        if (getLegalWhatAccessState(trialUser) === "trial_active") {
+          issueLocalSessionCookie(res, trialUser);
+          return res.json({ alreadyActive: true, redirectUrl: "/lexara-consent" });
+        }
+        return res.status(409).json({
+          code: "SUBSCRIPTION_CHOICE_REQUIRED",
+          message: "Choose to subscribe before opening Square checkout.",
+        });
       }
 
       const square = getSquareClient();

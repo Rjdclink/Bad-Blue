@@ -43,7 +43,7 @@ export default function Login() {
   const [signupSubscribeNow, setSignupSubscribeNow] = useState(false);
 
   const beginSubscriptionCheckout = useCallback(async () => {
-    const response = await apiRequest("/api/subscription/checkout", "POST");
+    const response = await apiRequest("/api/subscription/checkout", "POST", { subscribeNow: true });
     const data = await response.json();
 
     if (data.alreadyActive) {
@@ -91,11 +91,7 @@ export default function Login() {
       !data.accessZone &&
       !["paid", "master"].includes(accessState) &&
       data.hasActiveSubscription !== true;
-    const needsSubscriptionCheckout =
-      subscribeNowCheckout ||
-      (!data.accessZone &&
-        !["paid", "trial_active", "master"].includes(accessState) &&
-        data.hasActiveSubscription !== true);
+    const needsSubscriptionCheckout = subscribeNowCheckout;
     if (needsSubscriptionCheckout) {
       // Own checkout before auth-query invalidation can rerender this page and
       // start the resume effect in parallel.
@@ -136,17 +132,11 @@ export default function Login() {
           : "Welcome back!",
     });
 
-    if (!needsSubscriptionCheckout) {
-      setLocation(redirectPath);
-      return;
-    }
-
-    try {
-      await beginSubscriptionCheckout();
-    } catch (error) {
-      subscriptionResumeStarted.current = false;
-      throw error;
-    }
+    setLocation(
+      data.accessZone || ["paid", "trial_active", "master"].includes(accessState) || data.hasActiveSubscription === true
+        ? redirectPath
+        : "/subscription-required",
+    );
   };
 
   const handleLogin = async (e: FormEvent) => {
@@ -226,6 +216,7 @@ export default function Login() {
         firstName: signupFirstName,
         lastName: signupLastName,
         skipTrial: signupSubscribeNow,
+        trialChoice: signupSubscribeNow ? "subscribe_now" : "free_trial",
       });
 
       if (response.ok) {
@@ -265,19 +256,11 @@ export default function Login() {
           return;
         }
 
-        subscriptionResumeStarted.current = true;
         toast({
-          title: data.trialOutcome === "CLEAR_REPEAT" ? "Trial already used" : "Account created",
-          description: data.trialOutcome === "CLEAR_REPEAT"
-            ? "This account is linked to a previously used trial. Continue with the existing Square subscription."
-            : "Continue to the existing Square checkout to activate your LegalWhat subscription.",
+          title: data.trialOutcome === "CLEAR_REPEAT" ? "Trial already used" : "Trial eligibility needs review",
+          description: "Your account is safe. Choose a subscription or contact support if the trial did not activate.",
         });
-        try {
-          await beginSubscriptionCheckout();
-        } catch (error) {
-          subscriptionResumeStarted.current = false;
-          throw error;
-        }
+        setLocation(data.trialOutcome === "CLEAR_REPEAT" ? "/subscription-required" : "/trial-review");
       } else {
         const data = await response.json();
         throw new Error(data.error || data.message || "Signup failed");

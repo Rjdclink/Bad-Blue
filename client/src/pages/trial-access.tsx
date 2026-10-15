@@ -22,7 +22,7 @@ export default function TrialAccessPage({ review = false, required = false, earl
     setIsLoading(true);
     setError("");
     try {
-      const response = await apiRequest("/api/subscription/checkout", "POST");
+      const response = await apiRequest("/api/subscription/checkout", "POST", { subscribeNow: true });
       const data = await response.json();
       if (data.alreadyActive) {
         setLocation(data.redirectUrl || "/lexara-consent", { replace: true });
