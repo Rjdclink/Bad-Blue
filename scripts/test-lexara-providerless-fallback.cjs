@@ -273,7 +273,7 @@ async function main() {
     'What does Iowa law require for this filing?',
     { jurisdiction: 'Iowa' },
   );
-  assert.match(legalFailure.text, /live legal-reasoning service is temporarily unavailable/i);
+  assert.match(legalFailure.text, /couldn't establish the applicable Iowa rule from the sources/i);
   assert.equal(legalFailure.backgroundEndpoint, undefined);
   assert.equal(globalThis.__lexaraProviderlessTest.scenario.openRouterCalls, 0);
 
