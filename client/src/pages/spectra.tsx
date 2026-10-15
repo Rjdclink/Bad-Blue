@@ -11,6 +11,7 @@ import { useVoiceMode } from '@/hooks/useVoiceMode';
 import { useVoiceSynthesis } from '@/hooks/useVoiceSynthesis';
 import { getLexaraLiveEnabled } from '@/components/LexaraLiveConsentModal';
 import type { GPSPoint, LocationCandidate } from '@shared/geoconsoleTypes';
+import { retainSpectraObservations, retainSpectraCandidates } from '@/lib/spectraResultRetention';
 import { spectraFeedNotice, spectraFeedNotices, spectraObservationNotices, spectraPipelineNotices, spectraRetrievalNotices, type SpectraFeedDiagnostics, type SpectraPipelineDiagnostics, type SpectraRetrievalSummary } from '@/lib/spectraFeedStatus';
 
 type Phase = 'awaiting_target' | 'awaiting_details' | 'acquiring' | 'active' | 'error';
@@ -216,6 +217,8 @@ export default function SpectraPage() {
   const [placeSources, setPlaceSources] = useState<Array<{ url: string; title: string; status: string }>>([]);
   const [observations, setObservations] = useState<GPSPoint[]>([]);
   const [candidateLocations, setCandidateLocations] = useState<SpectraLocationCandidate[]>([]);
+  const resultTargetRef = useRef('');
+  const mappedResultRef = useRef(false);
   const [contextEvidence, setContextEvidence] = useState<SpectraGeographicContextEvidence | null>(null);
   const [photoScenes, setPhotoScenes] = useState<SpectraPhotoScene[]>([]);
   const [directEvidence, setDirectEvidence] = useState<GPSPoint[]>([]);
@@ -354,6 +357,8 @@ export default function SpectraPage() {
     setDetails('');
     setObservations([]);
     setCandidateLocations([]);
+    resultTargetRef.current = '';
+    mappedResultRef.current = false;
     setContextEvidence(null);
     setPhotoScenes([]);
     setDirectEvidence([]);
@@ -382,6 +387,16 @@ export default function SpectraPage() {
     acquisitionControllerRef.current?.abort();
     const acquisitionController = new AbortController();
     acquisitionControllerRef.current = acquisitionController;
+    const resultTarget = `${publicPlaceMode ? 'place' : 'subject'}:${targetValue.trim().toLowerCase()}`;
+    if (resultTargetRef.current !== resultTarget) {
+      resultTargetRef.current = resultTarget;
+      mappedResultRef.current = false;
+      setObservations([]);
+      setCandidateLocations([]);
+      setContextEvidence(null);
+      setPhotoScenes([]);
+      setConfidence(null);
+    }
     if (!silentRefresh) {
       setPhase('acquiring');
       setFeedNotice(null);
@@ -395,6 +410,7 @@ export default function SpectraPage() {
     // take substantially longer, but the viewer should never lose verified
     // evidence while the next acquisition pass is running.
     if (extraEvidence.length > 0) {
+      mappedResultRef.current = true;
       setObservations(previous => {
         const merged = new Map<string, GPSPoint>();
         for (const point of [...previous, ...extraEvidence]) {
@@ -451,7 +467,8 @@ export default function SpectraPage() {
             latitude !== null && Math.abs(latitude) <= 90 &&
             longitude !== null && Math.abs(longitude) <= 180
           ) {
-            setCandidateLocations([{
+            mappedResultRef.current = true;
+            setCandidateLocations(previous => retainSpectraCandidates(previous, [{
               latitude,
               longitude,
               label: String(region.displayName || locationText),
@@ -460,7 +477,7 @@ export default function SpectraPage() {
               accuracyMeters: accuracyMeters !== null && accuracyMeters > 0
                 ? accuracyMeters
                 : 25_000,
-            }]);
+            }]));
             setAcquisitionStage('Regional context mapped; broadening identity discovery…');
             return;
           }
@@ -538,14 +555,16 @@ export default function SpectraPage() {
       );
 
       const canonicalLocationConfidence = payload.acquisition?.locationConfidence ?? 0;
-      setObservations(points);
-      setCandidateLocations(Array.isArray(payload.candidateLocations) ? payload.candidateLocations : []);
-      setContextEvidence(payload.contextEvidence?.anchor ? payload.contextEvidence : null);
+      if (points.length || payload.candidateLocations?.length) mappedResultRef.current = true;
+      setObservations(previous => retainSpectraObservations(previous, points));
+      setCandidateLocations(previous => retainSpectraCandidates(previous,
+        Array.isArray(payload.candidateLocations) ? payload.candidateLocations : []));
+      setContextEvidence(previous => payload.contextEvidence?.anchor ? payload.contextEvidence : previous);
       setPhotoScenes(Array.isArray(payload.mediaCaptureScenes) ? payload.mediaCaptureScenes : []);
-      setConfidence(
+      setConfidence(previous =>
         points.length > 0 || canonicalLocationConfidence > 0
           ? canonicalLocationConfidence
-          : null
+          : previous
       );
       setSourceCount(payload.acquisition?.sourceCount ?? 0);
       setFeedNotice(spectraFeedNotice(payload.acquisition?.feedDiagnostics));
@@ -616,7 +635,7 @@ export default function SpectraPage() {
         ? `The map contains ${points.length} timestamped location observation${points.length === 1 ? '' : 's'}${certainty !== null ? ` with ${certainty}% location-evidence confidence` : ''}. ${spectraObservationNotices(points, payload.acquisition?.liveLocationStatus).join(' ') || 'Current presence is not verified by a timestamp alone.'}`
         : regionalCandidates.length > 0
           ? `My best available regional estimate for ${resolvedTarget} is ${regionalCandidates[0].label || 'the area shown on the map'}. This is an estimate; the current live position is unverified.`
-          : `This pass referenced ${payload.acquisition?.sourceCount ?? 0} source group${(payload.acquisition?.sourceCount ?? 0) === 1 ? '' : 's'} for ${resolvedTarget}. This pass did not produce a mappable location estimate.`;
+          : `This pass referenced ${payload.acquisition?.sourceCount ?? 0} source group${(payload.acquisition?.sourceCount ?? 0) === 1 ? '' : 's'} for ${resolvedTarget}. This pass did not produce an additional mappable location estimate. Any previous estimate remains displayed.`;
 
       if (!silentRefresh) {
         addMessage('spectra', responseText);
@@ -627,9 +646,11 @@ export default function SpectraPage() {
       if (requestId !== requestRef.current || acquisitionController.signal.aborted) return;
       const message = error instanceof Error ? error.message : 'Target acquisition failed.';
       setLastError(message);
-      setAcquisitionStage('Acquisition could not finish');
-      if (!silentRefresh) setPhase('error');
-      const responseText = 'I could not complete that search. A request or service failed; please try again later.';
+      setAcquisitionStage(mappedResultRef.current ? 'Previous result retained; supplemental search could not finish' : 'Acquisition could not finish');
+      if (!silentRefresh) setPhase(mappedResultRef.current ? 'active' : 'error');
+      const responseText = mappedResultRef.current
+        ? 'The additional search could not finish. The previous result remains on the map.'
+        : 'I could not complete that search. A request or service failed; please try again later.';
       if (!silentRefresh) {
         addMessage('spectra', responseText);
         speakIfEnabled(responseText);
