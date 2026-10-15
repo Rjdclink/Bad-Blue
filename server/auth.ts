@@ -427,7 +427,7 @@ export async function setupAuth(app: Express) {
         subject: "LegalWhat: New signup",
         message: `New LegalWhat signup\n\nName: ${[createdUser.firstName, createdUser.lastName].filter(Boolean).join(" ") || "Not provided"}\nEmail: ${createdUser.email}`,
       }).catch((error) => console.error("[AUTH] Signup notification failed:", error));
-      const skipTrial = req.body?.skipTrial === true;
+      const skipTrial = req.body?.skipTrial === true && req.body?.trialChoice === "subscribe_now";
       const activation = skipTrial ? null : await activateLocalTrialHttp(createdUser.id);
       const user = activation?.user || createdUser;
       // Signup establishes a pending authenticated session so the user can move

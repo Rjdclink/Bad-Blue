@@ -35,7 +35,7 @@ for (const p of ["/legal-consultation","/api/lexara/chat"]) {
 }
 
 assert.match(auth,/activateLocalTrialHttp/);
-assert.match(auth,/const skipTrial = req\.body\?\.skipTrial === true/);
+assert.match(auth,/const skipTrial = req\.body\?\.skipTrial === true && req\.body\?\.trialChoice === "subscribe_now"/);
 assert.match(auth,/const activation = skipTrial \? null : await activateLocalTrialHttp\(createdUser\.id\)/);
 assert.match(auth,/if \(user\.trialEligible && !user\.trialStartedAt\)/);
 assert.match(auth,/const authorized = isPaidAccessState\(accessState\) \|\| accessState === "trial_active"/);

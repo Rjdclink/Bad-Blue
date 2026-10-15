@@ -170,7 +170,7 @@ try {
   const sameAccountRepeat = await localAuth.activateLocalTrialHttp(user.id);
   assert.equal(sameAccountRepeat.outcome, "CLEAR_REPEAT", "An expired trial cannot be activated again");
 
-  const checkout = await api("/api/subscription/checkout", {});
+  const checkout = await api("/api/subscription/checkout", { subscribeNow: true });
   assert.equal(
     checkout.response.status,
     200,
