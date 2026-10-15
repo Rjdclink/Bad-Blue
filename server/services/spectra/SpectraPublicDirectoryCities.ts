@@ -20,6 +20,19 @@ function publicationDate(item: RegionalSourceExcerpt): string | null {
   return Number.isFinite(ms) && ms <= Date.now() + 86_400_000 ? new Date(ms).toISOString() : null;
 }
 
+function matchingUsPhoneInEntry(entry: string, supplied: string | undefined): boolean {
+  const raw = String(supplied || '').replace(/\D/g, '');
+  const national = raw.length === 11 && raw.startsWith('1') ? raw.slice(1) : raw;
+  if (!/^[2-9]\d{2}[2-9]\d{6}$/.test(national)) return false;
+  // Match a complete phone token in this person's entry. Joining all page
+  // digits could accidentally combine an age, address and someone else's phone.
+  const numbers = entry.match(/(?<!\d)(?:\+?1[\s().-]*)?\(?[2-9]\d{2}\)?[\s().-]*[2-9]\d{2}[\s.-]*\d{4}(?!\d)/g) || [];
+  return numbers.some(number => {
+    const digits = number.replace(/\D/g, '');
+    return (digits.length === 11 && digits.startsWith('1') ? digits.slice(1) : digits) === national;
+  });
+}
+
 export function inferPublicDirectoryCities(
   fullName: string,
   sources: readonly RegionalSourceExcerpt[],
@@ -29,7 +42,6 @@ export function inferPublicDirectoryCities(
   if (name.split(' ').length < 2 || name.split(' ').length > 5) return [];
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
   const named = new RegExp(`\\b${escaped}\\b`, 'gi');
-  const digits = clues.phone?.replace(/\D/g, '') || '';
   const results = new Map<string, ProvisionalRegionalCity & { publishers: Set<string>; contact: boolean }>();
   for (const source of sources.slice(0, 200)) {
     const url = publisherUrl(source);
@@ -52,7 +64,7 @@ export function inferPublicDirectoryCities(
       if (!region) continue;
       // A phone match anywhere else on a multi-person results page is not a match.
       const contactBlock = entry.slice(0, 150);
-      const contact = (digits.length === 10 && contactBlock.replace(/\D/g, '').includes(digits))
+      const contact = matchingUsPhoneInEntry(contactBlock, clues.phone)
         || (Boolean(clues.email) && contactBlock.toLowerCase().includes(clues.email!.toLowerCase()));
       const key = `${region.city.toLowerCase()}|${region.state}`;
       const prior = results.get(key) || {
