@@ -2,7 +2,7 @@
  * Legal What? FAQ Page
  * 
  * Comprehensive FAQ page for Legal What? platform
- * Includes P.A.N.T.H.E.O.N. 13-AI system, core AI systems, and all 31 law types
+ * Current pricing, legal guidance, documents, research, and 40 practice areas
  */
 
 import { useState } from "react";
@@ -14,7 +14,6 @@ import {
   ChevronDown, 
   ChevronUp, 
   ArrowRight, 
-  Shield, 
   Brain, 
   FileText, 
   Camera, 
@@ -29,50 +28,33 @@ import { SEOHead } from "@/components/SEOHead";
 import { AppHeader } from "@/components/AppHeader";
 import { LAW_TYPE_DATA } from "@shared/lawTypes";
 
-// P.A.N.T.H.E.O.N. AI Models Data
-const AI_MODELS = [
-  { num: 1, name: "Gemini 2.5 Flash Lite", provider: "Google", specs: "1000 RPD, ultra-fast processing" },
-  { num: 2, name: "Gemini 2.5 Flash", provider: "Google", specs: "50 RPD, multimodal + Google Search grounding" },
-  { num: 3, name: "Claude 3.5 Haiku", provider: "Anthropic", specs: "Fast verification" },
-  { num: 4, name: "Claude 3.5 Sonnet", provider: "Anthropic", specs: "200k context, advanced legal reasoning" },
-  { num: 5, name: "Groq Llama 3.3 70B", provider: "Groq", specs: "Unlimited autonomous capacity" },
-  { num: 6, name: "Mistral Large/Small", provider: "Mistral AI", specs: "150k tokens/day, verification" },
-  { num: 7, name: "DeepSeek R1T2 Chimera", provider: "DeepSeek", specs: "671B params, 163k context, pattern recognition" },
-  { num: 8, name: "Grok 4.1 Fast", provider: "xAI", specs: "2M context, multimodal" },
-  { num: 9, name: "Kimi K2", provider: "Moonshot AI", specs: "1T params, 256k context, structured extraction" },
-  { num: 10, name: "Qwen 2.5 72B", provider: "Alibaba", specs: "Research and analysis" },
-  { num: 11, name: "Llama 3 70B", provider: "Meta", specs: "General purpose" },
-  { num: 12, name: "Mistral Large (OpenRouter)", provider: "OpenRouter", specs: "Alternate routing" },
-  { num: 13, name: "Gemini 2.0 Flash", provider: "Google", specs: "Experimental fallback" },
-];
-
 // Core AI Systems
 const CORE_SYSTEMS = [
   {
     name: "LEXARA",
     acronym: "Legal Expert AI Resource Advisor",
-    description: "Primary legal consultation AI providing comprehensive legal guidance across all 31 law types",
+    description: "Two-way voice and text legal guidance, research, and follow-up questions across 40 areas of law",
     icon: Brain,
     iconColor: "text-blue-600"
   },
   {
-    name: "C.A.D.E.",
-    acronym: "Case Adaptive Drafting Entity",
-    description: "Jurisprudential drafting intelligence engine, procedural law-aware, content-adaptive, jurisdiction-specific legal authoring machine, operating as co-counsel to LEXARA",
+    name: "Document Preparation",
+    acronym: "Legal drafting and local forms",
+    description: "Helps identify local forms and prepare, revise, and download legal drafts as PDF or DOCX",
     icon: FileText,
     iconColor: "text-purple-600"
   },
   {
-    name: "F.M.I.",
-    acronym: "Forensic Media Intelligence",
-    description: "Evidence analysis system for videos, photos, audio, and documents with advanced pattern recognition",
+    name: "File & Evidence Analysis",
+    acronym: "Documents, images, audio, and video",
+    description: "Reviews supported uploads, summarizes relevant information, and connects evidence with your legal questions",
     icon: Camera,
     iconColor: "text-green-600"
   },
   {
-    name: "I-DRIVE",
-    acronym: "Identity Data Retrieval & Investigative Examiner",
-    description: "Advanced people and identity search tool aggregating data from multiple public and legal sources",
+    name: "Public-Record Research",
+    acronym: "Court records, background research, and maps",
+    description: "Researches available public records, incarceration information, and relevant people, businesses, and places",
     icon: Search,
     iconColor: "text-orange-600"
   },
@@ -107,131 +89,47 @@ export default function FAQPage() {
 
   const faqSections: { title: string; icon: any; items: FAQItem[] }[] = [
     {
-      title: "P.A.N.T.H.E.O.N. - 13-AI Parallel Framework",
+      title: "LegalWhat & Lexara",
       icon: Sparkles,
       items: [
         {
-          question: "What is P.A.N.T.H.E.O.N.?",
-          answer: (
-            <div>
-              <p className="mb-4">
-                P.A.N.T.H.E.O.N. (Parallel Autonomous Network for Tactical Heuristic Eidolon Operations Network) is 
-                Legal What?'s revolutionary 13-AI orchestration framework. Unlike traditional single-model AI systems, 
-                P.A.N.T.H.E.O.N. runs 13 different AI models in parallel, cross-computational tandem to provide 
-                the most accurate, comprehensive, and reliable legal intelligence available.
-              </p>
-              <p className="mb-4 font-semibold">The 13 AI Models:</p>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm border-collapse">
-                  <thead>
-                    <tr className="border-b-2 border-primary/20">
-                      <th className="text-left py-2 px-3">#</th>
-                      <th className="text-left py-2 px-3">Model</th>
-                      <th className="text-left py-2 px-3">Provider</th>
-                      <th className="text-left py-2 px-3">Specifications</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {AI_MODELS.map((model) => (
-                      <tr key={model.num} className="border-b border-muted hover:bg-muted/50">
-                        <td className="py-2 px-3">{model.num}</td>
-                        <td className="py-2 px-3 font-medium">{model.name}</td>
-                        <td className="py-2 px-3">{model.provider}</td>
-                        <td className="py-2 px-3 text-muted-foreground">{model.specs}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <p className="mt-4 text-sm text-muted-foreground">
-                These models work together, validating each other's outputs and providing redundancy to ensure 
-                the highest quality legal assistance.
-              </p>
-            </div>
-          )
+          question: "What is LegalWhat?",
+          answer: "LegalWhat combines AI-assisted legal guidance, jurisdiction-aware research, document preparation, file and evidence analysis, public-record research, and matter organization in one online platform. It covers 40 areas of law."
         },
         {
-          question: "How does the parallel AI system work?",
-          answer: "P.A.N.T.H.E.O.N. sends your legal query to multiple AI models simultaneously. Each model analyzes your situation from its unique perspective and expertise. The system then cross-validates the responses, synthesizes the best insights, and delivers a comprehensive answer that leverages the strengths of all 13 models. This parallel processing ensures accuracy, reduces AI hallucinations, and provides multiple verification layers."
+          question: "What is Lexara?",
+          answer: "Lexara (Legal Expert AI Resource Advisor) is LegalWhat's conversational legal assistant. Explain your situation by voice or text, answer follow-up questions, and receive plain-English explanations connected to your facts and jurisdiction."
         },
         {
-          question: "Why use 13 different AI models?",
-          answer: "Different AI models excel at different tasks. Some are better at legal reasoning, others at document analysis, and others at understanding context. By using 13 models in tandem, Legal What? ensures that your legal matter is analyzed from every possible angle, with multiple layers of verification. This redundancy also ensures system reliability - if one model is unavailable, the others continue working seamlessly."
+          question: "Can I ask follow-up questions?",
+          answer: "Yes. Continue the conversation by voice or text, add facts or supported files, and ask Lexara to explain an answer or revise a draft. Paid access includes persistent matter storage for ongoing work."
         }
       ]
     },
     {
-      title: "Core AI Systems",
+      title: "Documents, Evidence & Public Records",
       icon: Brain,
       items: [
         {
-          question: "What is LEXARA?",
-          answer: (
-            <div>
-              <p className="mb-2">
-                <span className="font-bold">LEXARA</span> <span className="text-sm text-muted-foreground">(Legal Expert AI Resource Advisor)</span>
-              </p>
-              <p>
-                LEXARA is Legal What?'s primary legal consultation AI. Powered by the P.A.N.T.H.E.O.N. framework, 
-                LEXARA provides comprehensive legal guidance across all 31 law types. It analyzes your situation, 
-                explains relevant laws, identifies your rights, suggests legal strategies, and provides 
-                jurisdiction-specific advice tailored to your location.
-              </p>
-            </div>
-          )
+          question: "What documents can LegalWhat help prepare?",
+          answer: "LegalWhat can help prepare and revise motions, petitions, complaints, affidavits, declarations, contracts, demand letters, briefs, discovery materials, family-law filings, and FOIA or public-record requests. It can identify appropriate local forms and offer PDF or DOCX downloads through supported document workflows."
         },
         {
-          question: "What is C.A.D.E.?",
-          answer: (
-            <div>
-              <p className="mb-2">
-                <span className="font-bold">C.A.D.E.</span> <span className="text-sm text-muted-foreground">(Case Adaptive Drafting Entity)</span>
-              </p>
-              <p>
-                C.A.D.E. is Legal What?'s jurisprudential drafting intelligence engine. This procedural law-aware, 
-                content-adaptive, jurisdiction-specific legal authoring machine operates as co-counsel to LEXARA. 
-                C.A.D.E. drafts legal documents including complaints, motions, contracts, and pleadings with 
-                court-ready formatting and proper legal citations.
-              </p>
-            </div>
-          )
+          question: "Can LegalWhat help with criminal-record expungement?",
+          answer: "LegalWhat can help gather case information, research jurisdiction-specific expungement requirements, identify available forms, and prepare draft materials. Eligibility and filing requirements depend on the jurisdiction and your case history."
         },
         {
-          question: "What is F.M.I.?",
-          answer: (
-            <div>
-              <p className="mb-2">
-                <span className="font-bold">F.M.I.</span> <span className="text-sm text-muted-foreground">(Forensic Media Intelligence)</span>
-              </p>
-              <p>
-                F.M.I. is Legal What?'s evidence analysis system. It analyzes videos, photos, audio files, and 
-                documents to extract legally relevant information. F.M.I. can identify people, objects, locations, 
-                timestamps, detect alterations, transcribe audio, perform OCR on documents, and generate detailed 
-                forensic reports suitable for legal proceedings.
-              </p>
-            </div>
-          )
+          question: "Can LegalWhat research court and public records?",
+          answer: "LegalWhat can research available state and federal court records, incarceration information, professional licenses, business registrations, and other public-source information relevant to a matter. Availability depends on the source; some records require separate access or are unavailable online."
         },
         {
-          question: "What is I-DRIVE?",
-          answer: (
-            <div>
-              <p className="mb-2">
-                <span className="font-bold">I-DRIVE</span> <span className="text-sm text-muted-foreground">(Identity Data Retrieval & Investigative Examiner)</span>
-              </p>
-              <p>
-                I-DRIVE is Legal What?'s advanced people and identity search tool. It aggregates data from public 
-                records, court filings, social media, professional networks, and more to create comprehensive 
-                dossiers on individuals. I-DRIVE is essential for finding witnesses, researching opposing parties, 
-                locating experts, and conducting due diligence.
-              </p>
-            </div>
-          )
+          question: "What are Spectra and the Inmate Locator?",
+          answer: "Spectra supports location-related research with public-source evidence and map-based displays. The Inmate Locator helps search available county, state, and federal incarceration sources. Results depend on source availability and should be checked against the underlying records."
         }
       ]
     },
     {
-      title: "31 Law Types",
+      title: "40 Areas of Law",
       icon: Scale,
       items: [
         {
@@ -284,11 +182,11 @@ export default function FAQPage() {
           answer: (
             <div>
               <ol className="list-decimal list-inside space-y-2">
-                <li>Create a free account by clicking "Get Started" or "Sign Up"</li>
-                <li>Choose your area of law from our 31 law types</li>
-                <li>Describe your legal situation to LEXARA for instant consultation</li>
-                <li>Use C.A.D.E. to draft legal documents, F.M.I. to analyze evidence, or I-DRIVE to search for people</li>
-                <li>Access all tools and AI systems from your dashboard</li>
+                <li>Create an account by clicking "Get Started" or "Sign Up"</li>
+                <li>Choose from 40 areas of law, or describe your situation in ordinary language</li>
+                <li>Tell Lexara your jurisdiction, important facts, and what you need help understanding</li>
+                <li>Speak or type follow-up questions, upload supported files, and request research or a document draft</li>
+                <li>Use paid access to save matters and organize documents, evidence, deadlines, and calendar events</li>
               </ol>
               <p className="mt-4">
                 <Button 
@@ -308,7 +206,7 @@ export default function FAQPage() {
         },
         {
           question: "Can I use Legal What? on mobile devices?",
-          answer: "Yes! Legal What? is fully responsive and works seamlessly on smartphones, tablets, and desktop computers. Access your account, consult with LEXARA, draft documents, and use all features from any device with an internet connection."
+          answer: "Yes. LegalWhat works in a web browser on smartphones, tablets, and desktop computers. Voice features require a supported browser and microphone access."
         }
       ]
     },
@@ -318,15 +216,15 @@ export default function FAQPage() {
       items: [
         {
           question: "How much does Legal What? cost?",
-          answer: "Legal What? offers flexible pricing options to fit your needs. We provide free access to basic consultations with LEXARA. Premium features including advanced document drafting with C.A.D.E., comprehensive evidence analysis with F.M.I., and unlimited identity searches with I-DRIVE are available through affordable subscription plans. Special pricing is available for specific services like complaints, lawsuits, and FOIA requests."
+          answer: "LegalWhat offers a 3-day free trial (72 hours), then full access costs $19.99/month. Paid access includes persistent matter storage, document and evidence organization, deadlines, calendar and schedule tools, and access to higher legal reasoning models for more complex work."
         },
         {
           question: "Is there a free trial?",
-          answer: "Yes! New users can access LEXARA consultations for free to experience the power of our P.A.N.T.H.E.O.N. AI system. You can ask legal questions, get initial guidance, and explore the platform before committing to a paid plan."
+          answer: "Yes. Eligible new users can try LegalWhat free for 3 days (72 hours), with no payment card required to start the trial. After the trial, a $19.99/month subscription is required to continue using protected tools. You can also choose to skip the trial and pay now."
         },
         {
           question: "What payment methods do you accept?",
-          answer: "We accept all major credit cards (Visa, Mastercard, American Express, Discover), debit cards, and digital payment methods through our secure payment processor. All transactions are encrypted and PCI-compliant."
+          answer: "Subscription payments are handled through Square checkout. Available payment methods and subscription details are shown before you confirm payment."
         }
       ]
     },
@@ -336,19 +234,19 @@ export default function FAQPage() {
       items: [
         {
           question: "Is my information secure?",
-          answer: "Absolutely. Legal What? uses bank-level encryption (AES-256) to protect all your data. Your legal information, documents, and communications are encrypted both in transit and at rest. We comply with GDPR, CCPA, and other privacy regulations. Our servers are hosted in secure, SOC 2 certified data centers."
+          answer: "LegalWhat uses HTTPS and account access controls to help protect your information. See the Privacy Policy for details about data handling and the Terms of Service for platform conditions."
         },
         {
           question: "Who can see my legal information?",
-          answer: "Your legal information is completely private and confidential. Only you can access your account and data. Legal What? staff cannot view your consultations or documents. We never share, sell, or disclose your information to third parties except as required by law or with your explicit consent."
+          answer: "Your matter workspace requires account access. Information submitted for AI analysis may be processed by supporting AI and service providers. See the Privacy Policy for details about data handling."
         },
         {
           question: "Do you keep logs of my consultations?",
-          answer: "Yes, we maintain encrypted logs of your consultations and interactions for your benefit - so you can review past advice, track your legal matters, and maintain continuity. However, these logs are encrypted and only accessible to you through your secure account. We do not use your consultation data to train AI models or for any other purpose."
+          answer: "Paid access includes persistent matter storage so you can organize case information and continue work. Storage and retention depend on the feature and account state. Consult the Privacy Policy or contact support for details about consultation data."
         },
         {
           question: "Can I delete my data?",
-          answer: "Yes. You have complete control over your data. You can delete individual documents, consultations, or your entire account at any time. When you delete data, it is permanently removed from our systems within 30 days. We provide data export tools so you can download your information before deletion."
+          answer: "For help with account data, documents, deletion, or other privacy requests, contact support through the Contact page. The Privacy Policy explains how to direct data requests; retention requirements may apply."
         }
       ]
     },
@@ -358,19 +256,19 @@ export default function FAQPage() {
       items: [
         {
           question: "What can Legal What? help me with?",
-          answer: "Legal What? can help with legal consultations, document drafting, evidence analysis, people searches, understanding your rights, filing complaints, drafting lawsuits, requesting public records, researching case law, understanding statutes, preparing for court, negotiating settlements, and much more across all 31 law types."
+          answer: "LegalWhat can help explain legal issues in plain English, research statutes and cases, identify local forms, analyze supported uploads, prepare and revise legal drafts, research available public records, and organize matters across 40 areas of law."
         },
         {
-          question: "How accurate is the AI legal advice?",
-          answer: "Legal What?'s P.A.N.T.H.E.O.N. system provides highly accurate legal information by cross-validating responses across 13 different AI models. However, AI cannot account for every nuance of your specific situation. The information provided is for educational and informational purposes. For critical legal decisions, always consult with a licensed attorney in your jurisdiction."
+          question: "How should I verify AI-generated legal information?",
+          answer: "AI can make mistakes or miss relevant facts. Check important answers, citations, deadlines, and document requirements against current primary sources and your court or agency. LegalWhat provides legal information and research assistance; it does not guarantee accuracy or outcomes."
         },
         {
           question: "Does Legal What? work in my state/country?",
-          answer: "Legal What? covers all 50 US states, Washington D.C., and US territories. Our AI systems are trained on jurisdiction-specific laws and procedures. For international users, Legal What? can provide general legal information and US law guidance, but we recommend consulting local legal professionals for matters governed by foreign law."
+          answer: "LegalWhat supports jurisdiction-aware legal research and document workflows across the United States. Provide the state, court, or agency involved so research can focus on the relevant rules. Coverage and source availability vary by jurisdiction."
         },
         {
           question: "Can Legal What? analyze video/photo evidence?",
-          answer: "Yes! F.M.I. (Forensic Media Intelligence) can analyze videos, photos, audio files, and documents. Upload your evidence files and F.M.I. will extract timestamps, identify people and objects, detect alterations, transcribe audio, perform OCR on text, and generate detailed forensic reports. This is especially useful for police misconduct cases, personal injury claims, and contract disputes."
+          answer: "LegalWhat can help analyze supported documents, images, audio, and video, summarize relevant details, and connect them to legal questions and research. Available analysis depends on the file format and tools."
         }
       ]
     },
@@ -433,7 +331,7 @@ export default function FAQPage() {
 
       <SEOHead
         title="Legal What? FAQ | AI Legal Tools & Search Services"
-        description="Frequently asked questions about Legal What? AI legal consultation, document tools, public-record research, background reports, people finding, inmate search, and platform features."
+        description="Answers about LegalWhat: a 3-day free trial, $19.99/month subscription, voice and text legal guidance across 40 areas, documents, public records, and matter storage."
       />
 
       {/* Header */}
@@ -458,7 +356,7 @@ export default function FAQPage() {
             />
           </h1>
           <p className="text-lg sm:text-xl text-white/90 max-w-3xl mx-auto mb-6">
-            Everything you need to know about Legal What?'s revolutionary AI-powered legal platform
+            Answers about LegalWhat's current pricing, legal guidance, documents, research, and account features
           </p>
           <div className="flex flex-wrap justify-center gap-3">
             {CORE_SYSTEMS.map((system) => (
@@ -565,7 +463,7 @@ export default function FAQPage() {
                 Ready to Get Started with Legal What??
               </CardTitle>
               <CardDescription className="text-base">
-                Experience the power of P.A.N.T.H.E.O.N. AI and get instant legal assistance
+                Try LegalWhat free for 3 days, then continue with full access for $19.99/month
               </CardDescription>
             </CardHeader>
             <CardContent className="flex flex-col sm:flex-row gap-4 justify-center">
@@ -574,7 +472,7 @@ export default function FAQPage() {
                 onClick={() => setLocation('/login')}
                 className="shadow-lg"
               >
-                Get Started Free
+                Start Your 3-Day Free Trial
                 <ArrowRight className="ml-2 h-5 w-5" />
               </Button>
               <Button 
