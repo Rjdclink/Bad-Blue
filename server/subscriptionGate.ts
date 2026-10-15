@@ -95,7 +95,7 @@ export function createSubscriptionGate(resolveAccess: ResolveAccess, development
 
     try {
       const access = await resolveAccess(req, res);
-      if (access.authenticated && access.authorized && isPaidAccessState(access.accessState)) return next();
+      if (access.authenticated && access.authorized && (isPaidAccessState(access.accessState) || access.accessState === "trial_active")) return next();
       if (access.reason === "auth_store_unavailable") {
         return res.status(503).json({ code: "AUTH_STATE_UNAVAILABLE", message: "Subscription verification is temporarily unavailable. Please try again." });
       }
