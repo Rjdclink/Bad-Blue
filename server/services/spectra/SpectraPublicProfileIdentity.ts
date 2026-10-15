@@ -37,7 +37,14 @@ export function publicProfileContactMatch(
   const phone = clues.phone?.replace(/\D/g, '');
   if (phone && phone.length >= 10 && phone.length <= 15) {
     const publicPhones = text.match(/\+?\d[\d\s().-]{8,}\d/g) || [];
-    if (publicPhones.some(value => value.replace(/\D/g, '') === phone)) return 'phone';
+    const normalized = phone.length === 11 && phone.startsWith('1') ? phone.slice(1) : phone;
+    if (publicPhones.some(value => {
+      const digits = value.replace(/\D/g, '');
+      return digits === phone || (
+        /^[2-9]\d{2}[2-9]\d{6}$/.test(normalized)
+        && (digits.length === 11 && digits.startsWith('1') ? digits.slice(1) : digits) === normalized
+      );
+    })) return 'phone';
   }
   return null;
 }
