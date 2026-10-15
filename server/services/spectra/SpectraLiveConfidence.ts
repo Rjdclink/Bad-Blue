@@ -462,11 +462,15 @@ function localMeters(
 ): { x: number; y: number } {
   const originLatitudeRadians = toRadians(originLatitude);
   return {
-    x: toRadians(longitude - originLongitude)
+    x: toRadians(wrapLongitude(longitude - originLongitude))
       * EARTH_RADIUS_METERS
       * Math.max(0.05, Math.cos(originLatitudeRadians)),
     y: toRadians(latitude - originLatitude) * EARTH_RADIUS_METERS,
   };
+}
+
+function wrapLongitude(longitude: number): number {
+  return ((longitude + 180) % 360 + 360) % 360 - 180;
 }
 
 function geoFromLocalMeters(
@@ -478,11 +482,12 @@ function geoFromLocalMeters(
   const originLatitudeRadians = toRadians(originLatitude);
   return {
     latitude: originLatitude + y / EARTH_RADIUS_METERS * 180 / Math.PI,
-    longitude:
+    longitude: wrapLongitude(
       originLongitude
       + x
       / (EARTH_RADIUS_METERS * Math.max(0.05, Math.cos(originLatitudeRadians)))
       * 180 / Math.PI,
+    ),
   };
 }
 
@@ -647,10 +652,11 @@ export function assessSpectraLiveLocation(
     (sum, item) => sum + item.point.latitude,
     0,
   ) / representatives.length;
-  const originLongitude = representatives.reduce(
-    (sum, item) => sum + item.point.longitude,
+  const referenceLongitude = representatives[0].point.longitude;
+  const originLongitude = wrapLongitude(referenceLongitude + representatives.reduce(
+    (sum, item) => sum + wrapLongitude(item.point.longitude - referenceLongitude),
     0,
-  ) / representatives.length;
+  ) / representatives.length);
 
   const prepared: PreparedMeasurement[] = representatives.map(({ family, point }) => {
     const local = localMeters(

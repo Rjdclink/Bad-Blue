@@ -18,6 +18,10 @@ assert.equal(publicProfileContactMatch({ textExcerpt: 'Not jane@example.org.evil
   { email: 'jane@example.org' }), null);
 assert.equal(publicProfileContactMatch({ textExcerpt: 'Call (712) 209-8254' },
   { phone: '712-209-8254' }), 'phone');
+assert.equal(publicProfileContactMatch({ textExcerpt: 'Call (712) 209-8254' },
+  { phone: '+1 712 209 8254' }), 'phone', 'E.164 and domestic notation identify the same US number');
+assert.equal(publicProfileContactMatch({ textExcerpt: 'Call (712) 209-8254' },
+  { phone: '+44 712 209 8254' }), null, 'another country code must not match by its last ten digits');
 assert.equal(publicProfileContactMatch({ textExcerpt: 'No public contact' },
   { email: 'jane@example.org', phone: '712-209-8254' }), null);
 assert.equal(publicProfileNameMatch({ structuredRecord: { displayName: 'Jane Doe' } }, 'Jane Maria Doe'), true);
@@ -52,6 +56,12 @@ assert.equal(profileCities[0]?.state, 'SD');
 assert.equal(profileCities[0]?.supportingClaims[0]?.identityStatus, 'public_contact_match_unverified');
 assert.equal(profileCities[0]?.currentPositionVerified, false);
 assert.equal(profileCities[0]?.publishedAt, null);
+const phoneProfileCities = inferPublicContactProfileCities('Jane Maria Doe', [{
+  ...profileCityRecord,
+  textExcerpt: 'Call (712) 209-8254. Based in Sioux Falls, SD.',
+}], { phone: '+17122098254' });
+assert.equal(phoneProfileCities[0]?.city, 'Sioux Falls',
+  'a phone-bound public profile adds its labeled regional candidate');
 assert.equal(inferPublicContactProfileCities('Jane Maria Doe', [profileCityRecord],
   { email: 'other@example.org' }).length, 0);
 assert.equal(inferPublicContactProfileCities('Other Person', [profileCityRecord],

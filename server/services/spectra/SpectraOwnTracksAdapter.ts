@@ -6,11 +6,14 @@ import {
   configuredSpectraEndpoint,
   fetchSpectraConfiguredJson,
   joinSpectraEndpoint,
+  spectraFiniteNumber,
 } from './SpectraExternalSourceHttp';
 
 function timestamp(value: unknown): string | null {
-  const numeric = Number(value);
-  const raw = Number.isFinite(numeric)
+  if ((typeof value !== 'number' && typeof value !== 'string')
+    || (typeof value === 'string' && !value.trim())) return null;
+  const numeric = spectraFiniteNumber(value);
+  const raw = numeric !== null
     ? (Math.abs(numeric) < 100_000_000_000 ? numeric * 1000 : numeric)
     : value;
   const date = new Date(raw as any);
@@ -87,31 +90,31 @@ export async function acquireSpectraOwnTracks(
   const measurements = rows.flatMap((row: any) => {
     if (!row || row._type !== 'location') return [];
     if (!matchingTopic(row.topic, user, tracker)) return [];
-    const latitude = Number(row.lat);
-    const longitude = Number(row.lon);
+    const latitude = spectraFiniteNumber(row.lat);
+    const longitude = spectraFiniteNumber(row.lon);
     const observedAt = timestamp(row.tst ?? row.isotst);
     if (
-      !Number.isFinite(latitude)
+      latitude === null
       || latitude < -90 || latitude > 90
-      || !Number.isFinite(longitude)
+      || longitude === null
       || longitude < -180 || longitude > 180
       || !observedAt
     ) return [];
-    const accuracy = Number(row.acc);
-    const altitude = Number(row.alt);
-    const speedKph = Number(row.vel);
-    const heading = Number(row.cog);
+    const accuracy = spectraFiniteNumber(row.acc);
+    const altitude = spectraFiniteNumber(row.alt);
+    const speedKph = spectraFiniteNumber(row.vel);
+    const heading = spectraFiniteNumber(row.cog);
     return [{
       kind: 'position',
       source: 'device_gps',
       timestamp: observedAt,
       latitude,
       longitude,
-      altitude: Number.isFinite(altitude) ? altitude : undefined,
-      accuracy: Number.isFinite(accuracy) && accuracy > 0 ? accuracy : undefined,
-      speed: Number.isFinite(speedKph) && speedKph >= 0 ? speedKph / 3.6 : undefined,
-      heading: Number.isFinite(heading) && heading >= 0 && heading <= 360 ? heading : undefined,
-      confidence: Number.isFinite(accuracy) && accuracy > 0
+      altitude: altitude ?? undefined,
+      accuracy: accuracy !== null && accuracy > 0 ? accuracy : undefined,
+      speed: speedKph !== null && speedKph >= 0 ? speedKph / 3.6 : undefined,
+      heading: heading !== null && heading >= 0 && heading <= 360 ? heading : undefined,
+      confidence: accuracy !== null && accuracy > 0
         ? Math.max(0.25, Math.min(0.96, 1 - Math.log10(Math.max(1, accuracy)) / 6))
         : 0.6,
       provider: 'owntracks-recorder',
@@ -123,7 +126,7 @@ export async function acquireSpectraOwnTracks(
         ownTracksUser: user,
         ownTracksDevice: tracker,
         trigger: typeof row.t === 'string' ? row.t : undefined,
-        batteryPercent: Number.isFinite(Number(row.batt)) ? Number(row.batt) : undefined,
+        batteryPercent: spectraFiniteNumber(row.batt) ?? undefined,
         connectivity: typeof row.conn === 'string' ? row.conn : undefined,
       },
     }];

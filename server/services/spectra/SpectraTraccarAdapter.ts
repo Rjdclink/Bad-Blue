@@ -5,6 +5,7 @@ import {
   configuredSpectraEndpoint,
   fetchSpectraConfiguredJson,
   joinSpectraEndpoint,
+  spectraFiniteNumber,
 } from './SpectraExternalSourceHttp';
 
 function configuredBase(env: NodeJS.ProcessEnv): URL | null {
@@ -26,7 +27,8 @@ function apiRoot(base: URL): URL {
 
 function timestamp(...values: unknown[]): string | null {
   for (const value of values) {
-    if (value === undefined || value === null || value === '') continue;
+    if ((typeof value !== 'string' && typeof value !== 'number')
+      || (typeof value === 'string' && !value.trim())) continue;
     const date = new Date(value as any);
     if (Number.isFinite(date.getTime()) && date.getTime() <= Date.now() + 24 * 60 * 60_000) {
       return date.toISOString();
@@ -81,21 +83,21 @@ export async function acquireSpectraTraccar(
   }
   const positionId = Number(row.id);
 
-  const latitude = Number(row.latitude);
-  const longitude = Number(row.longitude);
+  const latitude = spectraFiniteNumber(row.latitude);
+  const longitude = spectraFiniteNumber(row.longitude);
   const observedAt = timestamp(row.fixTime, row.deviceTime, row.serverTime);
   if (
-    !Number.isFinite(latitude) || latitude < -90 || latitude > 90
-    || !Number.isFinite(longitude) || longitude < -180 || longitude > 180
+    latitude === null || latitude < -90 || latitude > 90
+    || longitude === null || longitude < -180 || longitude > 180
     || !observedAt
   ) {
     throw new Error('Traccar position is missing usable coordinates or time.');
   }
 
-  const accuracy = Number(row.accuracy);
-  const altitude = Number(row.altitude);
-  const speedKnots = Number(row.speed);
-  const course = Number(row.course);
+  const accuracy = spectraFiniteNumber(row.accuracy);
+  const altitude = spectraFiniteNumber(row.altitude);
+  const speedKnots = spectraFiniteNumber(row.speed);
+  const course = spectraFiniteNumber(row.course);
 
   return {
     sessionId: input.sessionId,
@@ -107,13 +109,13 @@ export async function acquireSpectraTraccar(
       timestamp: observedAt,
       latitude,
       longitude,
-      altitude: Number.isFinite(altitude) ? altitude : undefined,
-      accuracy: Number.isFinite(accuracy) && accuracy > 0 ? accuracy : undefined,
-      speed: Number.isFinite(speedKnots) && speedKnots >= 0
+      altitude: altitude ?? undefined,
+      accuracy: accuracy !== null && accuracy > 0 ? accuracy : undefined,
+      speed: speedKnots !== null && speedKnots >= 0
         ? speedKnots * 0.514444
         : undefined,
-      heading: Number.isFinite(course) && course >= 0 && course <= 360 ? course : undefined,
-      confidence: Number.isFinite(accuracy) && accuracy > 0
+      heading: course !== null && course >= 0 && course <= 360 ? course : undefined,
+      confidence: accuracy !== null && accuracy > 0
         ? Math.max(0.25, Math.min(0.96, 1 - Math.log10(Math.max(1, accuracy)) / 6))
         : 0.6,
       provider: 'traccar',

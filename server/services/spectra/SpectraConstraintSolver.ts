@@ -77,9 +77,13 @@ function localMeters(
 ): { x: number; y: number } {
   const originLatRad = originLatitude * DEG_TO_RAD;
   return {
-    x: (longitude - originLongitude) * DEG_TO_RAD * EARTH_RADIUS * Math.cos(originLatRad),
+    x: wrapLongitude(longitude - originLongitude) * DEG_TO_RAD * EARTH_RADIUS * Math.cos(originLatRad),
     y: (latitude - originLatitude) * DEG_TO_RAD * EARTH_RADIUS,
   };
+}
+
+function wrapLongitude(longitude: number): number {
+  return ((longitude + 180) % 360 + 360) % 360 - 180;
 }
 
 function fromLocalMeters(
@@ -91,7 +95,7 @@ function fromLocalMeters(
   const originLatRad = originLatitude * DEG_TO_RAD;
   return {
     latitude: originLatitude + (y / EARTH_RADIUS) * RAD_TO_DEG,
-    longitude: originLongitude + (x / (EARTH_RADIUS * Math.max(1e-6, Math.cos(originLatRad)))) * RAD_TO_DEG,
+    longitude: wrapLongitude(originLongitude + (x / (EARTH_RADIUS * Math.max(1e-6, Math.cos(originLatRad)))) * RAD_TO_DEG),
   };
 }
 

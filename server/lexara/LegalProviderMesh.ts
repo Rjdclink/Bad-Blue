@@ -114,8 +114,9 @@ function recordEngineFailure(engine: string, reason: string, retryAfterMs = 180_
     engineCooldownUntil.set(engine, Math.max(engineCooldownUntil.get(engine) || 0, Date.now() + budgetCooldownMs));
     console.warn('[LEXARA Search Availability]', JSON.stringify({ engine, status: 'plan-limit-cooldown', retryAfterMs: budgetCooldownMs }));
   } else if (/429|rate.?limit|too many|unusual traffic/i.test(reason)) {
-    engineCooldownUntil.set(engine, Math.max(engineCooldownUntil.get(engine) || 0, Date.now() + Math.max(180_000, retryAfterMs)));
-    console.warn('[LEXARA Search Availability]', JSON.stringify({ engine, status: 'rate-limit-cooldown', retryAfterMs: Math.max(180_000, retryAfterMs) }));
+    const cooldownMs = Math.max(engine === 'brave' ? 60 * 60_000 : 180_000, retryAfterMs);
+    engineCooldownUntil.set(engine, Math.max(engineCooldownUntil.get(engine) || 0, Date.now() + cooldownMs));
+    console.warn('[LEXARA Search Availability]', JSON.stringify({ engine, status: 'rate-limit-cooldown', retryAfterMs: cooldownMs }));
   }
 }
 
@@ -403,7 +404,13 @@ function lexaraSearxngBase(): string {
 async function searxng(query: string, signal?: AbortSignal): Promise<LegalMeshCandidate[]> {
   const base = lexaraSearxngBase();
   if (!base) return skippedProvider('searxng', 'DISCOVERY_NOT_CONFIGURED');
-  const engines = ['google cse', 'brave', 'bing'].filter(engineAvailable);
+  // The public Brave web endpoint rejects this Railway origin with 429s.
+  // Keep it available by explicit override, but do not send routine queries
+  // to a known-blocked upstream. The other existing engines remain active.
+  const supported = new Set(['google cse', 'bing', 'yahoo', 'brave']);
+  const engines = [...new Set((process.env.LEXARA_SEARXNG_ENGINES
+    ?? 'google cse,bing,yahoo').split(',').map(value => value.trim())
+    .filter(value => supported.has(value) && engineAvailable(value)))];
   if (!engines.length) return skippedProvider('searxng');
   const result = await withTimeout('searxng', 2_200, signal, async requestSignal => {
     const activeEngines = engines.filter(engineAvailable);
@@ -443,11 +450,20 @@ async function ddgsBackend(query: string, backend: string, budgetMs: number, sig
     const activeBackend = backend.split(',').filter(engineAvailable).join(',');
     if (!activeBackend) throw discoveryError('DISCOVERY_UNAVAILABLE');
     const endpoint = new URL('/search/text', base.endsWith('/') ? base : base + '/');
-    const response = await discoveryFetch(fetch, endpoint, {
+    const init = {
       method: 'POST', signal: requestSignal,
       headers: { 'content-type': 'application/json', accept: 'application/json' },
       body: JSON.stringify({ query, max_results: 12, safesearch: 'off', backend: activeBackend }),
-    });
+    };
+    let response = await discoveryFetch(fetch, endpoint, init);
+    // DDGS occasionally emits HTTP 500 for a parsed-empty Yahoo page even
+    // though the upstream request succeeded. Permit one bounded recovery probe.
+    if (response.status === 500) {
+      const detail = await boundedProviderError(response).catch(() => '');
+      if (/Search failed:\s*No results found\./i.test(detail) && !requestSignal.aborted) {
+        response = await discoveryFetch(fetch, endpoint, init);
+      } else throw new Error('Discovery HTTP 500');
+    }
     const payload:any = await readDiscoveryJson(response, ['ddgsBackend', ...activeBackend.split(',')]);
     return discoveryRows(payload).slice(0, 12).flatMap((item:any) => {
       const url=clean(item?.href || item?.url || item?.link);

@@ -92,7 +92,7 @@ assert.match(pdfBoundary, /export async function textFromPdf/);
 
 // An acquisition's environmental result has to reach the Spectra UI.
 assert.match(route, /locationObservations,\s*candidateLocations,\s*mediaCaptureScenes,\s*contextEvidence,\s*liveLocationAssessment/);
-assert.match(page, /setContextEvidence\(payload\.contextEvidence\?\.anchor/);
+assert.match(page, /setContextEvidence\(previous => payload\.contextEvidence\?\.anchor/);
 assert.match(page, /<SpectraGeographicContext value=\{contextEvidence\} photoScenes=\{photoScenes\}/);
 assert.match(panel, /Photograph metadata by capture date/);
 assert.doesNotMatch(panel, /not sightings or measurements of the investigated person/);
@@ -100,6 +100,10 @@ assert.match(panel, /Source time unknown/);
 
 // Existing spatial observations must remain separate from source-scene/context records.
 assert.match(route, /contextEvidence = contextOutcome\.value/);
+assert.match(route, /fetchedCitySources = \(\) => \[\.\.\.retrievedRegionalSources\(publicNews\.records\)/,
+  'retrieved public news must reach existing regional inference');
+assert.match(route, /isolateSpectraClue\(\s*\(\) => collectSpectraPublicNewsRecords/,
+  'one optional news failure must not cancel the other clue lanes');
 assert.match(route, /buildSpectraAcquisitionRecords\([\s\S]*contextEvidence\)/);
 assert.match(images, /observations: \[\]/);
 assert.match(images, /captureLocationIsSubjectPosition: false/);
@@ -135,7 +139,7 @@ assert.match(route, /camera\.status\?\.disabled === true/);
 
 // Only actual retrieved HTML can supply social post media URLs.
 assert.match(retrieval, /spectraSocialPageImageLeads\(sourceUrl, ogImages\)/);
-assert.match(route, /const xPostMedia = await collectSpectraXPostMedia\(retrievedEvidence\)/);
+assert.match(route, /const xPostMedia = await isolateSpectraClue\(\s*\(\) => collectSpectraXPostMedia\(retrievedEvidence\)/);
 assert.match(route, /collectSpectraPublicSocialPageImages\(\[\s*\.\.\.xPostMedia\.posts, \.\.\.retrievedEvidence,\s*\]\)/,
   'only validated X post-media leads and retrieved post HTML enter image acquisition');
 assert.match(route, /retrievedEvidence\.push\(\.\.\.publicSocialImages\.records\)/,

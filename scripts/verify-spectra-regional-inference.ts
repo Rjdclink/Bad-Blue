@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import {
   inferCorroboratedRegionalCity,
+  retrievedRegionalSources,
   type RegionalSourceExcerpt,
 } from '../server/services/spectra/SpectraRegionalInference';
+import type { SpectraRetrievedEvidence } from '../server/services/spectra/SpectraPublicRetrieval';
 
 // Synthetic identity and location examples; none is the real benchmark target.
 const person = 'Taylor Morgan';
@@ -106,6 +108,26 @@ assert.equal(inferCorroboratedRegionalCity('Taylor', [first, second]), null,
 // City-level accuracy should prefer abstaining over reporting weak,
  // contradictory, copied or stale geographic associations.
 const testAsOf = new Date('2026-10-09T00:00:00.000Z');
+const article = (url: string, textExcerpt: string): SpectraRetrievedEvidence => ({
+  url, requestedUrl: url, retrievedAt: '2026-10-09T00:00:00Z',
+  publishedAt: '2026-09-20T00:00:00Z', textExcerpt, observations: [],
+});
+const independentlyRetrieved = retrievedRegionalSources([
+  article('https://reporter.example.net/story', 'Taylor Morgan currently resides in Cedar Rapids, IA.'),
+]);
+assert.equal(inferCorroboratedRegionalCity(person, independentlyRetrieved, testAsOf), null);
+assert.equal(inferCorroboratedRegionalCity(person, [
+  ...independentlyRetrieved,
+  ...retrievedRegionalSources([
+    article('https://records.example.org/profile', 'Taylor Morgan lives in Cedar Rapids, Iowa.'),
+  ]),
+], testAsOf)?.city, 'Cedar Rapids', 'a directly retrieved article and an independent fetched page can corroborate');
+assert.equal(inferCorroboratedRegionalCity(person, [
+  ...independentlyRetrieved,
+  ...retrievedRegionalSources([
+    article('https://records.example.org/profile', 'Taylor Morgan lives in Helena, Montana.'),
+  ]),
+], testAsOf), null, 'conflicting direct news must not create a confident city');
 assert.equal(inferCorroboratedRegionalCity(person, [
   first,
   { url: 'https://copies.example.net/taylor', snippet: first.snippet },

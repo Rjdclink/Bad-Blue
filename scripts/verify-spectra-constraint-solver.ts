@@ -43,6 +43,19 @@ function anchor(latitude: number, longitude: number, uncertaintyMeters = 1) {
   };
 }
 
+// Range constraints across the date line use the short crossing, not a world-spanning offset.
+{
+  const seed = point({ latitude: 0, longitude: 179.9998, accuracy: 80,
+    source: 'uwb_range',
+    metadata: { constraintAnchors: [
+      { latitude: 0, longitude: -179.9998, distanceMeters: 20, uncertaintyMeters: 2 },
+    ] },
+  });
+  const solved = solveSpectraConstraintLayer([seed]);
+  assert.ok(Math.abs(Math.abs(solved.points[0].longitude) - 180) < 0.01);
+  assert.ok(solved.diagnostics.contradictoryConstraintCount === 0);
+}
+
 // Multi-anchor convergence: a biased seed is pulled toward the common range intersection.
 {
   const anchors = [

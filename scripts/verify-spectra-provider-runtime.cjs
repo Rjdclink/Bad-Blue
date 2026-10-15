@@ -173,6 +173,21 @@ const workFor = ms => signal => new Promise((resolve, reject) => {
     const { stats } = await capture(() => d.ddgsBackend('fixture', 'yahoo', 500));
     assert.equal(stats.failed, 1); assert.equal(stats.empty, 0); assert.equal(stats.providers[0].errors['invalid-response'], 1);
   });
+  await test('DDGS retries one parsed-empty HTTP 500 and retains the recovered result', async () => {
+    let requests = 0;
+    global.fetch = async () => ++requests === 1
+      ? json({ detail: 'Search failed: No results found.' }, 500)
+      : json({ results: [{ href: 'https://example.test/recovered', title: 'Recovered' }] });
+    const { result, stats } = await capture(() => d.ddgsBackend('fixture', 'yahoo', 500));
+    assert.equal(requests, 2); assert.equal(result[0].url, 'https://example.test/recovered');
+    assert.equal(stats.ok, 1); assert.equal(stats.failed, 0);
+  });
+  await test('DDGS does not retry unrelated HTTP 500 errors', async () => {
+    let requests = 0;
+    global.fetch = async () => { requests++; return json({ detail: 'Search failed: upstream down' }, 500); };
+    const { stats } = await capture(() => d.ddgsBackend('fixture', 'yahoo', 500));
+    assert.equal(requests, 1); assert.equal(stats.failed, 1);
+  });
   await test('Common Crawl collection HTTP 503 remains visible', async () => {
     global.fetch = async () => json({ error: 'DO_NOT_LOG' }, 503);
     const { stats } = await capture(() => d.commonCrawl('historical fixture', ['https://example.test/docs'], {}));
@@ -205,6 +220,78 @@ const workFor = ms => signal => new Promise((resolve, reject) => {
     global.fetch = async () => json({ results: [{ url: 'https://example.test/docs' }], unresponsive_engines: [['bing', 'timeout']] });
     const { result, stats } = await capture(() => d.searxng('fixture'));
     assert.equal(result.length, 1); assert.equal(stats.ok, 1); assert.equal(stats.partial, 1); assert.equal(stats.incomplete, true);
+  });
+  await test('SearXNG defaults to available engines while keeping Brave opt-in', async () => {
+    const previous = process.env.LEXARA_SEARXNG_ENGINES;
+    delete process.env.LEXARA_SEARXNG_ENGINES;
+    try {
+      global.fetch = async raw => {
+        assert.equal(new URL(raw).searchParams.get('engines'), 'google cse,bing,yahoo');
+        return json({ results: [{ url: 'https://example.test/docs' }], unresponsive_engines: [] });
+      };
+      const { result, stats } = await capture(() => d.searxng('fixture'));
+      assert.equal(result.length, 1); assert.equal(stats.ok, 1); assert.equal(stats.partial, 0);
+    } finally {
+      if (previous === undefined) delete process.env.LEXARA_SEARXNG_ENGINES;
+      else process.env.LEXARA_SEARXNG_ENGINES = previous;
+    }
+  });
+  await test('SearXNG keeps original engine results when supplemental Yahoo fails', async () => {
+    global.fetch = async raw => {
+      assert.equal(new URL(raw).searchParams.get('engines'), 'google cse,bing,yahoo');
+      return json({
+        results: [{ url: 'https://example.test/existing', title: 'Existing result' }],
+        unresponsive_engines: [['yahoo', 'timeout']],
+      });
+    };
+    const { result, stats } = await capture(() => d.searxng('fixture'));
+    assert.equal(result.length, 1);
+    assert.equal(result[0].url, 'https://example.test/existing');
+    assert.equal(stats.ok, 1);
+    assert.equal(stats.partial, 1);
+  });
+  await test('rate-limited Brave cools for an hour while other SearXNG engines keep searching', async () => {
+    const previous = process.env.LEXARA_SEARXNG_ENGINES;
+    process.env.LEXARA_SEARXNG_ENGINES = 'google cse,brave,bing,yahoo';
+    const clock = require('@sinonjs/fake-timers').install({ toFake: ['Date'] });
+    try {
+      const requested = [];
+      global.fetch = async raw => {
+        requested.push(new URL(raw).searchParams.get('engines'));
+        return json({ results: [{ url: 'https://example.test/existing' }],
+          unresponsive_engines: requested.length === 1 ? [['brave', 'Too many request (suspended_time=180)']] : [] });
+      };
+      const first = await capture(() => d.searxng('fixture'));
+      assert.equal(first.result.length, 1); assert.equal(first.stats.partial, 1);
+      const second = await capture(() => d.searxng('fixture'));
+      assert.equal(second.result.length, 1); assert.equal(second.stats.ok, 1);
+      assert.deepEqual(requested, ['google cse,brave,bing,yahoo', 'google cse,bing,yahoo']);
+      clock.setSystemTime(Date.now() + 3_599_000);
+      await capture(() => d.searxng('fixture'));
+      assert.equal(requested[2], 'google cse,bing,yahoo');
+      clock.setSystemTime(Date.now() + 2_000);
+      await capture(() => d.searxng('fixture'));
+      assert.equal(requested[3], 'google cse,brave,bing,yahoo');
+    } finally {
+      clock.uninstall();
+      if (previous === undefined) delete process.env.LEXARA_SEARXNG_ENGINES;
+      else process.env.LEXARA_SEARXNG_ENGINES = previous;
+    }
+  });
+  await test('SearXNG overrides reject unknown engines, deduplicate, and retain explicit Brave access', async () => {
+    const previous = process.env.LEXARA_SEARXNG_ENGINES;
+    process.env.LEXARA_SEARXNG_ENGINES = 'brave,bing,bing,duckduckgo,unknown';
+    try {
+      global.fetch = async raw => {
+        assert.equal(new URL(raw).searchParams.get('engines'), 'brave,bing');
+        return json({ results: [{ url: 'https://example.test/docs' }], unresponsive_engines: [] });
+      };
+      const { result } = await capture(() => d.searxng('fixture'));
+      assert.equal(result.length, 1);
+    } finally {
+      if (previous === undefined) delete process.env.LEXARA_SEARXNG_ENGINES;
+      else process.env.LEXARA_SEARXNG_ENGINES = previous;
+    }
   });
   await test('OpenSERP engine failure with no results is not a clean empty search', async () => {
     global.fetch = async () => json({ results: [], meta: { engines_failed: ['baidu'], engine_errors: [{ engine: 'baidu', error: 'DO_NOT_LOG' }] } });

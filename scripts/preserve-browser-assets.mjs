@@ -6,6 +6,10 @@ const HISTORY = 'assets/browser-asset-history.json';
 const RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const MAX_FILES = 5000;
 const MAX_BYTES = 256 * 1024 * 1024;
+// Production currently retains over a thousand assets. Six downloads per
+// batch cannot copy that inventory within the former three-minute deadline.
+const DOWNLOAD_BATCH_SIZE = 24;
+const PRESERVATION_DEADLINE_MS = 900_000;
 
 function assetPath(reference, base, origin) {
   try {
@@ -31,12 +35,12 @@ export function referencedAssets(text, base, origin) {
 // A failed copy blocks the deployment rather than silently retiring those files.
 export async function preserveBrowserAssets({ outDir, origin, now = Date.now(), fetchImpl = fetch }) {
   const source = new URL(origin).origin;
-  const deadline = Date.now() + 180_000;
+  const deadline = Date.now() + PRESERVATION_DEADLINE_MS;
   let bytes = 0;
   async function download(url, optional = false) {
     let failure;
     for (let attempt = 0; attempt < 3; attempt++) {
-      if (Date.now() >= deadline) throw new Error('Browser asset preservation exceeded 180 seconds');
+      if (Date.now() >= deadline) throw new Error('Browser asset preservation exceeded 15 minutes');
       try {
         const response = await fetchImpl(url, { redirect: 'manual', signal: AbortSignal.timeout(20_000) });
         if (optional && response.status === 404) return null;
@@ -63,7 +67,7 @@ export async function preserveBrowserAssets({ outDir, origin, now = Date.now(), 
   async function copyQueue(discover) {
     while (queue.length) {
       if (downloaded.size + queue.length > MAX_FILES) throw new Error('Browser asset history exceeded 5000 files');
-      const batch = queue.splice(0, 6);
+      const batch = queue.splice(0, DOWNLOAD_BATCH_SIZE);
       await Promise.all(batch.map(async name => {
         const response = await download(`${source}${name}`);
         if (response.type.includes('text/html')) throw new Error(`HTML returned for browser asset ${name}`);

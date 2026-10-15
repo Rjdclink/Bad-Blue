@@ -36,6 +36,15 @@ export interface LocationCandidate {
   accuracyMeters?: number;
 }
 
+/** A computed position, kept separate from observed fixes and regional clues. */
+export interface SpectraPosteriorMapEstimate {
+  latitude: number;
+  longitude: number;
+  radius95Meters: number;
+  confidence: number;
+  independentDomains: number;
+}
+
 export type DataSource = 
   | 'device_gps'
   | 'gnss_fix'

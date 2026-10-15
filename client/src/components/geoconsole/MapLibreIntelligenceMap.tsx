@@ -16,7 +16,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import maplibregl, { GeoJSONSource, Map as MapLibreMap, MapLayerMouseEvent } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import type { GeoFrame } from '@/hooks/useGeoRuntime';
-import type { LocationCandidate } from '@shared/geoconsoleTypes';
+import type { LocationCandidate, SpectraPosteriorMapEstimate } from '@shared/geoconsoleTypes';
 import RasterIntelligenceMap from './RasterIntelligenceMap';
 import { spectraStreetLayers } from './spectraMapPolicy';
 import { mapDeadline, PLACE_LABELS, SATELLITE_FALLBACK, satelliteBasemap, satelliteStyle } from './mapBasemap';
@@ -43,6 +43,7 @@ export interface IntelligenceMapProps {
   trail: GeoFrame[];
   futurecast: GeoFrame[];
   candidateLocations?: LocationCandidate[];
+  posteriorEstimate?: SpectraPosteriorMapEstimate | null;
   displayTime?: Date;
   /** Restrict Spectra to streets without changing other GeoConsole consumers. */
   streetMapOnly?: boolean;
@@ -512,6 +513,31 @@ function addRuntimeLayers(map: MapLibreMap, streetMapOnly = false) {
     });
   }
 
+  if (!map.getSource('spectra-posterior')) {
+    map.addSource('spectra-posterior', {
+      type: 'geojson', data: { type: 'FeatureCollection', features: [] },
+    });
+  }
+  if (!map.getLayer('spectra-posterior-area')) {
+    map.addLayer({
+      id: 'spectra-posterior-area', type: 'fill', source: 'spectra-posterior',
+      filter: ['==', ['geometry-type'], 'Polygon'],
+      paint: { 'fill-color': '#a78bfa', 'fill-opacity': 0.09 },
+    });
+  }
+  if (!map.getLayer('spectra-posterior-point')) {
+    map.addLayer({
+      id: 'spectra-posterior-point', type: 'circle', source: 'spectra-posterior',
+      filter: ['==', ['geometry-type'], 'Point'],
+      paint: { 'circle-radius': 9, 'circle-color': [
+        'match', ['get', 'basis'],
+        'regional', '#fbbf24', 'observation', '#34d399',
+        'prediction', '#c084fc', '#a78bfa',
+      ],
+        'circle-stroke-color': '#ffffff', 'circle-stroke-width': 2 },
+    });
+  }
+
   if (!map.getSource('spectra-current')) {
     map.addSource('spectra-current', {
       type: 'geojson',
@@ -748,6 +774,7 @@ export const MapLibreIntelligenceMap: React.FC<IntelligenceMapProps> = ({
   trail,
   futurecast,
   candidateLocations = [],
+  posteriorEstimate = null,
   displayTime,
   mapMode: requestedMapMode,
   layers: requestedLayers,
@@ -781,8 +808,34 @@ export const MapLibreIntelligenceMap: React.FC<IntelligenceMapProps> = ({
   const activeStyleRef = useRef(styleKeyFor(mapMode, layers.satellite));
   const startupDeadlineRef = useRef<ReturnType<typeof mapDeadline> | null>(null);
   const displayTimeMs = displayTime?.getTime() ?? null;
+  // SPECTRA presents one chosen position. Other evidence remains available to
+  // the inference engine and timeline without making extra map markers.
+  const singleMapLocation = useMemo(() => {
+    if (!streetMapOnly) return null;
+    if (posteriorEstimate) return {
+      latitude: posteriorEstimate.latitude, longitude: posteriorEstimate.longitude,
+      radiusMeters: posteriorEstimate.radius95Meters, radiusLabel: 'Estimated 95% radius',
+      label: 'Fused telemetry estimate', basis: 'posterior',
+      independentDomains: posteriorEstimate.independentDomains,
+    };
+    if (currentFrame) return {
+      latitude: currentFrame.position.latitude, longitude: currentFrame.position.longitude,
+      radiusMeters: currentFrame.position.accuracy,
+      radiusLabel: 'Reported accuracy',
+      label: currentFrame.observationKind === 'predicted' ? 'Predicted position' : 'Latest timed observation',
+      basis: currentFrame.observationKind === 'predicted' ? 'prediction' : 'observation',
+      independentDomains: 0,
+    };
+    const candidate = candidateLocations[0];
+    return candidate ? {
+      latitude: candidate.latitude, longitude: candidate.longitude,
+      radiusMeters: candidate.accuracyMeters, radiusLabel: 'Regional uncertainty',
+      label: candidate.label, basis: 'regional', independentDomains: 0,
+    } : null;
+  }, [streetMapOnly, posteriorEstimate, currentFrame, candidateLocations]);
 
   const initialCenter = useMemo<[number, number]>(() => {
+    if (singleMapLocation) return [singleMapLocation.longitude, singleMapLocation.latitude];
     if (currentFrame) return [currentFrame.position.longitude, currentFrame.position.latitude];
     if (trail.length) {
       const p = trail[trail.length - 1];
@@ -1007,6 +1060,20 @@ export const MapLibreIntelligenceMap: React.FC<IntelligenceMapProps> = ({
         .addTo(map);
     });
 
+    map.on('click', 'spectra-posterior-point', (event: MapLayerMouseEvent) => {
+      const feature = event.features?.[0];
+      if (feature?.geometry?.type !== 'Point') return;
+      const radius = finiteOptionalNumber(feature.properties?.radiusMeters);
+      popup.setLngLat(feature.geometry.coordinates.slice() as [number, number])
+        .setDOMContent(popupTextNode([
+          { label: 'Mapped position:', value: String(feature.properties?.label || 'Estimate') },
+          ...(radius !== null ? [{ label: String(feature.properties?.radiusLabel || 'Uncertainty'),
+            value: radius < 1000 ? `${Math.round(radius)} m` : `${(radius / 1000).toFixed(1)} km` }] : []),
+          ...(Number(feature.properties?.independentDomains) > 0
+            ? [{ label: 'Independent telemetry domains:', value: String(feature.properties?.independentDomains) }] : []),
+        ])).addTo(map);
+    });
+
     map.on('click', 'spectra-observation-points', (event: MapLayerMouseEvent) => {
       const feature = event.features?.[0];
       if (!feature?.geometry || feature.geometry.type !== 'Point') return;
@@ -1152,6 +1219,27 @@ export const MapLibreIntelligenceMap: React.FC<IntelligenceMapProps> = ({
         ];
       }),
     });
+    const mappedPosition = streetMapOnly ? singleMapLocation : posteriorEstimate
+      ? { ...posteriorEstimate, radiusMeters: posteriorEstimate.radius95Meters,
+          radiusLabel: 'Estimated 95% radius', label: 'Fused telemetry estimate', basis: 'posterior' }
+      : null;
+    const radius = Number(mappedPosition?.radiusMeters);
+    safeSetData(map, 'spectra-posterior', {
+      type: 'FeatureCollection',
+      features: mappedPosition ? [
+        ...(Number.isFinite(radius) && radius > 0 && radius <= 250_000
+          && Math.abs(mappedPosition.longitude) + radius
+            / (6_378_137 * Math.max(0.01, Math.cos(mappedPosition.latitude * Math.PI / 180)))
+            * 180 / Math.PI < 180
+          ? [circleFeature(mappedPosition.longitude, mappedPosition.latitude, radius)] : []),
+        { type: 'Feature', geometry: { type: 'Point', coordinates: [
+          mappedPosition.longitude, mappedPosition.latitude,
+        ] }, properties: { radiusMeters: Number.isFinite(radius) && radius > 0 ? radius : null,
+          radiusLabel: mappedPosition.radiusLabel, label: mappedPosition.label,
+          basis: mappedPosition.basis,
+          independentDomains: mappedPosition.independentDomains } },
+      ] : [],
+    });
 
     const contextTime = displayTimeMs !== null
       ? new Date(displayTimeMs)
@@ -1192,7 +1280,7 @@ export const MapLibreIntelligenceMap: React.FC<IntelligenceMapProps> = ({
           }]
         : [],
     });
-  }, [ready, trail, futurecast, currentFrame, candidateLocations, displayTimeMs]);
+  }, [ready, trail, futurecast, currentFrame, candidateLocations, posteriorEstimate, singleMapLocation, streetMapOnly, displayTimeMs]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -1209,26 +1297,28 @@ export const MapLibreIntelligenceMap: React.FC<IntelligenceMapProps> = ({
       'spectra-earth-observation',
       layers.earthObservation && earthObservationAvailable,
     );
-    setVisibility(map, 'spectra-observation-heat', layers.heatmap);
-    setVisibility(map, 'spectra-observation-points', layers.markers);
+    setVisibility(map, 'spectra-observation-heat', !streetMapOnly && layers.heatmap);
+    setVisibility(map, 'spectra-observation-points', !streetMapOnly && layers.markers);
     setVisibility(map, 'spectra-futurecast-line', layers.futurecast);
-    setVisibility(map, 'spectra-futurecast-points', layers.futurecast);
+    setVisibility(map, 'spectra-futurecast-points', !streetMapOnly && layers.futurecast);
     setVisibility(
       map,
       'spectra-futurecast-uncertainty-fill',
-      layers.futurecast && layers.uncertainty,
+      !streetMapOnly && layers.futurecast && layers.uncertainty,
     );
     setVisibility(
       map,
       'spectra-futurecast-uncertainty-outline',
-      layers.futurecast && layers.uncertainty,
+      !streetMapOnly && layers.futurecast && layers.uncertainty,
     );
-    setVisibility(map, 'spectra-current-ring', layers.reticle);
-    setVisibility(map, 'spectra-candidate-points', candidateLocations.length > 0);
-    setVisibility(map, 'spectra-candidate-area', candidateLocations.length > 0);
-    setVisibility(map, 'spectra-candidate-area-outline', candidateLocations.length > 0);
-    setVisibility(map, 'spectra-uncertainty-fill', layers.uncertainty);
-    setVisibility(map, 'spectra-uncertainty-outline', layers.uncertainty);
+    setVisibility(map, 'spectra-current-ring', !streetMapOnly && layers.reticle);
+    setVisibility(map, 'spectra-candidate-points', !streetMapOnly && candidateLocations.length > 0);
+    setVisibility(map, 'spectra-candidate-area', !streetMapOnly && candidateLocations.length > 0);
+    setVisibility(map, 'spectra-candidate-area-outline', !streetMapOnly && candidateLocations.length > 0);
+    setVisibility(map, 'spectra-posterior-point', streetMapOnly ? Boolean(singleMapLocation) : Boolean(posteriorEstimate) && layers.markers);
+    setVisibility(map, 'spectra-posterior-area', Boolean(streetMapOnly ? singleMapLocation : posteriorEstimate) && layers.uncertainty);
+    setVisibility(map, 'spectra-uncertainty-fill', !streetMapOnly && layers.uncertainty);
+    setVisibility(map, 'spectra-uncertainty-outline', !streetMapOnly && layers.uncertainty);
     setVisibility(map, 'spectra-weather-radar', layers.weather && weatherAvailable);
     setVisibility(map, 'spectra-hillshade', layers.terrain && terrainAvailable);
     setVisibility(map, 'spectra-buildings-3d', layers.buildings && providerStatus.buildings !== 'unavailable');
@@ -1266,6 +1356,9 @@ export const MapLibreIntelligenceMap: React.FC<IntelligenceMapProps> = ({
     layers,
     mapMode,
     candidateLocations.length,
+    posteriorEstimate,
+    singleMapLocation,
+    streetMapOnly,
     providerStatus.earthObservation,
     providerStatus.weather,
     providerStatus.terrain,
@@ -1279,7 +1372,7 @@ export const MapLibreIntelligenceMap: React.FC<IntelligenceMapProps> = ({
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !ready || !lockOnTarget || currentFrame || candidateLocations.length === 0) return;
+    if (!map || !ready || streetMapOnly || !lockOnTarget || currentFrame || candidateLocations.length === 0) return;
     if (Date.now() < userInteractionUntilRef.current) return;
 
     const candidate = candidateLocations[0];
@@ -1297,11 +1390,11 @@ export const MapLibreIntelligenceMap: React.FC<IntelligenceMapProps> = ({
       duration: 500,
       essential: true,
     });
-  }, [ready, lockOnTarget, currentFrame, candidateLocations]);
+  }, [ready, streetMapOnly, lockOnTarget, currentFrame, candidateLocations]);
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !ready || !lockOnTarget || !currentFrame) return;
+    if (!map || !ready || streetMapOnly || !lockOnTarget || !currentFrame) return;
     if (Date.now() < userInteractionUntilRef.current) return;
 
     const next: [number, number] = [
@@ -1324,7 +1417,22 @@ export const MapLibreIntelligenceMap: React.FC<IntelligenceMapProps> = ({
       duration: 500,
       essential: true,
     });
-  }, [ready, lockOnTarget, currentFrame, isLive]);
+  }, [ready, streetMapOnly, lockOnTarget, currentFrame, isLive]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready || !streetMapOnly || !lockOnTarget || !singleMapLocation) return;
+    if (Date.now() < userInteractionUntilRef.current) return;
+    const next: [number, number] = [singleMapLocation.longitude, singleMapLocation.latitude];
+    const last = lastFollowRef.current;
+    if (last && Math.abs(last[0] - next[0]) <= 0.00001
+      && Math.abs(last[1] - next[1]) <= 0.00001) return;
+    lastFollowRef.current = next;
+    map.easeTo({ center: next, zoom: singleMapLocation.basis === 'regional'
+      ? candidateZoomForAccuracy(singleMapLocation.radiusMeters)
+      : observationZoomForAccuracy(singleMapLocation.radiusMeters),
+      duration: 500, essential: true });
+  }, [ready, streetMapOnly, lockOnTarget, singleMapLocation]);
 
   useEffect(() => {
     const requestId = ++streetRequestRef.current;
@@ -1380,7 +1488,7 @@ export const MapLibreIntelligenceMap: React.FC<IntelligenceMapProps> = ({
       <div ref={containerRef} className="absolute inset-0" />
       {rendererUnavailable && <RasterIntelligenceMap
         currentFrame={currentFrame} trail={trail} futurecast={futurecast}
-        candidateLocations={candidateLocations} displayTime={displayTime}
+        candidateLocations={candidateLocations} posteriorEstimate={posteriorEstimate} displayTime={displayTime}
         streetMapOnly={streetMapOnly}
         mapMode={mapMode} layers={layers} isLive={isLive}
         lockOnTarget={lockOnTarget} onUserInteraction={onUserInteraction}

@@ -63,6 +63,8 @@ function load(path, overrides = {}) {
     publicPlaceMode: true, directEvidence: [], spectraSessionId: null,
     acquisitionControllerRef: { current: null }, requestRef: { current: 0 },
     originLexaraSessionIdRef: { current: null },
+    resultTargetRef: { current: '' },
+    mappedResultRef: { current: false },
     useCallback: fn => fn, addMessage() {}, speakIfEnabled() {},
     spectraFeedNotice() {}, spectraFeedNotices() {},
     fetch(url, init) { requests.push({ url, init }); return new Promise((_resolve, reject) => {

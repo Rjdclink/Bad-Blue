@@ -42,6 +42,7 @@ import {
   SPECTRA_DISCOVERY_POLICY,
 } from '../services/spectra/SpectraSourceRegistry';
 import { buildSpectraRecursiveClueQueries } from '../services/spectra/SpectraRecursiveClues';
+import { isolateSpectraClue } from '../services/spectra/SpectraClueOrchestration';
 import {
   loadSpectraSessionIdentityBindings,
   loadSpectraSessionObservations,
@@ -1157,30 +1158,62 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
 
     const attemptedDiscoveryQueries = new Set<string>();
     const attemptedRetrievalUrls = new Set<string>();
-    const firstPassPromise = runDiscoveryPass(initialQueries, {
+    const firstPassPromise = isolateSpectraClue(() => runDiscoveryPass(initialQueries, {
       subject: resolvedSubjectName,
       location: discoveryJurisdiction,
       // The native-first background lane owns the paid fallback. Avoid
       // duplicate Claude searches for this same subject in parallel.
       useClaude: false,
       allowPaidSearch: process.env.SPECTRA_PAID_SEARCH_ENABLED === 'true',
-    }, attemptedDiscoveryQueries, attemptedRetrievalUrls);
+    }, attemptedDiscoveryQueries, attemptedRetrievalUrls), {
+      results: [], retrievedEvidence: [], attempted: 1, failed: 1, claudeNotes: [],
+      retrieval: { selected: 0, retrieved: 0, deadlineExpiredPasses: 0 },
+    });
     const activeAcquisitionPromise = acquireSpectraEnrolledTelemetry({
       userId,
       phoneNumber: phone,
       deviceRef,
       sessionId: requestedSessionId,
       subjectLabel: resolvedTargetLabel,
+    }).catch(() => {
+      // Device telemetry supplements public regional inference. An unexpected
+      // device-provider error must not reject the independent discovery lanes.
+      return {
+        batches: [],
+        attempts: [{
+          id: 'enrolled-device-acquisition', label: 'Enrolled device acquisition',
+          status: 'failed' as const, normalizerKind: 'enrolled-device-binding',
+          measurementCount: 0, reasonCode: 'request-failed' as const,
+          reason: 'Device acquisition failed; independent discovery continued.',
+        }],
+      };
     });
-    const publicAccountPromise = collectSpectraPublicAccountRecords(combinedTargetText);
-    const publicProfileCandidatesPromise = discoverSpectraPublicBlueskyProfiles(resolvedName);
-    const publicMastodonPromise = collectSpectraPublicMastodonRecords(combinedTargetText);
-    const publicMastodonCandidatesPromise = discoverSpectraPublicMastodonProfiles(resolvedName);
-    const publicWikimediaPromise = collectSpectraPublicWikimediaRecords(combinedTargetText);
-    const publicNewsPromise = collectSpectraPublicNewsRecords(resolvedName || resolvedSubjectName);
-    const publicCourtPromise = collectSpectraPublicCourtRecords(resolvedName || resolvedSubjectName);
-    const phoneOriginPromise = collectSpectraPhoneOrigin(phone);
-    const phoneInfogaPromise = collectSpectraPhoneInfoga(phone);
+    const publicAccountPromise = isolateSpectraClue(
+      () => collectSpectraPublicAccountRecords(combinedTargetText),
+      { records: [], status: 'failed' as const });
+    const publicProfileCandidatesPromise = isolateSpectraClue(
+      () => discoverSpectraPublicBlueskyProfiles(resolvedName),
+      { records: [], status: 'failed' as const });
+    const publicMastodonPromise = isolateSpectraClue(
+      () => collectSpectraPublicMastodonRecords(combinedTargetText),
+      { records: [], status: 'failed' as const });
+    const publicMastodonCandidatesPromise = isolateSpectraClue(
+      () => discoverSpectraPublicMastodonProfiles(resolvedName),
+      { records: [], status: 'failed' as const });
+    const publicWikimediaPromise = isolateSpectraClue(
+      () => collectSpectraPublicWikimediaRecords(combinedTargetText),
+      { records: [], status: 'failed' as const });
+    const publicNewsPromise = isolateSpectraClue(
+      () => collectSpectraPublicNewsRecords(resolvedName || resolvedSubjectName),
+      { records: [], articleLeads: 0, status: 'failed' as const });
+    const publicCourtPromise = isolateSpectraClue(
+      () => collectSpectraPublicCourtRecords(resolvedName || resolvedSubjectName),
+      { records: [], status: 'failed' as const });
+    const phoneOriginPromise = isolateSpectraClue(
+      () => collectSpectraPhoneOrigin(phone), { origin: null, records: [] });
+    const phoneInfogaPromise = isolateSpectraClue(
+      () => collectSpectraPhoneInfoga(phone),
+      { status: 'failed' as const, scanners: [], searchQueries: [] });
 
     const [
       backgroundOutcome,
@@ -1230,8 +1263,12 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       ...publicProfileLeads(foundProfileUrls, 'mastodon', [...mastodonApiUrls, publicMastodon.profileUrl || ''])])]
       .filter(url => url !== publicMastodon.profileUrl).slice(0, 4);
     const [blueskyFetched, mastodonFetched] = await Promise.all([
-      Promise.all(blueskyUrls.map(url => collectSpectraPublicAccountRecords(url))),
-      Promise.all(mastodonUrls.map(url => collectSpectraPublicMastodonRecords(url))),
+      Promise.all(blueskyUrls.map(url => isolateSpectraClue(
+        () => collectSpectraPublicAccountRecords(url),
+        { records: [], status: 'failed' as const }))),
+      Promise.all(mastodonUrls.map(url => isolateSpectraClue(
+        () => collectSpectraPublicMastodonRecords(url),
+        { records: [], status: 'failed' as const }))),
     ]);
     const blueskyCandidateCollections = blueskyFetched.filter(collection =>
       collection.records.some(record => record.title === 'Public Bluesky profile'
@@ -1262,14 +1299,14 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
     // Inspect public media as source-file evidence; a profile ownership match
     // is not a prerequisite and no EXIF becomes a target position observation.
     const [publicBlueskyImages, publicMastodonImages] = await Promise.all([
-      collectSpectraPublicBlueskyImages([
+      isolateSpectraClue(() => collectSpectraPublicBlueskyImages([
         ...blueskyCandidatePosts,
         ...publicAccount.records.filter(record => record.title === 'Public Bluesky post'),
-      ]),
-      collectSpectraPublicMastodonImages([
+      ]), { records: [], attempted: 0, failed: 1 }),
+      isolateSpectraClue(() => collectSpectraPublicMastodonImages([
         ...mastodonCandidatePosts,
         ...publicMastodon.records.filter(record => record.title === 'Public Mastodon status'),
-      ]),
+      ]), { records: [], attempted: 0, failed: 1 }),
     ]);
 
     const activeBatchOutcomes = await Promise.allSettled(
@@ -1495,7 +1532,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
     ];
     // Person-city guesses must rest on the retrieved publisher text. A search
     // title or snippet can describe someone else even when the URL resolves.
-    const fetchedCitySources = () => [...discoveryResults.filter(result =>
+    const fetchedCitySources = () => [...retrievedRegionalSources(publicNews.records), ...discoveryResults.filter(result =>
       result.metadata?.subjectAssociation !== 'supplied_profile_url_unverified'
       && result.metadata?.subjectAssociation !== 'name_match_unverified'
       && result.metadata?.subjectAssociation !== 'case_name_match_unverified'
@@ -1572,12 +1609,15 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       if (!nextQueries.length) break;
 
       const beforeCount = discoveryResults.length;
-      const nextPass = await runDiscoveryPass(nextQueries, {
+      const nextPass = await isolateSpectraClue(() => runDiscoveryPass(nextQueries, {
         subject: resolvedSubjectName,
         location: discoveryJurisdiction,
         useClaude: false,
         allowPaidSearch: process.env.SPECTRA_PAID_SEARCH_ENABLED === 'true',
-      }, attemptedDiscoveryQueries, attemptedRetrievalUrls);
+      }, attemptedDiscoveryQueries, attemptedRetrievalUrls), {
+        results: [], retrievedEvidence: [], attempted: 1, failed: 1, claudeNotes: [],
+        retrieval: { selected: 0, retrieved: 0, deadlineExpiredPasses: 0 },
+      });
       discoveryQueriesAttempted += nextPass.attempted;
       retrievedEvidence.push(...nextPass.retrievedEvidence);
       searchRetrievedEvidence.push(...nextPass.retrievedEvidence);
@@ -1607,10 +1647,12 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
     // Expand only already-retrieved public X posts using the official API
     // when an authorized bearer token is configured. Never run an unbounded
     // account scan or treat posts as subject position observations.
-    const xPostMedia = await collectSpectraXPostMedia(retrievedEvidence);
-    const publicSocialImages = await collectSpectraPublicSocialPageImages([
+    const xPostMedia = await isolateSpectraClue(
+      () => collectSpectraXPostMedia(retrievedEvidence),
+      { posts: [], attempted: 0, retrieved: 0, failed: 1, status: 'partial' as const });
+    const publicSocialImages = await isolateSpectraClue(() => collectSpectraPublicSocialPageImages([
       ...xPostMedia.posts, ...retrievedEvidence,
-    ]);
+    ]), { records: [], attempted: 0, failed: 1 });
     retrievedEvidence.push(...publicSocialImages.records);
     report.publicRecords.push(...publicSocialImages.records.map(record => ({
       title: record.title, url: record.url, publishedAt: record.publishedAt,
@@ -1824,6 +1866,8 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       regionalDiagnostics.profileClues = profileCities.length;
       let region = null;
       let cityCorroborationUsed = false;
+      const mappedRegionalCities = new Set<string>();
+      const cityKey = (city: string, state: string) => `${city.trim().toLowerCase()}|${state.trim().toUpperCase()}`;
       // An independently reported city must not be silently overridden by
       // a search clue supplied by the user (often a historical location).
       if (!region && corroboratedCity) {
@@ -1833,6 +1877,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
           );
           cityCorroborationUsed = Boolean(region);
           if (region) regionalDiagnostics.mappedBy = 'corroborated';
+          if (region) mappedRegionalCities.add(cityKey(corroboratedCity.city, corroboratedCity.state));
           if (region) candidateLocations.push({
             latitude: region.latitude,
             longitude: region.longitude,
@@ -1851,12 +1896,13 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       // never disappear merely because another was ranked first.
       for (const provisional of [...directoryCities, ...provisionalCities]) {
         if (candidateLocations.length >= 3) break;
-        if (corroboratedCity && provisional.city.toLowerCase() === corroboratedCity.city.toLowerCase()
-          && provisional.state === corroboratedCity.state) continue;
+        const key = cityKey(provisional.city, provisional.state);
+        if (mappedRegionalCities.has(key)) continue;
         try {
           const candidate = await resolveRegionalClue(`${provisional.city}, ${provisional.state}`);
           if (!candidate) continue;
           if (!region) { region = candidate; regionalDiagnostics.mappedBy = 'public-document'; }
+          mappedRegionalCities.add(key);
           candidateLocations.push({
             latitude: candidate.latitude,
             longitude: candidate.longitude,
@@ -1874,14 +1920,13 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       }
       for (const profileCity of profileCities) {
         if (candidateLocations.length >= 3) break;
-        if ((corroboratedCity && profileCity.city.toLowerCase() === corroboratedCity.city.toLowerCase()
-          && profileCity.state === corroboratedCity.state)
-          || provisionalCities.some(city => city.city.toLowerCase() === profileCity.city.toLowerCase()
-            && city.state === profileCity.state)) continue;
+        const key = cityKey(profileCity.city, profileCity.state);
+        if (mappedRegionalCities.has(key)) continue;
         try {
           const candidate = await resolveRegionalClue(`${profileCity.city}, ${profileCity.state}`);
           if (!candidate) continue;
           if (!region) { region = candidate; regionalDiagnostics.mappedBy = 'public-profile'; }
+          mappedRegionalCities.add(key);
           candidateLocations.push({
             latitude: candidate.latitude, longitude: candidate.longitude,
             label: `${profileCity.city}, ${profileCity.state} (public profile city; account ownership and current city unverified)`,

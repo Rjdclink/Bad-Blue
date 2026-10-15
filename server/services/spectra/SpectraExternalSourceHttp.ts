@@ -2,6 +2,14 @@ import { discoveryFetch } from '../../lexara/DiscoveryDiagnostics';
 
 const MAX_JSON_BYTES = 2_000_000;
 
+/** Missing JSON numbers are not zero-valued measurements. */
+export function spectraFiniteNumber(value: unknown): number | null {
+  if (typeof value !== 'number' && typeof value !== 'string') return null;
+  if (typeof value === 'string' && !value.trim()) return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
 export type SpectraConfiguredProviderErrorCategory =
   | 'authentication'
   | 'authorization'

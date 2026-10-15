@@ -18,6 +18,19 @@ function point(overrides: Partial<GPSPoint> & Pick<GPSPoint, 'source'>): GPSPoin
   };
 }
 
+// Adjacent readings across the date line must remain adjacent in the posterior.
+{
+  const assessment = assessSpectraLiveLocation([
+    point({ source: 'gnss_fix', latitude: 0, longitude: 179.9999, accuracy: 50,
+      provenance: { provider: 'gnss-date-line' } }),
+    point({ source: 'wifi_rtt', latitude: 0, longitude: -179.9999, accuracy: 50,
+      provenance: { provider: 'wifi-date-line' } }),
+  ], now);
+  assert.ok(assessment.consensusCenter);
+  assert.ok(Math.abs(Math.abs(assessment.consensusCenter.longitude) - 180) < 0.01);
+  assert.ok((assessment.confidenceRadiusMeters99 ?? Infinity) < 1_000);
+}
+
 {
   const assessment = assessSpectraLiveLocation([
     point({ source: 'gnss_fix', accuracy: 4 }),

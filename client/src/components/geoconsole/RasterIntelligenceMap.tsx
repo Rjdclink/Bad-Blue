@@ -151,6 +151,50 @@ export default function RasterIntelligenceMap(requestedProps: IntelligenceMapPro
       lines.forEach(text => { const line = document.createElement('div'); line.textContent = text; node.append(line); });
       return node;
     };
+    if (props.streetMapOnly) {
+      const estimate = props.posteriorEstimate;
+      const frame = props.currentFrame;
+      const candidate = props.candidateLocations?.[0];
+      const chosen = estimate
+        ? { latitude: estimate.latitude, longitude: estimate.longitude,
+            radius: estimate.radius95Meters, label: 'Fused telemetry estimate',
+            radiusLabel: 'Estimated 95% radius', color: '#a78bfa' }
+        : frame
+          ? { latitude: frame.position.latitude, longitude: frame.position.longitude,
+              radius: frame.position.accuracy,
+              label: frame.observationKind === 'predicted' ? 'Predicted position' : 'Latest timed observation',
+              radiusLabel: 'Reported accuracy', color: '#34d399' }
+          : candidate
+            ? { latitude: candidate.latitude, longitude: candidate.longitude,
+                radius: candidate.accuracyMeters, label: candidate.label,
+                radiusLabel: 'Regional uncertainty', color: '#fbbf24' }
+            : null;
+      if (props.layers.trail) {
+        let segment: L.LatLngExpression[] = [];
+        const flush = () => { if (segment.length > 1) L.polyline(segment, { color: '#22d3ee', weight: 3 }).addTo(group); segment = []; };
+        for (const item of props.trail) {
+          if (Number(item.metadata?.gapBeforeSeconds || 0) > 0) flush();
+          segment.push([item.position.latitude, item.position.longitude]);
+        }
+        flush();
+      }
+      if (chosen) {
+        const location: L.LatLngExpression = [chosen.latitude, chosen.longitude];
+        if (props.layers.uncertainty && Number.isFinite(chosen.radius)
+          && Number(chosen.radius) > 0 && Number(chosen.radius) <= 250_000) {
+          L.circle(location, { radius: Number(chosen.radius), color: chosen.color,
+            weight: 1, fillOpacity: 0.09 }).addTo(group);
+        }
+        L.circleMarker(location, { radius: 9, color: chosen.color, fillOpacity: 0.7 })
+          .bindPopup(popup([chosen.label,
+            ...(Number.isFinite(chosen.radius) && Number(chosen.radius) > 0
+              ? [`${chosen.radiusLabel}: ${Math.round(Number(chosen.radius))} m`] : []),
+          ])).addTo(group);
+        if (props.lockOnTarget) map.setView(location,
+          Math.max(map.getZoom(), estimate || frame ? 15 : 8), { animate: false });
+      }
+      return;
+    }
     for (const candidate of props.candidateLocations || []) {
       const location: L.LatLngExpression = [candidate.latitude, candidate.longitude];
       const radius = candidate.accuracyMeters;
@@ -160,6 +204,22 @@ export default function RasterIntelligenceMap(requestedProps: IntelligenceMapPro
       L.circleMarker(location, { radius: 7, color: '#fbbf24', fillOpacity: 0.3 }).bindPopup(popup([
         `Regional candidate: ${candidate.label}`, 'A regional estimate does not verify a current location.',
       ])).addTo(group);
+    }
+    if (props.posteriorEstimate) {
+      const estimate = props.posteriorEstimate;
+      const location: L.LatLngExpression = [estimate.latitude, estimate.longitude];
+      if (props.layers.uncertainty && estimate.radius95Meters <= 250_000) {
+        L.circle(location, { radius: estimate.radius95Meters, color: '#a78bfa',
+          weight: 1, fillOpacity: 0.09 }).addTo(group);
+      }
+      if (props.layers.markers) {
+        L.circleMarker(location, { radius: 9, color: '#a78bfa', fillOpacity: 0.7 })
+          .bindPopup(popup([
+            'Telemetry estimate: fused position, not a device observation',
+            `Estimated 95% radius: ${Math.round(estimate.radius95Meters)} m`,
+            `Independent domains: ${estimate.independentDomains}`,
+          ])).addTo(group);
+      }
     }
     const drawFrame = (frame: NonNullable<IntelligenceMapProps['currentFrame']>, current = false) => {
       const location: L.LatLngExpression = [frame.position.latitude, frame.position.longitude];
@@ -211,7 +271,7 @@ export default function RasterIntelligenceMap(requestedProps: IntelligenceMapPro
       if (latest) map.setView([latest.position.latitude, latest.position.longitude], Math.max(map.getZoom(), 15), { animate: false });
       else if (candidate) map.setView([candidate.latitude, candidate.longitude], Math.max(map.getZoom(), 8), { animate: false });
     }
-  }, [ready, props.currentFrame, props.trail, props.futurecast, props.candidateLocations, props.layers, props.lockOnTarget]);
+  }, [ready, props.currentFrame, props.trail, props.futurecast, props.candidateLocations, props.posteriorEstimate, props.layers, props.lockOnTarget]);
 
   return <div className="absolute inset-0 isolate" data-testid="spectra-raster-map" data-gesture-navigation="ignore">
     <div ref={containerRef} className="absolute inset-0 z-0" aria-label="Interactive location map" />
