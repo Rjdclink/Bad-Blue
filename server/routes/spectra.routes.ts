@@ -1171,6 +1171,18 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       deviceRef,
       sessionId: requestedSessionId,
       subjectLabel: resolvedTargetLabel,
+    }).catch(() => {
+      // Device telemetry supplements public regional inference. An unexpected
+      // device-provider error must not reject the independent discovery lanes.
+      return {
+        batches: [],
+        attempts: [{
+          id: 'enrolled-device-acquisition', label: 'Enrolled device acquisition',
+          status: 'failed' as const, normalizerKind: 'enrolled-device-binding',
+          measurementCount: 0, reasonCode: 'request-failed' as const,
+          reason: 'Device acquisition failed; independent discovery continued.',
+        }],
+      };
     });
     const publicAccountPromise = collectSpectraPublicAccountRecords(combinedTargetText);
     const publicProfileCandidatesPromise = discoverSpectraPublicBlueskyProfiles(resolvedName);
