@@ -92,7 +92,7 @@ assert.match(pdfBoundary, /export async function textFromPdf/);
 
 // An acquisition's environmental result has to reach the Spectra UI.
 assert.match(route, /locationObservations,\s*candidateLocations,\s*mediaCaptureScenes,\s*contextEvidence,\s*liveLocationAssessment/);
-assert.match(page, /setContextEvidence\(payload\.contextEvidence\?\.anchor/);
+assert.match(page, /setContextEvidence\(previous => payload\.contextEvidence\?\.anchor/);
 assert.match(page, /<SpectraGeographicContext value=\{contextEvidence\} photoScenes=\{photoScenes\}/);
 assert.match(panel, /Photograph metadata by capture date/);
 assert.doesNotMatch(panel, /not sightings or measurements of the investigated person/);
