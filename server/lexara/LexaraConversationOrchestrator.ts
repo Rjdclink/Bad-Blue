@@ -565,7 +565,7 @@ export async function generateLexaraConversationResponse(
   const explicitStateJurisdiction = inferJurisdiction(cleanPrompt)
     || normalizeJurisdiction(context.jurisdiction)
     || inferPriorUserJurisdiction(context.previousMessages);
-  const semanticResearchDecision = await semanticResearchDecisionPromise;
+  const semanticResearchDecision = (await semanticResearchDecisionPromise) ?? decideLexaraResearchNeed(cleanPrompt, previousUserTurns);
   const jurisdictionRelevant = semanticResearchDecision.intent === 'legal' || semanticResearchDecision.intent === 'mixed'
     || /\b(?:laws?|legal|court|case|charge|crime|criminal|civil|lawsuit|sue|claim|statutes?|deadline|limitation|file|filing|motion|petition|complaint|divorce|custody|probation|parole|warrant|rights?|attorney|judge|jurisdiction|venue|state\s+law|federal)\b/i.test(cleanPrompt);
   const backgroundStateJurisdiction = jurisdictionRelevant
