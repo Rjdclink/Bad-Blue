@@ -156,7 +156,7 @@ async function optionalDeviceLane(
         measurementCount: batch.measurements.length,
       },
     };
-  } catch (error) {
+  } catch {
     return {
       batch: null,
       attempt: {
@@ -166,7 +166,7 @@ async function optionalDeviceLane(
         normalizerKind,
         measurementCount: 0,
         reasonCode: 'request-failed',
-        reason: error instanceof Error ? error.message : String(error),
+        reason: `${label} was unavailable; independent sources continued.`,
       },
     };
   }
@@ -181,6 +181,21 @@ function durableEnrollmentStoreConfigured(env: NodeJS.ProcessEnv): boolean {
       || ''
     ).trim()
   );
+}
+
+function failedLane(id: string, label: string, normalizerKind: string): SpectraActiveAcquisitionAttempt {
+  return {
+    id, label, normalizerKind, status: 'failed', measurementCount: 0,
+    reasonCode: 'request-failed', reason: `${label} was unavailable; independent sources continued.`,
+  };
+}
+
+async function isolatedAcquisition(
+  id: string, label: string, normalizerKind: string,
+  work: () => Promise<SpectraActiveAcquisitionResult>,
+): Promise<SpectraActiveAcquisitionResult> {
+  try { return await work(); }
+  catch { return { batches: [], attempts: [failedLane(id, label, normalizerKind)] }; }
 }
 
 export function getSpectraEnrolledAcquisitionCapabilities(
@@ -270,7 +285,7 @@ export async function acquireSpectraEnrolledTelemetry(
   }
 
   const device = resolution.device;
-  const inboxPromise = deps.inbox(input.userId, device.deviceRef, {
+  const inboxPromise = Promise.resolve().then(() => deps.inbox(input.userId, device.deviceRef, {
     maxAgeMs: Math.max(
       5_000,
       Math.min(
@@ -278,7 +293,7 @@ export async function acquireSpectraEnrolledTelemetry(
         Number(env.SPECTRA_ENROLLED_TELEMETRY_MAX_AGE_MS || 5 * 60_000),
       ),
     ),
-  }).then(batch => batch
+  })).then(batch => batch
     ? {
         batch: {
           ...batch,
@@ -320,14 +335,18 @@ export async function acquireSpectraEnrolledTelemetry(
           reasonCode: 'no-fresh-telemetry' as const,
           reason: 'No fresh device-reported telemetry is available for this enrolled device.',
         },
-      });
+      }).catch(() => ({
+        batch: null,
+        attempt: failedLane('enrolled-device-inbox-active', 'Enrolled device telemetry inbox', 'canonical-telemetry'),
+      }));
 
-  const activePromise = deps.active({
+  const activePromise = isolatedAcquisition('active-provider-acquisition', 'Active provider acquisition',
+    'canonical-telemetry', () => deps.active({
     deviceRef: device.deviceRef,
     platform: device.platform,
     sessionId: input.sessionId,
     subjectLabel: input.subjectLabel,
-  });
+  }));
   const ownTracksPromise = optionalDeviceLane(
     'owntracks-recorder-active',
     'OwnTracks Recorder',
@@ -350,10 +369,11 @@ export async function acquireSpectraEnrolledTelemetry(
       subjectLabel: input.subjectLabel,
     }, env),
   );
-  const carrierPromise = deps.carrier(device.phoneE164, {
+  const carrierPromise = isolatedAcquisition('carrier-location-acquisition', 'Carrier location acquisition',
+    'camara-location-retrieval', () => deps.carrier(device.phoneE164, {
     sessionId: input.sessionId,
     subjectLabel: input.subjectLabel,
-  }, env);
+  }, env));
 
   const [inbox, active, ownTracks, traccar, carrier] = await Promise.all([
     inboxPromise,
