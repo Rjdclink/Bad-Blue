@@ -13,6 +13,7 @@ import { useGlobalGestureNavigation } from "@/hooks/useGlobalGestureNavigation";
 import { isPaidAccessState, isPublicMarketingAppPath, isSubscriptionEntryPath } from "@shared/subscriptionPolicy";
 import MasterPanelNavigator from "@/components/MasterPanelNavigator";
 import TrialAccessPage from "@/pages/trial-access";
+import { TrialStatusBanner } from "@/components/TrialStatusBanner";
 import { recoverPageDownload } from "@/lib/pageLoadRecovery";
 
 if (typeof window !== 'undefined') {
@@ -240,6 +241,7 @@ function Router() {
   const accessState = String((user as any)?.accessState || "");
   const hasPaidAccess = isMasterSession ||
     isPaidAccessState(accessState) ||
+    accessState === "trial_active" ||
     (!accessState &&
       Boolean((user as any)?.hasPaidForAccess === true) &&
       !["suspended", "past_due", "canceled", "expired"].includes(
@@ -310,6 +312,12 @@ function Router() {
   return (
     <Suspense fallback={<PageLoader />}>
       <>
+        <TrialStatusBanner
+          accessState={accessState}
+          trialRemainingMs={Number((user as any)?.trialRemainingMs || 0)}
+          trialExpiresAt={(user as any)?.trialExpiresAt || null}
+          userId={(user as any)?.id}
+        />
         {isMasterSession && <MasterPanelNavigator />}
         <Switch>
           <Route path="/" component={Landing} />
@@ -317,13 +325,13 @@ function Router() {
 
           <Route path="/subscription-success" component={SubscriptionSuccess} />
           <Route path="/trial-expired">
-            <TrialAccessPage required />
+            <TrialAccessPage />
           </Route>
           <Route path="/trial-upgrade">
-            <TrialAccessPage required />
+            <TrialAccessPage early />
           </Route>
           <Route path="/trial-review">
-            <TrialAccessPage required />
+            <TrialAccessPage review />
           </Route>
           <Route path="/subscription-required">
             <TrialAccessPage required />

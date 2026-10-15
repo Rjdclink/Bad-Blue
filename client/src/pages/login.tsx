@@ -4,6 +4,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Shield, Loader2 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -28,6 +29,7 @@ export default function Login() {
 
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
+  const [loginSubscribeNow, setLoginSubscribeNow] = useState(false);
   const [masterPassword, setMasterPassword] = useState("");
   const resetToken = urlParams.get("reset") || "";
   const [forgotMode, setForgotMode] = useState(false);
@@ -38,6 +40,7 @@ export default function Login() {
   const [signupPassword, setSignupPassword] = useState("");
   const [signupFirstName, setSignupFirstName] = useState("");
   const [signupLastName, setSignupLastName] = useState("");
+  const [signupSubscribeNow, setSignupSubscribeNow] = useState(false);
 
   const beginSubscriptionCheckout = useCallback(async () => {
     const response = await apiRequest("/api/subscription/checkout", "POST");
@@ -91,7 +94,7 @@ export default function Login() {
     const needsSubscriptionCheckout =
       subscribeNowCheckout ||
       (!data.accessZone &&
-        !["paid", "master"].includes(accessState) &&
+        !["paid", "trial_active", "master"].includes(accessState) &&
         data.hasActiveSubscription !== true);
     if (needsSubscriptionCheckout) {
       // Own checkout before auth-query invalidation can rerender this page and
@@ -114,12 +117,23 @@ export default function Login() {
       return;
     }
 
+    if (accessState === "trial_expired") {
+      setLocation("/trial-expired");
+      return;
+    }
+    if (data.trialOutcome === "AMBIGUOUS") {
+      setLocation("/trial-review");
+      return;
+    }
+
     const redirectPath = data.accessZone ? (data.redirectRoute || "/lexara-consent") : "/lexara-consent";
     toast({
-      title: "Login successful",
+      title: accessState === "trial_active" ? "Free trial active" : "Login successful",
       description: data.accessZone
         ? "Master access enabled."
-        : "Welcome back!",
+        : accessState === "trial_active"
+          ? "Your 72-hour trial is active. No payment card is required."
+          : "Welcome back!",
     });
 
     if (!needsSubscriptionCheckout) {
@@ -144,7 +158,7 @@ export default function Login() {
         email: loginEmail,
         password: loginPassword,
       });
-      await completeLogin(response, true);
+      await completeLogin(response, loginSubscribeNow);
     } catch (error: any) {
       toast({
         title: "Login failed",
@@ -211,17 +225,52 @@ export default function Login() {
         password: signupPassword,
         firstName: signupFirstName,
         lastName: signupLastName,
-        skipTrial: true,
+        skipTrial: signupSubscribeNow,
       });
 
       if (response.ok) {
         const data = await response.json();
         await queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
 
+        if (signupSubscribeNow) {
+          subscriptionResumeStarted.current = true;
+          toast({
+            title: "Account created",
+            description: "Opening secure Square checkout for your $19.99/month subscription.",
+          });
+          try {
+            await beginSubscriptionCheckout();
+          } catch (error) {
+            subscriptionResumeStarted.current = false;
+            throw error;
+          }
+          return;
+        }
+
+        if (data.accessState === "trial_active" && data.trialOutcome === "ELIGIBLE") {
+          toast({
+            title: "Your free trial has started",
+            description: "You have 72 hours of LegalWhat access. No payment card is required.",
+          });
+          setLocation("/lexara-consent");
+          return;
+        }
+
+        if (data.trialOutcome === "AMBIGUOUS") {
+          toast({
+            title: "Trial eligibility needs review",
+            description: "Your account is safe. Continue with subscription or contact support for help.",
+          });
+          setLocation("/trial-review");
+          return;
+        }
+
         subscriptionResumeStarted.current = true;
         toast({
-          title: "Account created",
-          description: "Opening secure Square checkout for your $19.99/month subscription.",
+          title: data.trialOutcome === "CLEAR_REPEAT" ? "Trial already used" : "Account created",
+          description: data.trialOutcome === "CLEAR_REPEAT"
+            ? "This account is linked to a previously used trial. Continue with the existing Square subscription."
+            : "Continue to the existing Square checkout to activate your LegalWhat subscription.",
         });
         try {
           await beginSubscriptionCheckout();
@@ -347,6 +396,18 @@ export default function Login() {
 
 
 
+                    <div className="flex items-start gap-2 rounded-md border p-3">
+                      <Checkbox
+                        id="login-subscribe-now"
+                        checked={loginSubscribeNow}
+                        onCheckedChange={(checked) => setLoginSubscribeNow(checked === true)}
+                        disabled={isLoading}
+                      />
+                      <Label htmlFor="login-subscribe-now" className="cursor-pointer text-sm font-normal leading-snug">
+                        If this account is not already subscribed, take me to the $19.99/month subscription checkout after I sign in.
+                      </Label>
+                    </div>
+
                     <Button type="submit" className="w-full" disabled={isLoading}>
                       {isLoading ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Logging in...</> : "Login"}
                     </Button>
@@ -405,11 +466,23 @@ export default function Login() {
 
 
 
+                    <div className="flex items-start gap-2 rounded-md border p-3">
+                      <Checkbox
+                        id="signup-subscribe-now"
+                        checked={signupSubscribeNow}
+                        onCheckedChange={(checked) => setSignupSubscribeNow(checked === true)}
+                        disabled={isLoading}
+                      />
+                      <Label htmlFor="signup-subscribe-now" className="cursor-pointer text-sm font-normal leading-snug">
+                        Skip my 72-hour free trial and subscribe now for $19.99/month.
+                      </Label>
+                    </div>
+
                     <Button type="submit" className="w-full" disabled={isLoading}>
                       {isLoading ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Creating account...</> : "Sign Up"}
                     </Button>
 
-                    <p className="text-xs text-center text-muted-foreground">An active $19.99/month subscription is required. You will review and confirm payment in Square checkout.</p>
+                    <p className="text-xs text-center text-muted-foreground">The 72-hour free trial does not require a payment card unless you choose to subscribe now.</p>
                   </form>
                 </TabsContent>
               </Tabs>

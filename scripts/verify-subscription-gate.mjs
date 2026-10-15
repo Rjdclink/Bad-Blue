@@ -55,11 +55,11 @@ for (const path of protectedPaths) {
   for (const [name, state] of Object.entries(states)) {
     for (const method of ['GET', 'HEAD']) {
       const result = await request(path, state, method);
-      assert.equal(result.allowed, name === 'paid' || name === 'owner', `${name} ${method} ${path}`);
+      assert.equal(result.allowed, name === 'paid' || name === 'owner' || name === 'trial', `${name} ${method} ${path}`);
       assert.equal(result.headers['Cache-Control'], 'private, no-store');
       assert.equal(result.headers['X-Robots-Tag'], 'noindex, nofollow');
       if (name === 'anonymous') assert.equal(result.location, '/login');
-      if (['unpaid', 'trial', 'expired'].includes(name)) assert.equal(result.location, '/subscription-required');
+      if (['unpaid', 'expired'].includes(name)) assert.equal(result.location, '/subscription-required');
       if (name === 'unavailable') assert.equal(result.status, 503);
       decisions++;
     }
@@ -87,7 +87,7 @@ assert.equal(isPublicMarketingAppPath('/legal-consultation'), false);
 for (const path of ['/api/lexara/chat', '/api/documents/generate', '/api/new-service', '/api/pulse/status/example']) {
   assert.equal((await request(path, states.anonymous, 'POST')).status, 401);
   assert.equal((await request(path, states.unpaid, 'POST')).status, 402);
-  assert.equal((await request(path, states.trial, 'POST')).status, 402);
+  assert.equal((await request(path, states.trial, 'POST')).allowed, true);
   assert.equal((await request(path, states.paid, 'POST')).allowed, true);
 }
 for (const path of ['/login', '/subscription-required', '/subscription-success', '/privacy', '/terms', '/contact', '/assets/app.js', '/assets/app.css', '/images/Legal%20What%20Icon.png', '/manifest.json', '/sitemap.xml']) {
@@ -118,9 +118,9 @@ assert.ok(index.indexOf('await registerRoutes(app)') < index.indexOf('app.use(ex
 assert.ok(index.includes('parsed.origin === BASE_URL && isPublicSeoPage(parsed.pathname)'));
 const auth = read('server/auth.ts');
 assert.ok(auth.includes('const authorized = isPaidAccessState(accessState)'));
-assert.ok(!auth.includes('await activateLocalTrialHttp('));
+assert.ok(auth.includes('await activateLocalTrialHttp('));
 assert.ok(app.indexOf('if (!isSubscriptionEntryPath(currentPath)') < app.indexOf('<Switch>'));
 assert.ok(app.includes('!isPublicMarketingAppPath(currentPath)'));
-assert.ok(!app.includes('accessState === "trial_active" ||'));
+assert.ok(app.includes('accessState === "trial_active" ||'));
 assert.ok(app.includes('if (isLoading) return <AuthLoadingSkeleton />'));
 console.log(JSON.stringify({ staticHtmlFiles: htmlFiles.length, publicSeoUrls: publicSeoPaths.length, protectedUrlVariants: protectedPaths.length, accessDecisions: decisions, result: 'PASS' }));
