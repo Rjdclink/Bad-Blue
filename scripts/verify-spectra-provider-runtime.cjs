@@ -221,6 +221,20 @@ const workFor = ms => signal => new Promise((resolve, reject) => {
       else process.env.LEXARA_SEARXNG_ENGINES = previous;
     }
   });
+  await test('SearXNG keeps original engine results when supplemental Yahoo fails', async () => {
+    global.fetch = async raw => {
+      assert.equal(new URL(raw).searchParams.get('engines'), 'google cse,brave,bing,yahoo');
+      return json({
+        results: [{ url: 'https://example.test/existing', title: 'Existing result' }],
+        unresponsive_engines: [['yahoo', 'timeout']],
+      });
+    };
+    const { result, stats } = await capture(() => d.searxng('fixture'));
+    assert.equal(result.length, 1);
+    assert.equal(result[0].url, 'https://example.test/existing');
+    assert.equal(stats.ok, 1);
+    assert.equal(stats.partial, 1);
+  });
   await test('SearXNG overrides reject unknown engines, deduplicate, and retain explicit Brave access', async () => {
     const previous = process.env.LEXARA_SEARXNG_ENGINES;
     process.env.LEXARA_SEARXNG_ENGINES = 'brave,bing,bing,duckduckgo,unknown';
