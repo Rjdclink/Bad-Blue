@@ -403,7 +403,11 @@ function lexaraSearxngBase(): string {
 async function searxng(query: string, signal?: AbortSignal): Promise<LegalMeshCandidate[]> {
   const base = lexaraSearxngBase();
   if (!base) return skippedProvider('searxng', 'DISCOVERY_NOT_CONFIGURED');
-  const engines = ['google cse', 'brave', 'bing'].filter(engineAvailable);
+  // Preserve every existing engine; Yahoo supplements their results.
+  const supported = new Set(['google cse', 'bing', 'yahoo', 'brave']);
+  const engines = [...new Set((process.env.LEXARA_SEARXNG_ENGINES
+    ?? 'google cse,brave,bing,yahoo').split(',').map(value => value.trim())
+    .filter(value => supported.has(value) && engineAvailable(value)))];
   if (!engines.length) return skippedProvider('searxng');
   const result = await withTimeout('searxng', 2_200, signal, async requestSignal => {
     const activeEngines = engines.filter(engineAvailable);
