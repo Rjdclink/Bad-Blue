@@ -17,7 +17,7 @@ const additions = [
   "cornell-lii","ecfr","federal-register","caselaw-access-project","openjurist","leagle",
   "lawdiver","fdic-bankfind","netr-public-records","opencorporates",
   "wayback-machine","reuters","associated-press","nass-corporate-registration",
-  "justice-press-releases","library-of-congress",
+  "justice-press-releases","library-of-congress","whitepages","yellowpages","who-is",
 ];
 const byId = new Map(LEXARA_PUBLIC_SOURCES.map(source => [source.id, source]));
 
@@ -64,6 +64,9 @@ test("named provider requests place public site discovery within the first two v
     ["Wayback Machine old website","news-history","web.archive.org"],
     ["Associated Press news history","news-history","apnews.com"],
     ["NASS corporate registration","business","www.nass.org"],
+    ["Whitepages reverse phone lookup","contacts-addresses","www.whitepages.com"],
+    ["Yellow Pages business phone number","business","www.yellowpages.com"],
+    ["Who.is domain registration","domain-web","www.who.is"],
   ]) {
     const queries=buildLexaraSourceQueries({query:q,categories:[category],jurisdiction:"Iowa"});
     assert.ok(queries.slice(0,2).some(x=>x.includes("site:"+domain)),q+": source not in first two search variants");
