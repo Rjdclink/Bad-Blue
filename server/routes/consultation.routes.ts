@@ -497,7 +497,7 @@ export function setupConsultationRoutes(app: Express): void {
       formatJurisdictionAuthorityForSystem(documentJurisdictionProfile),
       `OFFICIAL-FORM DETERMINATION:\n${formDirective}`,
       reliefDocument ? RECORD_RELIEF_DIRECTIVE : '',
-      'Use ONLY facts supplied below. Never invent names, dates, courts, case numbers, quotations, authorities, procedural posture, or requested relief.',
+      'Use ONLY facts supplied below. Never invent names, dates, courts, case numbers, quotations, authorities, procedural posture, requested relief, or an official recipient’s postal address or email. Use labeled contact placeholders unless those details were supplied by the user or verified in the authority assessment.',
       'The application-supplied Lexara background evidence below contains directly retrieved facts for this same matter. Preserve relevant facts supported there without adding a re-verification placeholder merely because the drafting turn did not repeat the background search. Keep placeholders for facts absent from that evidence; factual verification does not establish legal admissibility.',
       'Return plain document text. The PDF and DOCX exporters use that text directly: do not use Markdown heading markers, asterisks for emphasis, backticks, or code fences. Use ordinary section titles and lettered or numbered paragraphs.',
       'Where a required fact is unknown, insert a conspicuous bracketed placeholder such as [COURT NAME NEEDED].',

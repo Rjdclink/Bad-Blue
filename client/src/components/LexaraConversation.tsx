@@ -1120,7 +1120,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       return;
     }
 
-    if (conversationDocument && /^(?:please\s+)?(?:add|change|revise|update|replace|correct|include|use|put)\b|^(?:actually|also|the|my|i forgot|it is|it's)\b/i.test(message)) {
+    if (conversationDocument && /^(?:please\s+)?(?:add|change|revise|update|replace|correct|include|use|put|remove|delete|omit|strip)\b|^(?:actually|also|the|my|i forgot|it is|it's)\b/i.test(message)) {
       appendMessage('user', message);
       setUserInput('');
       setDocumentPreviewOpen(false);

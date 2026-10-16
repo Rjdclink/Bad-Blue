@@ -107,7 +107,7 @@ export function resolveLegalDocumentType(text: string): LegalDocumentType | null
     if (canonical && new RegExp(`(?:^| )${canonical}(?: |$)`).test(normalized)) return type;
   }
   for (const [type, aliases] of TYPE_ALIASES) {
-    if (aliases.some(alias => normalized.includes(normalize(alias)))) return type;
+    if (aliases.some(alias => ` ${normalized} `.includes(` ${normalize(alias)} `))) return type;
   }
   return null;
 }
