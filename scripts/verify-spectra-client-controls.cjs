@@ -310,7 +310,7 @@ async function verifyLivePublication() {
 // superseded candidates in the active map context. Fixture names are fictional
 // and never passed into any production acquisition or persisted database.
 const candidateRetention = read('client/src/lib/spectraResultRetention.ts').match(
-  /export function retainSpectraCandidates<[\s\\S]*?\n\\}/,
+  /export function retainSpectraCandidates<[\s\S]*?\n\}/,
 )?.[0];
 assert.ok(candidateRetention, 'regional candidate retention function unavailable');
 const selectCandidates = execute(
