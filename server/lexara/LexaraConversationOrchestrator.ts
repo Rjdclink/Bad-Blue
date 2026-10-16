@@ -750,7 +750,7 @@ export async function generateLexaraConversationResponse(
   const relayResearchAbort = () => researchController.abort();
   if (context.signal?.aborted) researchController.abort();
   else context.signal?.addEventListener('abort', relayResearchAbort, { once: true });
-  const researchRouteSelected = sequencePlan.useLegalResearch || Boolean(courtRecordPlan);
+  const researchRouteSelected = sequencePlan.useLegalResearch || (!sequencePlan.documentAction && Boolean(courtRecordPlan));
   const legalResearchRequired = sequencePlan.useLegalResearch;
   let legalResearchOutcome: LexaraLegalResearchOutcome | undefined;
   const authorityResearchRunner: typeof researchLegalAuthority = legalResearchRequired
@@ -986,7 +986,7 @@ export async function generateLexaraConversationResponse(
   // Document-routing answers may stream text immediately. The existing route
   // still blocks document text from the real-time speech channel.
 
-  const unverifiedBackgroundOnly = backgroundResearchRequested && !mixedLegalFactNeed
+  const unverifiedBackgroundOnly = backgroundResearchRequested && !mixedLegalFactNeed && !sequencePlan.documentAction
     && (!backgroundInvestigation?.evidenceSummary
       || (criminalBackgroundOnly && !backgroundInvestigation.sources.length));
   const unverifiedSubject = resolvedBackgroundSubject?.name || researchDecision.subject || 'this subject';
