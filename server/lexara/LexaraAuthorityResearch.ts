@@ -228,6 +228,16 @@ async function discoverAuthoritySources(
     ? [context.jurisdiction, formObjective]
         .filter(Boolean).join(' ').replace(/\b(?:Do not draft a document|Answer briefly)\.?/gi, '').trim().slice(0, 390)
     : courtPlan?.discoveryQuery || query;
+  // An exact U.S. Reports citation identifies the official opinion directly.
+  // Retrieve its text before depending on search services or index snippets.
+  const reportedCase = includeLegalAuthorities && !formLookup
+    ? /\b(\d{1,3})\s+U\.?\s*S\.?\s+(\d{1,4})\b/i.exec(formObjective) : null;
+  if (reportedCase) {
+    const [, volume, page] = reportedCase;
+    add({ title: `${volume} U.S. ${page}`, url: `https://www.govinfo.gov/content/pkg/USREPORTS-${volume}/pdf/USREPORTS-${volume}-${page}.pdf`, provider: 'official-us-reports' });
+    const retrieved = await enrichAuthoritySourcesWithLexaraRetrieval(sources, signal, false, false, false, true);
+    if (retrieved.some(source => source.provider === 'official-us-reports' && source.evidenceLevel === 'document' && source.excerpt?.trim())) return retrieved;
+  }
   // Straight record requests try the case archive first. Avoid unrelated
   // opinion/publication searches and web-provider calls when readable filings suffice.
   if (recordLookup && courtPlan) {
