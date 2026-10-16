@@ -619,11 +619,16 @@ async function commonCrawl(query: string, existingUrls: readonly string[], optio
 function containsLegalAuthorityLead(items: readonly LegalMeshCandidate[]): boolean {
   return items.some(item => {
     try {
-      const host = new URL(item.url).hostname.toLowerCase();
-      return host.endsWith('.gov') || host.endsWith('.us') || host.endsWith('.mil')
-        || host === 'courtlistener.com' || host.endsWith('.courtlistener.com')
-        || host === 'law.cornell.edu' || host === 'law.justia.com'
+      const target = new URL(item.url);
+      const host = target.hostname.toLowerCase();
+      const official = host.endsWith('.gov') || host.endsWith('.us') || host.endsWith('.mil')
         || host === 'supremecourt.gov' || host.endsWith('.uscourts.gov');
+      if (!official) return false;
+      // A generic .gov directory or search hit is NOT primary legal text.
+      // Only concrete statutes, opinions and rules may end the strict lead race.
+      const lawPath = /\/(?:docs\/code|statutes?|codes?|laws?|opinions?|rules?|regulations?|cases?)\/|\/content\/pkg\//i.test(target.pathname);
+      const lawTitle = /\b(?:code\s+(?:section|§|\d)|statute\s*(?:section|§|\d)|judicial\s+opinion|court\s+(?:opinion|rule)|rule\s+\d|§\s*\d)\b/i.test(item.title || '');
+      return lawPath || lawTitle;
     } catch { return false; }
   });
 }
