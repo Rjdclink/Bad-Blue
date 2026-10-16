@@ -255,7 +255,25 @@ async function discoverAuthoritySources(
         provider: 'official-court-directory', recordType: 'portal', evidenceLevel: 'metadata',
         excerpt: 'Official court/directory access lead only. No case search or filing was retrieved from this link. Use its clerk or public-record portal for missing records; do not infer any case facts.' }));
   }
-  const courtMeshPromise = courtPlan && !recordLookup ? discoverLegalMeshTier3(discoveryQuery, signal, meshOptions) : undefined;
+  // Start broad discovery while official indexes are checked, instead of
+  // spending their latency before searching for the requested legal authority.
+  const fastLegalPrimarySearch = context.requirePrimaryText && !recordLookup && !formLookup
+    && !getRecordReliefProfile(context.recordReliefState || '');
+  const courtMeshPromise = (courtPlan && !recordLookup) || fastLegalPrimarySearch
+    ? discoverLegalMeshTier3(discoveryQuery, signal, meshOptions) : undefined;
+  // Search jurisdiction-matched official domains in parallel with other sources.
+  // These URLs remain leads until the independent text-retrieval gate succeeds.
+  const officialHost = context.requirePrimaryText
+    ? (context.preferredOfficialDomains || []).find(domain =>
+        /^(?:[a-z0-9-]+\.)+[a-z]{2,}$/i.test(domain) && /(?:\.gov|\.us)$/i.test(domain))
+    : undefined;
+  const officialMeshPromise = officialHost && !recordLookup && !formLookup
+    ? discoverLegalMeshTier3(
+        [context.jurisdiction, formObjective, 'statute court rule case full text', 'site:' + officialHost]
+          .filter(Boolean).join(' ').slice(0, 390),
+        signal, { ...meshOptions, allowPaidSearch: false, allowClaudePlanning: false, firstUseful: true },
+      ).catch(() => [])
+    : undefined;
   const supportingAuthorities: LexaraAuthoritySource[] = [];
   const reliefProfile = getRecordReliefProfile(context.recordReliefState || '');
   reliefProfile?.urls.forEach(url => add({ title: `${reliefProfile.state} official criminal record relief guidance`,
@@ -314,6 +332,8 @@ async function discoverAuthoritySources(
     sources.splice(0, sources.length, ...retrieved);
   }
   let reliefTimer: ReturnType<typeof setTimeout> | undefined;
+  // Prioritize the official leads before the 14-source cap is reached.
+  (officialMeshPromise ? await officialMeshPromise : []).forEach(item => add(item));
   const mesh = reliefController
     ? await Promise.race([
         discoverLegalMeshTier3(discoveryQuery, reliefController.signal, meshOptions).catch(() => []),
@@ -377,9 +397,9 @@ async function enrichAuthoritySourcesWithLexaraRetrieval(
     let timer: ReturnType<typeof setTimeout> | undefined;
     const enrichment = await Promise.race([
       lexaraRetrievalAdapter.retrieve({ purpose: 'lexara_legal_research', targets, signal: retrievalController.signal,
-        timeoutMs: requirePrimaryText ? 10_000 : undefined }),
+        timeoutMs: requirePrimaryText ? 4_000 : undefined }),
       aborted,
-      new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), requirePrimaryText ? 12_000 : LEXARA_RETRIEVAL_TIMEOUT_MS); }),
+      new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), requirePrimaryText ? 5_000 : LEXARA_RETRIEVAL_TIMEOUT_MS); }),
     ]).finally(() => {
       clearTimeout(timer);
       retrievalController.abort();
