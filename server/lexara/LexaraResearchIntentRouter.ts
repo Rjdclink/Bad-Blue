@@ -93,6 +93,7 @@ export function isLexaraOfficialFormQuestion(text: string): boolean {
 export function isLexaraConversationControl(text: string): boolean {
   return isLexaraRepeatRequest(text)
     || isLexaraGenericLegalIntake(text)
+    || /\b(?:remember that|keep that in mind|note that)\.?$/i.test(text.trim()) && !/[?]/.test(text)
     || /^(?:what|which|where|when|who)\b[^?]{0,140}\b(?:did\s+i\s+(?:say|tell\s+you|mention)|i\s+(?:said|told\s+you|mentioned))\b/i.test(text.trim())
     || /^(?:(?:please|lexara)[, ]+)*(?:what do you mean|can you explain (?:that|your answer)|explain that|could you clarify|are you (?:still )?there|can you hear me|did you hear me|are you listening|how are you|who are you|what can you do|can you help me)[?.! ]*$/i.test(text.trim());
 }
