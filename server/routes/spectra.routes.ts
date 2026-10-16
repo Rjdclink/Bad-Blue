@@ -339,6 +339,7 @@ function buildDiscoveryQueries(args: {
     // Broaden to a name/address search once without replacing the contact-
     // bearing queries or repeatedly buying the same generic expansion.
     quotedName ? `${quotedName} address` : '',
+    quotedName ? `${quotedName} "Lives in" site:facebook.com` : '',
     email ? `"${email}"` : '',
     email && quotedName ? `${quotedName} "${email}"` : '',
     phoneDigits.length >= 7 ? `"${phoneDigits}"` : '',
@@ -358,6 +359,7 @@ function buildDiscoveryQueries(args: {
     nationalPhone.length === 10 ? `${nationalPhone.slice(0, 3)} area code NANPA geographic assignment` : '',
     nationalPhone.length === 10 ? `${nationalPhone.slice(0, 3)} ${nationalPhone.slice(3, 6)} NPA NXX original carrier rate center` : '',
     quotedName ? `${quotedName} (site:facebook.com OR site:instagram.com OR site:x.com)` : '',
+    quotedName ? `${quotedName} (site:tiktok.com OR site:threads.net OR site:linkedin.com) (city OR location OR bio)` : '',
     [identityAnchor, compactDetails, 'public court docket record'].filter(Boolean).join(' '),
     [identityAnchor, compactDetails, 'employment property profile'].filter(Boolean).join(' '),
     [identityAnchor, compactDetails, 'media geotag timestamp'].filter(Boolean).join(' '),
