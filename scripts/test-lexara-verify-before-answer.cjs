@@ -14,7 +14,7 @@ const packet = sources => ({sources, summary: 'fixture', hasPrimaryAuthority: tr
 
 function harness(options = {}) {
   const clock = FakeTimers.createClock();
-  const calls = { research: [], grade: [], final: [], streaming: 0, logs: [], signals: [], mesh: [], retrieval: [] };
+  const calls = { research: [], grade: [], final: [], streaming: 0, logs: [], signals: [], mesh: [], retrieval: [], web: [] };
   const cache = new Map();
   const stubs = {
     'server/claude.ts': {
@@ -36,6 +36,10 @@ function harness(options = {}) {
         return {content:'The supplied authority supports this fixture answer.'};
       },
       async callClaudeStreaming() { calls.streaming++; throw new Error('legal answer streamed before verification'); },
+      async callClaudeWebSearch(prompt, config) {
+        calls.web.push({prompt, config});
+        return {sources:options.claudeWebSources || [], searches:1, content:''};
+      },
     },
     'server/aiHarmonyModelRegistry.ts': {CURRENT_AI_MODELS:{claudeFast:'fixture',claudeBalanced:'fixture'},LEGAL_AI_MODELS:{claudeFast:'fixture'}},
     'server/lexara/LexaraAuthorityResearch.ts': {
@@ -65,7 +69,12 @@ function harness(options = {}) {
     stubs['server/lexara/LexaraDiscoveryLearning.ts'] = {rememberLexaraDiscoveryOutcome:async()=>{}};
     stubs['server/lexara/RecordReliefSources.ts'] = {getRecordReliefProfile:()=>undefined,recordReliefDomains:()=>[]};
     stubs['server/lexara/LegalProviderMesh.ts'] = {
-      discoverLegalMeshTier3:async query=>{calls.mesh.push(query);return [{url,title:doc.title,excerpt:'A search snippet',provider:'fixture'}];},
+      discoverLegalMeshTier3:async (query,_signal,config)=>{
+        calls.mesh.push({query, config});
+        return options.weakNative
+          ? [{url:'https://example.org/irrelevant',title:'Unrelated search lead',excerpt:'A search snippet',provider:'fixture'}]
+          : [{url,title:doc.title,excerpt:'A search snippet',provider:'fixture'}];
+      },
       discoverLegalMeshSupplemental:async()=>[],legalMeshSufficient:()=>true,
     };
     stubs['server/lexara/LexaraRetrievalBoundary.ts'] = {lexaraRetrievalAdapter:{retrieve:async request=>{
@@ -132,7 +141,7 @@ test('assessment failures and invented support URLs cannot authorize an answer',
 test('timeout cancels research and cannot report verification',async()=>{
   const h=harness({hang:true});
   const pending=h.load('server/lexara/LexaraLegalResearchGate.ts').completeLexaraLegalResearch('Iowa fixture question',{});
-  await h.clock.tickAsync(6001);const result=await pending;
+  await h.clock.tickAsync(8001);const result=await pending;
   assert.equal(result.status,'timed-out');assert.equal(result.research,null);assert(h.calls.signals[0].aborted);assert.equal(h.clock.countTimers(),0);
 });
 
@@ -173,13 +182,13 @@ test('real authority discovery continues past federal snippets and reads Iowa pr
   await h.clock.tickAsync(3000);const result=await pending;
   assert.equal(result.status,'supported');assert.equal(h.calls.mesh.length,1);
   assert(h.calls.retrieval[0].targets.includes(url));assert.equal(h.calls.retrieval[0].timeoutMs,4000);
-  assert.equal(result.research.sources[0].evidenceLevel,'document');assert.equal(h.clock.countTimers(),0);
+  assert.equal(result.research.sources[0].evidenceLevel,'document');assert.equal(h.calls.web.length,0);assert.equal(h.clock.countTimers(),0);
 });
 
 test('real authority discovery with unreadable primary leads does not pass the gate',async()=>{
   const h=harness({actualAuthority:true,emptyRetrieval:true});
   const result=await h.load('server/lexara/LexaraLegalResearchGate.ts').completeLexaraLegalResearch('Iowa landlord security deposit obligations',{jurisdiction:'Iowa'});
-  assert.equal(result.status,'sources-insufficient');assert.equal(h.calls.mesh.length,3);assert.equal(h.calls.grade.length,0);
+  assert.equal(result.status,'sources-insufficient');assert.equal(h.calls.mesh.length,2);assert.equal(h.calls.web.length,1);assert.equal(h.calls.grade.length,0);
 });
 
  
@@ -207,6 +216,35 @@ test('legal precedent assessment applies to all jurisdictions, not just Iowa',as
     'Is this case still binding?',{jurisdiction:'New York'});
   assert(h.calls.grade.some(prompt=>prompt.includes('For EVERY state or federal jurisdiction')));
   assert(h.calls.grade.every(prompt=>!prompt.includes('For Iowa, consider')));
+});
+
+
+test('weak native legal evidence triggers one real Claude web-search fallback with independently downloaded primary text', async()=>{
+  const h=harness({actualAuthority:true,weakNative:true,claudeWebSources:[{
+    url,title:'Official Iowa Code result',citedText:'An index snippet is not source text',
+  }]});
+  const result=await h.load('server/lexara/LexaraLegalResearchGate.ts').completeLexaraLegalResearch(
+    'What Iowa statute regulates security deposits?',{jurisdiction:'Iowa'});
+  assert.equal(result.status,'supported');
+  assert.equal(h.calls.web.length,1,'one Claude web-search fallback only');
+  assert(h.calls.web[0].prompt.includes('Iowa'));
+  assert(h.calls.web[0].config.maxUses===1);
+  assert.equal(h.calls.mesh.length,1,'Claude fallback must not relaunch generic search');
+  assert(h.calls.retrieval.some(request=>request.targets.includes(url)),'verify the web-search citation by direct retrieval');
+  assert(h.calls.grade.some(prompt=>prompt.includes(doc.excerpt)),'model may assess only actual retrieved text');
+  assert.equal(result.research.sources[0].evidenceLevel,'document');
+});
+
+test('Claude web-search snippets alone cannot pass primary-authority verification', async()=>{
+  const h=harness({actualAuthority:true,weakNative:true,emptyRetrieval:true,claudeWebSources:[{
+    url,title:'Official Iowa Code search lead',citedText:'Unverified snippet',
+  }]});
+  const result=await h.load('server/lexara/LexaraLegalResearchGate.ts').completeLexaraLegalResearch(
+    'What Iowa statute regulates security deposits?',{jurisdiction:'Iowa'});
+  assert.equal(result.status,'sources-insufficient');
+  assert.equal(h.calls.web.length,1);
+  assert.equal(h.calls.grade.length,0);
+  assert.equal(result.research,null);
 });
 
 (async()=>{for(const {name,run} of tests){await run();console.log('PASS:',name);}console.log(`${tests.length} verification-before-answer behavioral groups passed.`);})().catch(e=>{console.error(e);process.exitCode=1;});
