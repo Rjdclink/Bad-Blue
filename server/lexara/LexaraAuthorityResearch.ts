@@ -280,6 +280,7 @@ async function discoverAuthoritySources(
     firstUseful: courtPlan?.lookupQuery ? true : context.requirePrimaryText === true,
     // Legal primary-text queries must not expand into background-record variants.
     queryAlreadyPlanned: context.requirePrimaryText === true && !courtPlan && !formLookup,
+    strictLegalSource: context.requirePrimaryText === true,
   };
   const discoveryQuery = formLookup || primaryTextLookup
     ? [context.jurisdiction, formObjective]
