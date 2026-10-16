@@ -32,6 +32,17 @@ export async function completeLexaraLegalResearch(
   let attempts = 0;
   let timedOut = false;
   let claudeLegalFallbackUsed = false;
+  const verifiedPartial = new Map<string, LexaraAuthorityResearch['sources'][number]>();
+  let latestResearch: LexaraAuthorityResearch | null = null;
+  const partialEvidence = (): LexaraAuthorityResearch | null => {
+    if (!latestResearch || verifiedPartial.size === 0) return null;
+    const sources = [...verifiedPartial.values()];
+    return { ...latestResearch, sources,
+      hasPrimaryAuthority: false, hasUsableEvidence: false,
+      summary: 'Primary documents retrieved, but applicability and unresolved material issues were NOT fully verified. Do not assert legal rules from these candidates.\n' +
+        sources.map(source => `${source.title} — ${source.url}\nCandidate source excerpt (unverified applicability): ${source.excerpt}`).join('\n\n'),
+    };
+  };
   const budgetMs = lexaraLegalResearchBudgetMs(question);
   const startedAt = Date.now();
   // Legal native discovery and the weak-evidence Claude web fallback share
@@ -45,7 +56,7 @@ export async function completeLexaraLegalResearch(
     onAbort = () => {
       if (timedOut) {
         console.info('[LEXARA Legal Research Deadline]', { budgetMs, attempts, fallbackUsed: claudeLegalFallbackUsed });
-        resolve({ research: null, status: 'timed-out', attempts });
+        resolve({ research: partialEvidence(), status: 'timed-out', attempts });
       }
       else reject(context.signal?.reason || new Error('Lexara turn cancelled'));
     };
@@ -61,14 +72,17 @@ export async function completeLexaraLegalResearch(
       queries.add(query);
       // Only after the first native pass has insufficient verified evidence,
       // use one existing Claude web search as another source-discovery path.
-      const useClaudeLegalFallback = pass > 0 && !claudeLegalFallbackUsed;
+      const useClaudeLegalFallback = pass > 0 && !claudeLegalFallbackUsed
+        && ![...evidence.values()].some(source => source.kind === 'primary');
       if (useClaudeLegalFallback) claudeLegalFallbackUsed = true;
       const result = await researchLegalAuthority(query, {
         ...context, standaloneQuery: query, forceResearch: true,
         requirePrimaryText: true, forceClaudeLegalWebFallback: useClaudeLegalFallback,
+        previouslyRetrievedUrls: [...evidence.keys()],
         signal: controller.signal,
       }).catch(() => null);
       if (controller.signal.aborted) break;
+      if (result) latestResearch = result;
       for (const source of result?.sources || []) {
         if (source.evidenceLevel === 'document' && source.recordType !== 'portal' && source.excerpt?.trim()) {
           evidence.set(source.url, source);
@@ -106,6 +120,13 @@ export async function completeLexaraLegalResearch(
               },
             };
           }
+          // A partly supported legal question is not a verified answer. Keep
+          // only independently downloaded primary documents named by the
+          // grader, so useful research survives the deadline without claiming
+          // that outstanding propositions were proven.
+          if (grade.sufficient === false) for (const source of supporting) {
+            if (source.kind === 'primary') verifiedPartial.set(source.url, source);
+          }
           if (typeof grade.nextQuery === 'string') nextQuery = grade.nextQuery.trim().slice(0, 1200);
         } catch {
           // A failed assessment is not a successful verification. Try another source query.
@@ -120,7 +141,7 @@ export async function completeLexaraLegalResearch(
       query = nextQuery && !queries.has(nextQuery) ? nextQuery : fallback;
       if (queries.has(query)) break;
     }
-    return { research: null, status: timedOut ? 'timed-out' : 'sources-insufficient', attempts };
+    return { research: partialEvidence(), status: timedOut ? 'timed-out' : 'sources-insufficient', attempts };
   };
   try {
     return await Promise.race([aborted, run()]);
