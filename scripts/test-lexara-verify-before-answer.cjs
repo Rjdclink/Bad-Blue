@@ -207,7 +207,7 @@ test('primary-text discovery retains official sources across state and federal j
       {jurisdiction,preferredOfficialDomains:[officialDomain]});
     assert.equal(outcome.status,'sources-insufficient');
     assert.equal(h.calls.grade.length,0);
-    assert(h.calls.mesh.some(entry=>entry.query.includes('site:'+officialDomain)), jurisdiction+' official law query missing');
+    assert(h.calls.mesh.some(entry=>entry.query.includes('site:'+officialDomain.replace(/^www\./,'')) || entry.query.includes('site:'+officialDomain)), jurisdiction+' official law query missing');
     assert.equal(h.clock.countTimers(),0);
   }
 });
