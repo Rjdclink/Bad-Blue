@@ -181,6 +181,7 @@ test('real authority discovery continues past federal snippets and reads Iowa pr
   const pending=h.load('server/lexara/LexaraLegalResearchGate.ts').completeLexaraLegalResearch('Iowa landlord security deposit obligations',{jurisdiction:'Iowa'});
   await h.clock.tickAsync(3000);const result=await pending;
   assert.equal(result.status,'supported');assert.equal(h.calls.mesh.length,1);
+  assert.equal(h.calls.mesh[0].config.strictLegalSource,true,'legal searches must await authority leads');
   assert(h.calls.retrieval[0].targets.includes(url));assert.equal(h.calls.retrieval[0].timeoutMs,4000);
   assert.equal(result.research.sources[0].evidenceLevel,'document');assert.equal(h.calls.web.length,0);assert.equal(h.clock.countTimers(),0);
 });
