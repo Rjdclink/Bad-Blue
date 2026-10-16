@@ -273,7 +273,7 @@ async function discoverClaudeLegalFallback(
       signal: context.signal,
     });
     const seen = new Set<string>();
-    const leads = result.sources.slice(0, 8).flatMap(source => {
+    const leads = result.sources.slice(0, 20).flatMap(source => {
       const url = cleanUrl(source.url);
       if (!url || seen.has(url)) return [];
       seen.add(url);
@@ -286,8 +286,15 @@ async function discoverClaudeLegalFallback(
         evidenceLevel: 'snippet' as const,
       }];
     });
-    console.info('[LEXARA Legal Web Fallback]', { searches: result.searches, sourceLeads: leads.length });
-    return leads;
+    // Claude search returns discovery leads, not confirmed law. Keep official
+    // legislative and court sources ahead of blocked commercial mirrors even
+    // when they appear after the first eight search hits.
+    const ranked = leads.sort((a, b) => officialLawSourcePriority(b, context) - officialLawSourcePriority(a, context)).slice(0, 8);
+    console.info('[LEXARA Legal Web Fallback]', {
+      searches: result.searches, sourceLeads: ranked.length,
+      officialLeads: ranked.filter(source => source.kind === 'primary').length,
+    });
+    return ranked;
   } catch (error) {
     if (!context.signal?.aborted) console.warn('[LEXARA Legal Web Fallback] unavailable', {
       error: error instanceof Error ? error.message : String(error),
