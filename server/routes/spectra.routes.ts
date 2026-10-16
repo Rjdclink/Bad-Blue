@@ -69,6 +69,7 @@ import {
 } from '../services/spectra/SpectraPublicEvidenceProvenance';
 import { inferCorroboratedRegionalCity, inferProvisionalRegionalCities, inferPublicContactProfileCities, retrievedRegionalSources } from '../services/spectra/SpectraRegionalInference';
 import { inferPublicDirectoryCities } from '../services/spectra/SpectraPublicDirectoryCities';
+import { inferPublicSocialCities } from '../services/spectra/SpectraPublicSocialCities';
 import { collectSpectraPhoneOrigin } from '../services/spectra/SpectraPhoneOrigin';
 import { collectSpectraPhoneInfoga } from '../services/spectra/SpectraPhoneInfoga';
 import {
@@ -1802,11 +1803,11 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
     }> = [];
     const regionalDiagnostics = {
       sourcesEvaluated: 0, corroboratedClues: 0, provisionalClues: 0,
-      directoryClues: 0, profileClues: 0,
+      directoryClues: 0, profileClues: 0, socialClues: 0,
       phoneSupplied: Boolean(phone), phoneOriginAvailable: Boolean(phoneOrigin.origin),
       phoneOriginRecords: phoneOrigin.records.length,
       suppliedClues: 0, geocodeAttempts: 0, geocodeMatches: 0, geocodeFailures: 0,
-      mappedBy: 'none' as 'none' | 'corroborated' | 'public-document' | 'public-profile' | 'phone-assignment' | 'supplied-clue',
+      mappedBy: 'none' as 'none' | 'corroborated' | 'public-document' | 'public-profile' | 'public-social' | 'phone-assignment' | 'supplied-clue',
     };
     const resolveRegionalClue = async (clue: string, freeform = false) => {
       regionalDiagnostics.geocodeAttempts++;
@@ -1856,14 +1857,22 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       regionalDiagnostics.corroboratedClues = corroboratedCity ? 1 : 0;
       regionalDiagnostics.provisionalClues = provisionalCities.length;
       regionalDiagnostics.directoryClues = directoryCities.length;
+      const publicSocialProfiles = [
+        ...publicProfileCandidates.records, ...publicMastodonCandidates.records,
+        ...publicAccount.records.filter(record => record.title === 'Public Bluesky profile'),
+        ...publicMastodon.records.filter(record => record.title === 'Public Mastodon profile'),
+      ];
       const profileCities = inferPublicContactProfileCities(
-        resolvedName,
-        [...publicProfileCandidates.records, ...publicMastodonCandidates.records,
-          ...publicAccount.records.filter(record => record.title === 'Public Bluesky profile'),
-          ...publicMastodon.records.filter(record => record.title === 'Public Mastodon profile')],
-        { email, phone },
+        resolvedName, publicSocialProfiles, { email, phone },
+      );
+      // Read actual public profile-page labels and directly returned API bios;
+      // a name-matched social city is a provisional clue, never live telemetry.
+      const socialCities = inferPublicSocialCities(
+        resolvedName || resolvedSubjectName, regionalSources,
+        publicSocialProfiles, extractCityStateHint,
       );
       regionalDiagnostics.profileClues = profileCities.length;
+      regionalDiagnostics.socialClues = socialCities.length;
       let region = null;
       let cityCorroborationUsed = false;
       const mappedRegionalCities = new Set<string>();
@@ -1894,19 +1903,31 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       // Keep competing source-backed cities visible even if one has already
       // reached the independent-publisher rule. A conflicting claim should
       // never disappear merely because another was ranked first.
-      for (const provisional of [...directoryCities, ...provisionalCities]) {
+      // Contact-bound directory records remain stronger than unverified
+      // social display names. However, direct profile "Lives in" labels should
+      // not be crowded out by weaker name-only directory associations.
+      const contactBoundDirectories = directoryCities.filter(city =>
+        city.supportingClaims.some(claim => claim.identityStatus === 'public_contact_match_unverified'));
+      const nameOnlyDirectories = directoryCities.filter(city =>
+        !city.supportingClaims.some(claim => claim.identityStatus === 'public_contact_match_unverified'));
+      const socialCityKeys = new Set(socialCities.map(city =>
+        cityKey(city.city, city.state)));
+      for (const provisional of [
+        ...contactBoundDirectories, ...socialCities,
+        ...nameOnlyDirectories, ...provisionalCities,
+      ]) {
         if (candidateLocations.length >= 3) break;
         const key = cityKey(provisional.city, provisional.state);
         if (mappedRegionalCities.has(key)) continue;
         try {
           const candidate = await resolveRegionalClue(`${provisional.city}, ${provisional.state}`);
           if (!candidate) continue;
-          if (!region) { region = candidate; regionalDiagnostics.mappedBy = 'public-document'; }
+          if (!region) { region = candidate; regionalDiagnostics.mappedBy = socialCityKeys.has(key) ? 'public-social' : 'public-document'; }
           mappedRegionalCities.add(key);
           candidateLocations.push({
             latitude: candidate.latitude,
             longitude: candidate.longitude,
-            label: `${provisional.city}, ${provisional.state} (provisional public residence clue; current city unverified)`,
+            label: `${provisional.city}, ${provisional.state} (${socialCityKeys.has(key) ? 'public social profile city; identity and date unverified' : 'provisional public residence clue; current city unverified'})`,
             confidence: Math.min(0.22, 0.10 + 0.04 * provisional.independentSourceCount),
             basis: 'regional_context',
             accuracyMeters: Math.max(25_000, candidate.accuracyMeters),
