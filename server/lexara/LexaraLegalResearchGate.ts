@@ -22,7 +22,7 @@ export async function completeLexaraLegalResearch(
   const timer = setTimeout(() => {
     timedOut = true;
     controller.abort(new Error('lexara_legal_research_deadline'));
-  }, 90_000);
+  }, 10_000);
   let onAbort: (() => void) | undefined;
   const aborted = new Promise<LexaraLegalResearchOutcome>((resolve, reject) => {
     onAbort = () => {
