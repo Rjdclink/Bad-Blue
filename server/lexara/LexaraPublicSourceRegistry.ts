@@ -39,6 +39,8 @@ export interface LexaraPublicSource {
   authority: 'primary' | 'secondary' | 'discovery' | 'archive';
   jurisdiction: string;
   lookupMode?: LexaraSourceLookupMode;
+  // Public, source-specific discovery terms; never grants credentials or gated API access.
+  searchAliases?: readonly string[];
 }
 
 export const LEXARA_PUBLIC_SOURCES: readonly LexaraPublicSource[] = [
@@ -78,6 +80,32 @@ export const LEXARA_PUBLIC_SOURCES: readonly LexaraPublicSource[] = [
   { id:'fec-data', root:'https://www.fec.gov/data/receipts/individual-contributions/', categories:['government-public','general-public-records'], queryHints:['campaign contribution','FEC individual contribution'], authority:'primary', jurisdiction:'US', lookupMode:'api' },
   { id:'senate-lobbying', root:'https://lda.senate.gov/system/public/', categories:['government-public','business'], queryHints:['lobbying disclosure','lobbyist','client'], authority:'primary', jurisdiction:'US' },
   { id:'nmls-consumer-access', root:'https://www.nmlsconsumeraccess.org/', categories:['professional-license','financial-professional','employment'], queryHints:['NMLS','mortgage loan originator','license'], authority:'primary', jurisdiction:'US' },
+  // Supplemental public discovery only; interactive and subscription sources remain gated.
+  {"id":"vlex-fastcase","root":"https://us.vlex.com/fastcase-library","categories":["courts"],"queryHints":["Fastcase","vLex Fastcase","legal research library","case law"],"authority":"secondary","jurisdiction":"US","lookupMode":"interactive","searchAliases":["fastcase","vlex fastcase"]},
+  {"id":"justia-case-law","root":"https://law.justia.com/","categories":["courts"],"queryHints":["Justia","case law","state appellate opinions"],"authority":"secondary","jurisdiction":"US","lookupMode":"direct-search","searchAliases":["justia"]},
+  {"id":"findlaw-case-law","root":"https://caselaw.findlaw.com/","categories":["courts"],"queryHints":["FindLaw","case law","court opinions"],"authority":"secondary","jurisdiction":"US","lookupMode":"direct-search","searchAliases":["findlaw"]},
+  {"id":"google-scholar-cases","root":"https://scholar.google.com/","categories":["courts","education"],"queryHints":["Google Scholar","case law","legal scholarship"],"authority":"secondary","jurisdiction":"US","lookupMode":"direct-search","searchAliases":["google scholar"]},
+  {"id":"govinfo","root":"https://www.govinfo.gov/","categories":["government-public","courts"],"queryHints":["GovInfo","federal statutes","official publications","United States Code"],"authority":"primary","jurisdiction":"US","lookupMode":"direct-search","searchAliases":["govinfo"]},
+  {"id":"congress-legislation","root":"https://www.congress.gov/","categories":["government-public"],"queryHints":["Congress.gov","congressional bills","federal legislative history"],"authority":"primary","jurisdiction":"US","lookupMode":"direct-search","searchAliases":["congress.gov","congressional bills"]},
+  {"id":"state-legislatures-directory","root":"https://www.ncsl.org/","categories":["government-public","courts"],"queryHints":["NCSL state legislature directory","state statutes","legislative websites"],"authority":"secondary","jurisdiction":"US","lookupMode":"discovery","searchAliases":["state legislature directory","state legislative websites"]},
+  {"id":"federal-courts","root":"https://www.uscourts.gov/court-records","categories":["courts","government-public"],"queryHints":["US Courts","federal court records","federal court forms","court procedures"],"authority":"primary","jurisdiction":"US","lookupMode":"direct-search","searchAliases":["federal court records","us courts website"]},
+  {"id":"state-court-directory","root":"https://www.justice.gov/jmd/ls/state","categories":["courts","government-public"],"queryHints":["NCSC","state court websites","state court directories"],"authority":"secondary","jurisdiction":"US","lookupMode":"discovery","searchAliases":["state court websites","ncsc"]},
+  {"id":"cornell-lii","root":"https://www.law.cornell.edu/","categories":["courts","government-public"],"queryHints":["Cornell LII","Legal Information Institute","statutes","federal rules"],"authority":"secondary","jurisdiction":"US","lookupMode":"direct-search","searchAliases":["cornell lii","legal information institute"]},
+  {"id":"ecfr","root":"https://www.ecfr.gov/","categories":["government-public"],"queryHints":["eCFR","federal regulations","Code of Federal Regulations"],"authority":"primary","jurisdiction":"US","lookupMode":"direct-search","searchAliases":["ecfr","code of federal regulations"]},
+  {"id":"federal-register","root":"https://www.federalregister.gov/","categories":["government-public","news-history"],"queryHints":["Federal Register","agency rules","federal rulemaking notices"],"authority":"primary","jurisdiction":"US","lookupMode":"direct-search","searchAliases":["federal register"]},
+  {"id":"caselaw-access-project","root":"https://case.law/","categories":["courts"],"queryHints":["Harvard Caselaw Access Project","historic case law","historical court opinions"],"authority":"archive","jurisdiction":"US","lookupMode":"discovery","searchAliases":["caselaw access project","harvard caselaw"]},
+  {"id":"openjurist","root":"https://openjurist.org/","categories":["courts"],"queryHints":["OpenJurist","federal case opinions","law library"],"authority":"secondary","jurisdiction":"US","lookupMode":"direct-search","searchAliases":["openjurist"]},
+  {"id":"leagle","root":"https://www.leagle.com/","categories":["courts"],"queryHints":["Leagle","appellate opinions","case law"],"authority":"secondary","jurisdiction":"US","lookupMode":"direct-search","searchAliases":["leagle"]},
+  {"id":"lawdiver","root":"https://lawdiver.com/","categories":["courts"],"queryHints":["LawDiver","free legal case search","court opinions"],"authority":"secondary","jurisdiction":"US","lookupMode":"direct-search","searchAliases":["lawdiver"]},
+  {"id":"fdic-bankfind","root":"https://banks.data.fdic.gov/bankfind-suite/","categories":["business","financial-public","financial-professional"],"queryHints":["FDIC BankFind","bank charter","bank branch","bank institution history"],"authority":"primary","jurisdiction":"US","lookupMode":"direct-search","searchAliases":["fdic bankfind","bankfind"]},
+  {"id":"netr-public-records","root":"https://publicrecords.netronline.com/","categories":["property","financial-public","general-public-records"],"queryHints":["NETR Online","county assessor","property tax","recorder","land deeds"],"authority":"discovery","jurisdiction":"US","lookupMode":"discovery","searchAliases":["netr","netr online"]},
+  {"id":"opencorporates","root":"https://opencorporates.com/","categories":["business","government-public"],"queryHints":["OpenCorporates","business officers","business entity register"],"authority":"secondary","jurisdiction":"US","lookupMode":"interactive","searchAliases":["opencorporates"]},
+  {"id":"wayback-machine","root":"https://web.archive.org/","categories":["news-history","domain-web","relationship-timeline","business"],"queryHints":["Wayback Machine","archived websites","historical web pages","site history"],"authority":"archive","jurisdiction":"US","lookupMode":"discovery","searchAliases":["wayback machine","internet archive"]},
+  {"id":"reuters","root":"https://www.reuters.com/","categories":["news-history"],"queryHints":["Reuters","news reporting","current events"],"authority":"secondary","jurisdiction":"US","lookupMode":"discovery","searchAliases":["reuters"]},
+  {"id":"associated-press","root":"https://apnews.com/","categories":["news-history"],"queryHints":["Associated Press","AP News","current news"],"authority":"secondary","jurisdiction":"US","lookupMode":"discovery","searchAliases":["associated press","ap news"]},
+  {"id":"nass-corporate-registration","root":"https://www.nass.org/business-services/corporate-registration","categories":["business","financial-public","government-public"],"queryHints":["NASS corporate registration","state secretaries of state","business registrations","UCC filings"],"authority":"primary","jurisdiction":"US","lookupMode":"discovery","searchAliases":["nass","corporate registration"]},
+  {"id":"justice-press-releases","root":"https://www.justice.gov/news","categories":["news-history","criminal-records","courts","government-public"],"queryHints":["Department of Justice","DOJ press releases","federal enforcement"],"authority":"primary","jurisdiction":"US","lookupMode":"direct-search","searchAliases":["doj press releases","justice department news"]},
+  {"id":"library-of-congress","root":"https://www.loc.gov/","categories":["news-history","government-public","education"],"queryHints":["Library of Congress","historical newspapers","legal history","Congressional documents"],"authority":"primary","jurisdiction":"US","lookupMode":"direct-search","searchAliases":["library of congress"]},
 ] as const;
 
 export const LEXARA_CATEGORY_QUERY_HINTS: Readonly<Record<LexaraSourceCategory, readonly string[]>> = {
@@ -163,11 +191,26 @@ export function buildLexaraSourceQueries(input: {
       return '';
     }
   }).filter(Boolean);
+  // Explicit source requests must reach that public website even in first-useful
+  // searches, which only execute the first two planned query variants.
+  // A site: query discovers public material; it does not log in or bypass paywalls.
+  const requestedSourceName = input.query.toLowerCase();
+  const namedSource = LEXARA_PUBLIC_SOURCES.find(source =>
+    source.searchAliases?.some(alias => alias.length >= 4 && requestedSourceName.includes(alias.toLowerCase()))
+  );
+  let namedSourceQuery = '';
+  if (namedSource) {
+    try {
+      namedSourceQuery = `site:${new URL(namedSource.root).hostname} ${identity || input.query} ${jurisdiction}`.replace(/\s+/g, ' ').trim();
+    } catch {
+      // Invalid source roots never stop the rest of the public-source discovery.
+    }
+  }
   const fact = input.requestedFact && input.requestedFact !== 'none' ? input.requestedFact.replace(/-/g, ' ') : '';
   // Live discovery uses the first two variants. Keep both focused on the fact,
   // and let the unquoted variant find records that omit middle names. Identity
   // matching still happens after retrieval; this does not accept namesakes.
   const focused = identity && fact ? [identity, fact, jurisdiction].filter(Boolean).join(' ') : base;
   const relaxed = identity && fact ? [input.subject, fact, jurisdiction].filter(Boolean).join(' ') : hinted;
-  return [...new Set([focused, relaxed, jurisdictionOfficial, ...official, ...discovery, hinted].filter(Boolean))].slice(0, 6);
+  return [...new Set([focused, namedSourceQuery, relaxed, jurisdictionOfficial, ...official, ...discovery, hinted].filter(Boolean))].slice(0, 6);
 }

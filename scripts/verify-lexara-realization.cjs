@@ -1447,4 +1447,6 @@ require('node:child_process').execFileSync(process.execPath, [require('node:path
 require('node:child_process').execFileSync(process.execPath, [require('node:path').join(__dirname, 'test-lexara-semantic-intent.cjs')], { stdio: 'inherit' });
 require('node:child_process').execFileSync(process.execPath, [require('node:path').join(__dirname, 'test-lexara-native-factual-routing.cjs')], { stdio: 'inherit' });
 require('node:child_process').execFileSync(process.execPath, [require('node:path').join(__dirname, 'test-lexara-native-background-investigation.cjs')], { stdio: 'inherit' });
+// Enforce additive public-source routing and access boundaries in every production build.
+require('node:child_process').execFileSync(process.execPath, ['--import', 'tsx', '--test', require('node:path').join(__dirname, 'test-lexara-public-source-expansion.mjs')], { stdio: 'inherit' });
 if (!process.exitCode) console.log('LEXARA realization verification passed.');
