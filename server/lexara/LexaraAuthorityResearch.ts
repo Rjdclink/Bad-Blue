@@ -157,8 +157,8 @@ function discoveredIowaCodeSections(leads: readonly { url: string; title?: strin
   for (const lead of leads) {
     const text = [lead.title || '', lead.excerpt || ''].join(' ').slice(0, 1800);
     const candidates = [
-      ...text.matchAll(/\bIowa\s+Code\s*(?:§|section|sec\.?)?\s*(\d{1,3}\.\d{1,4}[A-Z]?)(?![\d.])/gi),
-      ...text.matchAll(/\b(?:section|§)\s*(\d{1,3}\.\d{1,4}[A-Z]?)(?![\d.])/gi),
+      ...text.matchAll(/\bIowa\s+Code\s*(?:§|section|sec\.?)?\s*(\d{1,3}[A-Z]?\.\d{1,4}[A-Z]?)(?![\d.])/gi),
+      ...text.matchAll(/\b(?:section|§)\s*(\d{1,3}[A-Z]?\.\d{1,4}[A-Z]?)(?![\d.])/gi),
     ];
     // Bare "section" matches must come from the Iowa Legislature itself.
     const fromIowaLegislature = /^https:\/\/(?:www\.)?legis\.iowa\.gov\//i.test(lead.url);
