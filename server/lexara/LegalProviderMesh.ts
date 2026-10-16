@@ -708,7 +708,9 @@ async function firstUsefulSearchVariants(
   try {
     const completed: LegalMeshCandidate[][] = [];
     const first = await Promise.any(queries.map(async query => {
-      const candidates = await freeSearch(query, controller.signal, true, false, allowPaidSearch, strictLegalSource);
+      const candidates = strictLegalSource
+        ? await freeSearch(query, controller.signal, true, false, allowPaidSearch, true)
+        : await freeSearch(query, controller.signal, true, false, allowPaidSearch);
       if (!candidates.length) throw new Error('LEXARA_NO_QUERY_LEADS');
       completed.push(candidates);
       return candidates;
