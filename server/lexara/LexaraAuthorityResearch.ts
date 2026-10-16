@@ -1,4 +1,6 @@
 import { lexaraRetrievalAdapter } from './LexaraRetrievalBoundary';
+import { callClaudeWebSearch } from '../claude';
+import { CURRENT_AI_MODELS } from '../aiHarmonyModelRegistry';
 import {
   decideLexaraResearchNeed,
   type LexaraResearchIntent,
@@ -46,6 +48,8 @@ export interface LexaraAuthorityResearch {
 export interface LexaraAuthorityResearchContext {
   /** Legal answers require retrieved authority text, not index snippets. */
   requirePrimaryText?: boolean;
+  /** A legal-only Claude web-search attempt after native evidence was weak. */
+  forceClaudeLegalWebFallback?: boolean;
   /** Public-law discovery only; personal record retrieval uses a separate query. */
   recordReliefState?: string;
   disableCourtRecordPlanning?: boolean;
@@ -179,6 +183,55 @@ async function searchCourtListener(query: string, signal?: AbortSignal): Promise
   } catch { return []; }
 }
 
+
+/**
+ * Existing Claude web-search transport is a fallback only after weak native
+ * discovery. Search citations remain leads until independently downloaded
+ * and assessed by the same legal verification gate.
+ */
+async function discoverClaudeLegalFallback(
+  question: string,
+  context: LexaraAuthorityResearchContext,
+): Promise<LexaraAuthoritySource[]> {
+  if (context.signal?.aborted) return [];
+  try {
+    const result = await callClaudeWebSearch([
+      'Use web search to locate primary, current, publicly readable legal authority for the precise question.',
+      'Find relevant controlling statutes, rules, regulations, and appellate opinions. Prioritize official court and legislative publishers.',
+      'Return source results, not conclusions. Do not guess citations, penalties, effective dates, or precedential validity.',
+      'Jurisdiction: ' + (context.jurisdiction || 'not established'),
+      'Legal question: ' + question.slice(0, 800),
+    ].join('\n'), {
+      model: CURRENT_AI_MODELS.claudeFast,
+      maxUses: 1,
+      maxTokens: 384,
+      retryTruncatedOutput: false,
+      signal: context.signal,
+    });
+    const seen = new Set<string>();
+    const leads = result.sources.slice(0, 8).flatMap(source => {
+      const url = cleanUrl(source.url);
+      if (!url || seen.has(url)) return [];
+      seen.add(url);
+      return [{
+        title: String(source.title || 'Legal web-search source').slice(0, 240),
+        url,
+        kind: classifySource(url, context.preferredOfficialDomains),
+        excerpt: source.citedText?.trim().slice(0, 900),
+        provider: 'claude-legal-web-search',
+        evidenceLevel: 'snippet' as const,
+      }];
+    });
+    console.info('[LEXARA Legal Web Fallback]', { searches: result.searches, sourceLeads: leads.length });
+    return leads;
+  } catch (error) {
+    if (!context.signal?.aborted) console.warn('[LEXARA Legal Web Fallback] unavailable', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return [];
+  }
+}
+
 async function discoverAuthoritySources(
   query: string,
   signal: AbortSignal | undefined,
@@ -225,6 +278,9 @@ async function discoverAuthoritySources(
     // For legal full-text checks, use the earliest qualified search leads;
     // the gate still retries with targeted sources if these are insufficient.
     firstUseful: courtPlan?.lookupQuery ? true : context.requirePrimaryText === true,
+    // Legal primary-text queries must not expand into background-record variants.
+    queryAlreadyPlanned: context.requirePrimaryText === true && !courtPlan && !formLookup,
+    strictLegalSource: context.requirePrimaryText === true,
   };
   const discoveryQuery = formLookup || primaryTextLookup
     ? [context.jurisdiction, formObjective]
@@ -261,8 +317,12 @@ async function discoverAuthoritySources(
   // spending their latency before searching for the requested legal authority.
   const fastLegalPrimarySearch = context.requirePrimaryText && !recordLookup && !formLookup
     && !getRecordReliefProfile(context.recordReliefState || '');
+  const focusedLegalQuery = fastLegalPrimarySearch
+    ? [context.jurisdiction, context.standaloneQuery || formObjective, 'statute law official full text']
+        .filter(Boolean).join(' ').slice(0, 390)
+    : discoveryQuery;
   const courtMeshPromise = (courtPlan && !recordLookup) || fastLegalPrimarySearch
-    ? discoverLegalMeshTier3(discoveryQuery, signal, meshOptions) : undefined;
+    ? discoverLegalMeshTier3(focusedLegalQuery, signal, meshOptions) : undefined;
   // Search jurisdiction-matched official domains in parallel with other sources.
   // These URLs remain leads until the independent text-retrieval gate succeeds.
   const officialHost = context.requirePrimaryText
@@ -310,9 +370,14 @@ async function discoverAuthoritySources(
 
   if(includeLegalAuthorities && !recordLookup && !reliefProfile){
     const indexQuery = [context.jurisdiction, formObjective].filter(Boolean).join(' ').slice(0, 900);
+    // Federal opinion/publication indexes cannot verify current state statute text.
+    // Skip only for state-statute-only questions; cases and federal work stay enabled.
+    const stateStatuteOnly = context.requirePrimaryText === true && primaryTextLookup && !courtPlan
+      && Boolean(context.jurisdiction) && !/\bfederal\b/i.test(context.jurisdiction || '')
+      && !/\b(?:case\s*law|precedents?|opinions?|holdings?|appellate|judicial\s+decision)\b/i.test(formObjective);
     const [courtListenerResult, govInfoResult, courtRecordResult] = await Promise.all([
-      searchCourtListener(courtPlan?.lookupQuery || indexQuery, signal),
-      searchGovInfo(courtPlan ? `collection:USCOURTS AND (${(context.subject || courtPlan.subject || courtPlan.docketNumber || indexQuery).replace(/[():"\\]/g, ' ')})` : indexQuery, signal),
+      stateStatuteOnly ? Promise.resolve([]) : searchCourtListener(courtPlan?.lookupQuery || indexQuery, signal),
+      stateStatuteOnly ? Promise.resolve([]) : searchGovInfo(courtPlan ? `collection:USCOURTS AND (${(context.subject || courtPlan.subject || courtPlan.docketNumber || indexQuery).replace(/[():"\\]/g, ' ')})` : indexQuery, signal),
       courtPlan ? searchLexaraCourtRecords(courtPlan, signal) : Promise.resolve([]),
     ]);
     courtRecordResult.forEach(add);
@@ -334,14 +399,18 @@ async function discoverAuthoritySources(
     sources.splice(0, sources.length, ...retrieved);
   }
   let reliefTimer: ReturnType<typeof setTimeout> | undefined;
-  // Prioritize the official leads before the 14-source cap is reached.
-  (officialMeshPromise ? await officialMeshPromise : []).forEach(item => add(item));
-  const mesh = reliefController
-    ? await Promise.race([
-        discoverLegalMeshTier3(discoveryQuery, reliefController.signal, meshOptions).catch(() => []),
-        new Promise<never[]>(resolve => { reliefTimer = setTimeout(() => { reliefController.abort(); resolve([]); }, 8_000); }),
-      ]).finally(() => { clearTimeout(reliefTimer); })
-    : await (courtMeshPromise || discoverLegalMeshTier3(discoveryQuery, signal, meshOptions));
+  // Native broad and jurisdiction-specific searches have both been started.
+  // Await concurrently rather than serially, then prioritize official leads.
+  const [officialLeads, mesh] = await Promise.all([
+    officialMeshPromise || Promise.resolve([]),
+    reliefController
+      ? Promise.race([
+          discoverLegalMeshTier3(discoveryQuery, reliefController.signal, meshOptions).catch(() => []),
+          new Promise<never[]>(resolve => { reliefTimer = setTimeout(() => { reliefController.abort(); resolve([]); }, 8_000); }),
+        ]).finally(() => { clearTimeout(reliefTimer); })
+      : courtMeshPromise || discoverLegalMeshTier3(discoveryQuery, signal, meshOptions),
+  ]);
+  officialLeads.forEach(item => add(item));
   if (formLookup || primaryTextLookup) {
     // Prioritize the actual form sources over unrelated federal leads while
     // retaining the other authorities as fallback context.
@@ -355,7 +424,11 @@ async function discoverAuthoritySources(
   }
   supportingAuthorities.forEach(add);
   const finish = () => { reliefController?.abort(); signal?.removeEventListener('abort', relayReliefAbort); return sources; };
-  if ((courtPlan && sources.some(source => source.evidenceLevel === 'document')) || legalMeshSufficient(mesh) || sources.length >= MAX_AUTHORITY_SOURCES) return finish();
+  // Verify available leads before broadening; the legal gate handles any
+  // missing evidence through targeted native retry and then Claude web search.
+  if ((context.requirePrimaryText && sources.length > 0)
+    || (courtPlan && sources.some(source => source.evidenceLevel === 'document'))
+    || legalMeshSufficient(mesh) || sources.length >= MAX_AUTHORITY_SOURCES) return finish();
 
   const supplementalPromise = discoverLegalMeshSupplemental(discoveryQuery, [...seen], reliefController?.signal || signal, meshOptions).catch(error => {
     if (!reliefProfile) throw error;
@@ -478,7 +551,9 @@ export async function researchLegalAuthority(
 
   try {
     if (context.signal?.aborted) return null;
-    const discoveredSources = await discoverAuthoritySources(query, context.signal, context);
+    const discoveredSources = context.forceClaudeLegalWebFallback && context.requirePrimaryText
+      ? await discoverClaudeLegalFallback(question, context)
+      : await discoverAuthoritySources(query, context.signal, context);
     if (!discoveredSources.length && !courtRecordPlan) return null;
     if (context.signal?.aborted) return null;
     const formLookup = isOfficialFormLookup(question);

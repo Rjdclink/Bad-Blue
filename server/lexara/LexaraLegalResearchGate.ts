@@ -19,12 +19,13 @@ export async function completeLexaraLegalResearch(
   else context.signal?.addEventListener('abort', relayAbort, { once: true });
   let attempts = 0;
   let timedOut = false;
-  // Preserve the strict primary-text and precedent checks, but do not hold a
-  // live answer for ten seconds when source providers are unresponsive.
+  let claudeLegalFallbackUsed = false;
+  // Legal native discovery and the weak-evidence Claude web fallback share
+  // one bounded deadline. Successful primary-text checks return immediately.
   const timer = setTimeout(() => {
     timedOut = true;
     controller.abort(new Error('lexara_legal_research_deadline'));
-  }, 6_000);
+  }, 8_000);
   let onAbort: (() => void) | undefined;
   const aborted = new Promise<LexaraLegalResearchOutcome>((resolve, reject) => {
     onAbort = () => {
@@ -41,9 +42,14 @@ export async function completeLexaraLegalResearch(
     for (let pass = 0; pass < 3 && !controller.signal.aborted; pass++) {
       attempts++;
       queries.add(query);
+      // Only after the first native pass has insufficient verified evidence,
+      // use one existing Claude web search as another source-discovery path.
+      const useClaudeLegalFallback = pass > 0 && !claudeLegalFallbackUsed;
+      if (useClaudeLegalFallback) claudeLegalFallbackUsed = true;
       const result = await researchLegalAuthority(query, {
         ...context, standaloneQuery: query, forceResearch: true,
-        requirePrimaryText: true, signal: controller.signal,
+        requirePrimaryText: true, forceClaudeLegalWebFallback: useClaudeLegalFallback,
+        signal: controller.signal,
       }).catch(() => null);
       if (controller.signal.aborted) break;
       for (const source of result?.sources || []) {
@@ -65,7 +71,7 @@ export async function completeLexaraLegalResearch(
             'sufficient=true only when the supplied primary document text supports the answer, including material qualifications. Otherwise identify a specific gap in nextQuery. Do not claim that all law has been verified.',
             `As of: ${new Date().toISOString().slice(0, 10)}. Jurisdiction: ${context.jurisdiction || 'not established'}.`,
             `Original question: ${question}`,
-            `Retrieved documents: ${JSON.stringify(sources.map(source => ({ url: source.url, title: source.title, kind: source.kind, text: source.excerpt?.slice(0, 6500) })))}`,
+            `Retrieved documents: ${JSON.stringify(sources.slice(0, 6).map(source => ({ url: source.url, title: source.title, kind: source.kind, text: source.excerpt?.slice(0, 3800) })))}`,
           ].join('\n\n'), {
             model: CURRENT_AI_MODELS.claudeFast, maxTokens: 700, useJSON: true,
             providerPolicy: 'legalwhat', signal: controller.signal,

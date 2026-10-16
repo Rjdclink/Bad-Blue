@@ -32,6 +32,8 @@ export interface LegalMeshSearchOptions {
   // Live discovery takes the first useful leads. The investigator still verifies
   // sources, and switches to comprehensive discovery when those leads are weak.
   firstUseful?: boolean;
+  /** Legal-primary-text mode: do not cancel other engines on a generic web hit. */
+  strictLegalSource?: boolean;
   officialFormQuery?: boolean;
   // Native-only callers retain every source lane without buying alternate
   // query suggestions. Existing callers keep the conditional planner.
@@ -612,12 +614,27 @@ async function commonCrawl(query: string, existingUrls: readonly string[], optio
   return result||[];
 }
 
+
+/** A search hit is only a legal-authority lead, never verification of the law. */
+function containsLegalAuthorityLead(items: readonly LegalMeshCandidate[]): boolean {
+  return items.some(item => {
+    try {
+      const host = new URL(item.url).hostname.toLowerCase();
+      return host.endsWith('.gov') || host.endsWith('.us') || host.endsWith('.mil')
+        || host === 'courtlistener.com' || host.endsWith('.courtlistener.com')
+        || host === 'law.cornell.edu' || host === 'law.justia.com'
+        || host === 'supremecourt.gov' || host.endsWith('.uscourts.gov');
+    } catch { return false; }
+  });
+}
+
 async function freeSearch(
   query: string,
   signal?: AbortSignal,
   _firstUseful = false,
   officialFormQuery = false,
   allowPaidSearch = true,
+  strictLegalSource = false,
 ): Promise<LegalMeshCandidate[]> {
   // Fast mode returns leads for prompt verification; full mode retains all
   // bounded providers. An unverified fast lead triggers a full retry upstream.
@@ -637,17 +654,34 @@ async function freeSearch(
     ];
     if (_firstUseful && !officialFormQuery) {
       const completed: LegalMeshCandidate[][] = [];
-      const first = await Promise.any(providers.map(async provider => {
+      const firstAuthority = Promise.any(providers.map(async provider => {
         const candidates = await provider;
         if (!candidates.length) throw new Error('LEXARA_NO_SEARCH_LEADS');
         completed.push(candidates);
+        // Only strict legal research waits for an authoritative lead. Factual
+        // and background discovery retain their existing first-hit behavior.
+        if (strictLegalSource && !containsLegalAuthorityLead(candidates)) {
+          throw new Error('LEXARA_GENERIC_SEARCH_LEADS_ONLY');
+        }
         return candidates;
       })).catch(() => [] as LegalMeshCandidate[]);
+      let legalGraceTimer: ReturnType<typeof setTimeout> | undefined;
+      const first = strictLegalSource
+        ? await Promise.race([
+            firstAuthority,
+            new Promise<LegalMeshCandidate[]>(resolve => {
+              legalGraceTimer = setTimeout(() => resolve([]), 2_400);
+            }),
+          ]).finally(() => clearTimeout(legalGraceTimer))
+        : await firstAuthority;
       if (signal?.aborted) throw signal.reason || new DOMException('Discovery cancelled', 'AbortError');
       // Keep complementary evidence already returned by sibling providers.
-      // One event-loop turn drains their ready completions, never slow requests.
       if (first.length) await new Promise<void>(resolve => setTimeout(resolve, 0));
-      if (first.length) controller.abort(new Error('lexara_first_useful_provider'));
+      if (first.length || strictLegalSource) controller.abort(new Error('lexara_first_useful_provider'));
+      if (strictLegalSource) console.info('[LEXARA Legal Source Leads]', {
+        qualifiedLead: first.length > 0,
+        candidateCount: completed.flat().length,
+      });
       return completed.length ? fuseRankedCandidates(completed) : first;
     }
     const outcomes = await Promise.allSettled(providers);
@@ -665,6 +699,7 @@ async function firstUsefulSearchVariants(
   queries: readonly string[],
   signal?: AbortSignal,
   allowPaidSearch = true,
+  strictLegalSource = false,
 ): Promise<LegalMeshCandidate[]> {
   const controller = new AbortController();
   const relayAbort = () => controller.abort(signal?.reason);
@@ -673,7 +708,7 @@ async function firstUsefulSearchVariants(
   try {
     const completed: LegalMeshCandidate[][] = [];
     const first = await Promise.any(queries.map(async query => {
-      const candidates = await freeSearch(query, controller.signal, true, false, allowPaidSearch);
+      const candidates = await freeSearch(query, controller.signal, true, false, allowPaidSearch, strictLegalSource);
       if (!candidates.length) throw new Error('LEXARA_NO_QUERY_LEADS');
       completed.push(candidates);
       return candidates;
@@ -729,7 +764,7 @@ export async function discoverLegalMeshTier3(
   }
   const uniqueVariants=[...new Set(variants)].slice(0,options.firstUseful ? 2 : 6);
   const groups=options.firstUseful && !options.officialFormQuery
-    ? [await firstUsefulSearchVariants(uniqueVariants,signal,options.allowPaidSearch !== false)]
+    ? [await firstUsefulSearchVariants(uniqueVariants,signal,options.allowPaidSearch !== false,options.strictLegalSource === true)]
     : await Promise.all(uniqueVariants.map(variant=>freeSearch(variant,signal,false,options.officialFormQuery,options.allowPaidSearch !== false)));
   const learnedSources=await Promise.race([
     getLexaraLearnedSources(options.categories||[],options.jurisdiction,8),
