@@ -47,7 +47,7 @@ const stubs = {
   './DiscoveryDiagnostics':{
     discoveryFetch:(_lane,url,options)=>mockFetch(url,options),
     discoverySignal:signal=>signal,
-    beginDiscoveryAttempt:()=>()=>{},
+    beginDiscoveryAttempt:()=>{const record=()=>{};record.dispatch=()=>{};return record;},
     getDiscoveryDiagnostics:()=>null,
     markDiscoveryPartial:()=>{},
     discoveryErrorType:()=>null,
