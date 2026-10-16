@@ -306,6 +306,40 @@ async function verifyLivePublication() {
   failed.cleanup();
 }
 
+// Behavioral regression: a newer canonical regional result must not leave
+// superseded candidates in the active map context. Fixture names are fictional
+// and never passed into any production acquisition or persisted database.
+const candidateRetention = read('client/src/lib/spectraResultRetention.ts').match(
+  /export function retainSpectraCandidates<[\s\\S]*?\n\\}/,
+)?.[0];
+assert.ok(candidateRetention, 'regional candidate retention function unavailable');
+const selectCandidates = execute(
+  candidateRetention.replace(/^export /, '') +
+    '\nglobalThis.selectCandidates = retainSpectraCandidates;',
+).selectCandidates;
+const regionalCandidate = (label, confidence, latitude) => ({
+  latitude, longitude: -95, label, confidence,
+  basis: 'regional_context', accuracyMeters: 25_000,
+});
+const priorPlace = regionalCandidate('Fictional Oldtown, IA', 0.35, 42);
+const strongerPlace = regionalCandidate('Fictional Newtown, IA', 0.45, 42.1);
+const equallyStrongPlace = regionalCandidate('Fictional Middletown, IA', 0.35, 42.2);
+const weakerPlace = regionalCandidate('Fictional Weakville, IA', 0.1, 42.3);
+const labels = (oldRows, newRows) => Array.from(
+  selectCandidates(oldRows, newRows), candidate => candidate.label,
+);
+assert.deepEqual(labels([priorPlace], [strongerPlace]), [strongerPlace.label],
+  'a stronger canonical snapshot must not retain stale regional alternatives');
+assert.deepEqual(labels([priorPlace], [equallyStrongPlace]), [equallyStrongPlace.label],
+  'an equally supported new canonical snapshot replaces the previous guess');
+assert.deepEqual(labels([priorPlace], [weakerPlace]), [priorPlace.label],
+  'a weaker refresh must not discard a stronger earlier result');
+assert.deepEqual(labels([priorPlace], []), [priorPlace.label],
+  'an empty refresh preserves the previous supported estimate');
+assert.deepEqual(labels([], [weakerPlace, strongerPlace]),
+  [strongerPlace.label, weakerPlace.label],
+  'a new snapshot retains and ranks its own alternatives without duplicating old ones');
+
 verifyLivePublication().then(() => {
   console.log('Spectra client controls passed: both commands, clue parsing, immediate launch, Futurecast gaps, live persistence ordering, failure recovery, cleanup.');
 }).catch(error => { console.error(error); process.exitCode = 1; });
