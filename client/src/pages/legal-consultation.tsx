@@ -10,6 +10,7 @@ import LexaraCaseTools from '@/components/LexaraCaseTools';
 import LexaraLiveConsentModal, { getLexaraLiveEnabled } from '@/components/LexaraLiveConsentModal';
 import { useLocation, useRoute, useSearch } from 'wouter';
 import { Button } from '@/components/ui/button';
+import { LogoutButton } from '@/components/LogoutButton';
 import { ArrowLeft, Mic, Scale, ScanSearch } from 'lucide-react';
 import { SEOHead } from '@/components/SEOHead';
 import { LAW_TYPE_DATA } from '@shared/lawTypes';
@@ -98,14 +99,9 @@ export default function LegalConsultationPage() {
               {!toolsMode && <ScanSearch className="h-5 w-5" aria-hidden="true" />}
               <span>{toolsMode ? 'Live conversation' : 'Media Analyzer'}</span>
             </Button>
-            <Button
-              variant="outline"
-              onClick={() => setLocation('/login')}
-              data-testid="button-login"
-              className="hidden min-h-11 touch-manipulation sm:inline-flex"
-            >
-              Sign In
-            </Button>
+            <LogoutButton
+              className="min-w-11 shrink-0 bg-red-600 text-white hover:bg-red-700 hover:text-white [&>span]:hidden sm:[&>span]:inline"
+            />
           </div>
         </div>
       </header>
