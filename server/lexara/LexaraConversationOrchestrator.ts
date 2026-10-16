@@ -13,7 +13,7 @@ import {
   formatLexaraDomainSpecialization,
   getLexaraLegalDomainProfile,
 } from './LexaraLegalDomainProfiles';
-import { decideLexaraResearchNeed, isLexaraGenericLegalIntake, isLexaraRepeatRequest, isLexaraDocumentIntakeQuestion, isLexaraOfficialFormQuestion } from './LexaraResearchIntentRouter';
+import { decideLexaraResearchNeed, isLexaraConversationControl, isLexaraGenericLegalIntake, isLexaraRepeatRequest, isLexaraDocumentIntakeQuestion, isLexaraOfficialFormQuestion } from './LexaraResearchIntentRouter';
 import { planLexaraSequence } from './LexaraSequenceRouter';
 import { planLexaraCourtRecords, formatLexaraCourtRecordPlan } from './LexaraCourtRecords';
 import { resolveLexaraResearchDecisionSemantic } from './LexaraSemanticIntentInterpreter';
@@ -566,8 +566,9 @@ export async function generateLexaraConversationResponse(
     || normalizeJurisdiction(context.jurisdiction)
     || inferPriorUserJurisdiction(context.previousMessages);
   const semanticResearchDecision = await semanticResearchDecisionPromise;
-  const jurisdictionRelevant = semanticResearchDecision.intent === 'legal' || semanticResearchDecision.intent === 'mixed'
-    || /\b(?:laws?|legal|court|case|charge|crime|criminal|civil|lawsuit|sue|claim|statutes?|deadline|limitation|file|filing|motion|petition|complaint|divorce|custody|probation|parole|warrant|rights?|attorney|judge|jurisdiction|venue|state\s+law|federal)\b/i.test(cleanPrompt);
+  const jurisdictionRelevant = !isLexaraConversationControl(cleanPrompt) && (
+    semanticResearchDecision.intent === 'legal' || semanticResearchDecision.intent === 'mixed'
+    || /\b(?:laws?|legal|court|case|charge|crime|criminal|civil|lawsuit|sue|claim|statutes?|deadline|limitation|file|filing|motion|petition|complaint|divorce|custody|probation|parole|warrant|rights?|attorney|judge|jurisdiction|venue|state\s+law|federal)\b/i.test(cleanPrompt));
   const backgroundStateJurisdiction = jurisdictionRelevant
     ? normalizeJurisdiction(context.backgroundJurisdiction) : undefined;
   const backgroundLocationConfidence = Math.max(0, Math.min(1, Number(context.backgroundLocationConfidence || 0)));
