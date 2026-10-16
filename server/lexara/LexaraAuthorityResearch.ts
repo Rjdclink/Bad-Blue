@@ -396,7 +396,10 @@ async function discoverAuthoritySources(
           .map(resource => resource.host),
         ...(context.preferredOfficialDomains || []).filter(isOfficialLawHost),
         ...(context.preferredOfficialDomains || []),
-      ].find((domain): domain is string => Boolean(domain) && isOfficialLawHost(domain))
+      ].find((domain): domain is string => Boolean(domain) && (
+        isOfficialLawHost(domain)
+        || (/^federal$/i.test(context.jurisdiction || '') && /^(?:www\.)?uscourts\.gov$/i.test(domain))
+      ))
     : undefined;
   const officialMeshPromise = officialHost && !recordLookup && !formLookup
     ? discoverLegalMeshTier3(
