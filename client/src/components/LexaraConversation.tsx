@@ -32,6 +32,9 @@ interface ConversationDocument {
   content: string;
   documentType: string;
   state?: string;
+  sourceFacts?: string;
+  templateMode?: boolean;
+  packetItem?: boolean;
   esign?: {
     eligible: boolean;
     reason: string;
@@ -65,6 +68,7 @@ function spectraTargetFromPrompt(value: string): string | null {
     .replace(/\s+(?:is|are)(?:\s+(?:located|living|staying|now|currently|at))?\s*[?.!]*$/i, '')
     .replace(/[?.!]+$/g, '').trim() || '';
   if (target.length < 2 || target.length > 500) return null;
+  if (/\b(?:v\.?|vs\.?|versus)\s+[A-Z]|\b(?:citation|holding|opinion|case\s+law|docket)\b/i.test(target)) return null;
   // A state/county prefix can precede the artifact name. These are legal
   // requests even when they start with the hidden location-command wording.
   if (/\b(?:official|court|local|required|prescribed|mandatory|blank|template|legal|small\s+claims|money\s+judgment)\b[\s\S]*\b(?:forms?|petition|motion|complaint|cover\s+sheet)\b|\b(?:form\s+(?=[A-Z0-9.:-]*\d)[A-Z0-9.:-]+|case[- ]assignment|foia)\b/i.test(target)) return null;
@@ -518,7 +522,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     // consent may have populated the signal; text-only mode never gets a surprise prompt.
     void captureLexaraDeviceLocation({ prompt: false }).catch(() => undefined);
   }, []);
-  const [pendingDocument, setPendingDocument] = useState<{ title: string; facts: string; state: string; templateMode: boolean; missingFields?: string[]; packetItem?: boolean } | null>(null);
+  const [pendingDocument, setPendingDocument] = useState<{ title: string; facts: string; state: string; templateMode: boolean; confirmed: boolean; followUpQuestion?: string; missingFields?: string[]; packetItem?: boolean } | null>(null);
   const [showReviewPrompt, setShowReviewPrompt] = useState(false);
 
   const conversationRef = useRef<ConversationMessage[]>([]);
@@ -1092,6 +1096,48 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     userSpeechObservedRef.current = true;
     clearVoiceTurnBuffer();
 
+    if (pendingDocument && !pendingDocument.confirmed && /^(?:yes|yeah|yep|sure|please do|go ahead|i do|i would|okay|ok)(?:[,!. ]|$)/i.test(message)) {
+      appendMessage('user', message);
+      setUserInput('');
+      setPendingDocument(previous => previous ? { ...previous, confirmed: true } : previous);
+      appendMessage('lexara', pendingDocument.followUpQuestion || `You can preview or download the ${pendingDocument.title} as DOCX or PDF.`);
+      return;
+    }
+
+    if (pendingDocument?.confirmed && (pendingDocument.followUpQuestion || pendingDocument.missingFields?.length)) {
+      appendMessage('user', message);
+      setUserInput('');
+      setPendingDocument(previous => previous ? {
+        ...previous,
+        facts: `${previous.facts}\n\nLEXARA ASKED: ${previous.followUpQuestion || previous.missingFields?.[0]}\nUSER ANSWER: ${message}`,
+        followUpQuestion: undefined,
+        missingFields: previous.missingFields?.slice(1),
+      } : previous);
+      const nextField = pendingDocument.missingFields?.[1];
+      appendMessage('lexara', nextField
+        ? `What should I enter for ${nextField.replace(/[_-]+/g, ' ')}?`
+        : `I've added that information. You can preview or download the ${pendingDocument.title} as DOCX or PDF.`);
+      return;
+    }
+
+    if (conversationDocument && /^(?:please\s+)?(?:add|change|revise|update|replace|correct|include|use|put)\b|^(?:actually|also|the|my|i forgot|it is|it's)\b/i.test(message)) {
+      appendMessage('user', message);
+      setUserInput('');
+      setDocumentPreviewOpen(false);
+      setPendingDocument({
+        title: conversationDocument.documentType,
+        facts: `${conversationDocument.sourceFacts || ''}\n\nLATEST USER CORRECTION (OVERRIDES EARLIER CONFLICTING FACTS): ${message}`,
+        state: conversationDocument.state || jurisdiction,
+        templateMode: conversationDocument.templateMode === true,
+        confirmed: true,
+        packetItem: conversationDocument.packetItem,
+      });
+      setConversationDocument(null);
+      pendingActionRef.current = { kind: 'document', label: conversationDocument.documentType };
+      appendMessage('lexara', `I've added that information. A revised ${conversationDocument.title} is ready to prepare for preview or a new DOCX or PDF download.`);
+      return;
+    }
+
     // Hidden location commands and ordinary person-location requests are navigation, so their launch control must
     // not wait for a paid legal answer or a failing research request.
     if (spectraTarget) {
@@ -1172,10 +1218,10 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
 
     try {
       if (pendingDocument?.missingFields?.length) {
-        const activeField = pendingDocument.missingFields[0];
+        const activeField = pendingDocument.missingFields?.[0];
         setPendingDocument(previous => previous ? {
           ...previous,
-          facts: `${previous.facts}\n\nLEXARA REQUESTED FORM FIELD: ${activeField}\nUSER ANSWER: ${message}`,
+          facts: `${previous.facts}\n\n${activeField ? `LEXARA REQUESTED FORM FIELD: ${activeField}\n` : ''}USER ANSWER: ${message}`,
         } : previous);
       }
 
@@ -1427,6 +1473,8 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       }
       const priorPendingDocument = pendingDocument;
       const documentIntentRequested = data?.documentIntent?.requested === true;
+      const explicitDocumentRequest = /\b(?:prepare|draft|create|generate|write|make|download|export|give\s+me|i\s+(?:need|want|would\s+like))\b[\s\S]{0,120}\b(?:document|form|letter|complaint|petition|motion|affidavit|declaration|pdf|docx|contract|request)\b/i.test(message);
+      let documentOffer: string | null = null;
       const documentFollowup = /\b(?:document|draft|form|letter|complaint|petition|motion|affidavit|declaration|pdf|docx|edit|revise|change|paragraph|section|signature|download|export|file|filing)\b/i.test(message)
         || Boolean(priorPendingDocument?.missingFields?.length);
       // Document controls belong to the active document task, never to the
@@ -1448,6 +1496,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
             ? `${conversationFacts}\n\nAPPLICATION-SUPPLIED LEXARA BACKGROUND EVIDENCE (FOLLOW EACH ITEM’S IDENTITY/CASE MATCH STATUS; CANDIDATES ARE NOT VERIFIED USER FACTS; NOT AUTOMATICALLY ADMITTED):\n${backgroundDocumentContext}`
             : conversationFacts;
           const pendingTitle = String(data.documentIntent.documentType || 'Legal Document');
+          if (!explicitDocumentRequest) documentOffer = `Would you like me to prepare the ${pendingTitle} for preview and download as DOCX or PDF?`;
           // A newly requested document replaces the prior document task UI.
           // Keep the conversation, but never let an older preview hide the new task.
           setConversationDocument(null);
@@ -1458,6 +1507,8 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
             facts,
             state: resolvedJurisdiction,
             templateMode: data.documentIntent.templateMode === true,
+            confirmed: explicitDocumentRequest,
+            followUpQuestion: /\?/.test(String(data.response || '')) ? String(data.response).trim() : undefined,
             packetItem: data.documentIntent.packetItem === true,
           });
           pendingActionRef.current = { kind: 'document', label: pendingTitle };
@@ -1467,7 +1518,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       // answer playback is a new turn, not an "analysis still running" check-in.
       analysisActiveRef.current = false;
 
-      const answer = String(data?.response || '').trim();
+      const answer = documentOffer || String(data?.response || '').trim();
       if (!answer) throw new Error('LEXARA returned an empty response');
 
       if (data?.jurisdiction && typeof data.jurisdiction === 'string') {
@@ -1927,6 +1978,9 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         content,
         documentType: String(data?.documentType || pendingDocument.title),
         state: pendingDocument.state,
+        sourceFacts: pendingDocument.facts,
+        templateMode: pendingDocument.templateMode,
+        packetItem: pendingDocument.packetItem,
         esign: data?.esign && typeof data.esign === 'object' ? data.esign : undefined,
       });
       setPendingDocument(null);
@@ -2243,12 +2297,12 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
             <div className="flex justify-start">
               <div className="max-w-[92%] rounded-2xl border bg-card p-4 text-sm shadow-sm">
                 <div className="mb-2 font-medium">{pendingDocument.title}</div>
-                <div className="mb-3">Preview the complete document or download it in your preferred format.</div>
+                {pendingDocument.confirmed && !pendingDocument.followUpQuestion && !pendingDocument.missingFields?.length && <><div className="mb-3">Preview the complete document or download it in your preferred format.</div>
                 <div className="flex flex-wrap gap-2">
                   <Button size="sm" variant="outline" disabled={documentBusy} onClick={() => void generateAndDownloadPendingDocument()}><FileText className="mr-1 h-4 w-4" />Preview Document</Button>
                   <Button size="sm" variant="outline" disabled={documentBusy} onClick={() => void generateAndDownloadPendingDocument('docx')}><Download className="mr-1 h-4 w-4" />Download DOCX</Button>
                   <Button size="sm" variant="outline" disabled={documentBusy} onClick={() => void generateAndDownloadPendingDocument('pdf')}><Download className="mr-1 h-4 w-4" />Download PDF</Button>
-                </div>
+                </div></>}
               </div>
             </div>
           )}
