@@ -1871,7 +1871,7 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
       // a name-matched social city is a provisional clue, never live telemetry.
       const socialCities = inferPublicSocialCities(
         resolvedName || resolvedSubjectName, regionalSources,
-        publicSocialProfiles, extractCityStateHint,
+        publicSocialProfiles, extractCityStateHint, discoveryResults,
       );
       regionalDiagnostics.profileClues = profileCities.length;
       regionalDiagnostics.socialClues = socialCities.length;
@@ -1914,9 +1914,14 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
         !city.supportingClaims.some(claim => claim.identityStatus === 'public_contact_match_unverified'));
       const socialCityKeys = new Set(socialCities.map(city =>
         cityKey(city.city, city.state)));
+      const indexedSocialCities = socialCities.filter(city =>
+        city.supportingClaims.every(claim => claim.statement.startsWith('Indexed search preview (unverified):')));
+      const directSocialCities = socialCities.filter(city => !indexedSocialCities.includes(city));
+      const indexedSocialKeys = new Set(indexedSocialCities.map(city =>
+        cityKey(city.city, city.state)));
       for (const provisional of [
-        ...contactBoundDirectories, ...socialCities,
-        ...nameOnlyDirectories, ...provisionalCities,
+        ...contactBoundDirectories, ...directSocialCities,
+        ...nameOnlyDirectories, ...indexedSocialCities, ...provisionalCities,
       ]) {
         if (candidateLocations.length >= 3) break;
         const key = cityKey(provisional.city, provisional.state);
@@ -1929,8 +1934,10 @@ router.post('/acquire', async (req: Request, res: Response) => withDiscoveryDiag
           candidateLocations.push({
             latitude: candidate.latitude,
             longitude: candidate.longitude,
-            label: `${provisional.city}, ${provisional.state} (${socialCityKeys.has(key) ? 'public social profile city; identity and date unverified' : 'provisional public residence clue; current city unverified'})`,
-            confidence: Math.min(0.22, 0.10 + 0.04 * provisional.independentSourceCount),
+            label: `${provisional.city}, ${provisional.state} (${indexedSocialKeys.has(key) ? 'indexed social profile preview; not directly verified' : socialCityKeys.has(key) ? 'public social profile city; identity and date unverified' : 'provisional public residence clue; current city unverified'})`,
+            confidence: indexedSocialKeys.has(key)
+              ? Math.min(0.10, 0.05 + 0.02 * provisional.independentSourceCount)
+              : Math.min(0.22, 0.10 + 0.04 * provisional.independentSourceCount),
             basis: 'regional_context',
             accuracyMeters: Math.max(25_000, candidate.accuracyMeters),
             sourceUrls: provisional.sourceUrls,
