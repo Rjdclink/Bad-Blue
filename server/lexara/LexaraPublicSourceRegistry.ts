@@ -198,9 +198,13 @@ export function buildLexaraSourceQueries(input: {
   // searches, which only execute the first two planned query variants.
   // A site: query discovers public material; it does not log in or bypass paywalls.
   const requestedSourceName = input.query.toLowerCase();
-  const namedSource = LEXARA_PUBLIC_SOURCES.find(source =>
-    source.searchAliases?.some(alias => alias.length >= 4 && requestedSourceName.includes(alias.toLowerCase()))
-  );
+  const namedSource = LEXARA_PUBLIC_SOURCES
+    .filter(source => requestedSourceName.includes(source.id)
+      || requestedSourceName.includes(source.id.replace(/-/g, ' ')))
+    .sort((left, right) => right.id.length - left.id.length)[0]
+    || LEXARA_PUBLIC_SOURCES.find(source =>
+      source.searchAliases?.some(alias => alias.length >= 4 && requestedSourceName.includes(alias.toLowerCase())));
+
   let namedSourceQuery = '';
   if (namedSource) {
     try {
