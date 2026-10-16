@@ -766,7 +766,9 @@ export async function discoverLegalMeshTier3(
   }
   const uniqueVariants=[...new Set(variants)].slice(0,options.firstUseful ? 2 : 6);
   const groups=options.firstUseful && !options.officialFormQuery
-    ? [await firstUsefulSearchVariants(uniqueVariants,signal,options.allowPaidSearch !== false,options.strictLegalSource === true)]
+    ? [await (options.strictLegalSource
+        ? firstUsefulSearchVariants(uniqueVariants,signal,options.allowPaidSearch !== false,true)
+        : firstUsefulSearchVariants(uniqueVariants,signal,options.allowPaidSearch !== false))]
     : await Promise.all(uniqueVariants.map(variant=>freeSearch(variant,signal,false,options.officialFormQuery,options.allowPaidSearch !== false)));
   const learnedSources=await Promise.race([
     getLexaraLearnedSources(options.categories||[],options.jurisdiction,8),
