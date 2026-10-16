@@ -396,7 +396,8 @@ async function duckDuckGoInstantAnswer(query: string, signal?: AbortSignal): Pro
 }
 
 function lexaraSearxngBase(): string {
-  return independentSearchBase(process.env.SEARXNG_URL)
+  return (process.env.LEXARA_EMBEDDED_SEARCH === 'true' ? 'http://127.0.0.1:18080' : '')
+    || independentSearchBase(process.env.SEARXNG_URL)
     || (process.env.RAILWAY_ENVIRONMENT_ID === '91154a53-01a3-470c-8fdc-c0f13b4702fa'
       ? 'http://lexara-searxng.railway.internal:8080' : '');
 }
@@ -438,7 +439,8 @@ async function searxng(query: string, signal?: AbortSignal): Promise<LegalMeshCa
 // The production engine is independently hosted; no custom Railway variable is
 // required. Explicit non-retired endpoints remain available for other installs.
 function lexaraDdgsBase(): string {
-  return independentSearchBase(process.env.DDGS_URL)
+  return (process.env.LEXARA_EMBEDDED_SEARCH === 'true' ? 'http://127.0.0.1:14479' : '')
+    || independentSearchBase(process.env.DDGS_URL)
     || (process.env.RAILWAY_ENVIRONMENT_ID === '91154a53-01a3-470c-8fdc-c0f13b4702fa'
       ? 'http://lexara-ddgs.railway.internal:4479' : '');
 }
@@ -479,7 +481,9 @@ async function ddgs(query: string, signal?: AbortSignal): Promise<LegalMeshCandi
   // supported backends so an invalid name cannot reopen excluded engines.
   const supported = new Set(['brave', 'google', 'grokipedia', 'mojeek', 'startpage', 'wikipedia', 'yahoo']);
   const permittedBackends = (value: string) => [...new Set(value.split(',').map(x=>x.trim() === 'auto' ? 'yahoo' : x.trim()).filter(x=>supported.has(x) && engineAvailable(x)))].join(',');
-  const primary = permittedBackends(process.env.LEXARA_DDGS_BACKEND?.trim() || 'yahoo');
+  const configuredPrimary = process.env.LEXARA_DDGS_BACKEND?.trim() || 'yahoo';
+  const primary = permittedBackends(process.env.LEXARA_EMBEDDED_SEARCH === 'true'
+    ? 'wikipedia,grokipedia,' + configuredPrimary : configuredPrimary);
   const fallback = permittedBackends(process.env.LEXARA_DDGS_FALLBACK_BACKENDS?.trim() || '');
   if (!primary) return skippedProvider('ddgsBackend');
   const first = await ddgsBackend(query, primary, 2_200, signal);
@@ -487,7 +491,8 @@ async function ddgs(query: string, signal?: AbortSignal): Promise<LegalMeshCandi
 }
 
 function lexaraOpenserpBase(): string {
-  return independentSearchBase(process.env.OPENSERP_URL)
+  return (process.env.LEXARA_EMBEDDED_SEARCH === 'true' ? 'http://127.0.0.1:17000' : '')
+    || independentSearchBase(process.env.OPENSERP_URL)
     || (process.env.RAILWAY_ENVIRONMENT_ID === '91154a53-01a3-470c-8fdc-c0f13b4702fa'
       ? 'http://lexara-openserp.railway.internal:7000' : '');
 }
@@ -495,9 +500,11 @@ function lexaraOpenserpBase(): string {
 async function openserp(query: string, signal?: AbortSignal): Promise<LegalMeshCandidate[]> {
   const base = lexaraOpenserpBase();
   if (!base) return skippedProvider('openserp', 'DISCOVERY_NOT_CONFIGURED');
-  const engines = ['baidu'].filter(engineAvailable);
+  const engines = [...new Set((process.env.LEXARA_OPENSERP_ENGINES || 'bing,google')
+    .split(',').map(value => value.trim()).filter(value =>
+      ['bing', 'google', 'baidu', 'ecosia', 'yandex', 'duckduckgo'].includes(value) && engineAvailable(value)))];
   if (!engines.length) return skippedProvider('openserp');
-  const result = await withTimeout('openserp', 3_000, signal, async requestSignal => {
+  const result = await withTimeout('openserp', process.env.LEXARA_EMBEDDED_SEARCH === 'true' ? 6_500 : 3_000, signal, async requestSignal => {
     const activeEngines = engines.filter(engineAvailable);
     if (!activeEngines.length) throw discoveryError('DISCOVERY_UNAVAILABLE');
     const endpoint = new URL('/mega/search', base.endsWith('/') ? base : base + '/');

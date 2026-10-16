@@ -2,7 +2,7 @@ import { callClaudeWebSearch } from '../claude';
 import type { LegalMeshCandidate } from './LegalProviderMesh';
 import type { LexaraBackgroundSubject } from './LexaraBackgroundSubject';
 import type { LexaraResearchDecision } from './LexaraResearchIntentRouter';
-import { getLexaraSourceQueryHints } from './LexaraPublicSourceRegistry';
+import { getLexaraSourceQueryHints, getLexaraPublicSources, LEXARA_PUBLIC_SOURCES } from './LexaraPublicSourceRegistry';
 
 export interface LexaraClaudeCitationEvidence {
   url: string;
@@ -38,6 +38,17 @@ export async function searchLexaraBackgroundWithClaude(input: {
     ? 'the exact external fact requested by the user'
     : input.decision.requestedFact.replace(/-/g, ' ');
   const sourceHints = getLexaraSourceQueryHints(input.decision.sourceCategories).slice(0, 8);
+  // Claude keeps its existing weak-evidence trigger; only source selection is shared.
+  // Public directory URLs are discovery leads, not guaranteed API access or verified evidence.
+  const sourceNames = (input.prompt + ' ' + (input.decision.objective || '')).toLowerCase();
+  const namedSources = (Array.isArray(LEXARA_PUBLIC_SOURCES) ? LEXARA_PUBLIC_SOURCES : []).filter(source =>
+    sourceNames.includes(source.id) || sourceNames.includes(source.id.replace(/-/g, ' '))
+    || source.searchAliases?.some(alias => alias.length >= 4 && sourceNames.includes(alias.toLowerCase())))
+    .sort((left, right) => right.id.length - left.id.length);
+  const suggestedSources = typeof getLexaraPublicSources === 'function'
+    ? getLexaraPublicSources(input.decision.sourceCategories, location) : [];
+  const sourceDirectory = [...new Map([...namedSources, ...suggestedSources]
+    .map(source => [source.id, source])).values()].slice(0, 12);
 
   const prompt = [
     'Use web search now as an independent background-research lane.',
@@ -48,6 +59,7 @@ export async function searchLexaraBackgroundWithClaude(input: {
     subjectKind ? `Subject type: ${subjectKind}` : '',
     location ? `Location/jurisdiction context: ${location}` : '',
     sourceHints.length ? `Preferred source families/search concepts: ${sourceHints.join(', ')}` : '',
+    sourceDirectory.length ? 'Relevant public-source entries: ' + sourceDirectory.map(source => source.id + ': ' + source.root).join('; ') : '',
     `Requested fact: ${requestedFact}`,
     `Research objective: ${input.decision.objective || input.prompt}`,
     `Original user wording: ${input.prompt}`,
