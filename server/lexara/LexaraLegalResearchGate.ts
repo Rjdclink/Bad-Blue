@@ -73,7 +73,7 @@ export async function completeLexaraLegalResearch(
       // Only after the first native pass has insufficient verified evidence,
       // use one existing Claude web search as another source-discovery path.
       const useClaudeLegalFallback = pass > 0 && !claudeLegalFallbackUsed
-        && ![...evidence.values()].some(source => source.kind === 'primary');
+        && (pass >= 2 || ![...evidence.values()].some(source => source.kind === 'primary'));
       if (useClaudeLegalFallback) claudeLegalFallbackUsed = true;
       const result = await researchLegalAuthority(query, {
         ...context, standaloneQuery: query, forceResearch: true,
