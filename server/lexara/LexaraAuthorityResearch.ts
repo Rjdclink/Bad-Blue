@@ -222,7 +222,9 @@ async function discoverAuthoritySources(
     requestedFact:context.requestedFact,
     officialFormQuery: formLookup,
     allowClaudePlanning: courtPlan || primaryTextLookup ? false : context.allowClaudePlanning,
-    firstUseful: courtPlan?.lookupQuery ? true : undefined,
+    // For legal full-text checks, use the earliest qualified search leads;
+    // the gate still retries with targeted sources if these are insufficient.
+    firstUseful: courtPlan?.lookupQuery ? true : context.requirePrimaryText === true,
   };
   const discoveryQuery = formLookup || primaryTextLookup
     ? [context.jurisdiction, formObjective]
