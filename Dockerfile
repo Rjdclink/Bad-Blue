@@ -68,6 +68,30 @@ ENV SPECTRA_CRAWL4AI_PYTHON=/opt/spectra-crawl4ai/bin/python \
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
     PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+# The three Lexara search engines run on Bad-Blue's private loopback ports.
+# No separate Railway services, external access, or changes to source selection.
+RUN python3 -m venv /opt/lexara-ddgs && \
+    /opt/lexara-ddgs/bin/pip install --no-cache-dir "ddgs[api]==9.16.0" && \
+    /opt/lexara-ddgs/bin/python -c "import ddgs.api_server"
+RUN mkdir -p /opt/lexara-searxng/source /opt/lexara-openserp && \
+    wget -q -O /tmp/lexara-searxng.tar.gz https://codeload.github.com/searxng/searxng/tar.gz/8252c0bf6d5d97e833868099272eed0bb75828b2 && \
+    tar -xzf /tmp/lexara-searxng.tar.gz -C /opt/lexara-searxng/source --strip-components=1 && \
+    rm /tmp/lexara-searxng.tar.gz && \
+    printf "%s\n" 'VERSION_STRING = '"'"'2026.10.16-8252c0bf6'"'"'' 'VERSION_TAG = '"'"'2026.10.16-8252c0bf6'"'"'' 'DOCKER_TAG = '"'"'2026.10.16-8252c0bf6'"'"'' 'GIT_URL = '"'"'https://github.com/searxng/searxng'"'"'' 'GIT_BRANCH = '"'"'master'"'"'' > /opt/lexara-searxng/source/searx/version_frozen.py && \
+    python3 -m venv /opt/lexara-searxng && \
+    /opt/lexara-searxng/bin/pip install --no-cache-dir \
+      -r /opt/lexara-searxng/source/requirements.txt \
+      -r /opt/lexara-searxng/source/requirements-server.txt
+COPY infrastructure/lexara/searxng/settings.yml /opt/lexara-searxng/settings.yml
+RUN python3 -c "from pathlib import Path; import secrets; p=Path('/opt/lexara-searxng/settings.yml'); p.write_text(p.read_text().replace('GENERATED_AT_BUILD',secrets.token_hex(24)))" && \
+    cd /opt/lexara-searxng/source && \
+    PYTHONPATH=/opt/lexara-searxng/source \
+    SEARXNG_SETTINGS_PATH=/opt/lexara-searxng/settings.yml \
+    /opt/lexara-searxng/bin/python -c "import searx.webapp"
+COPY --from=karust/openserp@sha256:9f5c5736fc7434862fa23dd0955e53d4003ffe42f151a5e1297085decf3100b7 /usr/local/bin/openserp /usr/local/bin/openserp
+COPY --from=karust/openserp@sha256:9f5c5736fc7434862fa23dd0955e53d4003ffe42f151a5e1297085decf3100b7 /usr/src/app/config.yaml /opt/lexara-openserp/config.yaml
+RUN /usr/local/bin/openserp --help >/dev/null
+ENV LEXARA_EMBEDDED_SEARCH=true
 WORKDIR /app
 COPY package*.json ./
 RUN rm -rf node_modules || true && \
@@ -165,6 +189,7 @@ EXPOSE 5000
 # very large node_modules tree; only application-owned paths need writable owner.
 RUN useradd -m appuser && \
     chown appuser:appuser /app && \
+    chown -R appuser:appuser /opt/lexara-openserp && \
     chown -R appuser:appuser /app/dist /app/public /app/scripts /app/contracts /app/artifacts /app/config
 USER appuser
 # Fail the image build if the enabled local provider cannot actually extract.
