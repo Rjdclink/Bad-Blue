@@ -87,12 +87,12 @@ function harness(options = {}) {
 const tests = [];
 const test = (name, run) => tests.push({name, run});
 
-test('implicit legal follow-up waits beyond former ten-second cutoff before answer or speech', async()=>{
-  const h=harness({delay:12000});
+test('implicit legal follow-up verifies authority within bounded ten-second research', async()=>{
+  const h=harness({delay:8000});
   const {generateLexaraConversationResponse: respond}=h.load('server/lexara/LexaraConversationOrchestrator.ts');
   let done=false;
   const pending=respond('Can they do that?',{previousMessages:[{role:'user',content:'My landlord in Iowa kept my security deposit.'},{role:'lexara',content:'I need to verify the Iowa law.'}],onSpeechChunk:()=>assert.fail('premature speech'),onTextDelta:()=>assert.fail('premature text')}).then(x=>{done=true;return x;});
-  await h.clock.tickAsync(11000);
+  await h.clock.tickAsync(7000);
   assert.equal(done,false); assert.equal(h.calls.final.length,0); assert.equal(h.calls.streaming,0);
   await h.clock.tickAsync(2000);
   assert.match((await pending).text,/supports this fixture/);
@@ -127,7 +127,7 @@ test('assessment failures and invented support URLs cannot authorize an answer',
 test('timeout cancels research and cannot report verification',async()=>{
   const h=harness({hang:true});
   const pending=h.load('server/lexara/LexaraLegalResearchGate.ts').completeLexaraLegalResearch('Iowa fixture question',{});
-  await h.clock.tickAsync(90001);const result=await pending;
+  await h.clock.tickAsync(10001);const result=await pending;
   assert.equal(result.status,'timed-out');assert.equal(result.research,null);assert(h.calls.signals[0].aborted);assert.equal(h.clock.countTimers(),0);
 });
 

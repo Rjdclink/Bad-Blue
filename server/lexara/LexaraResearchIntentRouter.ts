@@ -73,6 +73,7 @@ export function isLexaraRepeatRequest(text: string): boolean {
 
 export function isLexaraGenericLegalIntake(text: string): boolean {
   const value = String(text || '').trim();
+  if (/^(?:i\s+(?:need|want|would\s+like)\s+to\s+(?:prepare|file|start|draft|create)\s+(?:a|my)\s+(?:lawsuit|civil\s+complaint)|(?:can|could|would)\s+you\s+(?:(?:please\s+)?help\s+me\s+)?(?:prepare|file|start|draft|create)\s+(?:a|my)\s+(?:lawsuit|civil\s+complaint))[?.! ]*$/i.test(value)) return true;
   return /^(?:(?:hi|hello|hey)[, ]+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?help\s+me(?:\s+out)?\s+with\s+(?:a|an|my)?\s*(?:(?:[a-z][a-z -]{0,48}\s+law)|law|legal)\s+(?:issue|matter|question|problem|case)|(?:i\s+(?:need|want|would\s+like)\s+(?:some\s+)?help\s+with|i\s+have)\s+(?:a|an|my)?\s*(?:(?:[a-z][a-z -]{0,48}\s+law)|law|legal)\s+(?:issue|matter|question|problem|case))[?.! ]*$/i.test(value);
 }
 
