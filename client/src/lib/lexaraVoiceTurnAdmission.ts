@@ -21,5 +21,9 @@ export function isDirectedLexaraVoiceTurn(
   const question = /^(?:what|which|why|when|where|how|who|can|could|would|will|does|do|did|is|are|should|tell me|find|look up|explain|and what|what about)\b/.test(normalized);
   const legalContext = /\b(?:law|legal|statute|code|citation|court|case|motion|judge|hearing|claim|lawsuit|filing|contract|appeal|deadline|rights|charge|foreclosure|divorce|custody|evidence|trial|petition|warrant)\b/i.test(context.priorQuestion || '');
   const clearCorrection = /^(?:actually|correction|i meant|i need to correct|also the|the correct|one correction|let me clarify)\b/.test(normalized);
-  return Boolean(legalSubject && (question || (legalContext && clearCorrection)));
+  // Preserve familiar short, contextual legal follow-ups without requiring
+  // a wake word for every question. Unrelated phone chatter still fails.
+  const focusedFollowUp = /^(?:can (?:they|he|she|it)|could (?:they|he|she|it)|is (?:that|this|it)|was (?:that|this|it)|what about (?:that|this|it)|does (?:that|this|it)|what if (?:they|he|she|it))\b/.test(normalized);
+  return Boolean((legalSubject && (question || (legalContext && clearCorrection)))
+    || (legalContext && focusedFollowUp));
 }
