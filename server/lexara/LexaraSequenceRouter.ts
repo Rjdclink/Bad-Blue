@@ -64,7 +64,10 @@ export function planLexaraSequence(
   if (documentAction) {
     return {
       sequence: 'document-action', researchDecision,
-      useLegalResearch: legal || researchDecision.needed,
+      // The document endpoint performs its own authority/form assessment when
+      // generating the draft. The conversational handoff only names the task
+      // and asks for essential facts; it must not wait on that legal gate.
+      useLegalResearch: false,
       useBackgroundResearch: factual,
       recursive: deep || factual,
       classifyBackground: factual,
