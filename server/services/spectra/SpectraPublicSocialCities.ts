@@ -74,6 +74,7 @@ export function inferPublicSocialCities(
   pages: readonly RegionalSourceExcerpt[],
   apiProfiles: readonly SocialProfileCitySource[],
   parseCity: (value: string) => ParsedCity | null,
+  searchPreviews: readonly { url?: string; title?: string; snippet?: string }[] = [],
 ): ProvisionalRegionalCity[] {
   const name = subject.replace(/\s+/g, ' ').trim();
   if (name.length > 130 || !/^[\p{L}][\p{L}'’.-]*(?:\s+[\p{L}][\p{L}'’.-]*){1,5}$/u.test(name)) return [];
@@ -123,6 +124,23 @@ export function inferPublicSocialCities(
     if (!claim || /\b(?:formerly|previously|historically|used to|moved from)\b/i.test(description.slice(Math.max(0, claim.index - 30), claim.index))) continue;
     const city = parseCity(claim[1]);
     if (city) add(source, city, (display + ' ' + claim[0]).slice(0, 180));
+  }
+
+  // An indexed search-preview label may survive when Facebook or another
+  // social site blocks direct retrieval. Keep this strictly lower provenance:
+  // an exact displayed name in the result title is required, and a preview
+  // never acquires a publication timestamp or current-position status.
+  for (const preview of searchPreviews.slice(0, 160)) {
+    const source = profilePublisher(preview.url);
+    const title = String(preview.title || '').trim()
+      .replace(/\s*[|·—-]\s*(?:Facebook|Instagram|TikTok|Threads|LinkedIn|Bluesky|Twitter|X)\s*$/i, '');
+    if (!source || normalizedName(title) !== normalizedName(name)) continue;
+    const snippet = String(preview.snippet || '').slice(0, 500);
+    const claim = DECLARED_CITY.exec(snippet);
+    if (!claim || /\b(?:formerly|previously|historically|used to|moved from)\b/i.test(
+      snippet.slice(Math.max(0, claim.index - 35), claim.index))) continue;
+    const city = parseCity(claim[1]);
+    if (city) add(source, city, ('Indexed search preview (unverified): ' + claim[0]).slice(0, 180));
   }
 
   return [...matches.values()]
