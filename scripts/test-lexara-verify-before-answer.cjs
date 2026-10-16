@@ -30,6 +30,7 @@ function harness(options = {}) {
         if (config.systemPrompt.includes('LEGAL VERIFICATION PARTIAL OR TIMED OUT')) {
           assert(!config.systemPrompt.includes('LEGAL RESEARCH COMPLETED BEFORE ANSWERING'));
           assert.match(config.systemPrompt, /Do NOT present an unverified statute/);
+          assert.match(config.systemPrompt, /A search timeout is not proof that no statute exists/);
           return {content:'The general legal question depends on the facts and controlling authority; the specific current rule was not verified.'};
         }
         assert(config.systemPrompt.includes(doc.excerpt), 'verified final model must receive the supporting document');
@@ -71,6 +72,7 @@ function harness(options = {}) {
     stubs['server/lexara/LegalProviderMesh.ts'] = {
       discoverLegalMeshTier3:async (query,_signal,config)=>{
         calls.mesh.push({query, config});
+        if(options.meshLeads) return options.meshLeads;
         return options.weakNative
           ? [{url:'https://example.org/irrelevant',title:'Unrelated search lead',excerpt:'A search snippet',provider:'fixture'}]
           : [{url,title:doc.title,excerpt:'A search snippet',provider:'fixture'}];
@@ -141,7 +143,7 @@ test('assessment failures and invented support URLs cannot authorize an answer',
 test('timeout cancels research and cannot report verification',async()=>{
   const h=harness({hang:true});
   const pending=h.load('server/lexara/LexaraLegalResearchGate.ts').completeLexaraLegalResearch('Iowa fixture question',{});
-  await h.clock.tickAsync(8001);const result=await pending;
+  await h.clock.tickAsync(15001);const result=await pending;
   assert.equal(result.status,'timed-out');assert.equal(result.research,null);assert(h.calls.signals[0].aborted);assert.equal(h.clock.countTimers(),0);
 });
 
@@ -180,8 +182,8 @@ test('real authority discovery continues past federal snippets and reads Iowa pr
   const h=harness({actualAuthority:true,retrievalDelay:2500});
   const pending=h.load('server/lexara/LexaraLegalResearchGate.ts').completeLexaraLegalResearch('Iowa landlord security deposit obligations',{jurisdiction:'Iowa'});
   await h.clock.tickAsync(3000);const result=await pending;
-  assert.equal(result.status,'supported');assert.equal(h.calls.mesh.length,1);
-  assert.equal(h.calls.mesh[0].config.strictLegalSource,true,'legal searches must await authority leads');
+  assert.equal(result.status,'supported');assert.equal(h.calls.mesh.length,2);
+  assert(h.calls.mesh.some(entry=>entry.config.strictLegalSource===true),'legal searches must await authority leads');
   assert(h.calls.retrieval[0].targets.includes(url));assert.equal(h.calls.retrieval[0].timeoutMs,4000);
   assert.equal(result.research.sources[0].evidenceLevel,'document');assert.equal(h.calls.web.length,0);assert.equal(h.clock.countTimers(),0);
 });
@@ -189,7 +191,7 @@ test('real authority discovery continues past federal snippets and reads Iowa pr
 test('real authority discovery with unreadable primary leads does not pass the gate',async()=>{
   const h=harness({actualAuthority:true,emptyRetrieval:true});
   const result=await h.load('server/lexara/LexaraLegalResearchGate.ts').completeLexaraLegalResearch('Iowa landlord security deposit obligations',{jurisdiction:'Iowa'});
-  assert.equal(result.status,'sources-insufficient');assert.equal(h.calls.mesh.length,2);assert.equal(h.calls.web.length,1);assert.equal(h.calls.grade.length,0);
+  assert.equal(result.status,'sources-insufficient');assert(h.calls.mesh.length>=2);assert.equal(h.calls.web.length,1);assert.equal(h.calls.grade.length,0);
 });
 
  
@@ -206,7 +208,7 @@ test('primary-text discovery retains official sources across state and federal j
       {jurisdiction,preferredOfficialDomains:[officialDomain]});
     assert.equal(outcome.status,'sources-insufficient');
     assert.equal(h.calls.grade.length,0);
-    assert(h.calls.mesh.some(entry=>entry.query.includes('site:'+officialDomain)), jurisdiction+' official law query missing');
+    assert(h.calls.mesh.some(entry=>entry.query.includes('site:'+officialDomain.replace(/^www\./,'')) || entry.query.includes('site:'+officialDomain)), jurisdiction+' official law query missing');
     assert.equal(h.clock.countTimers(),0);
   }
 });
@@ -230,7 +232,7 @@ test('weak native legal evidence triggers one real Claude web-search fallback wi
   assert.equal(h.calls.web.length,1,'one Claude web-search fallback only');
   assert(h.calls.web[0].prompt.includes('Iowa'));
   assert(h.calls.web[0].config.maxUses===1);
-  assert.equal(h.calls.mesh.length,1,'Claude fallback must not relaunch generic search');
+  assert.equal(h.calls.mesh.length,2,'Claude fallback must not relaunch native search after its initial official and broad queries');
   assert(h.calls.retrieval.some(request=>request.targets.includes(url)),'verify the web-search citation by direct retrieval');
   assert(h.calls.grade.some(prompt=>prompt.includes(doc.excerpt)),'model may assess only actual retrieved text');
   assert.equal(result.research.sources[0].evidenceLevel,'document');
@@ -246,6 +248,73 @@ test('Claude web-search snippets alone cannot pass primary-authority verificatio
   assert.equal(h.calls.web.length,1);
   assert.equal(h.calls.grade.length,0);
   assert.equal(result.research,null);
+});
+
+
+test('legal budget is 15 seconds by default and 20 seconds for compound-law questions', async()=>{
+  const h=harness();
+  const {lexaraLegalResearchBudgetMs:budget}=h.load('server/lexara/LexaraLegalResearchGate.ts');
+  assert.equal(budget('Which Iowa statute controls this issue?'),15_000);
+  assert.equal(budget('Which statutes apply, including the elements, penalties, and reporting duties?'),20_000);
+  assert.equal(budget('Compare controlling statutes and cases across states.'),20_000);
+  const hung=harness({hang:true});
+  const pending=hung.load('server/lexara/LexaraLegalResearchGate.ts').completeLexaraLegalResearch(
+    'Compare controlling statutes and cases across states.',{jurisdiction:'Iowa'});
+  await hung.clock.tickAsync(19_999);
+  assert.equal(hung.calls.signals[0].aborted,false,'complex research must not stop at the normal deadline');
+  await hung.clock.tickAsync(2);
+  const result=await pending;
+  assert.equal(result.status,'timed-out');
+  assert.equal(hung.calls.signals[0].aborted,true);
+  assert.equal(hung.clock.countTimers(),0);
+});
+
+test('Iowa legal search targets the legislature before generic federal directory domains', async()=>{
+  const h=harness({actualAuthority:true});
+  const result=await h.load('server/lexara/LexaraLegalResearchGate.ts').completeLexaraLegalResearch(
+    'Which Iowa Code section governs security deposits?', {
+      jurisdiction:'Iowa',
+      preferredOfficialDomains:['justice.gov','uscourts.gov','legis.iowa.gov'],
+      officialResources:[{title:'Iowa laws',url:'https://www.legis.iowa.gov/law/iowacode',host:'legis.iowa.gov',kind:'laws'}],
+    });
+  assert.equal(result.status,'supported');
+  assert(h.calls.mesh.some(entry=>entry.query.includes('site:legis.iowa.gov')),
+    'state law search must prefer the official legislature');
+  assert(!h.calls.mesh.some(entry=>entry.query.includes('site:justice.gov')),
+    'generic federal directory must not displace the state law publisher');
+  assert.equal(h.calls.web.length,0,'a successful native source must not trigger paid fallback');
+});
+
+test('search-discovered Iowa Code citations expand to retrieved official statute PDFs', async()=>{
+  const h=harness({actualAuthority:true,meshLeads:[
+    {url:'https://law.justia.com/codes/iowa/2026/',title:'Iowa Code 562A.12 landlord deposit',excerpt:'Iowa Code 562A.12',provider:'fixture'},
+    {url:'https://www.legis.iowa.gov/law/iowacode',title:'Iowa Legislature code index',excerpt:'Iowa Code section 562A.12',provider:'fixture'},
+  ]});
+  const result=await h.load('server/lexara/LexaraLegalResearchGate.ts').completeLexaraLegalResearch(
+    'Which Iowa statutes govern landlord security deposits?', {jurisdiction:'Iowa'});
+  assert.equal(result.status,'supported');
+  assert(h.calls.retrieval.some(request=>request.targets.includes('https://www.legis.iowa.gov/docs/code/562A.12.pdf')),
+    'a number returned by discovery should be followed to official text, not declared verified from a snippet');
+  assert(result.research.sources.some(source=>source.url==='https://www.legis.iowa.gov/docs/code/562A.12.pdf'
+    && source.evidenceLevel==='document'), 'official statute PDF must be independently retrieved');
+});
+
+test('Claude fallback keeps an official statute in ninth position ahead of eight blocked mirrors',async()=>{
+  const mirrors=Array.from({length:8},(_,index)=>({
+    url:'https://law.justia.com/codes/iowa/2026/title-'+index+'/chapter-123/',
+    title:'Commercial search mirror',citedText:'Search snippet only',
+  }));
+  const h=harness({actualAuthority:true,weakNative:true,claudeWebSources:[
+    ...mirrors,{url,title:'Official Iowa Code section 562A.12',citedText:'Search snippet only'},
+  ]});
+  const result=await h.load('server/lexara/LexaraLegalResearchGate.ts').completeLexaraLegalResearch(
+    'What current Iowa Code section governs deposits?',{jurisdiction:'Iowa'});
+  assert.equal(result.status,'supported');
+  assert.equal(h.calls.web.length,1);
+  assert(h.calls.retrieval.some(request=>request.targets.includes(url)),
+    'the ninth authoritative result must be retrieved despite earlier commercial mirrors');
+  assert(result.research.sources.some(source=>source.url===url && source.evidenceLevel==='document'),
+    'a commercial snippet cannot replace retrieved official text');
 });
 
 (async()=>{for(const {name,run} of tests){await run();console.log('PASS:',name);}console.log(`${tests.length} verification-before-answer behavioral groups passed.`);})().catch(e=>{console.error(e);process.exitCode=1;});

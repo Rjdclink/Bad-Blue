@@ -676,7 +676,20 @@ async function freeSearch(
         : await firstAuthority;
       if (signal?.aborted) throw signal.reason || new DOMException('Discovery cancelled', 'AbortError');
       // Keep complementary evidence already returned by sibling providers.
-      if (first.length) await new Promise<void>(resolve => setTimeout(resolve, 0));
+      if (first.length && strictLegalSource) {
+        // A government-looking result is still just a lead. Allow the other
+        // independently running engines a short grace window to contribute
+        // stronger legislative/court sources before cancelling the slow lanes.
+        let graceTimer: ReturnType<typeof setTimeout> | undefined;
+        await Promise.race([
+          Promise.allSettled(providers).then(() => undefined),
+          new Promise<void>(resolve => { graceTimer = setTimeout(resolve, 400); }),
+        ]).finally(() => clearTimeout(graceTimer));
+      } else if (first.length) {
+        // Preserve the original fast-first factual/background path.
+        await new Promise<void>(resolve => setTimeout(resolve, 0));
+      }
+      if (signal?.aborted) throw signal.reason || new DOMException('Discovery cancelled', 'AbortError');
       if (first.length || strictLegalSource) controller.abort(new Error('lexara_first_useful_provider'));
       if (strictLegalSource) console.info('[LEXARA Legal Source Leads]', {
         qualifiedLead: first.length > 0,

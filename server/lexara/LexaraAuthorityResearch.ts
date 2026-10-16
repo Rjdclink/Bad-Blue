@@ -107,6 +107,70 @@ function clampTail(value: string, maxLength: number): string {
   return trimmed.slice(trimmed.length - maxLength);
 }
 
+
+/**
+ * Known public official code hosts are direct search targets, not trusted law
+ * until the retrieval adapter downloads the actual current section text.
+ * All other jurisdictions continue through their official state directory.
+ */
+const LEGISLATIVE_PUBLISHERS: Record<string, string> = {
+  iowa: 'legis.iowa.gov',
+  california: 'leginfo.legislature.ca.gov',
+  texas: 'statutes.capitol.texas.gov',
+  'new york': 'nysenate.gov',
+  florida: 'leg.state.fl.us',
+};
+
+function isOfficialLawHost(host: string): boolean {
+  return /(?:\.gov|\.us)$/i.test(host)
+    && /^(?:[a-z0-9-]+\.)+[a-z]{2,}$/i.test(host)
+    && !/^(?:justice\.gov|uscourts\.gov|www\.uscourts\.gov|dc\.gov|www\.dc\.gov)$/i.test(host);
+}
+
+function legislativePublisherFor(jurisdiction?: string): string | undefined {
+  const normalized = String(jurisdiction || '').toLowerCase();
+  return Object.entries(LEGISLATIVE_PUBLISHERS)
+    .find(([state]) => new RegExp('\\b' + state + '\\b', 'i').test(normalized))?.[1];
+}
+
+function officialLawSourcePriority(source: LexaraAuthoritySource, context: LexaraAuthorityResearchContext): number {
+  let host = '';
+  try { host = new URL(source.url).hostname.toLowerCase().replace(/^www\./, ''); } catch { return 0; }
+  const officialLegislature = legislativePublisherFor(context.jurisdiction);
+  const stateLawHosts = (context.officialResources || []).filter(resource => resource.kind === 'laws')
+    .map(resource => resource.host.toLowerCase().replace(/^www\./, ''));
+  const isStateLawPublisher = (officialLegislature && (host === officialLegislature || host.endsWith('.' + officialLegislature)))
+    || stateLawHosts.some(domain => host === domain || host.endsWith('.' + domain));
+  const actualSection = /(?:\/(?:docs\/code|statutes?|laws?|codes?)\/|[§]|\bsection\s+\d)/i.test(source.url + ' ' + source.title)
+    || /\.(?:pdf|rtf)(?:$|[?#])/i.test(source.url);
+  return (source.provider === 'official-statute-directory' ? 70 : 0)
+    + (isStateLawPublisher ? 35 : 0)
+    + (source.kind === 'primary' ? 16 : 0)
+    + (actualSection ? 12 : 0)
+    + (/^(?:justice\.gov|www\.justice\.gov|dc\.gov|www\.dc\.gov)$/.test(host) && !/\bdistrict of columbia\b/i.test(context.jurisdiction || '') ? -25 : 0)
+    + (/^(?:law\.justia\.com|www\.law\.justia\.com)$/.test(host) ? -12 : 0);
+}
+
+/** Only search-returned Iowa Code citations may seed the official section PDF. */
+function discoveredIowaCodeSections(leads: readonly { url: string; title?: string; excerpt?: string }[]): string[] {
+  const sections = new Set<string>();
+  for (const lead of leads) {
+    const text = [lead.title || '', lead.excerpt || ''].join(' ').slice(0, 1800);
+    const candidates = [
+      ...text.matchAll(/\bIowa\s+Code\s*(?:§|section|sec\.?)?\s*(\d{1,3}[A-Z]?\.\d{1,4}[A-Z]?)(?![\d.])/gi),
+      ...text.matchAll(/\b(?:section|§)\s*(\d{1,3}[A-Z]?\.\d{1,4}[A-Z]?)(?![\d.])/gi),
+    ];
+    // Bare "section" matches must come from the Iowa Legislature itself.
+    const fromIowaLegislature = /^https:\/\/(?:www\.)?legis\.iowa\.gov\//i.test(lead.url);
+    for (const match of candidates) {
+      if (!fromIowaLegislature && !/\bIowa\s+Code\b/i.test(text)) continue;
+      sections.add(match[1].toUpperCase());
+      if (sections.size >= 4) return [...sections];
+    }
+  }
+  return [...sections];
+}
+
 function classifySource(
   rawUrl: string,
   preferredOfficialDomains: readonly string[] = [],
@@ -209,7 +273,7 @@ async function discoverClaudeLegalFallback(
       signal: context.signal,
     });
     const seen = new Set<string>();
-    const leads = result.sources.slice(0, 8).flatMap(source => {
+    const leads = result.sources.slice(0, 20).flatMap(source => {
       const url = cleanUrl(source.url);
       if (!url || seen.has(url)) return [];
       seen.add(url);
@@ -222,8 +286,15 @@ async function discoverClaudeLegalFallback(
         evidenceLevel: 'snippet' as const,
       }];
     });
-    console.info('[LEXARA Legal Web Fallback]', { searches: result.searches, sourceLeads: leads.length });
-    return leads;
+    // Claude search returns discovery leads, not confirmed law. Keep official
+    // legislative and court sources ahead of blocked commercial mirrors even
+    // when they appear after the first eight search hits.
+    const ranked = leads.sort((a, b) => officialLawSourcePriority(b, context) - officialLawSourcePriority(a, context)).slice(0, 8);
+    console.info('[LEXARA Legal Web Fallback]', {
+      searches: result.searches, sourceLeads: ranked.length,
+      officialLeads: ranked.filter(source => source.kind === 'primary').length,
+    });
+    return ranked;
   } catch (error) {
     if (!context.signal?.aborted) console.warn('[LEXARA Legal Web Fallback] unavailable', {
       error: error instanceof Error ? error.message : String(error),
@@ -326,8 +397,16 @@ async function discoverAuthoritySources(
   // Search jurisdiction-matched official domains in parallel with other sources.
   // These URLs remain leads until the independent text-retrieval gate succeeds.
   const officialHost = context.requirePrimaryText
-    ? (context.preferredOfficialDomains || []).find(domain =>
-        /^(?:[a-z0-9-]+\.)+[a-z]{2,}$/i.test(domain) && /(?:\.gov|\.us)$/i.test(domain))
+    ? [
+        legislativePublisherFor(context.jurisdiction),
+        ...(context.officialResources || []).filter(resource => resource.kind === 'laws')
+          .map(resource => resource.host),
+        ...(context.preferredOfficialDomains || []).filter(isOfficialLawHost),
+        ...(context.preferredOfficialDomains || []),
+      ].find((domain): domain is string => Boolean(domain) && (
+        isOfficialLawHost(domain)
+        || (/^federal$/i.test(context.jurisdiction || '') && /^(?:www\.)?uscourts\.gov$/i.test(domain))
+      ))
     : undefined;
   const officialMeshPromise = officialHost && !recordLookup && !formLookup
     ? discoverLegalMeshTier3(
@@ -410,6 +489,17 @@ async function discoverAuthoritySources(
         ]).finally(() => { clearTimeout(reliefTimer); })
       : courtMeshPromise || discoverLegalMeshTier3(discoveryQuery, signal, meshOptions),
   ]);
+  // Broaden the first official result into its exact statute sections before
+  // generic search pages consume the fourteen-source discovery budget.
+  if (context.requirePrimaryText && primaryTextLookup && /\biowa\b/i.test(context.jurisdiction || '')) {
+    for (const section of discoveredIowaCodeSections([...officialLeads, ...mesh])) {
+      add({
+        title: 'Iowa Code section ' + section,
+        url: 'https://www.legis.iowa.gov/docs/code/' + section + '.pdf',
+        provider: 'official-statute-directory',
+      });
+    }
+  }
   officialLeads.forEach(item => add(item));
   if (formLookup || primaryTextLookup) {
     // Prioritize the actual form sources over unrelated federal leads while
@@ -562,8 +652,14 @@ export async function researchLegalAuthority(
         ? /\b(?:instructions?|filing requirements|local rules)\b/i.test(source.title) ? 2 : 1 : 0;
       return score(b)-score(a);
     });
-    if (context.requirePrimaryText) discoveredSources.sort((a, b) => Number(b.kind === 'primary') - Number(a.kind === 'primary'));
+    if (context.requirePrimaryText) discoveredSources.sort((a, b) =>
+      officialLawSourcePriority(b, context) - officialLawSourcePriority(a, context));
     const sources = await enrichAuthoritySourcesWithLexaraRetrieval(discoveredSources, context.signal, formLookup, Boolean(courtRecordPlan), Boolean(reliefProfile), context.requirePrimaryText);
+    if (context.requirePrimaryText) console.info('[LEXARA Official Law Retrieval]', {
+      discovered: discoveredSources.length,
+      retrievedDocuments: sources.filter(source => source.evidenceLevel === 'document' && source.excerpt?.trim()).length,
+      verifiedPrimaryCandidates: sources.filter(source => source.kind === 'primary' && source.evidenceLevel === 'document' && source.excerpt?.trim()).length,
+    });
 
     void Promise.allSettled(sources.filter(source => source.recordType !== 'portal').map(source => rememberLexaraDiscoveryOutcome(
       source.url,

@@ -8,6 +8,18 @@ export interface LexaraLegalResearchOutcome {
   attempts: number;
 }
 
+
+/**
+ * Standard legal research may use 15s; multi-issue, cross-jurisdiction and
+ * precedent-validity questions may use 20s. Neither budget is a minimum wait:
+ * as soon as primary source text supports an answer, research returns early.
+ */
+export function lexaraLegalResearchBudgetMs(question: string): number {
+  const complex = /\b(?:multiple\s+(?:jurisdictions?|states?|issues?)|across\s+(?:states?|jurisdictions?)|compare|constitutional|overturned|overrul(?:ed|ing)|negative\s+treatment|precedent(?:s)?\s+and\s+statutes?|statutes?\s+and\s+(?:cases?|precedent)|appeal\s+and\s+(?:motion|deadline)|all\s+(?:applicable|relevant)\s+(?:statutes?|rules?|cases?))\b/i.test(question)
+    || /\bincluding\b/i.test(question) && (question.match(/[,;]/g) || []).length >= 2;
+  return complex ? 20_000 : 15_000;
+}
+
 /** A bounded prerequisite, never a race from research into an ungrounded answer. */
 export async function completeLexaraLegalResearch(
   question: string,
@@ -20,16 +32,21 @@ export async function completeLexaraLegalResearch(
   let attempts = 0;
   let timedOut = false;
   let claudeLegalFallbackUsed = false;
+  const budgetMs = lexaraLegalResearchBudgetMs(question);
+  const startedAt = Date.now();
   // Legal native discovery and the weak-evidence Claude web fallback share
   // one bounded deadline. Successful primary-text checks return immediately.
   const timer = setTimeout(() => {
     timedOut = true;
     controller.abort(new Error('lexara_legal_research_deadline'));
-  }, 8_000);
+  }, budgetMs);
   let onAbort: (() => void) | undefined;
   const aborted = new Promise<LexaraLegalResearchOutcome>((resolve, reject) => {
     onAbort = () => {
-      if (timedOut) resolve({ research: null, status: 'timed-out', attempts });
+      if (timedOut) {
+        console.info('[LEXARA Legal Research Deadline]', { budgetMs, attempts, fallbackUsed: claudeLegalFallbackUsed });
+        resolve({ research: null, status: 'timed-out', attempts });
+      }
       else reject(context.signal?.reason || new Error('Lexara turn cancelled'));
     };
     if (controller.signal.aborted) onAbort();
@@ -80,6 +97,7 @@ export async function completeLexaraLegalResearch(
           const urls = Array.isArray(grade.supportingUrls) ? new Set(grade.supportingUrls.filter((url: unknown) => typeof url === 'string')) : new Set();
           const supporting = sources.filter(source => urls.has(source.url));
           if (!controller.signal.aborted && grade.sufficient === true && supporting.some(source => source.kind === 'primary')) {
+            console.info('[LEXARA Legal Research Verified]', { elapsedMs: Date.now() - startedAt, attempts, primarySources: supporting.filter(source => source.kind === 'primary').length });
             return {
               status: 'supported', attempts,
               research: { ...result, sources: supporting, hasPrimaryAuthority: true, hasUsableEvidence: true,
