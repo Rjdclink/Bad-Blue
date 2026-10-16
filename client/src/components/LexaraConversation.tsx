@@ -20,6 +20,7 @@ import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
 import { captureLexaraDeviceLocation, readLexaraDeviceLocation } from '@/lib/lexaraLocation';
 import { lexaraRealtimeVoiceClient } from '@/lib/lexaraRealtimeVoiceClient';
+import { isDirectedLexaraVoiceTurn } from '@/lib/lexaraVoiceTurnAdmission';
 import { useLocation } from 'wouter';
 
 interface LexaraConversationProps {
@@ -88,6 +89,7 @@ type ConversationPhase =
 const BROWSER_FINAL_FALLBACK_SETTLE_MS = 1_200;
 const SERVER_VOICE_TURN_SETTLE_MS = 300;
 const FLUX_FINAL_SETTLE_MS = 1_200;
+const FLUX_CONFIRMED_FINAL_SETTLE_MS = 650;
 const VOICE_END_GRACE_MS = 850;
 const INCOMPLETE_TURN_GRACE_MS = 2_200;
 const CHAT_TURN_TIMEOUT_MS = 10 * 60_000;
@@ -579,6 +581,15 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     const text = voiceTurnBufferRef.current.trim();
     voiceTurnBufferRef.current = '';
     if (!text) return;
+    // Do not convert an ambient phone conversation into a new request while
+    // Lexara is speaking or researching. Typed turns are never filtered.
+    const busy = Boolean(currentRequestRef.current) || phaseRef.current === 'speaking';
+    const priorQuestion = currentTurnTextRef.current
+      || [...conversationRef.current].reverse().find(message => message.role === 'user')?.content;
+    if (!isDirectedLexaraVoiceTurn(text, { busy, priorQuestion })) {
+      lexaraRealtimeVoiceClient.reportInputDecision('realtime-input-rejected', 'not-directed-to-lexara');
+      return;
+    }
 
     // Some mobile/server STT chunks can contain the tail of a substantive turn
     // plus a later conversational check-in. Keep the check-in as its own turn
@@ -638,6 +649,14 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       if (!observed) return;
 
       const normalizedObserved = normalizeSpeechText(observed);
+      const busyVoiceTurn = Boolean(currentRequestRef.current) || phaseRef.current === 'speaking';
+      const priorQuestion = currentTurnTextRef.current
+        || [...conversationRef.current].reverse().find(message => message.role === 'user')?.content;
+      const directedAtLexara = isDirectedLexaraVoiceTurn(observed, { busy: busyVoiceTurn, priorQuestion });
+      if (isFinal && !directedAtLexara) {
+        lexaraRealtimeVoiceClient.reportInputDecision('realtime-input-rejected', 'not-directed-to-lexara');
+        return;
+      }
       const explicitPlaybackControl =
         /^(?:wait|stop|no|hold on|hang on|actually|but wait|let me finish)\b/i.test(normalizedObserved);
       const speakerTailActive =
@@ -702,6 +721,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
           phaseRef.current === 'speaking'
           && !isSuspiciousGenericServerTranscript(observed, meta)
           && isStrongBargeIn(observed, meta)
+          && directedAtLexara
         ) {
           if (typeof meta.utteranceId === 'number') {
             if (meta.provider === 'deepgram-flux') {
@@ -728,12 +748,14 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
               || meta.endOfTurnConfidence >= REALTIME_OVERLAP_MIN_EOT_CONFIDENCE)
             && !isLikelyPlaybackEchoFragment(observed)
             && !isSuspiciousGenericServerTranscript(observed, meta)
-            && isStrongBargeIn(observed, meta);
+            && isStrongBargeIn(observed, meta)
+            && directedAtLexara;
 
           if (
             isFinal
             && explicitPlaybackControl
             && !isSuspiciousGenericServerTranscript(observed, meta)
+            && directedAtLexara
           ) {
             validatedBargeInUtterancesRef.current.add(meta.utteranceId);
             lexaraRealtimeVoiceClient.reportInputDecision('realtime-input-confirmed', 'explicit-floor-control');
@@ -776,7 +798,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         // fragments are not allowed to chop LEXARA's playback. A deliberate
         // interruption must survive lexical echo rejection above and carry
         // enough final acoustic/transcript evidence to own the floor.
-        if (!isStrongBargeIn(observed, meta)) return;
+        if (!directedAtLexara || !isStrongBargeIn(observed, meta)) return;
         autoInterruptRef.current(explicitPlaybackControl ? 'explicit-floor-control' : 'confirmed-user-speech');
       }
 
@@ -802,7 +824,9 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       clearVoiceTurnTimer();
       const bufferedTurn = voiceTurnBufferRef.current.trim();
       const settleMs = meta.provider === 'deepgram-flux'
-        ? (isLikelyIncompleteUtterance(bufferedTurn) ? INCOMPLETE_TURN_GRACE_MS : FLUX_FINAL_SETTLE_MS)
+        ? (isLikelyIncompleteUtterance(bufferedTurn) ? INCOMPLETE_TURN_GRACE_MS
+          : typeof meta.endOfTurnConfidence === 'number' && meta.endOfTurnConfidence >= 0.9
+            ? FLUX_CONFIRMED_FINAL_SETTLE_MS : FLUX_FINAL_SETTLE_MS)
         : isLikelyIncompleteUtterance(bufferedTurn)
           ? INCOMPLETE_TURN_GRACE_MS
           : meta.engine === 'server'

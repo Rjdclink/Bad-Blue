@@ -14,7 +14,7 @@ const packet = sources => ({sources, summary: 'fixture', hasPrimaryAuthority: tr
 
 function harness(options = {}) {
   const clock = FakeTimers.createClock();
-  const calls = { research: [], grade: [], final: [], streaming: 0, logs: [], signals: [], mesh: [], retrieval: [], web: [] };
+  const calls = { research: [], researchContexts: [], grade: [], final: [], streaming: 0, logs: [], signals: [], mesh: [], retrieval: [], web: [] };
   const cache = new Map();
   const stubs = {
     'server/claude.ts': {
@@ -45,7 +45,7 @@ function harness(options = {}) {
     'server/aiHarmonyModelRegistry.ts': {CURRENT_AI_MODELS:{claudeFast:'fixture',claudeBalanced:'fixture'},LEGAL_AI_MODELS:{claudeFast:'fixture'}},
     'server/lexara/LexaraAuthorityResearch.ts': {
       async researchLegalAuthority(question, context) {
-        calls.research.push(question); calls.signals.push(context.signal);
+        calls.research.push(question); calls.researchContexts.push(context); calls.signals.push(context.signal);
         assert.equal(context.requirePrimaryText, true);
         if (options.hang) return new Promise(() => {});
         if (options.delay) await new Promise(resolve => clock.setTimeout(resolve, options.delay));
@@ -315,6 +315,40 @@ test('Claude fallback keeps an official statute in ninth position ahead of eight
     'the ninth authoritative result must be retrieved despite earlier commercial mirrors');
   assert(result.research.sources.some(source=>source.url===url && source.evidenceLevel==='document'),
     'a commercial snippet cannot replace retrieved official text');
+});
+
+test('native primary documents do not trigger an unnecessary Claude web search when another targeted legal query will verify them',async()=>{
+  const h=harness({grade:n=>n===1?{sufficient:false,supportingUrls:[],nextQuery:'Find statutory exceptions'}:{sufficient:true,supportingUrls:[url]}});
+  const result=await h.load('server/lexara/LexaraLegalResearchGate.ts').completeLexaraLegalResearch('Iowa deposit rule',{jurisdiction:'Iowa'});
+  assert.equal(result.status,'supported');assert.equal(h.calls.research.length,2);
+  assert.equal(h.calls.web.length,0,'do not buy a fallback search when a primary statute was already downloaded');
+  assert(h.calls.research[1].includes('statutory exceptions'));
+});
+
+test('partial primary evidence survives without claiming that incomplete legal verification succeeded',async()=>{
+  const h=harness({grade:()=>({sufficient:false,supportingUrls:[url],nextQuery:'Find unverified material qualifications'})});
+  const result=await h.load('server/lexara/LexaraLegalResearchGate.ts').completeLexaraLegalResearch('Iowa exception question',{jurisdiction:'Iowa'});
+  assert.equal(result.status,'sources-insufficient');
+  assert.equal(result.research.hasUsableEvidence,false);
+  assert.equal(result.research.hasPrimaryAuthority,false);
+  assert.equal(result.research.sources.length,1);
+  assert.match(result.research.summary,/NOT fully verified/);
+  assert.equal(h.calls.web.length,0);
+  assert.equal(h.calls.researchContexts[2].forceClaudeLegalWebFallback,true, 'a still-incomplete native investigation retains its late Claude discovery option');
+  assert.equal(h.clock.countTimers(),0);
+});
+
+test('direct official retrieval is reused across targeted retries, and web fallback has sufficient bounded output',async()=>{
+  const h=harness({actualAuthority:true,grade:n=>n===1?{sufficient:false,supportingUrls:[],nextQuery:'Iowa deposit exceptions'}:{sufficient:true,supportingUrls:[url]}});
+  const result=await h.load('server/lexara/LexaraLegalResearchGate.ts').completeLexaraLegalResearch('Iowa deposit statute',{jurisdiction:'Iowa'});
+  assert.equal(result.status,'supported');
+  assert.equal(h.calls.retrieval.filter(request=>request.targets.includes(url)).length,1,'do not redownload the same primary document');
+  assert.equal(h.calls.web.length,0);
+  const weak=harness({actualAuthority:true,weakNative:true,emptyRetrieval:true});
+  await weak.load('server/lexara/LexaraLegalResearchGate.ts').completeLexaraLegalResearch('Iowa deposit statute',{jurisdiction:'Iowa'});
+  assert.equal(weak.calls.web.length,1);
+  assert.equal(weak.calls.web[0].config.maxTokens,900);
+  assert.equal(weak.calls.web[0].config.retryTruncatedOutput,true);
 });
 
 (async()=>{for(const {name,run} of tests){await run();console.log('PASS:',name);}console.log(`${tests.length} verification-before-answer behavioral groups passed.`);})().catch(e=>{console.error(e);process.exitCode=1;});

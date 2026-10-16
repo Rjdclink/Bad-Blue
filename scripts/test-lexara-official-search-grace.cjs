@@ -28,7 +28,7 @@ async function mockFetch(url, options) {
   }
   if (requestUrl.includes(':18080/search')) {
     lanes.push('searxng');
-    await wait(160,options?.signal);
+    await wait(650,options?.signal);
     return {ok:true,status:200,headers:new Headers({'content-type':'application/json'}),
       json:async()=>({results:[{url:'https://www.legis.iowa.gov/docs/code/321.261.pdf',
         title:'Iowa Code 321.261',content:'Official legislative statute lead'}],
@@ -36,7 +36,7 @@ async function mockFetch(url, options) {
   }
   if (requestUrl.includes(':17000/mega/search')) {
     lanes.push('openserp');
-    await wait(950,options?.signal);
+    await wait(1700,options?.signal);
     return {ok:true,status:200,headers:new Headers({'content-type':'application/json'}),
       json:async()=>({results:[],meta:{}})};
   }
@@ -85,7 +85,7 @@ vm.runInNewContext('(function(require,module,exports){'+compiled+'\n})',
     'start all three independent embedded engines');
   assert(results.some(item=>item.url.includes('legis.iowa.gov')),
     'generic first government lead must not cancel later legislative authority');
-  assert(elapsed<900,'return before slow engine completes');
+  assert(elapsed>=600 && elapsed<1450,'must wait for actual authority, but not slow unrelated engines');
   console.log('PASS: all 3 engines started; later Iowa legislature result retained');
   console.log('PASS: legal search returned in '+elapsed+'ms, before slow OpenSERP');
 })().catch(error=>{console.error(error);process.exitCode=1;});

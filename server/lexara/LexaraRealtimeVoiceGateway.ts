@@ -125,7 +125,7 @@ function deepgramListenUrl(sampleRate: number): string {
   url.searchParams.set('sample_rate', String(sampleRate));
   url.searchParams.set('eager_eot_threshold', process.env.LEXARA_FLUX_EAGER_EOT_THRESHOLD?.trim() || '0.8');
   url.searchParams.set('eot_threshold', process.env.LEXARA_FLUX_EOT_THRESHOLD?.trim() || '0.85');
-  url.searchParams.set('eot_timeout_ms', process.env.LEXARA_FLUX_EOT_TIMEOUT_MS?.trim() || '8000');
+  url.searchParams.set('eot_timeout_ms', process.env.LEXARA_FLUX_EOT_TIMEOUT_MS?.trim() || '3500');
   url.searchParams.set('numerals', 'true');
   return url.toString();
 }
