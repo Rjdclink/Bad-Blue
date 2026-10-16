@@ -50,6 +50,8 @@ export interface LexaraAuthorityResearchContext {
   requirePrimaryText?: boolean;
   /** A legal-only Claude web-search attempt after native evidence was weak. */
   forceClaudeLegalWebFallback?: boolean;
+  /** Reuse already downloaded law text within the SAME user turn. */
+  previouslyRetrievedUrls?: readonly string[];
   /** Public-law discovery only; personal record retrieval uses a separate query. */
   recordReliefState?: string;
   disableCourtRecordPlanning?: boolean;
@@ -268,8 +270,8 @@ async function discoverClaudeLegalFallback(
     ].join('\n'), {
       model: CURRENT_AI_MODELS.claudeFast,
       maxUses: 1,
-      maxTokens: 384,
-      retryTruncatedOutput: false,
+      maxTokens: 900,
+      retryTruncatedOutput: true,
       signal: context.signal,
     });
     const seen = new Set<string>();
@@ -427,7 +429,7 @@ async function discoverAuthoritySources(
       || (/\bsmall\s+claims?\b/i.test(formObjective) ? '631.1' : undefined);
     if (section) {
       add({ title: `Iowa Code section ${section}`, url: `https://www.legis.iowa.gov/docs/code/${section.toUpperCase()}.pdf`, provider: 'official-statute-directory' });
-      const retrieved = await enrichAuthoritySourcesWithLexaraRetrieval(sources, signal, false, false, false, context.requirePrimaryText);
+      const retrieved = await enrichAuthoritySourcesWithLexaraRetrieval(sources, signal, false, false, false, context.requirePrimaryText, context.previouslyRetrievedUrls);
       sources.splice(0, sources.length, ...retrieved);
       if (!context.requirePrimaryText && !/\b(?:case\s+law|precedent|interpret\w*|holdings?|compare|constitutional|strategy)\b/i.test(formObjective)
         && sources.some(source => source.provider === 'official-statute-directory' && source.evidenceLevel === 'document')) return sources;
@@ -539,6 +541,7 @@ async function enrichAuthoritySourcesWithLexaraRetrieval(
   courtLookup = false,
   recordRelief = false,
   requirePrimaryText = false,
+  previouslyRetrievedUrls: readonly string[] = [],
 ): Promise<LexaraAuthoritySource[]> {
   if (!sources.length) return sources;
   const targets = sources.filter(source => source.recordType !== 'docket' && source.recordType !== 'portal' && source.evidenceLevel !== 'document' && (!source.excerpt?.trim()
@@ -547,7 +550,7 @@ async function enrichAuthoritySourcesWithLexaraRetrieval(
     || (recordRelief && source.kind === 'primary')
     || (courtLookup && (source.kind === 'primary' || /^https:\/\/(?:law|dockets)\.justia\.com\/(?:cases|docket)\//i.test(source.url)))
     || (formLookup && source.kind === 'primary' && /\b(?:forms?|instructions?|petition|cover\s+sheet|assignment)\b/i.test([source.title, source.excerpt].join(' ')))
-    )).slice(0, 6).map(source => source.url);
+    )).filter(source => !previouslyRetrievedUrls.includes(source.url)).slice(0, 6).map(source => source.url);
   if (!targets.length) return sources;
 
   try {
@@ -654,7 +657,7 @@ export async function researchLegalAuthority(
     });
     if (context.requirePrimaryText) discoveredSources.sort((a, b) =>
       officialLawSourcePriority(b, context) - officialLawSourcePriority(a, context));
-    const sources = await enrichAuthoritySourcesWithLexaraRetrieval(discoveredSources, context.signal, formLookup, Boolean(courtRecordPlan), Boolean(reliefProfile), context.requirePrimaryText);
+    const sources = await enrichAuthoritySourcesWithLexaraRetrieval(discoveredSources, context.signal, formLookup, Boolean(courtRecordPlan), Boolean(reliefProfile), context.requirePrimaryText, context.previouslyRetrievedUrls);
     if (context.requirePrimaryText) console.info('[LEXARA Official Law Retrieval]', {
       discovered: discoveredSources.length,
       retrievedDocuments: sources.filter(source => source.evidenceLevel === 'document' && source.excerpt?.trim()).length,
