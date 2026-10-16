@@ -501,6 +501,7 @@ export function setupConsultationRoutes(app: Express): void {
       'The application-supplied Lexara background evidence below contains directly retrieved facts for this same matter. Preserve relevant facts supported there without adding a re-verification placeholder merely because the drafting turn did not repeat the background search. Keep placeholders for facts absent from that evidence; factual verification does not establish legal admissibility.',
       'Return plain document text. The PDF and DOCX exporters use that text directly: do not use Markdown heading markers, asterisks for emphasis, backticks, or code fences. Use ordinary section titles and lettered or numbered paragraphs.',
       'Where a required fact is unknown, insert a conspicuous bracketed placeholder such as [COURT NAME NEEDED].',
+      'Keep the document brief and precise. Cite a specific statute, rule, or case only when the supplied authority assessment supports its exact citation and proposition. Omit unsupported legal assertions; never insert a placeholder asking for a legal citation or legal authority.',
       templateMode ? 'The user explicitly requested a blank/template document. Preserve unknown facts as bracketed placeholders and do not turn the draft into a questionnaire.' : '',
       'Use conventional legal-document structure appropriate to the requested document, with a caption placeholder when court filing format is applicable.',
       'Do not claim the document is ready to file; local court rules, citations, deadlines, signatures, service, and filing requirements require human verification.',
@@ -520,7 +521,7 @@ export function setupConsultationRoutes(app: Express): void {
       log.warn('Legal document draft requires repair', { documentType: requestedType, reason: initialValidation.reason || 'missing filing anatomy', characters: normalizedDocument.length });
       const repairPrompt = [
         draftingPrompt,
-        'CRITICAL REPAIR: The prior draft was commentary rather than the requested legal instrument.',
+        `CRITICAL REPAIR: The prior draft failed validation: ${initialValidation.reason || 'missing filing anatomy'}.`,
         'Return ONLY the complete legal-document draft itself. Begin with the conventional caption/title/body structure for this instrument.',
         'Do not preface or conclude with advice, explanation, disclaimers, filing instructions, or commentary.',
         'Use bracketed placeholders for every unknown required filing fact.',
