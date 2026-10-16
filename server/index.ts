@@ -31,6 +31,7 @@ import {
 } from './aiHarmonyModelRegistry';
 import { getHarmonyWarmStatus, prewarmHarmonyProviders } from './aiHarmonyWarmup';
 import { getLexaraCrawlerReadiness } from './lexara/LexaraCrawlerCapabilityRegistry';
+import { startLexaraEmbeddedSearchEngines } from './lexara/LexaraEmbeddedSearchEngines';
 
 // CRITICAL: Validate configuration before anything else
 // Note: Using console.log here intentionally as logger is not yet initialized during bootstrap
@@ -981,6 +982,7 @@ startupTrace('routes_registration_completed');
 
     // This optional workload starts only after strict readiness is true. Failures
     // remain isolated and cannot keep a healthy replacement deployment in 503.
+    startLexaraEmbeddedSearchEngines();
     void initializeOptionalServicesAfterReadiness();
   } catch (error) {
     backgroundInitializationError = error instanceof Error ? error.message : String(error);
