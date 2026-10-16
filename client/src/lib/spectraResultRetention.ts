@@ -15,22 +15,26 @@ export function retainSpectraObservations(previous: GPSPoint[], incoming: GPSPoi
     new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 }
 
-export function retainSpectraCandidates<T extends LocationCandidate>(previous: T[], incoming: T[]): T[] {
-  // No new report is not evidence that the previous map context became invalid.
+export function retainSpectraCandidates<T extends LocationCandidate>(
+  previous: T[], incoming: T[], canonicalSubjectUpdate = false,
+): T[] {
   if (!incoming.length) return previous;
-  const latest = new Map<string, T>();
-  for (const candidate of incoming) {
+  const merged = new Map<string, T>();
+  const rows = canonicalSubjectUpdate ? incoming : [...previous, ...incoming];
+  for (const candidate of rows) {
     const key = [candidate.latitude, candidate.longitude, candidate.basis, candidate.label].join('|');
-    const existing = latest.get(key);
-    if (!existing || candidate.confidence >= existing.confidence) latest.set(key, candidate);
+    const existing = merged.get(key);
+    if (!existing || candidate.confidence >= existing.confidence) merged.set(key, candidate);
   }
-  const ranked = [...latest.values()].sort((a, b) => b.confidence - a.confidence);
-  const previousBest = previous.reduce((best, candidate) =>
-    Math.max(best, Number.isFinite(candidate.confidence) ? candidate.confidence : -Infinity), -Infinity);
-  const nextBest = ranked[0]?.confidence ?? -Infinity;
-  // A degraded supplemental refresh must not replace stronger earlier evidence.
-  // An equally or more strongly supported canonical update replaces the old
-  // candidate snapshot, rather than retaining obsolete alternative map choices.
-  // Full evidence remains in the independently persisted source archive.
-  return Number.isFinite(nextBest) && nextBest >= previousBest ? ranked : previous;
+  const ranked = [...merged.values()].sort((a, b) => b.confidence - a.confidence);
+  if (canonicalSubjectUpdate) {
+    const previousBest = previous.reduce((best, candidate) =>
+      Math.max(best, Number.isFinite(candidate.confidence) ? candidate.confidence : -Infinity), -Infinity);
+    const newBest = ranked[0]?.confidence ?? -Infinity;
+    // Replace a subject's obsolete map estimate only if newly assembled
+    // evidence is at least as strong. Keep weaker supplemental refreshes.
+    if (!Number.isFinite(newBest) || newBest < previousBest) return previous;
+  }
+  // Public places and other non-canonical views preserve additive evidence.
+  return ranked;
 }
