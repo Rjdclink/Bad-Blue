@@ -146,6 +146,9 @@ export function validateLegalDocumentDraft(
   if (/\b(?:don't have a specific question|details didn't come through|could you tell me what's going on)\b/i.test(trimmed)) {
     return { valid: false, reason: 'missing-input conversational fallback' };
   }
+  if (/\[(?:(?:citation\b|(?:legal\s+)?(?:authority|statute|rule|case\s+law)\b)[^\]]{0,100}\b(?:needed|required|verify|to\s+be\s+verified)\b|(?:verify|confirm)\s+(?:citation|legal|authority|statute|rule|(?:response\s+)?deadline|response\s+period)\b)[^\]]*\]/i.test(trimmed)) {
+    return { valid: false, reason: 'unverified legal authority placeholder' };
+  }
 
   if (requestedType !== 'Custom Document') {
     if (requestedType === 'FOIA or Public Records Request'
