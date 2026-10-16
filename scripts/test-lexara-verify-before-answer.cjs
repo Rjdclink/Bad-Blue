@@ -14,7 +14,7 @@ const packet = sources => ({sources, summary: 'fixture', hasPrimaryAuthority: tr
 
 function harness(options = {}) {
   const clock = FakeTimers.createClock();
-  const calls = { research: [], grade: [], final: [], streaming: 0, logs: [], signals: [], mesh: [], retrieval: [], web: [] };
+  const calls = { research: [], researchContexts: [], grade: [], final: [], streaming: 0, logs: [], signals: [], mesh: [], retrieval: [], web: [] };
   const cache = new Map();
   const stubs = {
     'server/claude.ts': {
@@ -45,7 +45,7 @@ function harness(options = {}) {
     'server/aiHarmonyModelRegistry.ts': {CURRENT_AI_MODELS:{claudeFast:'fixture',claudeBalanced:'fixture'},LEGAL_AI_MODELS:{claudeFast:'fixture'}},
     'server/lexara/LexaraAuthorityResearch.ts': {
       async researchLegalAuthority(question, context) {
-        calls.research.push(question); calls.signals.push(context.signal);
+        calls.research.push(question); calls.researchContexts.push(context); calls.signals.push(context.signal);
         assert.equal(context.requirePrimaryText, true);
         if (options.hang) return new Promise(() => {});
         if (options.delay) await new Promise(resolve => clock.setTimeout(resolve, options.delay));
@@ -334,6 +334,7 @@ test('partial primary evidence survives without claiming that incomplete legal v
   assert.equal(result.research.sources.length,1);
   assert.match(result.research.summary,/NOT fully verified/);
   assert.equal(h.calls.web.length,0);
+  assert.equal(h.calls.researchContexts[2].forceClaudeLegalWebFallback,true, 'a still-incomplete native investigation retains its late Claude discovery option');
   assert.equal(h.clock.countTimers(),0);
 });
 
