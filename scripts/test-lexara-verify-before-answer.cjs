@@ -30,6 +30,7 @@ function harness(options = {}) {
         if (config.systemPrompt.includes('LEGAL VERIFICATION PARTIAL OR TIMED OUT')) {
           assert(!config.systemPrompt.includes('LEGAL RESEARCH COMPLETED BEFORE ANSWERING'));
           assert.match(config.systemPrompt, /Do NOT present an unverified statute/);
+          assert.match(config.systemPrompt, /A search timeout is not proof that no statute exists/);
           return {content:'The general legal question depends on the facts and controlling authority; the specific current rule was not verified.'};
         }
         assert(config.systemPrompt.includes(doc.excerpt), 'verified final model must receive the supporting document');
