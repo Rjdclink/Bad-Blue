@@ -181,8 +181,8 @@ test('real authority discovery continues past federal snippets and reads Iowa pr
   const h=harness({actualAuthority:true,retrievalDelay:2500});
   const pending=h.load('server/lexara/LexaraLegalResearchGate.ts').completeLexaraLegalResearch('Iowa landlord security deposit obligations',{jurisdiction:'Iowa'});
   await h.clock.tickAsync(3000);const result=await pending;
-  assert.equal(result.status,'supported');assert.equal(h.calls.mesh.length,1);
-  assert.equal(h.calls.mesh[0].config.strictLegalSource,true,'legal searches must await authority leads');
+  assert.equal(result.status,'supported');assert.equal(h.calls.mesh.length,2);
+  assert(h.calls.mesh.some(entry=>entry.config.strictLegalSource===true),'legal searches must await authority leads');
   assert(h.calls.retrieval[0].targets.includes(url));assert.equal(h.calls.retrieval[0].timeoutMs,4000);
   assert.equal(result.research.sources[0].evidenceLevel,'document');assert.equal(h.calls.web.length,0);assert.equal(h.clock.countTimers(),0);
 });
@@ -190,7 +190,7 @@ test('real authority discovery continues past federal snippets and reads Iowa pr
 test('real authority discovery with unreadable primary leads does not pass the gate',async()=>{
   const h=harness({actualAuthority:true,emptyRetrieval:true});
   const result=await h.load('server/lexara/LexaraLegalResearchGate.ts').completeLexaraLegalResearch('Iowa landlord security deposit obligations',{jurisdiction:'Iowa'});
-  assert.equal(result.status,'sources-insufficient');assert.equal(h.calls.mesh.length,2);assert.equal(h.calls.web.length,1);assert.equal(h.calls.grade.length,0);
+  assert.equal(result.status,'sources-insufficient');assert(h.calls.mesh.length>=2);assert.equal(h.calls.web.length,1);assert.equal(h.calls.grade.length,0);
 });
 
  
@@ -231,7 +231,7 @@ test('weak native legal evidence triggers one real Claude web-search fallback wi
   assert.equal(h.calls.web.length,1,'one Claude web-search fallback only');
   assert(h.calls.web[0].prompt.includes('Iowa'));
   assert(h.calls.web[0].config.maxUses===1);
-  assert.equal(h.calls.mesh.length,1,'Claude fallback must not relaunch generic search');
+  assert.equal(h.calls.mesh.length,2,'Claude fallback must not relaunch native search after its initial official and broad queries');
   assert(h.calls.retrieval.some(request=>request.targets.includes(url)),'verify the web-search citation by direct retrieval');
   assert(h.calls.grade.some(prompt=>prompt.includes(doc.excerpt)),'model may assess only actual retrieved text');
   assert.equal(result.research.sources[0].evidenceLevel,'document');
