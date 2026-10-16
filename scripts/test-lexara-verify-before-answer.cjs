@@ -297,4 +297,23 @@ test('search-discovered Iowa Code citations expand to retrieved official statute
   assert(result.research.sources.some(source=>source.url==='https://www.legis.iowa.gov/docs/code/562A.12.pdf'
     && source.evidenceLevel==='document'), 'official statute PDF must be independently retrieved');
 });
+
+test('Claude fallback keeps an official statute in ninth position ahead of eight blocked mirrors',async()=>{
+  const mirrors=Array.from({length:8},(_,index)=>({
+    url:'https://law.justia.com/codes/iowa/2026/title-'+index+'/chapter-123/',
+    title:'Commercial search mirror',citedText:'Search snippet only',
+  }));
+  const h=harness({actualAuthority:true,weakNative:true,claudeWebSources:[
+    ...mirrors,{url,title:'Official Iowa Code section 562A.12',citedText:'Search snippet only'},
+  ]});
+  const result=await h.load('server/lexara/LexaraLegalResearchGate.ts').completeLexaraLegalResearch(
+    'What current Iowa Code section governs deposits?',{jurisdiction:'Iowa'});
+  assert.equal(result.status,'supported');
+  assert.equal(h.calls.web.length,1);
+  assert(h.calls.retrieval.some(request=>request.targets.includes(url)),
+    'the ninth authoritative result must be retrieved despite earlier commercial mirrors');
+  assert(result.research.sources.some(source=>source.url===url && source.evidenceLevel==='document'),
+    'a commercial snippet cannot replace retrieved official text');
+});
+
 (async()=>{for(const {name,run} of tests){await run();console.log('PASS:',name);}console.log(`${tests.length} verification-before-answer behavioral groups passed.`);})().catch(e=>{console.error(e);process.exitCode=1;});
