@@ -12,6 +12,7 @@ const cases = [
   ['Lexara stop',true],['Hey Lexara, hold on',true],['Lex era, I need to add something',true],
   ['LegalWhat, what about the motion?',true],['What statute applies?',true],
   ['Can you check the court filing?',true],['Actually the filing date was October 12',true],
+  ['Can they do that?',true],['What about that?',true],
   ['Wait',false],['Stop',false],['No',false],['Okay',false],
   ['Yeah I am on the phone',false],['What are you doing tonight?',false],
   ['Tell her I will call back',false],['I told you already',false],
