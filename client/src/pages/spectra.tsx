@@ -569,7 +569,8 @@ export default function SpectraPage() {
       if (points.length || payload.candidateLocations?.length) mappedResultRef.current = true;
       setObservations(previous => retainSpectraObservations(previous, points));
       setCandidateLocations(previous => retainSpectraCandidates(previous,
-        Array.isArray(payload.candidateLocations) ? payload.candidateLocations : []));
+        Array.isArray(payload.candidateLocations) ? payload.candidateLocations : [],
+        !publicPlaceMode));
       const posterior = payload.liveLocationAssessment;
       const center = posterior?.consensusCenter;
       const radius = posterior?.confidenceRadiusMeters95;

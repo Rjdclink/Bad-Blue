@@ -15,15 +15,26 @@ export function retainSpectraObservations(previous: GPSPoint[], incoming: GPSPoi
     new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 }
 
-export function retainSpectraCandidates<T extends LocationCandidate>(previous: T[], incoming: T[]): T[] {
+export function retainSpectraCandidates<T extends LocationCandidate>(
+  previous: T[], incoming: T[], canonicalSubjectUpdate = false,
+): T[] {
   if (!incoming.length) return previous;
   const merged = new Map<string, T>();
-  for (const candidate of [...previous, ...incoming]) {
+  const rows = canonicalSubjectUpdate ? incoming : [...previous, ...incoming];
+  for (const candidate of rows) {
     const key = [candidate.latitude, candidate.longitude, candidate.basis, candidate.label].join('|');
     const existing = merged.get(key);
     if (!existing || candidate.confidence >= existing.confidence) merged.set(key, candidate);
   }
-  // Preserve existing alternatives; a weaker pass must not displace the best
-  // supported estimate. Scores are retained as supplied, never inflated.
-  return [...merged.values()].sort((a, b) => b.confidence - a.confidence);
+  const ranked = [...merged.values()].sort((a, b) => b.confidence - a.confidence);
+  if (canonicalSubjectUpdate) {
+    const previousBest = previous.reduce((best, candidate) =>
+      Math.max(best, Number.isFinite(candidate.confidence) ? candidate.confidence : -Infinity), -Infinity);
+    const newBest = ranked[0]?.confidence ?? -Infinity;
+    // Replace a subject's obsolete map estimate only if newly assembled
+    // evidence is at least as strong. Keep weaker supplemental refreshes.
+    if (!Number.isFinite(newBest) || newBest < previousBest) return previous;
+  }
+  // Public places and other non-canonical views preserve additive evidence.
+  return ranked;
 }

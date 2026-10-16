@@ -59,7 +59,7 @@ export function chooseSpectraPublicRetrievalUrls(
   if (capacity >= 4) {
     for (const hosts of [
       /(?:^|\.)(?:whitepages\.com|yellowbook\.com|yellowpages\.com|spokeo\.com|idcrawl\.com)$/,
-      /(?:^|\.)(?:facebook\.com|instagram\.com|x\.com|twitter\.com)$/,
+      /(?:^|\.)(?:facebook\.com|instagram\.com|x\.com|twitter\.com|tiktok\.com|threads\.net|linkedin\.com|bsky\.app)$/,
     ]) {
       const candidate = ranked.find(item => {
         try { return hosts.test(new URL(item.url).hostname.toLowerCase()); }
