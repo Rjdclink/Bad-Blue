@@ -500,7 +500,8 @@ function lexaraOpenserpBase(): string {
 async function openserp(query: string, signal?: AbortSignal): Promise<LegalMeshCandidate[]> {
   const base = lexaraOpenserpBase();
   if (!base) return skippedProvider('openserp', 'DISCOVERY_NOT_CONFIGURED');
-  const engines = [...new Set((process.env.LEXARA_OPENSERP_ENGINES || 'bing,google')
+  const engines = [...new Set((process.env.LEXARA_OPENSERP_ENGINES
+    || (process.env.LEXARA_EMBEDDED_SEARCH === 'true' ? 'bing,google' : 'baidu'))
     .split(',').map(value => value.trim()).filter(value =>
       ['bing', 'google', 'baidu', 'ecosia', 'yandex', 'duckduckgo'].includes(value) && engineAvailable(value)))];
   if (!engines.length) return skippedProvider('openserp');
