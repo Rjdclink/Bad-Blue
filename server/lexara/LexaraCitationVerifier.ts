@@ -1,4 +1,5 @@
 import * as cheerio from 'cheerio';
+import { lexaraCourtListenerJson } from './LexaraCourtListenerClient';
 
 export type CitationVerificationStatus = 'verified' | 'unresolved' | 'unavailable';
 
@@ -8,6 +9,8 @@ export interface CitationVerification {
   sourceUrl?: string;
   caseTitle?: string;
   possibleNegativeTreatment: boolean;
+  /** Whether a later-court-treatment search returned readable results; not a good-law guarantee. */
+  treatmentChecked?: boolean;
   negativeTreatmentEvidence?: string;
 }
 
@@ -121,7 +124,14 @@ export function extractCaseCitations(text: string): Array<{ citation: string; vo
   return found;
 }
 
-async function fetchWithTimeout(url: string, timeoutMs = 4_000): Promise<Response | null> {
+interface CitationSourcePage {
+  ok: boolean;
+  status: number;
+  url: string;
+  html: string;
+}
+
+async function fetchWithTimeout(url: string, timeoutMs = 2_500): Promise<CitationSourcePage | null> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -133,7 +143,10 @@ async function fetchWithTimeout(url: string, timeoutMs = 4_000): Promise<Respons
         'User-Agent': 'LegalWhat-Lexara-CitationVerifier/1.0 (+https://legalwhat.com)',
       },
     });
-    return response;
+    // The timeout includes downloading the body, not merely response headers.
+    const html = response.ok ? await response.text() : '';
+    if (controller.signal.aborted) return null;
+    return { ok: response.ok, status: response.status, url: response.url, html };
   } catch {
     return null;
   } finally {
@@ -153,49 +166,77 @@ function titleFromHtml(html: string): string | undefined {
   }
 }
 
-async function possibleNegativeTreatment(citation: string): Promise<{ found: boolean; evidence?: string }> {
+async function possibleNegativeTreatment(citation: string): Promise<{ found: boolean; checked: boolean; evidence?: string }> {
   const q = `"${citation}" AND (overruled OR abrogated OR superseded OR vacated)`;
   const url = `https://www.courtlistener.com/?type=o&q=${encodeURIComponent(q)}`;
-  const response = await fetchWithTimeout(url, 3_500);
-  if (!response?.ok) return { found: false };
-  const html = await response.text().catch(() => '');
-  if (!html) return { found: false };
-  const $ = cheerio.load(html);
-  // Search only actual opinion-result containers. The page also echoes the query
-  // itself, which contains our negative-treatment keywords and would otherwise
-  // create a false signal on every search.
-  const resultTexts: string[] = [];
-  $('a[href*="/opinion/"]').each((_index, element) => {
-    const anchor = $(element);
-    const container = anchor.closest('article, li, .search-result, .v-offset-below-2').first();
-    const text = (container.length ? container.text() : anchor.parent().text())
-      .replace(/\s+/g, ' ')
-      .trim();
-    if (text) resultTexts.push(text);
-  });
+  // Use the existing authenticated CourtListener search when available.
+  // The public HTML search sometimes rejects Railway with HTTP 403.
+  const [api, response] = await Promise.all([
+    lexaraCourtListenerJson('search/?' + new URLSearchParams({ q, type: 'o' }).toString()),
+    fetchWithTimeout(url, 2_500),
+  ]);
+  // Treat API snippets as possible signals, never conclusive good-law status.
+  const apiResults = Array.isArray(api?.results) ? api.results : null;
+  const resultTexts: string[] = (apiResults || []).slice(0, 20).map((item: any) =>
+    [item.caseName, item.snippet, ...(Array.isArray(item.opinions)
+      ? item.opinions.map((opinion: any) => opinion.snippet) : [])]
+      .filter(Boolean).join(' ').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(),
+  ).filter(Boolean);
+  if (response?.ok && response.html) {
+    const $ = cheerio.load(response.html);
+    // Never scan the query itself: it contains the negative-treatment words.
+    $('a[href*="/opinion/"]').each((_index, element) => {
+      const anchor = $(element);
+      const container = anchor.closest('article, li, .search-result, .v-offset-below-2').first();
+      const text = (container.length ? container.text() : anchor.parent().text())
+        .replace(/\s+/g, ' ').trim();
+      if (text) resultTexts.push(text);
+    });
+  }
+  if (!apiResults && !(response?.ok && response.html)) return { found: false, checked: false };
   for (const text of resultTexts.slice(0, 20)) {
     const match = text.match(/.{0,110}\b(overruled|abrogated|superseded|vacated)\b.{0,170}/i);
-    if (match) return { found: true, evidence: match[0].trim().slice(0, 320) };
+    if (match) return { found: true, checked: true, evidence: match[0].trim().slice(0, 320) };
   }
-  return { found: false };
+  return { found: false, checked: true };
 }
 
 async function verifyOneCitation(item: ReturnType<typeof extractCaseCitations>[number]): Promise<CitationVerification> {
   const slug = REPORTER_SLUGS[normalizeReporter(item.reporter)];
   if (!slug) {
-    return { citation: item.citation, status: 'unresolved', possibleNegativeTreatment: false };
+    return { citation: item.citation, status: 'unresolved', possibleNegativeTreatment: false, treatmentChecked: false };
   }
 
   const lookupUrl = `https://www.courtlistener.com/c/${slug}/${item.volume}/${item.page}/`;
-  const [response, treatment] = await Promise.all([
+  const [response, treatment, lookup] = await Promise.all([
     fetchWithTimeout(lookupUrl),
     possibleNegativeTreatment(item.citation),
+    lexaraCourtListenerJson('search/?' + new URLSearchParams({ q: item.citation, type: 'o' }).toString()),
   ]);
+  // Match exact reporter citations in CourtListener's authenticated case
+  // metadata. Search-result rank or URL resemblance alone is not verification.
+  const citationKey = (value: unknown) => String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const matched = (Array.isArray(lookup?.results) ? lookup.results : []).find((row: any) =>
+    (Array.isArray(row.citation) ? row.citation : [row.citation])
+      .some((value: unknown) => citationKey(value) === citationKey(item.citation)));
+  if (matched) {
+    const path = String(matched.absolute_url || '');
+    return {
+      citation: item.citation,
+      status: 'verified',
+      sourceUrl: /^\/opinion\/\d+\//.test(path) ? 'https://www.courtlistener.com' + path : lookupUrl,
+      caseTitle: String(matched.caseName || matched.case_name || '').slice(0, 240) || undefined,
+      possibleNegativeTreatment: treatment.found,
+      treatmentChecked: treatment.checked,
+      negativeTreatmentEvidence: treatment.evidence,
+    };
+  }
   if (!response) {
     return {
       citation: item.citation,
       status: 'unavailable',
       possibleNegativeTreatment: treatment.found,
+      treatmentChecked: treatment.checked,
       negativeTreatmentEvidence: treatment.evidence,
     };
   }
@@ -205,17 +246,17 @@ async function verifyOneCitation(item: ReturnType<typeof extractCaseCitations>[n
       citation: item.citation,
       status: unavailable ? 'unavailable' : 'unresolved',
       possibleNegativeTreatment: treatment.found,
+      treatmentChecked: treatment.checked,
       negativeTreatmentEvidence: treatment.evidence,
     };
   }
 
-  const html = await response.text().catch(() => '');
+  const html = response.html;
   const normalizedBody = html.replace(/\s+/g, ' ').toLowerCase();
-  const citationPresent = normalizedBody.includes(item.citation.toLowerCase())
-    || response.url.includes('/opinion/')
-    || response.url.includes(`/c/${slug}/${item.volume}/${item.page}/`);
+  const citationPresent = normalizedBody.includes(item.citation.toLowerCase());
   if (!citationPresent) {
-    return { citation: item.citation, status: 'unresolved', possibleNegativeTreatment: false };
+    return { citation: item.citation, status: 'unresolved', possibleNegativeTreatment: treatment.found,
+      treatmentChecked: treatment.checked, negativeTreatmentEvidence: treatment.evidence };
   }
 
   return {
@@ -224,6 +265,7 @@ async function verifyOneCitation(item: ReturnType<typeof extractCaseCitations>[n
     sourceUrl: response.url || lookupUrl,
     caseTitle: titleFromHtml(html),
     possibleNegativeTreatment: treatment.found,
+    treatmentChecked: treatment.checked,
     negativeTreatmentEvidence: treatment.evidence,
   };
 }
@@ -257,7 +299,9 @@ export function formatCitationVerificationForCorrection(results: CitationVerific
         : 'UNRESOLVED';
     const treatment = result.possibleNegativeTreatment
       ? `; POSSIBLE NEGATIVE TREATMENT SIGNAL: ${result.negativeTreatmentEvidence || 'CourtListener search surfaced a negative-treatment term; verify before relying on the case'}`
-      : '';
+      : result.treatmentChecked === true
+        ? '; LIMITED LATER-TREATMENT SEARCH FOUND NO SIGNAL; continued precedential validity is NOT established'
+        : '; LATER-COURT TREATMENT UNVERIFIED; do not describe the case as still binding or not overruled';
     const title = result.caseTitle ? `; case/source title: ${result.caseTitle}` : '';
     const source = result.sourceUrl ? `; verification source: ${result.sourceUrl}` : '';
     return `- ${result.citation}: ${status}${title}${source}${treatment}`;

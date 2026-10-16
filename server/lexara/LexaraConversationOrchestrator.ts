@@ -345,7 +345,7 @@ function buildLegalSystemPrompt(
 \n- When grounded retrieval is supplied, answer the user's factual question from that evidence. Do not tell the user to go look up, examine, search, check, or research information that the application has already retrieved or can answer from the supplied evidence.\n- For requests about judges, courts, sentencing patterns, statistics, comparative outcomes, current rules, or other externally verifiable legal facts, use application-supplied research when present and report the actual findings, relevant scope/date, and source attribution. If the evidence is insufficient, say exactly what could not be verified rather than delegating the research to the user.\n\nLEGAL REASONING REQUIREMENTS\n- Separate known facts, user allegations, reasonable inferences, and legal conclusions.\n- Analyze and stress-test the user's position. Identify weaknesses, defenses, missing elements, contradictory facts, procedural problems, evidentiary gaps, and stronger alternative theories when relevant.\n- Do not tunnel on the selected law-book category. Identify adjacent legal domains, federal/state overlap, procedural doctrines, remedies, defenses, and collateral consequences whenever the facts reasonably trigger them.\n- If a missing fact materially changes the legal analysis, ask the single highest-value follow-up question rather than dumping a questionnaire.\n- If an external factual detail cannot be independently verified, state that limitation briefly when material and continue answering every legal issue that can still be resolved without that fact.\n- If jurisdiction is unknown and jurisdiction materially affects the answer, say so and ask for the state or jurisdiction. Do not invent one.
 - If the user corrects or supplies their location/jurisdiction, silently treat that user statement as controlling. Do not explain competing location signals.
 - When a turn only corrects jurisdiction/location for an ongoing matter, adopt it and continue with the single next necessary question. Do not volunteer jurisdictional background unless the user asks or it is necessary to prevent a materially wrong answer.
-- Never name or infer a county from a city, state, model recollection, or nearby geography. A county may be stated only when the user explicitly supplied it or application-supplied evidence verifies it. If county-level jurisdiction matters and is unverified, say the county has not been established.\n- Never invent a statute, case, quotation, holding, deadline, court rule, or citation. If current authority has not been grounded or otherwise verified, say that verification is needed before relying on a specific citation.\n- Do not treat agreement among language models as legal verification. Prefer primary legal authority when verification is available.\n- When discussing deadlines, statutes of limitation, emergency filings, criminal exposure, immigration status, custody, or other high-consequence issues, explicitly identify assumptions and uncertainty.\n- Do not claim to have reviewed documents, recordings, dockets, or evidence that were not actually provided.\n- Never let persona, emotion detection, or presentation logic override legal accuracy.\n\nCONVERSATIONAL PERFORMANCE\n- Respond directly to the specific question, statement, or new fact the user just provided.\n- Put the useful answer in the first sentence. Do not bury it under background or repeat facts the user already gave you.\n- Default to 1-3 concise sentences, normally under 60 words. Give more detail only when the user explicitly asks for detail or an additional sentence is necessary to prevent a materially misleading answer. Keep document bodies in the document workflow rather than expanding the conversational reply.
+- Never name or infer a county from a city, state, model recollection, or nearby geography. A county may be stated only when the user explicitly supplied it or application-supplied evidence verifies it. If county-level jurisdiction matters and is unverified, say the county has not been established.\n- Never invent a statute, case, quotation, holding, deadline, court rule, or citation. If current authority has not been grounded or otherwise verified, say that verification is needed before relying on a specific citation.\n- A citation's existence is not proof that a case remains good law. Check subsequent court treatment, jurisdiction and statutory changes before calling it controlling or not overturned; if that status was not verified, say so.\n- Do not treat agreement among language models as legal verification. Prefer primary legal authority when verification is available.\n- When discussing deadlines, statutes of limitation, emergency filings, criminal exposure, immigration status, custody, or other high-consequence issues, explicitly identify assumptions and uncertainty.\n- Do not claim to have reviewed documents, recordings, dockets, or evidence that were not actually provided.\n- Never let persona, emotion detection, or presentation logic override legal accuracy.\n\nCONVERSATIONAL PERFORMANCE\n- Respond directly to the specific question, statement, or new fact the user just provided.\n- Put the useful answer in the first sentence. Do not bury it under background or repeat facts the user already gave you.\n- Default to 1-3 concise sentences, normally under 60 words. Give more detail only when the user explicitly asks for detail or an additional sentence is necessary to prevent a materially misleading answer. Keep document bodies in the document workflow rather than expanding the conversational reply.
 - Do not ask the user to choose a category, record type, or terminology when the intended request can be inferred from context. If a missing detail truly prevents a reliable answer, ask one short clarification question without listing possible categories or examples.
 - Do not volunteer adjacent information, extra options, examples, background, next steps, or offers to do more work unless they are necessary to answer the user's actual request.
 - Never pad an answer with phrases such as "I can also," "if you'd like," "would you like me to," or process narration. Answer and stop.\n- Sound natural when spoken aloud. Avoid headings, tables, long lists, and memorandum-style exposition unless the user asks for structure.\n- Avoid repetitive disclaimers, canned introductions, filler, and unnecessary restatement.
@@ -849,6 +849,7 @@ export async function generateLexaraConversationResponse(
   if (!authorityResearch) researchController.abort();
   context.signal?.removeEventListener('abort', relayResearchAbort);
   const researchWaitMs = Date.now() - researchStartedAt;
+  const legalResearchIncomplete = legalResearchRequired && legalResearchOutcome?.status !== 'supported';
   const backgroundEndpoint = backgroundResearchRequested
     ? backgroundInvestigation?.endpoint || 'unavailable' : undefined;
   const backgroundStatus = backgroundEndpoint === 'evidence-sufficient'
@@ -920,8 +921,11 @@ export async function generateLexaraConversationResponse(
   const researchStatusPrompt = researchRouteSelected && !authorityResearch?.hasUsableEvidence && !backgroundInvestigation?.evidenceSummary
     ? '\n\nAPPLICATION RESEARCH STATUS\nLexara attempted the selected external research route for this turn but no independently usable source result was returned within the live research budget. Do not claim that no search was attempted. Do not invent the requested fact; say it could not be verified from the completed search and preserve useful next steps or clarification.'
     : '';
+  const unverifiedLegalPrompt = legalResearchIncomplete
+    ? '\n\nLEGAL VERIFICATION PARTIAL OR TIMED OUT\nThe research did not establish controlling primary-law text for this turn. Do NOT present an unverified statute, section number, case citation, holding, binding precedent, deadline, penalty, or current jurisdiction-specific rule as established. Offer only brief useful general issue-spotting guidance or ask the single essential question, and state the specific verification limitation once. Do not give a canned refusal or imply that law or precedent was checked when it was not.'
+    : '';
   const completedLegalResearchPrompt = legalResearchOutcome?.status === 'supported'
-    ? '\n\nLEGAL RESEARCH COMPLETED BEFORE ANSWERING\nAnswer directly from the supplied supporting authority and its qualifications. Do not say you need to research, check or verify authority already supplied. Never generalize this verification to all laws or unresolved facts. If a distinct material issue remains unsupported, identify that specific limitation rather than repeating a generic promise to verify Iowa law.'
+    ? '\n\nLEGAL RESEARCH COMPLETED BEFORE ANSWERING\nAnswer directly from the supplied supporting authority and its qualifications. Do not say you need to research, check or verify authority already supplied. Never generalize this verification to all laws or unresolved facts. If a distinct material issue remains unsupported, identify that specific limitation rather than repeating a generic promise to verify the applicable law.'
     : '';
   const jurisdictionCorrectionPrompt = jurisdictionCorrectionOnly
     ? '\n\nJURISDICTION CORRECTION TURN\nThe user has supplied or corrected the location for the ongoing matter. Adopt it silently as controlling context. Do not explain jurisdictional background or repeat the correction. Continue directly with the single next necessary question or answer from the existing matter.'
@@ -940,6 +944,7 @@ export async function generateLexaraConversationResponse(
     + resolvedBackgroundSubjectPrompt
     + researchStatusPrompt
     + completedLegalResearchPrompt
+    + unverifiedLegalPrompt
     + (!authorityResearch ? formatLexaraCourtRecordPlan(courtRecordPlan) : '')
     + formatLexaraBackgroundResearchForSystem(backgroundInvestigation)
     + backgroundPresentationPrompt
@@ -997,10 +1002,9 @@ export async function generateLexaraConversationResponse(
     : researchDecision.requestedFact === 'business'
       ? `which business ${unverifiedSubject} operates`
       : `the requested information about ${unverifiedSubject}`;
-  const legalResearchIncomplete = legalResearchRequired && legalResearchOutcome?.status !== 'supported';
-  let text = legalResearchIncomplete
-    ? `I couldn't establish the applicable ${publicJurisdiction || 'legal'} rule from the sources I could retrieve and check. I can't give you a reliable conclusion on that legal question from this evidence.`
-    : unverifiedBackgroundOnly
+  // A source timeout must not replace the answer with an unconditional refusal.
+  // Claude may give bounded general guidance but has no authority to invent law.
+  let text = unverifiedBackgroundOnly
     ? `I couldn't verify ${unverifiedObjective} from the ${criminalBackgroundOnly ? 'available' : 'completed'} sources.`
     : '';
   const claudeStartedAt = Date.now();
@@ -1136,18 +1140,32 @@ export async function generateLexaraConversationResponse(
   let negativeTreatmentSignalCount = 0;
   if (!answerServiceUnavailable && /\\b\\d{1,4}\\s+(?:U\\.?\\s*S\\.?|S\\.?\\s*Ct\\.?|F\\.?\\s*(?:Supp\\.?\\s*(?:2d|3d)?|2d|3d|4th)?|N\\.?\\s*[EW]\\.?\\s*(?:2d|3d)?|S\\.?\\s*[EW]\\.?\\s*(?:2d|3d)?|P\\.?\\s*(?:2d|3d)?|A\\.?\\s*(?:2d|3d)?|So\\.?\\s*(?:2d|3d)?)\\s+\\d{1,6}\\b/i.test(text)) {
     try {
+      let citationTimer: ReturnType<typeof setTimeout> | undefined;
       const verification = await Promise.race([
         verifyLegalCitationsInText(text),
-        new Promise<[]>(resolve => setTimeout(() => resolve([]), 6_000)),
-      ]);
+        new Promise<[]>(resolve => { citationTimer = setTimeout(() => resolve([]), 3_500); }),
+      ]).finally(() => clearTimeout(citationTimer));
       citationVerificationCount = verification.length;
-      unresolvedCitationCount = verification.filter(item => item.status === 'unresolved').length;
+      unresolvedCitationCount = verification.filter(item => item.status !== 'verified').length;
       negativeTreatmentSignalCount = verification.filter(item => item.possibleNegativeTreatment).length;
+      const treatmentUnchecked = verification.some(item => item.treatmentChecked !== true);
+      const currentValidityClaim = /\b(?:still (?:binding|controlling)|remains? (?:binding|controlling|good law)|good law|not (?:overruled|overturned)|binding precedent|controlling precedent)\b/i.test(text);
 
-      if (verification.length && (unresolvedCitationCount > 0 || negativeTreatmentSignalCount > 0) && !context.signal?.aborted) {
-        const verificationSummary = formatCitationVerificationForCorrection(verification);
-        const correction = await callClaude(
-          `CURRENT ANSWER:\n${text}\n\nCITATION VERIFICATION RESULTS:\n${verificationSummary}\n\nRevise the answer conservatively. Preserve all supported analysis and conversational tone. Do not rely on any citation marked UNRESOLVED. If a citation has a possible negative-treatment signal, qualify it and avoid presenting it as unquestionably current authority unless the supplied LegalWhat research evidence independently establishes current validity. Do not invent replacement citations. Return only the corrected user-facing answer.`,
+      // A found case is not proven good law; a failed citator is not a clean bill
+      // of health. Revise even when verification is unavailable or timed out.
+      if ((!verification.length || unresolvedCitationCount > 0 || negativeTreatmentSignalCount > 0
+        || treatmentUnchecked || currentValidityClaim) && !context.signal?.aborted) {
+        const verificationSummary = verification.length
+          ? formatCitationVerificationForCorrection(verification)
+          : 'CASE CITATIONS UNVERIFIED: citation lookup or later-treatment search did not finish within the budget.';
+        const citationCorrectionController = new AbortController();
+        const relayCitationCancel = () => citationCorrectionController.abort(context.signal?.reason);
+        if (context.signal?.aborted) relayCitationCancel();
+        else context.signal?.addEventListener('abort', relayCitationCancel, { once: true });
+        let citationCorrectionTimer: ReturnType<typeof setTimeout> | undefined;
+        const correction = await Promise.race([
+          callClaude(
+          `CURRENT ANSWER:\n${text}\n\nCITATION VERIFICATION RESULTS:\n${verificationSummary}\n\nRevise the answer conservatively. Preserve all supported analysis and conversational tone. Remove or clearly label any UNRESOLVED, UNAVAILABLE, or timeout-unverified citation. Check later court treatment before asserting a case is still binding, good law, or not overruled. A limited negative-word search is not proof of continuing validity; possible negative treatment must be qualified. Do not invent replacement citations. Return only the corrected user-facing answer.`,
           {
             systemPrompt,
             model: claudeModel,
@@ -1156,16 +1174,30 @@ export async function generateLexaraConversationResponse(
             cacheSystemPrompt: true,
             cacheSystemPromptPrefix,
             providerPolicy: 'legalwhat',
-            signal: context.signal,
+            signal: citationCorrectionController.signal,
           },
-        );
-        const corrected = correction.content.trim();
+          ),
+          new Promise<null>(resolve => {
+            citationCorrectionTimer = setTimeout(() => {
+              citationCorrectionController.abort(new Error('lexara_citation_correction_deadline'));
+              resolve(null);
+            }, 2_500);
+          }),
+        ]).finally(() => {
+          clearTimeout(citationCorrectionTimer);
+          context.signal?.removeEventListener('abort', relayCitationCancel);
+        });
+        const corrected = correction?.content?.trim();
         if (corrected) text = corrected;
+        else text += ' The cited cases\' current precedential status could not be verified.';
       }
     } catch (error) {
-      console.warn('[LEXARA CitationVerifier] post-generation verification unavailable; preserving answer with existing research guardrails', {
+      console.warn('[LEXARA CitationVerifier] post-generation verification unavailable; case status is not confirmed', {
         error: error instanceof Error ? error.message : String(error),
       });
+      if (!/current precedential status could not be verified/i.test(text)) {
+        text += ' The cited cases\' current precedential status could not be verified.';
+      }
     }
   }
 

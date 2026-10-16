@@ -27,7 +27,12 @@ function harness(options = {}) {
           return {content: typeof grade === 'string' ? grade : JSON.stringify(grade)};
         }
         calls.final.push({prompt, config});
-        assert(config.systemPrompt.includes(doc.excerpt), 'final model must receive the supporting document');
+        if (config.systemPrompt.includes('LEGAL VERIFICATION PARTIAL OR TIMED OUT')) {
+          assert(!config.systemPrompt.includes('LEGAL RESEARCH COMPLETED BEFORE ANSWERING'));
+          assert.match(config.systemPrompt, /Do NOT present an unverified statute/);
+          return {content:'The general legal question depends on the facts and controlling authority; the specific current rule was not verified.'};
+        }
+        assert(config.systemPrompt.includes(doc.excerpt), 'verified final model must receive the supporting document');
         return {content:'The supplied authority supports this fixture answer.'};
       },
       async callClaudeStreaming() { calls.streaming++; throw new Error('legal answer streamed before verification'); },
@@ -87,14 +92,14 @@ function harness(options = {}) {
 const tests = [];
 const test = (name, run) => tests.push({name, run});
 
-test('implicit legal follow-up verifies authority within bounded ten-second research', async()=>{
-  const h=harness({delay:8000});
+test('implicit legal follow-up verifies actual authority inside the shortened live budget', async()=>{
+  const h=harness({delay:2500});
   const {generateLexaraConversationResponse: respond}=h.load('server/lexara/LexaraConversationOrchestrator.ts');
   let done=false;
   const pending=respond('Can they do that?',{previousMessages:[{role:'user',content:'My landlord in Iowa kept my security deposit.'},{role:'lexara',content:'I need to verify the Iowa law.'}],onSpeechChunk:()=>assert.fail('premature speech'),onTextDelta:()=>assert.fail('premature text')}).then(x=>{done=true;return x;});
-  await h.clock.tickAsync(7000);
+  await h.clock.tickAsync(1500);
   assert.equal(done,false); assert.equal(h.calls.final.length,0); assert.equal(h.calls.streaming,0);
-  await h.clock.tickAsync(2000);
+  await h.clock.tickAsync(1500);
   assert.match((await pending).text,/supports this fixture/);
   assert.equal(h.calls.final.length,1); assert(h.calls.research[0].includes('Iowa'));
   assert(h.calls.logs.some(x=>x[1]?.legalResearchStatus==='supported'));
@@ -112,7 +117,7 @@ test('snippets, URL-only sources and metadata never unlock a legal answer',async
     const h=harness({research:()=>packet([{...doc,evidenceLevel,excerpt:evidenceLevel?'Issued: 2026-01-01':undefined}])});
     const pending=h.load('server/lexara/LexaraConversationOrchestrator.ts').generateLexaraConversationResponse('Can they do that?',{jurisdiction:'Iowa'});
     await h.clock.tickAsync(1); const result=await pending;
-    assert.match(result.text,/couldn't establish/); assert.equal(h.calls.final.length,0);assert.equal(h.calls.grade.length,0);assert.equal(h.calls.research.length,3);
+    assert.match(result.text,/specific current rule was not verified/); assert.equal(h.calls.final.length,1);assert.equal(h.calls.grade.length,0);assert.equal(h.calls.research.length,3);
   }
 });
 
@@ -127,7 +132,7 @@ test('assessment failures and invented support URLs cannot authorize an answer',
 test('timeout cancels research and cannot report verification',async()=>{
   const h=harness({hang:true});
   const pending=h.load('server/lexara/LexaraLegalResearchGate.ts').completeLexaraLegalResearch('Iowa fixture question',{});
-  await h.clock.tickAsync(10001);const result=await pending;
+  await h.clock.tickAsync(6001);const result=await pending;
   assert.equal(result.status,'timed-out');assert.equal(result.research,null);assert(h.calls.signals[0].aborted);assert.equal(h.clock.countTimers(),0);
 });
 
@@ -167,7 +172,7 @@ test('real authority discovery continues past federal snippets and reads Iowa pr
   const pending=h.load('server/lexara/LexaraLegalResearchGate.ts').completeLexaraLegalResearch('Iowa landlord security deposit obligations',{jurisdiction:'Iowa'});
   await h.clock.tickAsync(3000);const result=await pending;
   assert.equal(result.status,'supported');assert.equal(h.calls.mesh.length,1);
-  assert(h.calls.retrieval[0].targets.includes(url));assert.equal(h.calls.retrieval[0].timeoutMs,10000);
+  assert(h.calls.retrieval[0].targets.includes(url));assert.equal(h.calls.retrieval[0].timeoutMs,4000);
   assert.equal(result.research.sources[0].evidenceLevel,'document');assert.equal(h.clock.countTimers(),0);
 });
 
@@ -175,6 +180,33 @@ test('real authority discovery with unreadable primary leads does not pass the g
   const h=harness({actualAuthority:true,emptyRetrieval:true});
   const result=await h.load('server/lexara/LexaraLegalResearchGate.ts').completeLexaraLegalResearch('Iowa landlord security deposit obligations',{jurisdiction:'Iowa'});
   assert.equal(result.status,'sources-insufficient');assert.equal(h.calls.mesh.length,3);assert.equal(h.calls.grade.length,0);
+});
+
+ 
+test('primary-text discovery retains official sources across state and federal jurisdictions', async()=>{
+  for(const [jurisdiction, officialDomain] of [
+    ['California','leginfo.legislature.ca.gov'],
+    ['New York','www.nysenate.gov'],
+    ['Texas','statutes.capitol.texas.gov'],
+    ['Federal','www.uscourts.gov'],
+  ]) {
+    const h=harness({actualAuthority:true,emptyRetrieval:true});
+    const outcome=await h.load('server/lexara/LexaraLegalResearchGate.ts').completeLexaraLegalResearch(
+      'What controlling statutes and cases govern this dispute?',
+      {jurisdiction,preferredOfficialDomains:[officialDomain]});
+    assert.equal(outcome.status,'sources-insufficient');
+    assert.equal(h.calls.grade.length,0);
+    assert(h.calls.mesh.some(query=>query.includes('site:'+officialDomain)), jurisdiction+' official law query missing');
+    assert.equal(h.clock.countTimers(),0);
+  }
+});
+
+test('legal precedent assessment applies to all jurisdictions, not just Iowa',async()=>{
+  const h=harness({grade:()=>({sufficient:false,supportingUrls:[]})});
+  await h.load('server/lexara/LexaraLegalResearchGate.ts').completeLexaraLegalResearch(
+    'Is this case still binding?',{jurisdiction:'New York'});
+  assert(h.calls.grade.some(prompt=>prompt.includes('For EVERY state or federal jurisdiction')));
+  assert(h.calls.grade.every(prompt=>!prompt.includes('For Iowa, consider')));
 });
 
 (async()=>{for(const {name,run} of tests){await run();console.log('PASS:',name);}console.log(`${tests.length} verification-before-answer behavioral groups passed.`);})().catch(e=>{console.error(e);process.exitCode=1;});
