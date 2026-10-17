@@ -524,25 +524,33 @@ async function openserp(query: string, signal?: AbortSignal, officialFormQuery =
     .split(',').map(value => value.trim()).filter(value =>
       ['bing', 'google', 'baidu', 'ecosia', 'yandex', 'duckduckgo'].includes(value) && engineAvailable(value)))];
   if (!engines.length) return skippedProvider('openserp');
-  const result = await withTimeout('openserp', officialFormQuery ? 10_000 : process.env.LEXARA_EMBEDDED_SEARCH === 'true' ? 6_500 : 3_000, signal, async requestSignal => {
+  const result = await withTimeout('openserp', officialFormQuery ? 16_000 : process.env.LEXARA_EMBEDDED_SEARCH === 'true' ? 6_500 : 3_000, signal, async requestSignal => {
     const activeEngines = engines.filter(engineAvailable);
     if (!activeEngines.length) throw discoveryError('DISCOVERY_UNAVAILABLE');
     const endpoint = new URL('/mega/search', base.endsWith('/') ? base : base + '/');
     endpoint.searchParams.set('text', query);
     endpoint.searchParams.set('limit', '12');
-    endpoint.searchParams.set('mode', 'balanced');
+    endpoint.searchParams.set('mode', officialFormQuery ? 'fast' : 'balanced');
     endpoint.searchParams.set('engines', activeEngines.join(','));
     let response = await discoveryFetch(fetch, endpoint, { signal: requestSignal, headers: { accept: 'application/json' } });
-    // A single blocked upstream may cause OpenSerp to return HTTP 502.
-    // For court forms, try a different supported engine within the SAME
-    // deadline; never turn a provider problem into a fake empty result.
+    // Official-form requests use the quickest available engine. On a 5xx,
+    // use independent alternatives rather than retrying the same failing
+    // Google/Ecosia aggregator. Both attempts share the bounded deadline.
     if (officialFormQuery && response.status >= 500 && !requestSignal.aborted) {
-      endpoint.searchParams.set('engines', 'baidu');
-      response = await discoveryFetch(fetch, endpoint, { signal: requestSignal, headers: { accept: 'application/json' } });
+      if(response.body) await response.body.cancel().catch(()=>undefined);
+      const alternatives=['baidu','yandex'].filter(engineAvailable);
+      if(alternatives.length){
+        endpoint.searchParams.set('mode','any');
+        endpoint.searchParams.set('engines',alternatives.join(','));
+        response=await discoveryFetch(fetch,endpoint,{
+          signal:requestSignal,headers:{accept:'application/json'},
+        });
+      }
     }
     const payload:any = await readDiscoveryJson(response, 'openserp');
     const failures = Array.isArray(payload?.meta?.engine_errors) ? payload.meta.engine_errors : [];
-    for (const failure of failures) if (engines.includes(failure?.engine)) recordEngineFailure(String(failure.engine), String(failure.error));
+    const requestedEngines=(endpoint.searchParams.get('engines')||'').split(',');
+    for (const failure of failures) if (requestedEngines.includes(failure?.engine)) recordEngineFailure(String(failure.engine), String(failure.error));
     const rows = discoveryRows(Array.isArray(payload?.results) ? payload : payload?.data);
     if (Array.isArray(payload?.meta?.engines_failed) && payload.meta.engines_failed.length) {
       console.info('[LEXARA OpenSERP Coverage]', JSON.stringify({
