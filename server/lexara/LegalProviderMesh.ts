@@ -477,19 +477,26 @@ async function ddgsBackend(query: string, backend: string, budgetMs: number, sig
   return result || [];
 }
 
-async function ddgs(query: string, signal?: AbortSignal): Promise<LegalMeshCandidate[]> {
+async function ddgs(query: string, signal?: AbortSignal, officialFormQuery = false): Promise<LegalMeshCandidate[]> {
   if (!lexaraDdgsBase()) return skippedProvider('ddgsBackend', 'DISCOVERY_NOT_CONFIGURED');
   // Installed DDGS rejects Bing and silently substitutes auto. Allow only
   // supported backends so an invalid name cannot reopen excluded engines.
   const supported = new Set(['brave', 'google', 'grokipedia', 'mojeek', 'startpage', 'wikipedia', 'yahoo']);
   const permittedBackends = (value: string) => [...new Set(value.split(',').map(x=>x.trim() === 'auto' ? 'yahoo' : x.trim()).filter(x=>supported.has(x) && engineAvailable(x)))].join(',');
   const configuredPrimary = process.env.LEXARA_DDGS_BACKEND?.trim() || 'yahoo';
-  const primary = permittedBackends(process.env.LEXARA_EMBEDDED_SEARCH === 'true'
-    ? 'wikipedia,grokipedia,' + configuredPrimary : configuredPrimary);
-  const fallback = permittedBackends(process.env.LEXARA_DDGS_FALLBACK_BACKENDS?.trim() || '');
+  // Court-form searches benefit from real web search, not encyclopedia-only
+  // backends, and may take longer than ordinary conversational lookup.
+  const primary = permittedBackends(officialFormQuery
+    ? 'google,' + configuredPrimary
+    : process.env.LEXARA_EMBEDDED_SEARCH === 'true'
+      ? 'wikipedia,grokipedia,' + configuredPrimary : configuredPrimary);
+  const fallback = permittedBackends(process.env.LEXARA_DDGS_FALLBACK_BACKENDS?.trim()
+    || (officialFormQuery ? 'mojeek,startpage' : ''));
   if (!primary) return skippedProvider('ddgsBackend');
-  const first = await ddgsBackend(query, primary, (laneFailures.get('ddgsBackend') || 0) > 0 ? 1_500 : 2_200, signal);
-  return first.length || !fallback ? first : ddgsBackend(query, fallback, 900, signal);
+  const first = await ddgsBackend(query, primary,
+    officialFormQuery ? 6_500 : (laneFailures.get('ddgsBackend') || 0) > 0 ? 1_500 : 2_200, signal);
+  return first.length || !fallback ? first : ddgsBackend(query, fallback,
+    officialFormQuery ? 4_000 : 900, signal);
 }
 
 function lexaraOpenserpBase(): string {
@@ -499,15 +506,15 @@ function lexaraOpenserpBase(): string {
       ? 'http://lexara-openserp.railway.internal:7000' : '');
 }
 
-async function openserp(query: string, signal?: AbortSignal): Promise<LegalMeshCandidate[]> {
+async function openserp(query: string, signal?: AbortSignal, officialFormQuery = false): Promise<LegalMeshCandidate[]> {
   const base = lexaraOpenserpBase();
   if (!base) return skippedProvider('openserp', 'DISCOVERY_NOT_CONFIGURED');
   const engines = [...new Set((process.env.LEXARA_OPENSERP_ENGINES
-    || (process.env.LEXARA_EMBEDDED_SEARCH === 'true' ? 'bing,google' : 'baidu'))
+    || (officialFormQuery ? 'google,ecosia' : process.env.LEXARA_EMBEDDED_SEARCH === 'true' ? 'bing,google' : 'baidu'))
     .split(',').map(value => value.trim()).filter(value =>
       ['bing', 'google', 'baidu', 'ecosia', 'yandex', 'duckduckgo'].includes(value) && engineAvailable(value)))];
   if (!engines.length) return skippedProvider('openserp');
-  const result = await withTimeout('openserp', process.env.LEXARA_EMBEDDED_SEARCH === 'true' ? 6_500 : 3_000, signal, async requestSignal => {
+  const result = await withTimeout('openserp', officialFormQuery ? 10_000 : process.env.LEXARA_EMBEDDED_SEARCH === 'true' ? 6_500 : 3_000, signal, async requestSignal => {
     const activeEngines = engines.filter(engineAvailable);
     if (!activeEngines.length) throw discoveryError('DISCOVERY_UNAVAILABLE');
     const endpoint = new URL('/mega/search', base.endsWith('/') ? base : base + '/');
@@ -515,7 +522,14 @@ async function openserp(query: string, signal?: AbortSignal): Promise<LegalMeshC
     endpoint.searchParams.set('limit', '12');
     endpoint.searchParams.set('mode', 'balanced');
     endpoint.searchParams.set('engines', activeEngines.join(','));
-    const response = await discoveryFetch(fetch, endpoint, { signal: requestSignal, headers: { accept: 'application/json' } });
+    let response = await discoveryFetch(fetch, endpoint, { signal: requestSignal, headers: { accept: 'application/json' } });
+    // A single blocked upstream may cause OpenSerp to return HTTP 502.
+    // For court forms, try a different supported engine within the SAME
+    // deadline; never turn a provider problem into a fake empty result.
+    if (officialFormQuery && response.status >= 500 && !requestSignal.aborted) {
+      endpoint.searchParams.set('engines', 'baidu');
+      response = await discoveryFetch(fetch, endpoint, { signal: requestSignal, headers: { accept: 'application/json' } });
+    }
     const payload:any = await readDiscoveryJson(response, 'openserp');
     const failures = Array.isArray(payload?.meta?.engine_errors) ? payload.meta.engine_errors : [];
     for (const failure of failures) if (engines.includes(failure?.engine)) recordEngineFailure(String(failure.engine), String(failure.error));
@@ -654,8 +668,8 @@ async function freeSearch(
       allowPaidSearch ? tavily(query, controller.signal, officialFormQuery ? 5_000 : 2_000) : Promise.resolve([]),
       duckDuckGoInstantAnswer(query, controller.signal),
       searxng(query, controller.signal),
-      ddgs(query, controller.signal),
-      openserp(query, controller.signal),
+      ddgs(query, controller.signal, officialFormQuery),
+      openserp(query, controller.signal, officialFormQuery),
     ];
     if (_firstUseful && !officialFormQuery) {
       const completed: LegalMeshCandidate[][] = [];
