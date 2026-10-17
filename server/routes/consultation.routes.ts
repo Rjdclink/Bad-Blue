@@ -9,7 +9,7 @@ import { isAuthenticated } from '../auth';
 import { asyncHandler } from '../errorHandler';
 import { analyzeLegalIssue } from '../legalAI';
 import { generateLegalAnalysis } from '../aiProvider';
-import { researchLegalAuthority, formatAuthorityResearchForSystem } from '../lexara/LexaraAuthorityResearch';
+import { researchLegalAuthority, formatAuthorityResearchForSystem, discoverClaudeOfficialFormLeads } from '../lexara/LexaraAuthorityResearch';
 import { resolveUSJurisdiction } from '../lexara/LexaraJurisdictionResolver';
 import { formatJurisdictionAuthorityForSystem, resolveJurisdictionAuthorityProfile } from '../lexara/LexaraJurisdictionAuthority';
 import { formatCitationVerificationForCorrection, verifyLegalCitationsInText } from '../lexara/LexaraCitationVerifier';
@@ -503,10 +503,52 @@ export function setupConsultationRoutes(app: Express): void {
       });
     const issuerHosts = [...new Set([...courtDomains,...agencyDomains])];
     const issuingDomains = issuerHosts.length ? issuerHosts : undefined;
-    const formResearch = reliefDocument && authorityResearch ? { ...authorityResearch, sources: authorityResearch.sources.filter(source =>
+    let formResearch = reliefDocument && authorityResearch ? { ...authorityResearch, sources: authorityResearch.sources.filter(source =>
       source.kind === 'primary' && source.evidenceLevel === 'document' && /expung|expunc|sealing|annul|nondisclosure|set.aside|vacat/i.test([source.title,source.excerpt].join(' '))) } : authorityResearch;
-    const candidates = officialFormRequested
+    let candidates = officialFormRequested
       ? rankOfficialLegalForms(formResearch,formDocumentLabel,requestedFormNumber,issuingDomains) : [];
+    if (officialFormRequested && !reliefDocument) {
+      // A search result is NOT a retrieved form. Verify actual downloadable
+      // originals before offering multiple choices or giving up on an issuer.
+      const available: typeof candidates = [];
+      for (const candidate of candidates.slice(0,5)) {
+        try {
+          await inspectOfficialForm(candidate.form);
+          available.push(candidate);
+        } catch (error) {
+          log.warn('Official form search lead not downloadable; continuing', {
+            message:error instanceof Error?error.message:String(error),
+          });
+        }
+      }
+      candidates=available;
+      // Claude web search is the last resort for FORM DISCOVERY only; it is
+      // never allowed to invent or approve court forms. Existing inspection
+      // and issuing-jurisdiction verification still apply to its source leads.
+      if (!candidates.length) {
+        const claudeLeads=await discoverClaudeOfficialFormLeads(
+          formDocumentLabel,documentJurisdiction,issuingDomains||[],
+        );
+        if (claudeLeads.length) {
+          formResearch={
+            ...(formResearch || {searchedAt:new Date().toISOString()}),
+            sources:[...(formResearch?.sources || []), ...claudeLeads],
+          } as NonNullable<typeof authorityResearch>;
+          for (const candidate of rankOfficialLegalForms(
+            formResearch,formDocumentLabel,requestedFormNumber,issuingDomains,
+          ).slice(0,5)) {
+            try {
+              await inspectOfficialForm(candidate.form);
+              candidates.push(candidate);
+            } catch (error) {
+              log.warn('Claude-backed official form lead not downloadable; continuing', {
+                message:error instanceof Error?error.message:String(error),
+              });
+            }
+          }
+        }
+      }
+    }
     const offeredChoices = Array.isArray(req.body?.formChoices)
       ? req.body.formChoices.filter((choice:unknown):choice is {title:string;url:string} =>
           Boolean(choice && typeof choice==='object' && typeof (choice as any).url==='string'
