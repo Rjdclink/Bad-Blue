@@ -503,6 +503,13 @@ export function setupConsultationRoutes(app: Express): void {
           }
         }
       }
+      if(selectedOfferedChoice){
+        return res.status(422).json({
+          formSelectionUnavailable:true,
+          error:'The selected source is not a verified downloadable form for this jurisdiction. The original selection was not replaced.',
+          selectedFormTitle:selectedOfferedChoice.title,
+        });
+      }
     }
 
     const authorityPrompt = [
