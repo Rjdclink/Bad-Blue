@@ -14,13 +14,13 @@ const packet = sources => ({sources, summary: 'fixture', hasPrimaryAuthority: tr
 
 function harness(options = {}) {
   const clock = FakeTimers.createClock();
-  const calls = { research: [], researchContexts: [], grade: [], final: [], streaming: 0, logs: [], signals: [], mesh: [], retrieval: [], web: [] };
+  const calls = { research: [], researchContexts: [], grade: [], final: [], streaming: 0, classifier: 0, directory: 0, court: 0, logs: [], signals: [], mesh: [], retrieval: [], web: [] };
   const cache = new Map();
   const stubs = {
     'server/claude.ts': {
       async callClaude(prompt, config) {
-        if (prompt.startsWith('Classify whether')) return {content: JSON.stringify(options.semantic || {needed: true, intent:'legal', requestedFact:'none', objective:'Under Iowa law, may a landlord keep this security deposit?'})};
-        if (prompt.startsWith('Assess whether')) {
+        if (prompt.startsWith('Classify whether')) { calls.classifier++; return {content: JSON.stringify(options.semantic || {needed: true, intent:'legal', requestedFact:'none', objective:'Under Iowa law, may a landlord keep this security deposit?'})}; }
+        if (prompt.startsWith('Assess whether') || prompt.startsWith('Verify only the specific rule')) {
           calls.grade.push(prompt);
           if (options.gradeThrows) throw new Error('fixture assessment outage');
           const grade = options.grade?.(calls.grade.length) || {sufficient: true, supportingUrls:[url]};
@@ -31,7 +31,9 @@ function harness(options = {}) {
           assert(!config.systemPrompt.includes('LEGAL RESEARCH COMPLETED BEFORE ANSWERING'));
           assert.match(config.systemPrompt, /Do NOT present an unverified statute/);
           assert.match(config.systemPrompt, /A search timeout is not proof that no statute exists/);
-          return {content:'The general legal question depends on the facts and controlling authority; the specific current rule was not verified.'};
+          assert.match(config.systemPrompt, /Never volunteer internal research timeouts/);
+          assert(!config.systemPrompt.includes('APPLICATION RESEARCH STATUS'), 'internal source failure must not be inserted as an additional warning');
+          return {content:'Which state is this about, and what happened?'};
         }
         assert(config.systemPrompt.includes(doc.excerpt), 'verified final model must receive the supporting document');
         return {content:'The supplied authority supports this fixture answer.'};
@@ -52,6 +54,7 @@ function harness(options = {}) {
         return options.research ? options.research(calls.research.length) : packet([doc]);
       },
       formatAuthorityResearchForSystem: r => r ? r.summary : '',
+      hasLexaraDirectStatutePublisher: jurisdiction => /^(?:iowa|california|texas|new york|florida)$/i.test(String(jurisdiction)),
     },
     'server/lexara/RecordReliefWorkflow.ts': {recordReliefTopic:()=>false},
     'shared/lawTypes.ts':{LAW_TYPE_DATA:[]},
@@ -59,14 +62,14 @@ function harness(options = {}) {
     'server/lexara/LexaraLegalDomainProfiles.ts':{getLexaraLegalDomainProfile:()=>null,formatLexaraDomainSpecialization:()=>''},
     'server/lexara/LexaraCourtRecords.ts':{planLexaraCourtRecords:()=>null,formatLexaraCourtRecordPlan:()=>''},
     'server/lexara/LexaraJurisdictionResolver.ts':{hasExplicitLocationCue:()=>false,resolveUSJurisdiction:async()=>null},
-    'server/lexara/LexaraJurisdictionAuthority.ts':{resolveJurisdictionAuthorityProfile:async()=>({officialResources:[],preferredOfficialDomains:['legis.iowa.gov']}),formatJurisdictionAuthorityForSystem:()=>''},
+    'server/lexara/LexaraJurisdictionAuthority.ts':{resolveJurisdictionAuthorityProfile:async()=>{calls.directory++;return {officialResources:[],preferredOfficialDomains:['legis.iowa.gov']}},formatJurisdictionAuthorityForSystem:()=>''},
     'server/lexara/LegalDeadlineEngine.ts':{inferLegalDeadlineFromPrompt:()=>null,formatDeadlineCalculationForSystem:()=>''},
     'server/lexara/LexaraBackgroundInvestigation.ts':{formatLexaraBackgroundResearchForSystem:()=>'',investigateLexaraBackgroundQuestion:async()=>{throw new Error('unexpected personal investigation');}},
     'server/lexara/LexaraCitationVerifier.ts':{verifyLegalCitationsInText:async()=>[],formatCitationVerificationForCorrection:()=>''},
   };
   if (options.actualAuthority) {
     delete stubs['server/lexara/LexaraAuthorityResearch.ts'];
-    stubs['server/lexara/LexaraCourtListenerClient.ts'] = {lexaraCourtListenerJson:async()=>({results:[{caseName:'Unrelated federal opinion',absolute_url:'/opinion/1/',snippet:'Index snippet'}]})};
+    stubs['server/lexara/LexaraCourtListenerClient.ts'] = {lexaraCourtListenerJson:async()=>{calls.court++;return {results:[{caseName:'Unrelated federal opinion',absolute_url:'/opinion/1/',snippet:'Index snippet'}]}}};
     stubs['server/lexara/LexaraDiscoveryLearning.ts'] = {rememberLexaraDiscoveryOutcome:async()=>{}};
     stubs['server/lexara/RecordReliefSources.ts'] = {getRecordReliefProfile:()=>undefined,recordReliefDomains:()=>[]};
     stubs['server/lexara/LegalProviderMesh.ts'] = {
@@ -128,7 +131,7 @@ test('snippets, URL-only sources and metadata never unlock a legal answer',async
     const h=harness({research:()=>packet([{...doc,evidenceLevel,excerpt:evidenceLevel?'Issued: 2026-01-01':undefined}])});
     const pending=h.load('server/lexara/LexaraConversationOrchestrator.ts').generateLexaraConversationResponse('Can they do that?',{jurisdiction:'Iowa'});
     await h.clock.tickAsync(1); const result=await pending;
-    assert.match(result.text,/specific current rule was not verified/); assert.equal(h.calls.final.length,1);assert.equal(h.calls.grade.length,0);assert.equal(h.calls.research.length,3);
+    assert.match(result.text,/Which state is this about/);assert.doesNotMatch(result.text,/could not verify|source unavailable|timed out/i); assert.equal(h.calls.final.length,1);assert.equal(h.calls.grade.length,0);assert.equal(h.calls.research.length,3);
   }
 });
 
@@ -349,6 +352,134 @@ test('direct official retrieval is reused across targeted retries, and web fallb
   assert.equal(weak.calls.web.length,1);
   assert.equal(weak.calls.web[0].config.maxTokens,900);
   assert.equal(weak.calls.web[0].config.retryTruncatedOutput,true);
+});
+
+test('statute-depth planner is jurisdiction-independent and keeps drafting, precedents and complex procedures deep',async()=>{
+  const {planLexaraLegalResearchDepth:plan}=harness().load('server/lexara/LexaraLegalResearchGate.ts');
+  for(const request of [
+    'What Iowa statute applies to hit and run?',
+    'What California law covers traffic accidents?',
+    'Which Texas code section regulates deposits?',
+    'What Vermont law covers leaving the scene of an accident?',
+    'What is 18 USC 924c?',
+  ]) assert.equal(plan(request), 'direct',request);
+  assert.equal(plan('Can they do that?'),'standard');
+  for(const request of [
+    'Draft a complaint under Iowa Code 321.261',
+    'Prepare a motion with court rules and supporting law',
+    'Compare case law and precedent across jurisdictions',
+    'Check amendments and effective date of the statute',
+    'Analyze constitutional appeals and appellate precedent',
+    'Which statutes apply, including the elements, penalties, and reporting duties?',
+  ]) assert.equal(plan(request),'deep',request);
+  assert.equal(plan('What Iowa statute applies?',{courtRecordPlan:{}}),'deep');
+  assert.equal(plan('Which Iowa statute controls?',{documentAction:true}),'deep');
+  assert.equal(plan('Which Iowa statute controls?',{researchIntent:'mixed'}),'deep');
+  assert.equal(plan('Which state law applies?',{jurisdiction:'Federal + Iowa'}),'deep');
+  assert.equal(plan('What are all legal requirements for a medical facility?'),'deep');
+  assert.equal(plan('What is the municipal noise ordinance?'),'standard');
+  assert.equal(plan('What regulations apply to clinical licensing?'),'standard');
+});
+
+test('direct statute question accepts one independently verified primary source without three broad passes',async()=>{
+  const h=harness();
+  const result=await h.load('server/lexara/LexaraLegalResearchGate.ts').completeLexaraLegalResearch(
+    'Which Iowa statute covers hit and run?',{jurisdiction:'Iowa',researchIntent:'legal',allowDirectStatuteLookup:true});
+  assert.equal(result.status,'supported');assert.equal(result.attempts,1);
+  assert.equal(h.calls.research.length,1);assert.equal(h.calls.web.length,0);
+  assert.equal(h.calls.researchContexts[0].directStatuteLookup,true);
+  assert(h.calls.grade[0].startsWith('Verify only the specific rule'));
+  assert.match(h.calls.grade[0],/conditional answer with one clarifying question/);
+  assert.match(h.calls.grade[0],/Never claim a penalty, deadline or exception/);
+  assert.match(h.calls.grade[0],/respect material qualifications/);
+  assert.equal(h.clock.countTimers(),0);
+});
+
+test('a URL, metadata or a false grade never authorizes the fast statute answer',async()=>{
+  for(const options of [
+    {research:()=>packet([{...doc,evidenceLevel:'snippet'}])},
+    {research:()=>packet([{...doc,evidenceLevel:'metadata'}])},
+    {grade:()=>({sufficient:true,supportingUrls:['https://invented.example/']})},
+    {grade:()=>({sufficient:false,supportingUrls:[]})},
+  ]) {
+    const h=harness(options);
+    const out=await h.load('server/lexara/LexaraLegalResearchGate.ts').completeLexaraLegalResearch(
+      'Which Iowa statute applies?',{jurisdiction:'Iowa',allowDirectStatuteLookup:true});
+    assert.equal(out.status,'sources-insufficient');assert.equal(out.attempts,1);
+    assert(!out.research?.hasUsableEvidence);assert.equal(h.calls.web.length,0);
+    assert.equal(h.clock.countTimers(),0);
+  }
+});
+
+test('simple statute research has a bounded seven-second deadline and preserves cancellations',async()=>{
+  const h=harness({hang:true});let done=false;
+  const pending=h.load('server/lexara/LexaraLegalResearchGate.ts').completeLexaraLegalResearch(
+    'What Iowa law covers leaving the scene?',{jurisdiction:'Iowa',allowDirectStatuteLookup:true}).then(out=>{done=true;return out});
+  await h.clock.tickAsync(6_999);assert.equal(done,false);
+  await h.clock.tickAsync(2);const out=await pending;
+  assert.equal(out.status,'timed-out');assert.equal(out.attempts,1);
+  assert.equal(h.calls.signals[0].aborted,true);assert.equal(h.clock.countTimers(),0);
+});
+
+test('standalone simple legal question avoids semantic classification and unnecessary directory',async()=>{
+  const h=harness();
+  const result=await h.load('server/lexara/LexaraConversationOrchestrator.ts').generateLexaraConversationResponse(
+    'What Iowa law covers leaving the scene of an accident?',{jurisdiction:'Iowa'});
+  assert.match(result.text,/supports this fixture/);
+  assert.equal(h.calls.classifier,0,'obvious direct-law request should not wait for a model just to classify it');
+  assert.equal(h.calls.directory,0,'known official legislative publisher does not need a court directory');
+  assert.equal(h.calls.researchContexts[0].allowDirectStatuteLookup,true);
+  assert.equal(h.calls.researchContexts[0].directStatuteLookup,true);
+  assert.equal(h.calls.research.length,1);
+  assert.equal(h.calls.streaming,0);
+});
+
+test('contextual legal follow-up keeps comprehensive verification despite a synthesized state-law query',async()=>{
+  const h=harness({grade:n=>n===1?{sufficient:false,supportingUrls:[],nextQuery:'Find statutory exceptions'}:{sufficient:true,supportingUrls:[url]}});
+  const out=await h.load('server/lexara/LexaraConversationOrchestrator.ts').generateLexaraConversationResponse(
+    'Can they do that?',{jurisdiction:'Iowa',previousMessages:[{role:'user',content:'My landlord kept a security deposit.'}]});
+  assert.match(out.text,/supports this fixture/);
+  assert.equal(h.calls.researchContexts[0].allowDirectStatuteLookup,false);
+  assert.equal(h.calls.researchContexts[0].directStatuteLookup,false);
+  assert.equal(h.calls.research.length,2);
+});
+
+test('direct Iowa statute lookup retrieves actual official law and skips unrelated federal case indexes',async()=>{
+  const actualUrl='https://www.legis.iowa.gov/docs/code/321.261.pdf';
+  const h=harness({actualAuthority:true,meshLeads:[
+    {url:'https://www.legis.iowa.gov/law/iowacode',title:'Iowa code listing',excerpt:'Iowa Code section 321.261',provider:'fixture'},
+  ],grade:()=>({sufficient:true,supportingUrls:[actualUrl]})});
+  const out=await h.load('server/lexara/LexaraLegalResearchGate.ts').completeLexaraLegalResearch(
+    'What Iowa law covers leaving the scene?',{jurisdiction:'Iowa',researchIntent:'legal',allowDirectStatuteLookup:true});
+  assert.equal(out.status,'supported');assert.equal(out.attempts,1);
+  assert(h.calls.retrieval.some(request=>request.targets.includes(actualUrl)), 'official PDF text was actually retrieved');
+  assert.equal(h.calls.court,0,'state statute lookup must not initiate irrelevant federal opinion index searches');
+  assert.equal(h.calls.web.length,0);
+});
+
+test('unknown legal venue gets one necessary question without source calls',async()=>{
+  const h=harness();
+  const output=await h.load('server/lexara/LexaraConversationOrchestrator.ts').generateLexaraConversationResponse(
+    'What statute covers hit and run?',{});
+  assert.match(output.text,/Which state or jurisdiction/);
+  assert.equal(h.calls.research.length,0);
+  assert.equal(h.calls.final.length,0);
+  assert.equal(h.calls.web.length,0);
+});
+
+test('direct California statute retrieves primary text without a jurisdiction-specific PDF seed',async()=>{
+  const official='https://leginfo.legislature.ca.gov/faces/codes_displaySection.xhtml?sectionNum=20001&lawCode=VEH';
+  const h=harness({actualAuthority:true,meshLeads:[{
+    url:official,title:'California Vehicle Code section 20001',excerpt:'Official code search lead',provider:'fixture',
+  }],grade:()=>({sufficient:true,supportingUrls:[official]})});
+  const result=await h.load('server/lexara/LexaraLegalResearchGate.ts').completeLexaraLegalResearch(
+    'Which California law addresses leaving an accident scene?',{
+      jurisdiction:'California',researchIntent:'legal',allowDirectStatuteLookup:true,
+    });
+  assert.equal(result.status,'supported');assert.equal(result.attempts,1);
+  assert(h.calls.retrieval.some(request=>request.targets.includes(official)));
+  assert(h.calls.mesh.some(item=>item.query.includes('site:leginfo.legislature.ca.gov')), 'state legislature searched directly');
+  assert.equal(h.calls.web.length,0);
 });
 
 (async()=>{for(const {name,run} of tests){await run();console.log('PASS:',name);}console.log(`${tests.length} verification-before-answer behavioral groups passed.`);})().catch(e=>{console.error(e);process.exitCode=1;});
