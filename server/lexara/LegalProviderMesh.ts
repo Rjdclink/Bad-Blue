@@ -488,7 +488,7 @@ async function ddgs(query: string, signal?: AbortSignal): Promise<LegalMeshCandi
     ? 'wikipedia,grokipedia,' + configuredPrimary : configuredPrimary);
   const fallback = permittedBackends(process.env.LEXARA_DDGS_FALLBACK_BACKENDS?.trim() || '');
   if (!primary) return skippedProvider('ddgsBackend');
-  const first = await ddgsBackend(query, primary, 2_200, signal);
+  const first = await ddgsBackend(query, primary, (laneFailures.get('ddgsBackend') || 0) > 0 ? 1_500 : 2_200, signal);
   return first.length || !fallback ? first : ddgsBackend(query, fallback, 900, signal);
 }
 
