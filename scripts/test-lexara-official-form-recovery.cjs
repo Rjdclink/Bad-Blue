@@ -261,10 +261,14 @@ async function run({facts='USER: Please find the Iowa child support modification
 
   const source=fs.readFileSync(path.join(root,'client/src/components/LexaraConversation.tsx'),'utf8');
   assert(source.includes('formSourceUrls: pendingDocument.formSourceUrls'));
+  assert(source.includes('remainingOfficialForms:remainingPacket'));
+  assert(source.includes('officialFormPacketPreviews.filter'));
+  assert(source.includes('templateMode:true'));
+
   assert(source.includes('String(data?.response ||'));
   const mesh=fs.readFileSync(path.join(root,'server/lexara/LegalProviderMesh.ts'),'utf8');
   assert(mesh.includes('officialFormQuery ? 6_500'));
-  assert(mesh.includes('officialFormQuery ? 10_000'));
+  assert(mesh.includes('officialFormQuery ? 16_000'));
   assert(mesh.includes('officialFormQuery ? 4_000'));
   const chat=fs.readFileSync(path.join(root,'server/routes/lexara.chat.routes.ts'),'utf8');
   const start=chat.indexOf('function detectDocumentIntent');
