@@ -25,6 +25,7 @@ export interface OfficialFormField {
 export interface InspectedOfficialForm {
   sourceUrl: string; contentType: 'pdf' | 'docx'; bytes: Buffer;
   fields: OfficialFormField[]; fillable: boolean;
+  uninspectable?: boolean;
 }
 async function download(url: string, trustedDomains?: readonly string[]): Promise<Buffer> {
   // Cache only public original files, never forms populated with user facts.
@@ -145,7 +146,16 @@ export async function inspectOfficialForm(form: OfficialLegalForm): Promise<Insp
     const fields=await inspectDocxFields(bytes);
     return {sourceUrl:resolved.url,contentType:'docx',bytes,fields,fillable:fields.length>0};
   }
-  const pdf=await PDFDocument.load(bytes,{ignoreEncryption:false});
+  if(bytes.subarray(0,5).toString('ascii')!=='%PDF-')
+    throw new Error('The official form source did not return a valid PDF or Word document');
+  let pdf:PDFDocument;
+  try { pdf=await PDFDocument.load(bytes,{ignoreEncryption:false}); }
+  catch {
+    // Some official court PDFs use encryption, proprietary forms, or malformed
+    // cross-reference tables. Never modify those bytes or claim prefill worked.
+    // The unaltered court-issued original remains available for download.
+    return {sourceUrl:resolved.url,contentType:'pdf',bytes,fields:[],fillable:false,uninspectable:true};
+  }
   const fields: OfficialFormField[]=[];
   const pages=pdf.getPages();
   for(const field of pdf.getForm().getFields()){
