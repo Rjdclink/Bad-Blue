@@ -10,7 +10,7 @@ function load(file,dependencies={}){
     compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,esModuleInterop:true},
   }).outputText;
   new Function('require','module','exports','URL','Buffer',output)(
-    key=>Object.hasOwn(dependencies,key)?dependencies[key]:require(key),mod,mod.exports,URL,Buffer);
+    key=>Object.hasOwn(dependencies,key)?dependencies[key]:{},mod,mod.exports,URL,Buffer);
   return mod.exports;
 }
 const resolver=load('server/lexara/OfficialLegalFormResolver.ts');
