@@ -273,7 +273,8 @@ function detectDocumentIntent(prompt: string, previousMessages: LexaraConversati
   const previousFormRequest=[...previousMessages].reverse().find(message=>
     message.role==='user' && isLexaraOfficialFormDeliveryRequest(message.content));
   const previouslyLinkedForm=previousMessages.slice(-8).some(message=>
-    message.role!=='user' && /https:\/\/[^\s<>"')\]]+(?:\.pdf|\.docx|\/download|\/embedDocument)(?:[?#/]|$)/i.test(message.content));
+    message.role!=='user' && message.content.includes('https://')
+      && /(?:\.pdf|\.docx|\/download|\/embedDocument)\b/i.test(message.content));
   const sameFormFollowup=Boolean(previousFormRequest && previouslyLinkedForm
     && /^(?:(?:please\s+)?(?:can|could|would|will)\s+you\s+)?(?:please\s+)?(?:get|grab|fetch|retrieve|download|send|give|open|pull\s+up)\s+(?:me\s+)?(?:it|that|that\s+one|the\s+form|that\s+form)(?:\s+(?:for\s+me|please))?[?.!]*$/i.test(prompt.trim()));
   const officialFormDelivery = isLexaraOfficialFormDeliveryRequest(prompt) || sameFormFollowup;
