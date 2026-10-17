@@ -37,7 +37,9 @@ function typeOf(url: string): OfficialLegalForm['contentType'] {
 export function resolveOfficialLegalForm(research: LexaraAuthorityResearch | null, documentType: string, requestedFormNumber?: string, issuingDomains?: readonly string[]): OfficialLegalForm {
   if(!research?.sources?.length) return { requirement:'unverified', verifiedOfficial:false, localRules:[], companionDocuments:[], provenance:[] };
   const escapedNumber = requestedFormNumber?.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const numberPattern = escapedNumber ? new RegExp(`(?:^|[^a-z0-9.:-])${escapedNumber}(?![a-z0-9.-]|:[a-z0-9])`, 'i') : null;
+  const numberPattern = escapedNumber
+    ? new RegExp(`(?:^|[^a-z0-9${/^\\d+$/.test(requestedFormNumber || '') ? '' : '.:-'}])${escapedNumber}(?![a-z0-9.-]|:[a-z0-9])`, 'i')
+    : null;
   // An unrelated agency's .gov file is not a form issued by this court.
   const matchesIssuer=(url:string) => !issuingDomains?.length || issuingDomains.some(domain=>{
     try {
@@ -51,11 +53,19 @@ export function resolveOfficialLegalForm(research: LexaraAuthorityResearch | nul
     && FORM_HINT.test([source.title,source.excerpt].filter(Boolean).join(' '))
     && !RETIRED_FORM_HINT.test([source.title,source.excerpt].filter(Boolean).join(' '))
     && (!numberPattern || numberPattern.test(source.title)));
-  const documentTokens=String(documentType||'').toLowerCase().split(/[^a-z0-9]+/).filter(token=>token.length>=4 && !['form','legal','document','official'].includes(token));
+  // Official publishers often use "Application to Modify" while users ask
+  // for "Modification of" the same obligation. Match the instrument's
+  // meaning without requiring the user's conversational words in its title.
+  const comparable=(value:string)=>String(value||'').toLowerCase()
+    .replace(/\\b(?:modification|modifying|modified)\\b/g,'modify')
+    .replace(/\\b(?:petitions?)\\b/g,'petition');
+  const documentTokens=comparable(documentType).split(/[^a-z0-9]+/)
+    .filter(token=>token.length>=4
+      && !['form','legal','document','official','requested','please','county','obligation'].includes(token));
   const scored=relevant.filter(source => !requestedFormNumber || !/\b(?:instructions?|guide|guidance|checklist)\b/i.test(source.title)).map(source=>{
-    const haystack=[source.title,source.excerpt].filter(Boolean).join(' ').toLowerCase();
+    const haystack=comparable([source.title,source.excerpt].filter(Boolean).join(' '));
     const tokenScore=documentTokens.reduce((total,token)=>total+(haystack.includes(token)?1:0),0);
-    const titleScore=documentTokens.reduce((total,token)=>total+(source.title.toLowerCase().includes(token)?1:0),0);
+    const titleScore=documentTokens.reduce((total,token)=>total+(comparable(source.title).includes(token)?1:0),0);
     const exactFormScore=numberPattern ? 3 : 0;
     const score=tokenScore+titleScore*3+exactFormScore+(typeOf(source.url)!=='html'?1:0);
     return {source,score,tokenScore,titleScore,haystack};
