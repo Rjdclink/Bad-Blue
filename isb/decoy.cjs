@@ -43,7 +43,9 @@ function createDecoyHandler(options = {}) {
       examined++;
       // Use only transient route shape. Ignore request headers, origin IP, and body.
       const path = typeof req.url === 'string' ? req.url.slice(0,2048) : '';
-      const signal = classify({host:'legalwhat.com',path});
+      // Embedded ISB uses a reserved prefix; the original standalone decoy still accepts root probes.
+      const probePath = path.startsWith('/__isb__/') ? path.slice(8) : path;
+      const signal = classify({host:'legalwhat.com',path:probePath});
       const decoyBait = bubbles.publicPaths(32).includes(path.split('?')[0]);
       if(signal.level !== 'suspicious' && !decoyBait)return;
       probes++;
