@@ -507,6 +507,12 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   const [emotion, setEmotion] = useState<LEXARAEmotionHint>('calm');
   const [gaze, setGaze] = useState<LEXARAGazeHint>('camera');
   const [conversationDocument, setConversationDocument] = useState<ConversationDocument | null>(null);
+  const [officialFormPreview, setOfficialFormPreview] = useState<{
+    url: string; title: string; format: 'pdf' | 'docx'; sourceUrl: string; revision?: string; notice?: string;
+  } | null>(null);
+  useEffect(() => () => {
+    if (officialFormPreview?.url) URL.revokeObjectURL(officialFormPreview.url);
+  }, [officialFormPreview]);
   const [savedArtifact, setSavedArtifact] = useState<{ title: string; fileName: string; mimeType: string; downloadUrl: string } | null>(null);
   const [deadlineCalendar, setDeadlineCalendar] = useState<{ label: string; dueDate: string; downloadUrl: string } | null>(null);
   const [documentBusy, setDocumentBusy] = useState(false);
@@ -524,7 +530,11 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     // consent may have populated the signal; text-only mode never gets a surprise prompt.
     void captureLexaraDeviceLocation({ prompt: false }).catch(() => undefined);
   }, []);
-  const [pendingDocument, setPendingDocument] = useState<{ title: string; facts: string; state: string; templateMode: boolean; confirmed: boolean; followUpQuestion?: string; missingFields?: string[]; packetItem?: boolean } | null>(null);
+  const [pendingDocument, setPendingDocument] = useState<{
+    title: string; facts: string; state: string; templateMode: boolean; confirmed: boolean;
+    followUpQuestion?: string; missingFields?: string[]; requiredFields?: string[];
+    packetItem?: boolean; officialFormDelivery?: boolean; autoRetrieve?: boolean;
+  } | null>(null);
   const [showReviewPrompt, setShowReviewPrompt] = useState(false);
 
   const conversationRef = useRef<ConversationMessage[]>([]);
@@ -1131,16 +1141,29 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     if (pendingDocument?.confirmed && (pendingDocument.followUpQuestion || pendingDocument.missingFields?.length)) {
       appendMessage('user', message);
       setUserInput('');
+      const currentField = pendingDocument.missingFields?.[0];
+      const skip = /^(?:skip|leave (?:it|this|that)(?: field)? blank|not applicable|n\/?a)$/i.test(message.trim());
+      const isRequired = Boolean(currentField && pendingDocument.requiredFields?.includes(currentField));
+      if (currentField && skip && isRequired) {
+        appendMessage('lexara', 'This field is marked required by the form. You may preview it unfinished, but the field still needs an answer.');
+        return;
+      }
       setPendingDocument(previous => previous ? {
         ...previous,
-        facts: `${previous.facts}\n\nLEXARA ASKED: ${previous.followUpQuestion || previous.missingFields?.[0]}\nUSER ANSWER: ${message}`,
+        facts: currentField
+          ? `${previous.facts}\n\n${skip ? 'LEXARA SKIPPED FORM FIELD: ' + currentField : 'LEXARA REQUESTED FORM FIELD: ' + currentField + '\nUSER ANSWER: ' + message}`
+          : `${previous.facts}\n\nLEXARA ASKED: ${previous.followUpQuestion || ''}\nUSER ANSWER: ${message}`,
         followUpQuestion: undefined,
         missingFields: previous.missingFields?.slice(1),
+        autoRetrieve: previous.officialFormDelivery === true,
       } : previous);
       const nextField = pendingDocument.missingFields?.[1];
+      const nextRequired = Boolean(nextField && pendingDocument.requiredFields?.includes(nextField));
       appendMessage('lexara', nextField
-        ? `What should I enter for ${nextField.replace(/[_-]+/g, ' ')}?`
-        : `I've added that information. You can preview or download the ${pendingDocument.title} as DOCX or PDF.`);
+        ? nextRequired
+          ? `What should I enter for ${nextField.replace(/[_-]+/g, ' ')}? This field is marked required.`
+          : `Would you like to complete ${nextField.replace(/[_-]+/g, ' ')}, or leave it blank? Say skip to leave it blank.`
+        : `I've updated the ${pendingDocument.title}. You can preview or download the latest form.`);
       return;
     }
 
@@ -1524,6 +1547,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
           // A newly requested document replaces the prior document task UI.
           // Keep the conversation, but never let an older preview hide the new task.
           setConversationDocument(null);
+          setOfficialFormPreview(null);
           setDocumentPreviewOpen(false);
           setEsignOpen(false);
           setPendingDocument({
@@ -1534,6 +1558,8 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
             confirmed: explicitDocumentRequest,
             followUpQuestion: /\?/.test(String(data.response || '')) ? String(data.response).trim() : undefined,
             packetItem: data.documentIntent.packetItem === true,
+            officialFormDelivery: data.documentIntent.officialFormDelivery === true,
+            autoRetrieve: data.documentIntent.officialFormDelivery === true && explicitDocumentRequest,
           });
           pendingActionRef.current = { kind: 'document', label: pendingTitle };
         }
