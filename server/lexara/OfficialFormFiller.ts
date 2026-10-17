@@ -10,6 +10,8 @@ import type { OfficialLegalForm } from './OfficialLegalFormResolver';
 
 const MAX_FORM_BYTES = 20 * 1024 * 1024;
 const DOWNLOAD_TIMEOUT_MS = 8_000;
+const ORIGINAL_CACHE_TTL_MS = 5 * 60_000;
+const originalFormCache = new Map<string,{bytes:Buffer;expires:number}>();
 
 export interface OfficialFormField {
   name: string;
@@ -25,6 +27,11 @@ export interface InspectedOfficialForm {
   fields: OfficialFormField[]; fillable: boolean;
 }
 async function download(url: string, trustedDomains?: readonly string[]): Promise<Buffer> {
+  // Cache only public original files, never forms populated with user facts.
+  // Repeated questions use the same verified version without another download.
+  const hit=originalFormCache.get(url);
+  if(hit && hit.expires>Date.now()) return Buffer.from(hit.bytes);
+  if(hit) originalFormCache.delete(url);
   const controller=new AbortController(); const timer=setTimeout(()=>controller.abort(),DOWNLOAD_TIMEOUT_MS);
   try {
     const response=await fetch(url,{signal:controller.signal,redirect:'follow',headers:{'User-Agent':'LegalWhat/1.0 official-form-retriever'}});
@@ -34,6 +41,10 @@ async function download(url: string, trustedDomains?: readonly string[]): Promis
     if(length>MAX_FORM_BYTES) throw new Error('Official form exceeds maximum size');
     const bytes=Buffer.from(await response.arrayBuffer());
     if(bytes.length>MAX_FORM_BYTES) throw new Error('Official form exceeds maximum size');
+    if(bytes.length<=4*1024*1024){
+      originalFormCache.set(url,{bytes,expires:Date.now()+ORIGINAL_CACHE_TTL_MS});
+      while(originalFormCache.size>6) originalFormCache.delete(originalFormCache.keys().next().value!);
+    }
     return bytes;
   } finally { clearTimeout(timer); }
 }
