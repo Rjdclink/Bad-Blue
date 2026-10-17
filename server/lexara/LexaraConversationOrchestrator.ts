@@ -1,5 +1,5 @@
 import { callClaude, callClaudeStreaming } from '../claude';
-import { completeLexaraLegalResearch, type LexaraLegalResearchOutcome } from './LexaraLegalResearchGate';
+import { completeLexaraLegalResearch, planLexaraLegalResearchDepth, type LexaraLegalResearchOutcome } from './LexaraLegalResearchGate';
 import { recordReliefTopic, generateRecordReliefResponse } from './RecordReliefWorkflow';
 import { CURRENT_AI_MODELS, LEGAL_AI_MODELS } from '../aiHarmonyModelRegistry';
 import type { LawType as ExpertLawType } from '../../shared/legalCounselTypes';
@@ -7,6 +7,7 @@ import { LAW_TYPE_DATA } from '../../shared/lawTypes';
 import { mapProductLawTypeToExpert } from '../../shared/legalDomainMapping';
 import {
   formatAuthorityResearchForSystem,
+  hasLexaraDirectStatutePublisher,
   researchLegalAuthority,
 } from './LexaraAuthorityResearch';
 import {
@@ -555,12 +556,18 @@ export async function generateLexaraConversationResponse(
   // classifier call overlaps normal jurisdiction/context preparation instead of
   // extending the legal-answer latency tail.
   const identifiedCourtPlan = planLexaraCourtRecords(cleanPrompt, {}, previousUserTurns);
+  const obviousLawLookup = planLexaraLegalResearchDepth(cleanPrompt) === 'direct'
+    && !identifiedCourtPlan?.lookupQuery;
+  const deterministicLawDecision = obviousLawLookup
+    ? decideLexaraResearchNeed(cleanPrompt, previousUserTurns) : null;
   const semanticResearchDecisionPromise = resolveLexaraResearchDecisionSemantic(
     cleanPrompt,
     previousUserTurns,
     context.signal,
     history,
     Boolean(identifiedCourtPlan?.lookupQuery),
+    deterministicLawDecision?.intent === 'legal'
+      && deterministicLawDecision.needed && deterministicLawDecision.requestedFact === 'none',
   );
   const explicitStateJurisdiction = inferJurisdiction(cleanPrompt)
     || normalizeJurisdiction(context.jurisdiction)
@@ -589,7 +596,13 @@ export async function generateLexaraConversationResponse(
     || (backgroundLocationTrusted ? jurisdiction : undefined);
   const domainName = trustedDomainName(context.lawType);
   const domainProfile = getLexaraLegalDomainProfile(context.lawType);
-  const jurisdictionAuthorityProfile = jurisdictionRelevant
+  // Known legislative publishers are already selected by the direct statute
+  // retriever. Do not wait for an unrelated U.S. court-directory lookup.
+  const publisherKnown = deterministicLawDecision?.needed === true
+    && deterministicLawDecision.intent === 'legal'
+    && deterministicLawDecision.requestedFact === 'none'
+    && hasLexaraDirectStatutePublisher(jurisdiction);
+  const jurisdictionAuthorityProfile = jurisdictionRelevant && !publisherKnown
     ? await resolveJurisdictionAuthorityProfile(
         cleanPrompt,
         resolvedJurisdiction,
@@ -752,6 +765,18 @@ export async function generateLexaraConversationResponse(
   else context.signal?.addEventListener('abort', relayResearchAbort, { once: true });
   const researchRouteSelected = sequencePlan.useLegalResearch || (!sequencePlan.documentAction && Boolean(courtRecordPlan));
   const legalResearchRequired = sequencePlan.useLegalResearch;
+  // Route only the actual, clearly narrow question through statute lookup.
+  // A synthesized 'Under state law...' follow-up is not automatically simple.
+  const directUserStatuteLookup = researchDecision.intent === 'legal'
+    && !courtRecordPlan && !sequencePlan.documentAction
+    && planLexaraLegalResearchDepth(cleanPrompt) === 'direct';
+  // Missing jurisdiction is a factual clarification, not an invitation to
+  // run a broad law search. An explicitly federal provision needs no state.
+  if (directUserStatuteLookup && !publicJurisdiction
+    && !/\b(?:federal|u\.?s\.?c\.?)\b/i.test(cleanPrompt)
+    && /\b(?:statutes?|code section|ordinances?|hit[ -]and[ -]run|leav(?:e|ing) (?:the )?scene|which law|what law)\b/i.test(cleanPrompt)) {
+    return { text: 'Which state or jurisdiction does this concern?', mappedLawType };
+  }
   let legalResearchOutcome: LexaraLegalResearchOutcome | undefined;
   const authorityResearchRunner: typeof researchLegalAuthority = legalResearchRequired
     ? async (question, researchContext = {}) => {
@@ -767,6 +792,7 @@ export async function generateLexaraConversationResponse(
         preferredOfficialDomains: jurisdictionOfficialDomains,
         officialResources: jurisdictionAuthorityProfile?.officialResources,
         forceResearch: true,
+        allowDirectStatuteLookup: directUserStatuteLookup,
         researchIntent: researchDecision.intent,
         subject: researchDecision.subject,
         requestedFact: researchDecision.requestedFact,
@@ -918,11 +944,11 @@ export async function generateLexaraConversationResponse(
   const resolvedBackgroundSubjectPrompt = resolvedBackgroundSubject
     ? `\n\nLEXARA RESOLVED BACKGROUND SUBJECT\nThe exact subject for this turn is: "${resolvedBackgroundSubject.name}". Preserve that exact subject as one identity. Do not split a multi-part name into alternatives, rename the subject, or reinterpret conversational filler as the subject. Use the rest of the user's wording only as clues and as the requested factual objective.`
     : '';
-  const researchStatusPrompt = researchRouteSelected && !authorityResearch?.hasUsableEvidence && !backgroundInvestigation?.evidenceSummary
+  const researchStatusPrompt = researchRouteSelected && !legalResearchRequired && !authorityResearch?.hasUsableEvidence && !backgroundInvestigation?.evidenceSummary
     ? '\n\nAPPLICATION RESEARCH STATUS\nLexara attempted the selected external research route for this turn but no independently usable source result was returned within the live research budget. Do not claim that no search was attempted. Do not invent the requested fact; say it could not be verified from the completed search and preserve useful next steps or clarification.'
     : '';
   const unverifiedLegalPrompt = legalResearchIncomplete
-    ? '\n\nLEGAL VERIFICATION PARTIAL OR TIMED OUT\nThe research did not establish controlling primary-law text for this turn. Do NOT present an unverified statute, section number, case citation, holding, binding precedent, deadline, penalty, or current jurisdiction-specific rule as established. Offer only brief useful general issue-spotting guidance or ask the single essential question, and state the specific verification limitation once. A search timeout is not proof that no statute exists: say that the specific current law could not be VERIFIED in time, never that no relevant law or precedent exists. Clearly identify any remaining comments as general guidance, not verified jurisdiction-specific law. Do not give a canned refusal or imply that law or precedent was checked when it was not.'
+    ? '\n\nLEGAL VERIFICATION PARTIAL OR TIMED OUT\nThe research did not establish controlling primary-law text for this turn. Do NOT present an unverified statute, section number, case citation, holding, binding precedent, deadline, penalty, or current jurisdiction-specific rule as established. Give only brief safe general context or ask the ONE essential missing fact (for an accident, whether anyone was injured or it was property damage only). Never volunteer internal research timeouts, search failures or inability to verify source text. A search timeout is not proof that no statute exists. Do not invent law or claim that unverified authority is current or binding. If the user explicitly asks for verification status or a precise unverified legal conclusion, acknowledge that narrow uncertainty without pretending to know it. Do not give a canned refusal or imply that law was checked when it was not.'
     : '';
   const completedLegalResearchPrompt = legalResearchOutcome?.status === 'supported'
     ? '\n\nLEGAL RESEARCH COMPLETED BEFORE ANSWERING\nAnswer directly from the supplied supporting authority and its qualifications. Do not say you need to research, check or verify authority already supplied. Never generalize this verification to all laws or unresolved facts. If a distinct material issue remains unsupported, identify that specific limitation rather than repeating a generic promise to verify the applicable law.'
