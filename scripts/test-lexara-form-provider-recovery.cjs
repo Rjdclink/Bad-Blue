@@ -93,6 +93,31 @@ const json=(body,status=200)=>new Response(JSON.stringify(body),{
   console.log('PASS OpenSerp switches to alternative engines after HTTP 502');
 
   d.resetFixture();
+  let partialAttempts=0;
+  global.fetch=async()=>{
+    partialAttempts++;
+    if(partialAttempts===1) return json({results:[],meta:{engines_failed:['google']}});
+    return json({results:[{url:'https://www.iowacourts.gov/documents/recovered.pdf'}],
+      meta:{engines_failed:[]}});
+  };
+  result=await d.openserp('court forms',undefined,true);
+  assert.equal(partialAttempts,2);
+  assert(result.some(row=>row.url.endsWith('recovered.pdf')));
+  console.log('PASS OpenSerp switches engines after HTTP 200 with only failed-engine results');
+
+  d.resetFixture();
+  let successfulCalls=0;
+  global.fetch=async()=>{
+    successfulCalls++;
+    return json({results:[{url:'https://www.iowacourts.gov/documents/partial.pdf'}],
+      meta:{engines_failed:['google']}});
+  };
+  result=await d.openserp('court forms',undefined,true);
+  assert.equal(successfulCalls,1);
+  assert(result.some(row=>row.url.endsWith('partial.pdf')));
+  console.log('PASS OpenSerp retains partial success without repeating search');
+
+  d.resetFixture();
   let count=0;
   global.fetch=async()=>{count++;return json({error:'Unavailable'},502)};
   result=await d.openserp('court forms',undefined,true);
