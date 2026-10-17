@@ -10,7 +10,7 @@ export interface OfficialLegalForm {
   provenance: Array<{ title: string; url: string; retrievedAt: string }>;
 }
 const OFFICIAL_HOST = /(?:\.gov|\.uscourts\.gov|\.courts?\.[a-z]{2}\.us|\.judicial\.[a-z]{2}\.gov)$/i;
-const FORM_HINT = /\b(form|petition|complaint|motion|notice|summons|cover sheet|affidavit|application|order|pleading)\b/i;
+const FORM_HINT = /\b(form|petition|complaint|motion|notice|summons|cover sheet|affidavit|application|request|order|pleading)\b/i;
 const MANDATORY_HINT = /\b(?:required\s+(?:official\s+)?form|mandatory\s+(?:official\s+)?form|prescribed form|must\s+(?:use|complete|file|submit)\s+(?:(?:this|the)\s+)?form|shall\s+(?:use|file|submit)\s+(?:(?:this|the)\s+)?form|use (?:this|the) form)\b/i;
 const OPTIONAL_HINT = /\b(optional|may use|provided for convenience)\b/i;
 const CUSTOM_HINT = /\b(no official form|no prescribed form|may be drafted|local form not required)\b/i;
