@@ -626,7 +626,8 @@ export function setupConsultationRoutes(app: Express): void {
       res.setHeader('X-Lexara-Official-Source', inspected.sourceUrl);
       return res.send(inspected.bytes);
     }
-    const fieldNames = inspected.fields.map(field => field.name);
+    const writableFields = inspected.fields.filter(field => !field.readOnly);
+    const fieldNames = writableFields.map(field => field.name);
     if (facts && fieldNames.length && Object.keys(values).length === 0) {
       const mappingRaw = await generateLegalAnalysis('document-drafting', [
         'Map ONLY supplied facts from the same user and matter to the actual form fields.',
