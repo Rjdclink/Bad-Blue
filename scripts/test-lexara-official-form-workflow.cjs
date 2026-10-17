@@ -61,11 +61,11 @@ const localCourt = resolver.resolveOfficialLegalForm({ searchedAt: '2026-10-17',
 assert.equal(localCourt.verifiedOfficial, true);
 
 
-for(const request of [
+for(const phrase of [
   'I need to change my child support order.',
   'We need to apply for guardianship.',
   'I want to file for custody.',
-]) assert.equal(request.isLexaraOfficialFormDeliveryRequest(request),true,request);
+]) assert.equal(request.isLexaraOfficialFormDeliveryRequest(phrase),true,phrase);
 for(const question of [
   'How do I modify child support?',
   'What does custody mean?',
