@@ -31,7 +31,7 @@ function reply(){
     read(){return {status,body}}};
 }
 async function run({facts='USER: Please find the Iowa child support modification form.',
-  formSourceUrls=[],nativeSources=[],claudeSources=[],failUrls=[]}={}){
+  documentType='Custom Document', formSourceUrls=[],nativeSources=[],claudeSources=[],failUrls=[]}={}){
   let nativeCalls=0,claudeCalls=0;
   const inspected=[];
   const routes=new Map();
@@ -84,7 +84,7 @@ async function run({facts='USER: Please find the Iowa child support modification
   });
   const response=reply();
   await routes.get('/api/lexara/documents/generate')({body:{
-    state:'Iowa',documentType:'Custom Document',facts,formSourceUrls,
+    state:'Iowa',documentType,facts,formSourceUrls,
   }},response);
   return {...response.read(),nativeCalls,claudeCalls,inspected};
 }
@@ -96,6 +96,13 @@ async function run({facts='USER: Please find the Iowa child support modification
   assert.equal(response.claudeCalls,0);
   assert.deepEqual(response.inspected,[courtUrl]);
   console.log('PASS prior Lexara court link is inspected and reused without searching again');
+
+  response=await run({facts:'USER: Grab it for me.',documentType:'Iowa child support modification form',
+    formSourceUrls:[courtUrl]});
+  assert.equal(response.status,409);
+  assert.equal(response.body.officialForm.url,courtUrl);
+  assert.equal(response.nativeCalls,0);
+  console.log('PASS short follow-up keeps the earlier official form identity and URL');
 
   response=await run({formSourceUrls:['https://untrusted.example.org/motion.pdf'],
     nativeSources:[nativeSource]});
@@ -142,5 +149,29 @@ async function run({facts='USER: Please find the Iowa child support modification
   assert(mesh.includes('officialFormQuery ? 6_500'));
   assert(mesh.includes('officialFormQuery ? 10_000'));
   assert(mesh.includes('officialFormQuery ? 4_000'));
+  const chat=fs.readFileSync(path.join(root,'server/routes/lexara.chat.routes.ts'),'utf8');
+  const start=chat.indexOf('function detectDocumentIntent');
+  const end=chat.indexOf('function selectPacketDocumentIntent',start);
+  assert(start>=0 && end>start);
+  const intentCode=ts.transpileModule(chat.slice(start,end),{
+    compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022},
+  }).outputText;
+  const detectIntent=new Function('isLexaraOfficialFormDeliveryRequest',
+    'lexaraRequestedOfficialFormTitle','isLexaraDocumentIntakeQuestion',
+    'resolveLegalDocumentType','inferLegalDocumentNeed','isBlankLegalDocumentRequest',
+    intentCode+'\\nreturn detectDocumentIntent;')(
+      formRequest.isLexaraOfficialFormDeliveryRequest,
+      formRequest.lexaraRequestedOfficialFormTitle,
+      ()=>false,()=>null,()=>null,()=>false,
+    );
+  const previous=[
+    {role:'user',content:'Please get me the Iowa child support modification form.'},
+    {role:'lexara',content:'Here is [Form 301]('+courtUrl+').'},
+  ];
+  const followup=detectIntent('Grab it for me',previous);
+  assert.equal(followup.requested,true);
+  assert.equal(followup.officialFormDelivery,true);
+  assert.match(followup.documentType,/child support/i);
+  console.log('PASS Markdown form link plus grab-it follow-up reaches document retrieval');
   console.log('PASS retained source URLs and form-specific search budgets are wired');
 })().catch(error=>{console.error(error);process.exitCode=1});
