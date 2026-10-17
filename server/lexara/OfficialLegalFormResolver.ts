@@ -5,6 +5,7 @@ export interface OfficialLegalForm {
   requirement: OfficialFormRequirement; title?: string; formNumber?: string; url?: string;
   sourceTitle?: string; issuingAuthority?: string; revision?: string;
   contentType?: 'pdf' | 'docx' | 'html' | 'unknown'; verifiedOfficial: boolean;
+  trustedOfficialDomains?: string[];
   localRules: string[]; companionDocuments: string[];
   provenance: Array<{ title: string; url: string; retrievedAt: string }>;
 }
@@ -14,10 +15,24 @@ const MANDATORY_HINT = /\b(?:required\s+(?:official\s+)?form|mandatory\s+(?:offi
 const OPTIONAL_HINT = /\b(optional|may use|provided for convenience)\b/i;
 const CUSTOM_HINT = /\b(no official form|no prescribed form|may be drafted|local form not required)\b/i;
 const RETIRED_FORM_HINT = /\b(?:superseded|obsolete|archived|withdrawn|discontinued|replaced by|no longer (?:valid|accepted|used))\b/i;
-function official(url: string): boolean { try { const host=new URL(url).hostname.toLowerCase(); return host.endsWith('.gov') || host==='gov' || host.endsWith('.uscourts.gov') || /(?:^|\.)courts?\.[a-z]{2}\.us$/.test(host); } catch { return false; } }
+function official(url: string, trustedDomains?: readonly string[]): boolean {
+  try {
+    const parsed=new URL(url);
+    if(parsed.protocol!=='https:') return false;
+    const host=parsed.hostname.toLowerCase().replace(/^www\./,'');
+    // State courts sometimes publish on official .org domains. Trust those
+    // only when obtained from the jurisdiction's court-resource directory.
+    if(trustedDomains?.some(domain=>{
+      const expected=domain.toLowerCase().replace(/^www\./,'');
+      return host===expected || host.endsWith('.'+expected);
+    })) return true;
+    return host.endsWith('.gov') || host==='gov' || host.endsWith('.uscourts.gov')
+      || /(?:^|\.)courts?\.[a-z]{2}\.us$/.test(host);
+  } catch { return false; }
+}
 function typeOf(url: string): OfficialLegalForm['contentType'] {
   const clean=url.toLowerCase().split('?')[0]; if(clean.endsWith('.pdf')) return 'pdf';
-  if(clean.endsWith('.docx')||clean.endsWith('.doc')) return 'docx'; if(clean.startsWith('http')) return 'html'; return 'unknown';
+  if(clean.endsWith('.docx')) return 'docx'; if(clean.startsWith('http')) return 'html'; return 'unknown';
 }
 export function resolveOfficialLegalForm(research: LexaraAuthorityResearch | null, documentType: string, requestedFormNumber?: string, issuingDomains?: readonly string[]): OfficialLegalForm {
   if(!research?.sources?.length) return { requirement:'unverified', verifiedOfficial:false, localRules:[], companionDocuments:[], provenance:[] };
@@ -31,7 +46,7 @@ export function resolveOfficialLegalForm(research: LexaraAuthorityResearch | nul
       return host===expected || host.endsWith('.'+expected);
     } catch { return false; }
   });
-  const relevant=research.sources.filter(source=>official(source.url) && matchesIssuer(source.url)
+  const relevant=research.sources.filter(source=>official(source.url,issuingDomains) && matchesIssuer(source.url)
     && source.kind!=='secondary' && source.kind!=='web'
     && FORM_HINT.test([source.title,source.excerpt].filter(Boolean).join(' '))
     && !RETIRED_FORM_HINT.test([source.title,source.excerpt].filter(Boolean).join(' '))
@@ -64,7 +79,7 @@ export function resolveOfficialLegalForm(research: LexaraAuthorityResearch | nul
   const revision=revisionText.match(/\b(?:revision|revised|edition|effective|updated|rev\.?)\s*(?:date)?\s*[:#-]?\s*((?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{1,2},?\s+\d{4}|(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{4}|\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4})\b/i)?.[1];
   const localRules=relevant.filter(s=>/\b(local rule|court rule|filing requirement|instructions?)\b/i.test([s.title,s.excerpt].filter(Boolean).join(' '))).map(s=>s.title).slice(0,8);
   const companionDocuments=relevant.filter(s=>/\b(summons|civil cover sheet|fee waiver|service|appearance|proposed order)\b/i.test([s.title,s.excerpt].filter(Boolean).join(' '))).map(s=>s.title).slice(0,8);
-  return { requirement,title,formNumber,url:direct?.url,sourceTitle:direct?.title,revision,contentType:direct?.url?typeOf(direct.url):undefined,verifiedOfficial:Boolean(direct && matchesIssuer(direct.url) && official(direct.url)),localRules,companionDocuments,provenance:relevant.slice(0,12).map(s=>({title:s.title,url:s.url,retrievedAt:research.searchedAt})) };
+  return { requirement,title,formNumber,url:direct?.url,sourceTitle:direct?.title,revision,contentType:direct?.url?typeOf(direct.url):undefined,verifiedOfficial:Boolean(direct && matchesIssuer(direct.url) && official(direct.url,issuingDomains)),trustedOfficialDomains:issuingDomains?.slice(0,18),localRules,companionDocuments,provenance:relevant.slice(0,12).map(s=>({title:s.title,url:s.url,retrievedAt:research.searchedAt})) };
 }
 export function officialFormDirective(form: OfficialLegalForm): string {
   if(form.requirement==='mandatory') return ['A mandatory official form appears to apply. Do NOT substitute a custom-drafted pleading for that official form.',form.title ? 'Official form: '+form.title+'.' : '',form.formNumber ? 'Form number: '+form.formNumber+'.' : '',form.url ? 'Verified official source: '+form.url+'.' : '',form.companionDocuments.length ? 'Potential accompanying documents: '+form.companionDocuments.join('; ')+'.' : ''].filter(Boolean).join(' ');
