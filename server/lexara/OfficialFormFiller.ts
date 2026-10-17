@@ -17,6 +17,8 @@ export interface OfficialFormField {
   requiredValue?: string;
   required?: boolean;
   readOnly?: boolean;
+  pageIndex?: number;
+  verticalPosition?: number;
 }
 export interface InspectedOfficialForm {
   sourceUrl: string; contentType: 'pdf' | 'docx'; bytes: Buffer;
@@ -134,12 +136,30 @@ export async function inspectOfficialForm(form: OfficialLegalForm): Promise<Insp
   }
   const pdf=await PDFDocument.load(bytes,{ignoreEncryption:false});
   const fields: OfficialFormField[]=[];
-  try {
-    for(const field of pdf.getForm().getFields()){
-      const name=field.getName(); const kind=field.constructor.name.toLowerCase();
-      fields.push({name,type:kind.includes('text')?'text':kind.includes('check')?'checkbox':kind.includes('radio')?'radio':kind.includes('dropdown')?'dropdown':kind.includes('option')?'option':'unknown',required:field.isRequired(),readOnly:field.isReadOnly()});
+  const pages=pdf.getPages();
+  for(const field of pdf.getForm().getFields()){
+    const name=field.getName(); const kind=field.constructor.name.toLowerCase();
+    const widget=(field as any).acroField?.getWidgets?.()?.[0];
+    const pageRef=widget?.P?.();
+    let pageIndex=pageRef ? pages.findIndex(page=>String(page.ref)===String(pageRef)) : -1;
+    if(pageIndex<0 && widget?.dict){
+      pageIndex=pages.findIndex(page => (page.node.Annots()?.asArray() || [])
+        .some(ref => pdf.context.lookup(ref)===widget.dict));
     }
-  } catch {}
+    const rectangle=widget?.getRectangle?.();
+    fields.push({
+      name,type:kind.includes('text')?'text':kind.includes('check')?'checkbox':kind.includes('radio')?'radio':kind.includes('dropdown')?'dropdown':kind.includes('option')?'option':'unknown',
+      required:field.isRequired(),readOnly:field.isReadOnly(),
+      pageIndex:pageIndex>=0?pageIndex:undefined,
+      verticalPosition:Number.isFinite(rectangle?.y)?rectangle.y:undefined,
+    });
+  }
+  // Ask fields in visual reading order where the issuing PDF records their
+  // widget pages. Otherwise preserve the original AcroForm order.
+  if(fields.every(field=>field.pageIndex!==undefined && field.verticalPosition!==undefined)){
+    fields.sort((a,b)=>(a.pageIndex!-b.pageIndex!)
+      || (b.verticalPosition!-a.verticalPosition!));
+  }
   return {sourceUrl:resolved.url,contentType:'pdf',bytes,fields,fillable:fields.length>0};
 }
 export async function fillOfficialPdf(inspected: InspectedOfficialForm, values: Record<string,string|boolean>, flatten=true): Promise<Buffer> {
