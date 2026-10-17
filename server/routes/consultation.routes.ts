@@ -14,6 +14,7 @@ import { resolveUSJurisdiction } from '../lexara/LexaraJurisdictionResolver';
 import { formatJurisdictionAuthorityForSystem, resolveJurisdictionAuthorityProfile } from '../lexara/LexaraJurisdictionAuthority';
 import { formatCitationVerificationForCorrection, verifyLegalCitationsInText } from '../lexara/LexaraCitationVerifier';
 import { resolveOfficialLegalForm, officialFormDirective } from '../lexara/OfficialLegalFormResolver';
+import { isLexaraOfficialFormDeliveryRequest, lexaraRequestedOfficialFormTitle } from '../lexara/OfficialFormRequest';
 import { isRecordReliefRequest, recordReliefCaseState, recordReliefTopic, recordReliefLawQuery } from '../lexara/RecordReliefWorkflow';
 import { assessRecordReliefDocument } from '../lexara/RecordReliefDocument';
 import { RECORD_RELIEF_DIRECTIVE } from '../lexara/RecordReliefSources';
@@ -350,6 +351,8 @@ export function setupConsultationRoutes(app: Express): void {
     const state = typeof req.body?.state === 'string' ? req.body.state.trim() : '';
     const facts = typeof req.body?.facts === 'string' ? req.body.facts.trim() : '';
     const rawRequestedType = typeof req.body?.documentType === 'string' ? req.body.documentType.trim() : '';
+    const latestUserRequest = [...facts.matchAll(/(?:^|\n)USER:\s*([^\n]+)/g)].at(-1)?.[1] || facts;
+    const actualFormRequested = isLexaraOfficialFormDeliveryRequest(latestUserRequest);
     const packetItemMode = req.body?.packetItem === true;
     const packetItemTitle = packetItemMode && typeof req.body?.packetItemTitle === 'string'
       ? req.body.packetItemTitle.trim().slice(0, 240)
@@ -357,13 +360,12 @@ export function setupConsultationRoutes(app: Express): void {
     const requestedType = (LEGAL_DOCUMENT_TYPES as readonly string[]).includes(rawRequestedType)
       ? rawRequestedType as (typeof LEGAL_DOCUMENT_TYPES)[number]
       : resolveLegalDocumentType(rawRequestedType)
-        || (packetItemTitle ? 'Custom Document' : null);
-    const documentLabel = packetItemTitle || rawRequestedType || requestedType || '';
+        || (packetItemTitle || actualFormRequested ? 'Custom Document' : null);
+    const documentLabel = packetItemTitle || (actualFormRequested ? lexaraRequestedOfficialFormTitle(latestUserRequest) : rawRequestedType) || requestedType || '';
     const templateMode = req.body?.templateMode === true;
     const customInstructions = typeof req.body?.instructions === 'string' ? req.body.instructions.trim() : '';
     if (!state || !facts || !requestedType || !documentLabel) return res.status(400).json({ error: 'Jurisdiction, case facts, and a supported document type are required' });
     if (facts.length > 30_000 || customInstructions.length > 8_000) return res.status(413).json({ error: 'Document request is too large' });
-    const latestUserRequest = [...facts.matchAll(/(?:^|\n)USER:\s*([^\n]+)/g)].at(-1)?.[1] || facts;
     const userFacts = [...facts.matchAll(/(?:^|\n)USER:\s*([\s\S]*?)(?=\n(?:USER|LEXARA|ASSISTANT):|\nAPPLICATION-SUPPLIED|$)/g)].map(m => m[1]);
     const reliefDocument = isRecordReliefRequest(documentLabel) || /^(?:Record Sealing|Nondisclosure|Petition to (?:Set Aside|Vacate) Conviction|Petition for Annulment)/i.test(documentLabel)
       || recordReliefTopic(latestUserRequest, userFacts.slice(0,-1));
@@ -371,7 +373,7 @@ export function setupConsultationRoutes(app: Express): void {
     if (reliefDocument && !reliefCaseState) return res.status(422).json({ error: 'The criminal case jurisdiction must be established.', missingFields: ['caseStateAndCourtSystem'], question: 'Which state was the case in, and was it in state or federal court?' });
     const localCoverSheetRequested = /\bcover\s+sheet\b/i.test(latestUserRequest)
       && /\b(?:case|court|local|filing)\b/i.test(latestUserRequest);
-    const officialFormRequested = (/\bofficial\b/i.test(latestUserRequest) && /\bform\b/i.test(latestUserRequest))
+    const officialFormRequested = actualFormRequested || (/\bofficial\b/i.test(latestUserRequest) && /\bform\b/i.test(latestUserRequest))
       || localCoverSheetRequested;
     // The generic artifact type must not erase the named local instrument.
     const formDocumentLabel = localCoverSheetRequested
