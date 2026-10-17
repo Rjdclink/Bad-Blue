@@ -159,7 +159,7 @@ async function run({facts='USER: Please find the Iowa child support modification
   const detectIntent=new Function('isLexaraOfficialFormDeliveryRequest',
     'lexaraRequestedOfficialFormTitle','isLexaraDocumentIntakeQuestion',
     'resolveLegalDocumentType','inferLegalDocumentNeed','isBlankLegalDocumentRequest',
-    intentCode+'\\nreturn detectDocumentIntent;')(
+    intentCode+String.fromCharCode(10)+'return detectDocumentIntent;')(
       formRequest.isLexaraOfficialFormDeliveryRequest,
       formRequest.lexaraRequestedOfficialFormTitle,
       ()=>false,()=>null,()=>null,()=>false,
