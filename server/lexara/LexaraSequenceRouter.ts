@@ -1,4 +1,5 @@
 import { decideLexaraResearchNeed, isLexaraConversationControl, isLexaraDocumentIntakeQuestion, type LexaraResearchDecision } from './LexaraResearchIntentRouter';
+import { isLexaraOfficialFormDeliveryRequest } from './OfficialFormRequest';
 
 export type LexaraSequenceId =
   | 'simple-factual'
@@ -58,7 +59,7 @@ export function planLexaraSequence(
   const factual = researchDecision.intent === 'factual' || researchDecision.intent === 'mixed';
   const documentAction = !isLexaraDocumentIntakeQuestion(text)
     && !/\b(?:do not|don't|dont|never)\s+(?:draft|prepare|create|generate|write)\b/i.test(text)
-    && DOCUMENT_PATTERN.test(text) && ACTION_PATTERN.test(text);
+    && ((DOCUMENT_PATTERN.test(text) && ACTION_PATTERN.test(text)) || isLexaraOfficialFormDeliveryRequest(text));
   const deep = DEEP_PATTERN.test(text) && researchDecision.needed;
 
   if (documentAction) {

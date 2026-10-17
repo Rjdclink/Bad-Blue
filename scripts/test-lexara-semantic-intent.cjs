@@ -87,8 +87,10 @@ const claude = {
   },
 };
 
+const officialFormRequest = execute('server/lexara/OfficialFormRequest.ts');
 const router = execute('server/lexara/LexaraSequenceRouter.ts', {
   './LexaraResearchIntentRouter': planner,
+  './OfficialFormRequest': officialFormRequest,
 });
 
 const semantic = execute('server/lexara/LexaraSemanticIntentInterpreter.ts', {

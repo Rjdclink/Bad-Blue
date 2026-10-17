@@ -52,6 +52,7 @@ async function run(outputs) {
       parseSignaturePngDataUrl: () => null,
       sha256Hex: () => '0'.repeat(64),
     },
+    '../lexara/OfficialFormRequest': { isLexaraOfficialFormDeliveryRequest: () => false, lexaraRequestedOfficialFormTitle: text => text },
     '../lexara/OfficialLegalFormResolver': { resolveOfficialLegalForm: () => ({ requirement: 'custom_allowed', verifiedOfficial: true, localRules: [], companionDocuments: [], provenance: [] }), officialFormDirective: () => 'Custom drafting verified as permitted.' },
     '../lexara/OfficialFormFiller': { inspectOfficialForm: async () => ({ contentType: 'pdf', bytes: Buffer.from(''), fields: [], fillable: true, sourceUrl: 'https://example.gov/form.pdf' }), fillOfficialPdf: async () => Buffer.from('pdf'), fillOfficialDocx: async () => Buffer.from('docx') },
     '../lexara/FlatOfficialFormOverlay': { overlayFlatOfficialPdf: async () => Buffer.from('pdf'), validateFlatFormLayout: layout => layout },
