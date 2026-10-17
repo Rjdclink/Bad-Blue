@@ -10,6 +10,11 @@ const DECOY_PREFIX = /^\/__isb__(?:\/|$)/;
 const MAX_QUEUE = 256;
 const MAX_PER_SECOND = 500;
 
+// Narrowly block only unmistakable probes for technologies and secrets that
+// are not part of LegalWhat. Ordinary login, signup, payment and API paths
+// never match. Exact paths only: no source-IP bans or general heuristics.
+const DEFINITE_ATTACK_PROBE = /^\/(?:\.env(?:\.[a-z0-9_-]+)?|\.git(?:\/(?:HEAD|config|index))?|\.svn(?:\/(?:entries|wc\.db))?|wp-login\.php|xmlrpc\.php|actuator\/env|server-status)$/i;
+
 function canonicalRoute(host, raw) {
   if (typeof raw !== 'string') return '/';
   const path = raw.slice(0, 2048).split(/[?#]/, 1)[0];
@@ -120,6 +125,22 @@ function createEmbeddedISB(options = {}) {
           // A telemetry failure is invisible to LegalWhat's clients.
         }
       });
+
+      // Silent, active blocking is limited to known exploit-scanner targets.
+      // No passwords, request bodies, cookies, authentication, or payment
+      // details are inspected. A malfunction or disabled feature fails open.
+      if (process.env.ISB_BLOCKING_DISABLED !== '1' &&
+          (method === 'GET' || method === 'HEAD') &&
+          DEFINITE_ATTACK_PROBE.test(path)) {
+        try {
+          res.status(404).set('Cache-Control', 'no-store')
+            .type('text/plain').send('Not found\n');
+          return;
+        } catch {
+          if (res.headersSent) return;
+          return next();
+        }
+      }
     } catch {
       // Instrumentation errors never stop the underlying request.
     }
