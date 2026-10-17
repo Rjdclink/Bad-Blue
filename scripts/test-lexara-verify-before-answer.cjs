@@ -14,16 +14,17 @@ const packet = sources => ({sources, summary: 'fixture', hasPrimaryAuthority: tr
 
 function harness(options = {}) {
   const clock = FakeTimers.createClock();
-  const calls = { research: [], researchContexts: [], grade: [], final: [], streaming: 0, classifier: 0, directory: 0, court: 0, logs: [], signals: [], mesh: [], retrieval: [], web: [] };
+  const calls = { research: [], researchContexts: [], grade: [], gradeConfigs: [], final: [], streaming: 0, classifier: 0, directory: 0, court: 0, logs: [], signals: [], mesh: [], retrieval: [], web: [] };
   const cache = new Map();
   const stubs = {
     'server/claude.ts': {
       async callClaude(prompt, config) {
         if (prompt.startsWith('Classify whether')) { calls.classifier++; return {content: JSON.stringify(options.semantic || {needed: true, intent:'legal', requestedFact:'none', objective:'Under Iowa law, may a landlord keep this security deposit?'})}; }
         if (prompt.startsWith('Assess whether') || prompt.startsWith('Verify only the specific rule')) {
-          calls.grade.push(prompt);
+          calls.grade.push(prompt); calls.gradeConfigs.push(config);
           if (options.gradeThrows) throw new Error('fixture assessment outage');
-          const grade = options.grade?.(calls.grade.length) || {sufficient: true, supportingUrls:[url]};
+          const grade = options.grade?.(calls.grade.length, config) || {sufficient: true, supportingUrls:[url]};
+          if (grade && typeof grade === 'object' && Object.prototype.hasOwnProperty.call(grade, 'content')) return grade;
           return {content: typeof grade === 'string' ? grade : JSON.stringify(grade)};
         }
         calls.final.push({prompt, config});
@@ -85,7 +86,7 @@ function harness(options = {}) {
     stubs['server/lexara/LexaraRetrievalBoundary.ts'] = {lexaraRetrievalAdapter:{retrieve:async request=>{
       calls.retrieval.push(request);
       if(options.retrievalDelay) await new Promise(resolve=>clock.setTimeout(resolve,options.retrievalDelay));
-      return {evidence:options.emptyRetrieval?[]:request.targets.map(target=>({target,content:doc.excerpt}))};
+      return {evidence:options.emptyRetrieval?[]:request.targets.map(target=>({target,content:options.retrievedContent || doc.excerpt}))};
     }}};
   }
   function load(file) {
@@ -136,17 +137,26 @@ test('snippets, URL-only sources and metadata never unlock a legal answer',async
 });
 
 test('assessment failures and invented support URLs cannot authorize an answer',async()=>{
-  for(const options of [{gradeThrows:true},{grade:()=>({sufficient:true,supportingUrls:['https://invented.example/']})},{grade:()=>'{bad json'},{grade:()=>({sufficient:'true',supportingUrls:[url]})}]) {
+  for(const [options,status,failureReason] of [
+    [{gradeThrows:true},'verification-unavailable','verification-provider-error'],
+    [{grade:()=>({sufficient:true,supportingUrls:['https://invented.example/']})},'sources-insufficient','unverified-supporting-urls'],
+    [{grade:()=>'{bad json'},'verification-unavailable','invalid-verification-response'],
+    [{grade:()=>({sufficient:'true',supportingUrls:[url]})},'verification-unavailable','invalid-verification-response'],
+  ]) {
     const h=harness(options);
     const result=await h.load('server/lexara/LexaraLegalResearchGate.ts').completeLexaraLegalResearch('Iowa fixture question',{jurisdiction:'Iowa'});
-    assert.equal(result.status,'sources-insufficient');assert.equal(result.research,null);assert.equal(h.clock.countTimers(),0);
+    assert.equal(result.status,status);assert.equal(result.failureReason,failureReason);
+    assert.equal(result.research?.hasUsableEvidence,false,'a failed assessment must never establish law');
+    assert.equal(result.research?.hasPrimaryAuthority,false,'retained documents remain unverified');
+    assert(h.calls.grade.length>=1 && h.calls.grade.length<=3);
+    assert.equal(h.clock.countTimers(),0);
   }
 });
 
 test('timeout cancels research and cannot report verification',async()=>{
   const h=harness({hang:true});
   const pending=h.load('server/lexara/LexaraLegalResearchGate.ts').completeLexaraLegalResearch('Iowa fixture question',{});
-  await h.clock.tickAsync(15001);const result=await pending;
+  await h.clock.tickAsync(30001);const result=await pending;
   assert.equal(result.status,'timed-out');assert.equal(result.research,null);assert(h.calls.signals[0].aborted);assert.equal(h.clock.countTimers(),0);
 });
 
@@ -235,7 +245,8 @@ test('weak native legal evidence triggers one real Claude web-search fallback wi
   assert.equal(h.calls.web.length,1,'one Claude web-search fallback only');
   assert(h.calls.web[0].prompt.includes('Iowa'));
   assert(h.calls.web[0].config.maxUses===1);
-  assert.equal(h.calls.mesh.length,2,'Claude fallback must not relaunch native search after its initial official and broad queries');
+  assert.equal(h.calls.mesh.length,4,'exactly two distinct native discovery rounds precede the alternative source');
+  assert.notEqual(h.calls.mesh[0].query,h.calls.mesh[2].query,'retry must target a distinct legal question');
   assert(h.calls.retrieval.some(request=>request.targets.includes(url)),'verify the web-search citation by direct retrieval');
   assert(h.calls.grade.some(prompt=>prompt.includes(doc.excerpt)),'model may assess only actual retrieved text');
   assert.equal(result.research.sources[0].evidenceLevel,'document');
@@ -254,16 +265,16 @@ test('Claude web-search snippets alone cannot pass primary-authority verificatio
 });
 
 
-test('legal budget is 15 seconds by default and 20 seconds for compound-law questions', async()=>{
+test('legal budget is adaptive: 30 seconds standard and 60 seconds compound-law', async()=>{
   const h=harness();
   const {lexaraLegalResearchBudgetMs:budget}=h.load('server/lexara/LexaraLegalResearchGate.ts');
-  assert.equal(budget('Which Iowa statute controls this issue?'),15_000);
-  assert.equal(budget('Which statutes apply, including the elements, penalties, and reporting duties?'),20_000);
-  assert.equal(budget('Compare controlling statutes and cases across states.'),20_000);
+  assert.equal(budget('Which Iowa statute controls this issue?'),30_000);
+  assert.equal(budget('Which statutes apply, including the elements, penalties, and reporting duties?'),60_000);
+  assert.equal(budget('Compare controlling statutes and cases across states.'),60_000);
   const hung=harness({hang:true});
   const pending=hung.load('server/lexara/LexaraLegalResearchGate.ts').completeLexaraLegalResearch(
     'Compare controlling statutes and cases across states.',{jurisdiction:'Iowa'});
-  await hung.clock.tickAsync(19_999);
+  await hung.clock.tickAsync(59_999);
   assert.equal(hung.calls.signals[0].aborted,false,'complex research must not stop at the normal deadline');
   await hung.clock.tickAsync(2);
   const result=await pending;
@@ -337,7 +348,7 @@ test('partial primary evidence survives without claiming that incomplete legal v
   assert.equal(result.research.sources.length,1);
   assert.match(result.research.summary,/NOT fully verified/);
   assert.equal(h.calls.web.length,0);
-  assert.equal(h.calls.researchContexts[2].forceClaudeLegalWebFallback,true, 'a still-incomplete native investigation retains its late Claude discovery option');
+  assert.equal(h.calls.researchContexts[2].forceClaudeLegalWebFallback,false, 'native primary documents keep later queries targeted without unnecessary paid Claude web-search');
   assert.equal(h.clock.countTimers(),0);
 });
 
@@ -350,6 +361,8 @@ test('direct official retrieval is reused across targeted retries, and web fallb
   const weak=harness({actualAuthority:true,weakNative:true,emptyRetrieval:true});
   await weak.load('server/lexara/LexaraLegalResearchGate.ts').completeLexaraLegalResearch('Iowa deposit statute',{jurisdiction:'Iowa'});
   assert.equal(weak.calls.web.length,1);
+  assert.equal(weak.calls.mesh.length,4,'two targeted native legal searches before alternative web discovery');
+  assert.notEqual(weak.calls.mesh[0].query,weak.calls.mesh[2].query,'native retries must refine their legal search query');
   assert.equal(weak.calls.web[0].config.maxTokens,900);
   assert.equal(weak.calls.web[0].config.retryTruncatedOutput,true);
 });
@@ -405,17 +418,19 @@ test('a URL, metadata or a false grade never authorizes the fast statute answer'
     const h=harness(options);
     const out=await h.load('server/lexara/LexaraLegalResearchGate.ts').completeLexaraLegalResearch(
       'Which Iowa statute applies?',{jurisdiction:'Iowa',allowDirectStatuteLookup:true});
-    assert.equal(out.status,'sources-insufficient');assert.equal(out.attempts,1);
-    assert(!out.research?.hasUsableEvidence);assert.equal(h.calls.web.length,0);
+    assert.equal(out.status,'sources-insufficient');assert.equal(out.attempts,3);
+    assert(!out.research?.hasUsableEvidence);
+    assert(h.calls.web.length<=1,'a deficient lookup uses at most one alternative discovery');
     assert.equal(h.clock.countTimers(),0);
   }
 });
 
-test('simple statute research has a bounded seven-second deadline and preserves cancellations',async()=>{
+test('simple statute research does not expire after seven seconds and still cancels stalled work',async()=>{
   const h=harness({hang:true});let done=false;
   const pending=h.load('server/lexara/LexaraLegalResearchGate.ts').completeLexaraLegalResearch(
     'What Iowa law covers leaving the scene?',{jurisdiction:'Iowa',allowDirectStatuteLookup:true}).then(out=>{done=true;return out});
-  await h.clock.tickAsync(6_999);assert.equal(done,false);
+  await h.clock.tickAsync(7_001);assert.equal(done,false,'the old seven-second deadline must be removed');
+  await h.clock.tickAsync(12_998);assert.equal(done,false,'allow the question-adaptive budget');
   await h.clock.tickAsync(2);const out=await pending;
   assert.equal(out.status,'timed-out');assert.equal(out.attempts,1);
   assert.equal(h.calls.signals[0].aborted,true);assert.equal(h.clock.countTimers(),0);
@@ -480,6 +495,77 @@ test('direct California statute retrieves primary text without a jurisdiction-sp
   assert(h.calls.retrieval.some(request=>request.targets.includes(official)));
   assert(h.calls.mesh.some(item=>item.query.includes('site:leginfo.legislature.ca.gov')), 'state legislature searched directly');
   assert.equal(h.calls.web.length,0);
+});
+
+
+test('direct statute verifier has an 1800-token allowance',async()=>{
+  const h=harness();
+  const out=await h.load('server/lexara/LexaraLegalResearchGate.ts').completeLexaraLegalResearch('Which Texas law covers leaving the scene?',{jurisdiction:'Texas',allowDirectStatuteLookup:true});
+  assert.equal(out.status,'supported'); assert.equal(out.attempts,1);
+  assert.equal(h.calls.gradeConfigs[0].maxTokens,1800);
+});
+test('all applicable state statutes are deep nationwide and allow 2800 tokens',async()=>{
+  const h=harness({grade:n=>n===1?{sufficient:false,supportingUrls:[url],nextQuery:'Find remaining collision-reporting duty'}:{sufficient:true,supportingUrls:[url]}});
+  const gate=h.load('server/lexara/LexaraLegalResearchGate.ts');
+  for(const state of ['Iowa','Texas','California','New York','Vermont'])
+    assert.equal(gate.planLexaraLegalResearchDepth('What all applicable '+state+' statutes apply to a hit and run?'),'deep');
+  const out=await gate.completeLexaraLegalResearch('What all applicable Iowa statutes apply to a hit and run?',{jurisdiction:'Iowa',researchIntent:'legal'});
+  assert.equal(out.status,'supported'); assert.equal(out.attempts,2);
+  assert.equal(h.calls.gradeConfigs[0].maxTokens,2800);
+  assert.equal(h.calls.research[1],'Find remaining collision-reporting duty');
+});
+test('direct verified-law search permits up to three distinct targeted verification attempts',async()=>{
+  const h=harness({grade:n=>n<=2?{sufficient:false,supportingUrls:[url],nextQuery:'Find outstanding qualification '+n}:{sufficient:true,supportingUrls:[url]}});
+  const out=await h.load('server/lexara/LexaraLegalResearchGate.ts').completeLexaraLegalResearch('Which Iowa statute covers leaving the scene?',{jurisdiction:'Iowa',allowDirectStatuteLookup:true});
+  assert.equal(out.status,'supported'); assert.equal(out.attempts,3);
+  assert.equal(h.calls.research.length,3);assert.equal(h.calls.web.length,0);
+});
+test('malformed JSON assessment retries using retained primary document and records its reason',async()=>{
+  const h=harness({grade:n=>n===1?'{"sufficient":':{sufficient:true,supportingUrls:[url]}});
+  const out=await h.load('server/lexara/LexaraLegalResearchGate.ts').completeLexaraLegalResearch('Which California statute regulates this?',{jurisdiction:'California',allowDirectStatuteLookup:true});
+  assert.equal(out.status,'supported');assert.equal(h.calls.research.length,1);
+  assert(h.calls.logs.some(x=>/invalid.*(?:response|json)/i.test(JSON.stringify(x))));
+});
+test('truncated Claude JSON is retried, not confused with insufficient legal evidence',async()=>{
+  const h=harness({grade:n=>n===1?{content:'{"sufficient":false,"supportingUrls":',stopReason:'max_tokens'}:{content:JSON.stringify({sufficient:true,supportingUrls:[url]}),stopReason:'end_turn'}});
+  const out=await h.load('server/lexara/LexaraLegalResearchGate.ts').completeLexaraLegalResearch('Which Iowa statute covers leaving the scene?',{jurisdiction:'Iowa',allowDirectStatuteLookup:true});
+  assert.equal(out.status,'supported');assert.equal(out.attempts,2);
+  assert.equal(h.calls.research.length,1);
+  assert(h.calls.logs.some(x=>/truncat/i.test(JSON.stringify(x))));
+});
+test('fabricated verifier supporting URLs remain rejected and are diagnosed',async()=>{
+  const h=harness({grade:()=>({sufficient:true,supportingUrls:['https://invalid.example/imaginary-statute']})});
+  const out=await h.load('server/lexara/LexaraLegalResearchGate.ts').completeLexaraLegalResearch('Which Iowa statute covers leaving the scene?',{jurisdiction:'Iowa',allowDirectStatuteLookup:true});
+  assert.equal(out.status,'sources-insufficient');assert(!out.research?.hasUsableEvidence);
+  assert(h.calls.logs.some(x=>/unverified-supporting-urls/.test(JSON.stringify(x))));
+});
+
+test('an explicitly requested statute section cannot be verified using a different statute',async()=>{
+  const h=harness({grade:()=>({sufficient:true,supportingUrls:[url]})});
+  const out=await h.load('server/lexara/LexaraLegalResearchGate.ts').completeLexaraLegalResearch(
+    'What does Iowa Code section 321.261 require?',{jurisdiction:'Iowa',allowDirectStatuteLookup:true});
+  assert.equal(out.status,'sources-insufficient','an unrelated section must not satisfy an explicitly requested citation');
+  assert.equal(out.failureReason,'incorrect-evidence');
+  assert(!out.research?.hasUsableEvidence);
+});
+
+test('qualifications after initial statute preamble survive into legal verification',async()=>{
+  const exception='IMPORTANT EXCEPTION: When an accident causes bodily injury, additional duties apply.';
+  const h=harness({actualAuthority:true,retrievedContent:'Synthetic legal text: '+('boilerplate '.repeat(710))+exception});
+  const out=await h.load('server/lexara/LexaraLegalResearchGate.ts').completeLexaraLegalResearch(
+    'What Iowa statute covers security deposits?',{jurisdiction:'Iowa',allowDirectStatuteLookup:true});
+  assert.equal(out.status,'supported');
+  assert(h.calls.grade.some(prompt=>prompt.includes(exception)),'later material exceptions must be evaluated rather than discarded');
+});
+
+test('wrong-jurisdiction and incomplete official law remain unverified with an explicit evidence code',async()=>{
+  const h=harness({grade:()=>({sufficient:false,supportingUrls:[],reasonCode:'incorrect-evidence',reason:'Source does not govern the requested jurisdiction',nextQuery:'Retrieve governing primary statute'})});
+  const out=await h.load('server/lexara/LexaraLegalResearchGate.ts').completeLexaraLegalResearch(
+    'What statute regulates this procedure in Vermont?',{jurisdiction:'Vermont',allowDirectStatuteLookup:true});
+  assert.equal(out.status,'sources-insufficient');
+  assert.equal(out.failureReason,'incorrect-evidence');
+  assert(!out.research?.hasUsableEvidence);
+  assert(h.calls.logs.some(x=>/incorrect-evidence/.test(JSON.stringify(x))));
 });
 
 (async()=>{for(const {name,run} of tests){await run();console.log('PASS:',name);}console.log(`${tests.length} verification-before-answer behavioral groups passed.`);})().catch(e=>{console.error(e);process.exitCode=1;});

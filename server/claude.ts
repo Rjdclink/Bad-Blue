@@ -207,7 +207,8 @@ export async function callClaude(
       });
     }
 
-    return { content, tokensUsed };
+    // Let legal verification distinguish truncated JSON from missing legal authority.
+    return { content, tokensUsed, stopReason: response.stop_reason };
   } catch (error: any) {
     // Preserve cancellation semantics. Harmony deliberately aborts losing hedges
     // and provider deadlines; wrapping those aborts as generic Claude failures
