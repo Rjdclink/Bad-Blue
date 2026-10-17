@@ -352,7 +352,13 @@ export function setupConsultationRoutes(app: Express): void {
     const facts = typeof req.body?.facts === 'string' ? req.body.facts.trim() : '';
     const rawRequestedType = typeof req.body?.documentType === 'string' ? req.body.documentType.trim() : '';
     const latestUserRequest = [...facts.matchAll(/(?:^|\n)USER:\s*([^\n]+)/g)].at(-1)?.[1] || facts;
-    const actualFormRequested = isLexaraOfficialFormDeliveryRequest(latestUserRequest);
+    const describedFormRequest=isLexaraOfficialFormDeliveryRequest(latestUserRequest);
+    // A referential "grab it" request carries its earlier court form title and
+    // issuing-document link; it does not need to repeat the word "form".
+    const priorFormLink=Array.isArray(req.body?.formSourceUrls)
+      && req.body.formSourceUrls.some((url:unknown)=>typeof url==='string');
+    const actualFormRequested=describedFormRequest || Boolean(priorFormLink
+      && /\b(?:form|application|petition|affidavit|cover\s+sheet|court)\b/i.test(rawRequestedType));
     const packetItemMode = req.body?.packetItem === true;
     const packetItemTitle = packetItemMode && typeof req.body?.packetItemTitle === 'string'
       ? req.body.packetItemTitle.trim().slice(0, 240)
@@ -364,7 +370,7 @@ export function setupConsultationRoutes(app: Express): void {
     // A user may explain their objective only after Lexara asks what the form is for.
     const clarifiedPurpose = [...facts.matchAll(/LEXARA REQUESTED FORM FIELD:\s*formPurpose\s*\nUSER ANSWER:\s*([^\n]+)/gi)].at(-1)?.[1]?.trim() || '';
     const documentLabel = [
-      packetItemTitle || (actualFormRequested ? lexaraRequestedOfficialFormTitle(latestUserRequest) : rawRequestedType) || requestedType || '',
+      packetItemTitle || (describedFormRequest ? lexaraRequestedOfficialFormTitle(latestUserRequest) : rawRequestedType) || requestedType || '',
       clarifiedPurpose,
     ].filter(Boolean).join(' ').trim();
     const templateMode = req.body?.templateMode === true;
