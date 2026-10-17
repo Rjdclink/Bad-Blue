@@ -1104,7 +1104,9 @@ must(
     consultationRoutes.includes('templateMode') &&
     legalDocumentRegistry.includes('export function inferLegalDocumentNeed') &&
     lexaraChatRoutes.includes('inferLegalDocumentNeed(prompt)') &&
-    lexaraChatRoutes.includes("documentType: officialFormDelivery ? lexaraRequestedOfficialFormTitle(prompt) : inferredType || currentType || historyType || 'Custom Document'") &&
+    lexaraChatRoutes.includes('documentType: sameFormFollowup') &&
+    lexaraChatRoutes.includes('officialFormDelivery ? lexaraRequestedOfficialFormTitle(prompt)') &&
+    lexaraChatRoutes.includes("inferredType || currentType || historyType || 'Custom Document'") &&
     conversation.includes("data?.validated !== true || String(data?.documentType || '') !== pendingDocument.title"),
   'LEXARA uses one canonical legal-document registry, inferred intent, current-turn precedence, and validated same-type export handoff',
 );
