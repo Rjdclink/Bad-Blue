@@ -2110,6 +2110,14 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     }
   };
 
+  // A request to obtain an original court form starts retrieval automatically.
+  // Subsequent field answers refresh the same form without a second law search.
+  useEffect(() => {
+    if (!pendingDocument?.autoRetrieve || !pendingDocument.confirmed || documentBusy) return;
+    setPendingDocument(previous => previous ? {...previous,autoRetrieve:false} : previous);
+    void generateAndDownloadPendingDocument();
+  }, [pendingDocument?.autoRetrieve,pendingDocument?.confirmed,documentBusy]);
+
   const signaturePoint = (event: ReactPointerEvent<HTMLCanvasElement>) => {
     const canvas = signatureCanvasRef.current;
     if (!canvas) return { x: 0, y: 0 };
@@ -2394,16 +2402,65 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
             </div>
           )}
 
+          {officialFormPreview && (
+            <div className="flex justify-start">
+              <div className="w-full max-w-3xl rounded-2xl border bg-card p-4 text-sm shadow-sm">
+                <div className="mb-2 font-medium">{officialFormPreview.title}</div>
+                <div className="mb-2 text-xs text-muted-foreground">
+                  Original court form from{' '}
+                  <a className="underline" href={officialFormPreview.sourceUrl}
+                    target="_blank" rel="noopener noreferrer">the official issuing court</a>
+                  {officialFormPreview.revision ? ` · Revision: ${officialFormPreview.revision}` : ''}
+                </div>
+                {officialFormPreview.notice && <p className="mb-2 text-xs text-muted-foreground">{officialFormPreview.notice}</p>}
+                {officialFormPreview.format === 'pdf' && (
+                  <iframe className="mb-3 h-[400px] w-full rounded border bg-white"
+                    title="Original official court form preview" src={officialFormPreview.url} />
+                )}
+                <Button size="sm" variant="outline" asChild>
+                  <a href={officialFormPreview.url}
+                    download={officialFormPreview.title.replace(/[^a-z0-9._-]+/gi,'-')+'.'+officialFormPreview.format}>
+                    <Download className="mr-1 h-4 w-4" />
+                    Download original {officialFormPreview.format.toUpperCase()}
+                  </a>
+                </Button>
+              </div>
+            </div>
+          )}
+
           {pendingDocument && !conversationDocument && (
             <div className="flex justify-start">
               <div className="max-w-[92%] rounded-2xl border bg-card p-4 text-sm shadow-sm">
                 <div className="mb-2 font-medium">{pendingDocument.title}</div>
-                {pendingDocument.confirmed && !pendingDocument.followUpQuestion && !pendingDocument.missingFields?.length && <><div className="mb-3">Preview the complete document or download it in your preferred format.</div>
-                <div className="flex flex-wrap gap-2">
-                  <Button size="sm" variant="outline" disabled={documentBusy} onClick={() => void generateAndDownloadPendingDocument()}><FileText className="mr-1 h-4 w-4" />Preview Document</Button>
-                  <Button size="sm" variant="outline" disabled={documentBusy} onClick={() => void generateAndDownloadPendingDocument('docx')}><Download className="mr-1 h-4 w-4" />Download DOCX</Button>
-                  <Button size="sm" variant="outline" disabled={documentBusy} onClick={() => void generateAndDownloadPendingDocument('pdf')}><Download className="mr-1 h-4 w-4" />Download PDF</Button>
-                </div></>}
+                {pendingDocument.confirmed && !pendingDocument.followUpQuestion && <>
+                  <div className="mb-3">
+                    {pendingDocument.officialFormDelivery
+                      ? 'The original court form is available while Lexara completes the remaining fields.'
+                      : 'Preview the complete document or download it in your preferred format.'}
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button size="sm" variant="outline" disabled={documentBusy}
+                      onClick={() => void generateAndDownloadPendingDocument()}>
+                      <FileText className="mr-1 h-4 w-4" />
+                      {pendingDocument.officialFormDelivery ? 'Refresh Form Preview' : 'Preview Document'}
+                    </Button>
+                    {pendingDocument.officialFormDelivery ? (
+                      <Button size="sm" variant="outline" disabled={documentBusy}
+                        onClick={() => void generateAndDownloadPendingDocument('pdf')}>
+                        <Download className="mr-1 h-4 w-4" />Download Original Form
+                      </Button>
+                    ) : <>
+                      <Button size="sm" variant="outline" disabled={documentBusy}
+                        onClick={() => void generateAndDownloadPendingDocument('docx')}>
+                        <Download className="mr-1 h-4 w-4" />Download DOCX
+                      </Button>
+                      <Button size="sm" variant="outline" disabled={documentBusy}
+                        onClick={() => void generateAndDownloadPendingDocument('pdf')}>
+                        <Download className="mr-1 h-4 w-4" />Download PDF
+                      </Button>
+                    </>}
+                  </div>
+                </>}
               </div>
             </div>
           )}
