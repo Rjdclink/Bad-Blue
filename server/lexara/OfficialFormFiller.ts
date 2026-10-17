@@ -156,30 +156,36 @@ export async function inspectOfficialForm(form: OfficialLegalForm): Promise<Insp
     // The unaltered court-issued original remains available for download.
     return {sourceUrl:resolved.url,contentType:'pdf',bytes,fields:[],fillable:false,uninspectable:true};
   }
-  const fields: OfficialFormField[]=[];
-  const pages=pdf.getPages();
-  for(const field of pdf.getForm().getFields()){
-    const name=field.getName(); const kind=field.constructor.name.toLowerCase();
-    const widget=(field as any).acroField?.getWidgets?.()?.[0];
-    const pageRef=widget?.P?.();
-    let pageIndex=pageRef ? pages.findIndex(page=>String(page.ref)===String(pageRef)) : -1;
-    if(pageIndex<0 && widget?.dict){
-      pageIndex=pages.findIndex(page => (page.node.Annots()?.asArray() || [])
-        .some(ref => pdf.context.lookup(ref)===widget.dict));
+  try {
+    const fields: OfficialFormField[]=[];
+    const pages=pdf.getPages();
+    for(const field of pdf.getForm().getFields()){
+      const name=field.getName(); const kind=field.constructor.name.toLowerCase();
+      const widget=(field as any).acroField?.getWidgets?.()?.[0];
+      const pageRef=widget?.P?.();
+      let pageIndex=pageRef ? pages.findIndex(page=>String(page.ref)===String(pageRef)) : -1;
+      if(pageIndex<0 && widget?.dict){
+        pageIndex=pages.findIndex(page => (page.node.Annots()?.asArray() || [])
+          .some(ref => pdf.context.lookup(ref)===widget.dict));
+      }
+      const rectangle=widget?.getRectangle?.();
+      fields.push({
+        name,type:kind.includes('text')?'text':kind.includes('check')?'checkbox':kind.includes('radio')?'radio':kind.includes('dropdown')?'dropdown':kind.includes('option')?'option':'unknown',
+        required:field.isRequired(),readOnly:field.isReadOnly(),
+        pageIndex:pageIndex>=0?pageIndex:undefined,
+        verticalPosition:Number.isFinite(rectangle?.y)?rectangle.y:undefined,
+      });
     }
-    const rectangle=widget?.getRectangle?.();
-    fields.push({
-      name,type:kind.includes('text')?'text':kind.includes('check')?'checkbox':kind.includes('radio')?'radio':kind.includes('dropdown')?'dropdown':kind.includes('option')?'option':'unknown',
-      required:field.isRequired(),readOnly:field.isReadOnly(),
-      pageIndex:pageIndex>=0?pageIndex:undefined,
-      verticalPosition:Number.isFinite(rectangle?.y)?rectangle.y:undefined,
-    });
-  }
-  // Ask fields in visual reading order where the issuing PDF records their
-  // widget pages. Otherwise preserve the original AcroForm order.
-  if(fields.every(field=>field.pageIndex!==undefined && field.verticalPosition!==undefined)){
-    fields.sort((a,b)=>(a.pageIndex!-b.pageIndex!)
-      || (b.verticalPosition!-a.verticalPosition!));
+    // Ask fields in visual reading order where the issuing PDF records their
+    // widget pages. Otherwise preserve the original AcroForm order.
+    if(fields.every(field=>field.pageIndex!==undefined && field.verticalPosition!==undefined)){
+      fields.sort((a,b)=>(a.pageIndex!-b.pageIndex!)
+        || (b.verticalPosition!-a.verticalPosition!));
+    }
+  } catch {
+    // A PDF can load successfully but still have malformed proprietary/XFA
+    // field metadata. Return the untouched official form, never a broken copy.
+    return {sourceUrl:resolved.url,contentType:'pdf',bytes,fields:[],fillable:false,uninspectable:true};
   }
   return {sourceUrl:resolved.url,contentType:'pdf',bytes,fields,fillable:fields.length>0};
 }
