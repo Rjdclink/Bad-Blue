@@ -164,3 +164,20 @@ test('application installation appears exactly once, before its regular logging 
   assert(file.indexOf("installEmbeddedISB(app)") < file.indexOf('const start = Date.now();'));
   assert.doesNotMatch(file,/app\.(?:post|get)\(['"]\/api\/(?:local-login|local-signup|webhooks\/square)/);
 });
+
+
+test('the same in-app bubble observes both public LegalWhat hostnames',async()=>{
+  await withServer({autoTick:false},async(port,isb)=>{
+    for(const host of ['legalwhat.com','bad-blue-production.up.railway.app']) {
+      assert.equal((await request(port,'/login',{host})).status,200);
+      const bait=await request(port,'/__isb__/robots.txt',{host});
+      assert.equal(bait.status,200);
+      assert.match(bait.body,/__isb__/);
+      assert.equal((await request(port,'/.env',{host})).status,200);
+    }
+    await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(isb.snapshot().probes,2);
+    assert(isb.snapshot().bubbles.shifted>=5);
+    assert.equal(isb.snapshot().enforcement,'none');
+  });
+});
