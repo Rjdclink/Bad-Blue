@@ -17,9 +17,14 @@ export function isLexaraOfficialFormDeliveryRequest(text: string): boolean {
 }
 
 export function lexaraRequestedOfficialFormTitle(text: string): string {
-  return String(text||'').trim()
-    .replace(/^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?|i\s+(?:need|want|would\s+like)\s+(?:you\s+to\s+)?)/i,'')
-    .replace(/^(?:please\s+)?(?:grab|fetch|retrieve|download|bring|send|provide|find|locate|get|show|pull\s+up|open|give)(?:\s+me)?\s+/i,'')
-    .replace(/^(?:a|an|the|a\s+copy\s+of|the\s+copy\s+of)\s+/i,'')
-    .replace(/[?.!]+$/,'').trim().slice(0,180) || 'Official Court Form';
+  // A request can name the form *before* a comma and specify the issuing
+  // county/court afterwards. Search for that instrument, not the whole turn.
+  const requested = String(text || '').replace(/[’]/g, "'").trim()
+    .replace(/^(?:(?:hey\s+)?lexara[,!:]?\s*)/i, '')
+    .replace(/^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?|i\s+(?:need|want|would\s+like)\s+(?:(?:you\s+to|to)\s+)?)/i, '')
+    .replace(/^(?:please\s+)?(?:find|locate|grab|fetch|retrieve|download|bring|send|provide|get|show|open|give|pull\s+up)(?:\s+(?:me|a\s+copy\s+of|the\s+copy\s+of))?\s+/i, '')
+    .replace(/^(?:(?:the|a|an)\s+)?(?:copy\s+of\s+)?/i, '')
+    .replace(/[,;]\s*(?:(?:the|a|an)\s+)?(?:(?:official|local|state|federal|county|court)\s+)*(?:court\s+)?forms?\b[\s\S]*$/i, '')
+    .replace(/[?.!,;]+$/g, '').trim();
+  return requested.slice(0, 180) || 'Official Court Form';
 }
