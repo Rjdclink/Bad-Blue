@@ -609,33 +609,36 @@ export function setupConsultationRoutes(app: Express): void {
         }
       }
     }
-    const offeredChoices = Array.isArray(req.body?.formChoices)
-      ? req.body.formChoices.filter((choice:unknown):choice is {title:string;url:string} =>
-          Boolean(choice && typeof choice==='object' && typeof (choice as any).url==='string'
-            && typeof (choice as any).title==='string'))
-          .slice(0,2) : [];
-    const clarification = [...facts.matchAll(/LEXARA REQUESTED FORM FIELD:\s*formChoice\s*\nUSER ANSWER:\s*([^\n]+)/gi)]
-      .at(-1)?.[1]?.trim() || '';
-    const selectedForm = clarification
-      ? selectClarifiedOfficialForm(candidates,clarification,offeredChoices.map((option:{url:string})=>option.url))
-      : null;
-    const leading = candidates.slice(0,2);
-    const isAmbiguous = officialFormNeedsClarification(candidates,requestedFormNumber);
-    if(officialFormRequested && (isAmbiguous || clarification) && !selectedForm) {
-      const [first,second] = leading;
-      if (first?.form.url && second?.form.url) {
-        const courtForm = (url:string)=>/(?:courts?|judicial|uscourts)/i.test(new URL(url).hostname);
-        const differentProcedures = courtForm(first.form.url)!==courtForm(second.form.url);
-        const question = differentProcedures
-          ? 'I found both a court application and an agency review form. Are you filing through the court or requesting a government agency review? You can also answer first or second.'
-          : 'Two different official forms may fit: (1) '+String(first.form.title).slice(0,115)
-            +'; (2) '+String(second.form.title).slice(0,115)
-            +'. Which situation applies? You can say first or second, or explain your situation.';
-        return res.status(422).json({
-          needsFormClarification:true, missingFields:['formChoice'],question,
-          formChoices:leading.map(item=>({title:item.form.title,url:item.form.url})),
-        });
-      }
+    // Several possible alternatives are NOT a filing packet. Only forms
+    // explicitly required by the selected publisher's instructions belong
+    // in its packet; exclude them from the alternative-choice interview.
+    const primaryCandidate=candidates[0]?.form;
+    const requiredCompanions=primaryCandidate
+      ? requiredOfficialFormCompanions(primaryCandidate,formResearch,issuingDomains) : [];
+    const companionUrls=new Set(requiredCompanions.map(form=>form.url));
+    const alternatives=candidates.filter(item=>!companionUrls.has(item.form.url));
+    const highestScore=alternatives[0]?.score || 0;
+    const plausible=alternatives.filter(item=>item.score>=highestScore-2).slice(0,12);
+    if(officialFormRequested && !requestedFormNumber && officialFormNeedsClarification(plausible)){
+      const [first,second]=plausible;
+      const courtForm=(url:string)=>/(?:courts?|judicial|uscourts)/i.test(new URL(url).hostname);
+      const differentProcedures=plausible.length===2
+        && first?.form.url && second?.form.url
+        && courtForm(first.form.url)!==courtForm(second.form.url);
+      const options=plausible.map((item,index)=>
+        '('+(index+1)+') '+String(item.form.title||'Official form').slice(0,115));
+      const question=differentProcedures
+        ? 'I found both a court application and an agency review form. Are you filing through the court or requesting an agency review? You can also say first or second.'
+        : 'More than one official form could apply: '+options.join('; ')+'. Which one fits your situation?';
+      return res.status(422).json({
+        needsFormClarification:true,missingFields:['formChoice'],question,
+        // Preserve the EXACT original ordered options and companion forms.
+        formChoices:plausible.map(item=>({
+          title:item.form.title,url:item.form.url,
+          requiredForms:requiredOfficialFormCompanions(item.form,formResearch,issuingDomains)
+            .map(companion=>({title:companion.title,url:companion.url})),
+        })),
+      });
     }
     if (officialFormRequested && !candidates.length && !clarifiedPurpose
       && /^(?:official\s+)?(?:court\s+)?forms?$/i.test(formDocumentLabel)) {
