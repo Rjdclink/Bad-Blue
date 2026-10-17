@@ -210,6 +210,7 @@ export async function fillOfficialDocx(inspected: InspectedOfficialForm, values:
     const documentPath=path.join(unpack,'word','document.xml');
     let xml=await readFile(documentPath,'utf8');
     for(const [key,value] of Object.entries(values)) {
+      const originalXml=xml;
       const escapedKey=key.replace(/[.*+?^$()|[\]\\]/g,'\\$&');
       const safe=escapeXmlText(String(value));
       xml=xml.replace(new RegExp('\\[\\s*'+escapedKey+'\\s*\\]','gi'),safe)
@@ -219,6 +220,7 @@ export async function fillOfficialDocx(inspected: InspectedOfficialForm, values:
         'gi'
       );
       xml=xml.replace(contentControl,(_match,prefix,_oldValue,suffix)=>prefix+safe+suffix);
+      if(xml===originalXml) throw new Error('An official Word form field could not be filled: '+key);
     }
     await writeFile(documentPath,xml,'utf8');
     await execFileAsync('zip',['-qr',out,'.'],{cwd:unpack});
