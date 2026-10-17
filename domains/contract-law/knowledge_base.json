@@ -1,23 +1,36 @@
 {
   "domain": "contract-law",
   "name": "Contract Law",
-  "version": "1.0.0",
-  "lastUpdated": "2024-01-01T00:00:00Z",
+  "version": "1.1.0",
+  "lastUpdated": "2026-10-16T00:00:00Z",
   "cases": [
     {
       "id": "hadley-v-baxendale",
       "name": "Hadley v. Baxendale",
       "citation": "156 Eng. Rep. 145 (1854)",
-      "summary": "Landmark case in Contract Law",
-      "relevance": "Foundational precedent for contract-law matters"
+      "summary": "English Exchequer decision illustrating foreseeability limits on consequential contract damages; historical persuasive reference, not automatically binding in a United States jurisdiction.",
+      "relevance": "Consequential damages; foreseeability; evidence of unusual loss and notice to the parties."
+    },
+    {
+      "id": "lucy-v-zehmer",
+      "name": "Lucy v. Zehmer",
+      "citation": "196 Va. 493 (1954)",
+      "summary": "Virginia Supreme Court decision examining outward manifestations of assent even when a party claims a private intent to joke; binding status depends on the relevant jurisdiction and later treatment.",
+      "relevance": "Objective assent; offer and acceptance; contract formation; evidentiary dispute over intent."
     }
   ],
   "statutes": [
     {
-      "id": "contract-law-primary-statute",
-      "name": "Primary Contract Law Statute",
-      "citation": "See applicable federal and state codes",
-      "summary": "Primary statutory framework for Contract Law"
+      "id": "federal-esign",
+      "name": "Electronic Signatures in Global and National Commerce Act",
+      "citation": "15 U.S.C. § 7001",
+      "summary": "Federal electronic-record and signature validity provision for qualifying interstate or foreign commerce transactions; the statute contains exceptions and does not eliminate other formation or enforceability rules."
+    },
+    {
+      "id": "federal-arbitration",
+      "name": "Federal Arbitration Act — arbitration agreements",
+      "citation": "9 U.S.C. § 2",
+      "summary": "Federal provision governing qualifying written arbitration agreements involving maritime or commercial transactions; application depends on coverage, defenses, later amendments, and statutory exceptions."
     }
   ],
   "templates": [
