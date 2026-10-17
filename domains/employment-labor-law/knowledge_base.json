@@ -1,23 +1,61 @@
 {
   "domain": "employment-labor-law",
   "name": "Employment and Labor Law",
-  "version": "1.0.0",
-  "lastUpdated": "2024-01-01T00:00:00Z",
+  "version": "1.1.0",
+  "lastUpdated": "2026-10-16T00:00:00Z",
   "cases": [
     {
-      "id": "nlrb-v-jones--laughlin-steel",
-      "name": "NLRB v. Jones & Laughlin Steel",
+      "id": "nlrb-v-jones-laughlin-steel",
+      "name": "NLRB v. Jones & Laughlin Steel Corp.",
       "citation": "301 U.S. 1 (1937)",
-      "summary": "Landmark case in Employment and Labor Law",
-      "relevance": "Foundational precedent for employment-labor-law matters"
+      "summary": "United States Supreme Court decision upholding federal regulation of industrial labor relations affecting interstate commerce; consult current NLRA text and later decisions for any particular claim.",
+      "relevance": "NLRA constitutional framework; labor organizing and collective bargaining."
+    },
+    {
+      "id": "mcdonnell-douglas-v-green",
+      "name": "McDonnell Douglas Corp. v. Green",
+      "citation": "411 U.S. 792 (1973)",
+      "summary": "United States Supreme Court decision describing a burden-shifting method for certain Title VII disparate-treatment cases relying on indirect evidence; verify later precedent and the claim-specific proof framework.",
+      "relevance": "Title VII discrimination; evidentiary burdens; hiring decisions; pretext."
+    },
+    {
+      "id": "burlington-northern-v-white",
+      "name": "Burlington Northern & Santa Fe Railway Co. v. White",
+      "citation": "548 U.S. 53 (2006)",
+      "summary": "United States Supreme Court decision analyzing materially adverse action under Title VII retaliation protections; the relevant test differs from the substantive discrimination provision.",
+      "relevance": "Retaliation; protected activity; materially adverse treatment; distinct Title VII standards."
     }
   ],
   "statutes": [
     {
-      "id": "employment-labor-law-primary-statute",
-      "name": "Primary Employment and Labor Law Statute",
-      "citation": "See applicable federal and state codes",
-      "summary": "Primary statutory framework for Employment and Labor Law"
+      "id": "title-vii-discrimination",
+      "name": "Title VII — unlawful employment practices",
+      "citation": "42 U.S.C. § 2000e-2(a)",
+      "summary": "Federal discrimination provision addressing covered employment practices based on specified protected characteristics; coverage, exemptions, defenses, and state-law overlays require claim-specific research."
+    },
+    {
+      "id": "title-vii-retaliation",
+      "name": "Title VII — retaliation protections",
+      "citation": "42 U.S.C. § 2000e-3(a)",
+      "summary": "Federal provision addressing retaliation for protected opposition or participation in Title VII proceedings; filing prerequisites and judicial interpretation must be checked for the particular claim."
+    },
+    {
+      "id": "flsa-overtime",
+      "name": "Fair Labor Standards Act — maximum hours",
+      "citation": "29 U.S.C. § 207(a)",
+      "summary": "Federal statutory overtime provision for covered employees; determine worker status, enterprise or individual coverage, regular rate, exclusions, exemptions, and applicable state wage law."
+    },
+    {
+      "id": "fmla-interference",
+      "name": "Family and Medical Leave Act — prohibited acts",
+      "citation": "29 U.S.C. § 2615",
+      "summary": "Federal prohibition on interference with qualifying leave rights and certain discriminatory or retaliatory acts; employer coverage, individual eligibility, proof, and remedies must be established."
+    },
+    {
+      "id": "nlra-unfair-practices",
+      "name": "National Labor Relations Act — unfair labor practices",
+      "citation": "29 U.S.C. § 158(a)",
+      "summary": "Federal statutory prohibitions on specified employer interference, discrimination, and refusal to bargain; employee coverage, Board doctrine, effective decisions, and filing rules must be verified."
     }
   ],
   "templates": [
