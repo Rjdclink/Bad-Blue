@@ -59,6 +59,10 @@ const NON_PERSON_SPECTRA_TARGET_RE = /^(?:(?:the|this|that|a|an|my|your)\s+)?(?:
 
 function spectraTargetFromPrompt(value: string): string | null {
   const normalized = value.replace(/[’]/g, "'").replace(/\s+/g, ' ').trim();
+  // Review the COMPLETE turn first: the issuing court/form often follows a
+  // comma, which the person-location parser would otherwise discard.
+  if (/\b(?:official|court|judicial|legal|filing|child\s+support|custody|divorce|probate|modification)\b/i.test(normalized)
+    && /\b(?:forms?|application|petition|affidavit|pleading|motion|cover\s+sheet|filing\s+packet)\b/i.test(normalized)) return null;
   // Recognize ordinary location requests locally so offering the map never
   // waits for research or adds an AI call. Keep legal/document requests in chat.
   const request = normalized.replace(/^(?:(?:hey\s+)?lexara[,!:]?\s+|please\s+|(?:can|could|would|will)\s+you\s+(?:please\s+)?|(?:help\s+me|i\s+(?:want|need|would\s+like)\s+(?:you\s+)?to|i(?:'m|\s+am)\s+trying\s+to)\s+)+/i, '');
