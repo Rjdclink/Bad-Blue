@@ -13,7 +13,7 @@ import { researchLegalAuthority, formatAuthorityResearchForSystem, discoverClaud
 import { resolveUSJurisdiction } from '../lexara/LexaraJurisdictionResolver';
 import { formatJurisdictionAuthorityForSystem, resolveJurisdictionAuthorityProfile } from '../lexara/LexaraJurisdictionAuthority';
 import { formatCitationVerificationForCorrection, verifyLegalCitationsInText } from '../lexara/LexaraCitationVerifier';
-import { resolveOfficialLegalForm, officialFormDirective, rankOfficialLegalForms, officialFormNeedsClarification, selectClarifiedOfficialForm } from '../lexara/OfficialLegalFormResolver';
+import { resolveOfficialLegalForm, officialFormDirective, rankOfficialLegalForms, officialFormNeedsClarification, selectClarifiedOfficialForm, requiredOfficialFormCompanions } from '../lexara/OfficialLegalFormResolver';
 import { isLexaraOfficialFormDeliveryRequest, lexaraRequestedOfficialFormTitle } from '../lexara/OfficialFormRequest';
 import { isRecordReliefRequest, recordReliefCaseState, recordReliefTopic, recordReliefLawQuery } from '../lexara/RecordReliefWorkflow';
 import { assessRecordReliefDocument } from '../lexara/RecordReliefDocument';
