@@ -2533,6 +2533,31 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
             </div>
           )}
 
+          {officialFormPacketPreviews.filter(form=>form.sourceUrl!==officialFormPreview?.sourceUrl)
+            .map(form=>(
+              <div className="flex justify-start" key={form.sourceUrl}>
+                <div className="w-full max-w-3xl rounded-2xl border bg-card p-4 text-sm shadow-sm">
+                  <div className="mb-2 font-medium">{form.title}</div>
+                  <div className="mb-3 text-xs text-muted-foreground">
+                    Required accompanying form from{' '}
+                    <a className="underline" href={form.sourceUrl}
+                      target="_blank" rel="noopener noreferrer">the official issuing source</a>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button size="sm" variant="outline" asChild>
+                      <a href={form.url} target="_blank" rel="noopener noreferrer">Preview form</a>
+                    </Button>
+                    <Button size="sm" variant="outline" asChild>
+                      <a href={form.url}
+                        download={form.title.replace(/[^a-z0-9._-]+/gi,'-')+'.'+form.format}>
+                        <Download className="mr-1 h-4 w-4" />Download {form.format.toUpperCase()}
+                      </a>
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            ))}
+
           {pendingDocument && !conversationDocument && (
             <div className="flex justify-start">
               <div className="max-w-[92%] rounded-2xl border bg-card p-4 text-sm shadow-sm">
