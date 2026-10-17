@@ -13,6 +13,7 @@ const FORM_HINT = /\b(form|petition|complaint|motion|notice|summons|cover sheet|
 const MANDATORY_HINT = /\b(?:required\s+(?:official\s+)?form|mandatory\s+(?:official\s+)?form|prescribed form|must\s+(?:use|complete|file|submit)\s+(?:(?:this|the)\s+)?form|shall\s+(?:use|file|submit)\s+(?:(?:this|the)\s+)?form|use (?:this|the) form)\b/i;
 const OPTIONAL_HINT = /\b(optional|may use|provided for convenience)\b/i;
 const CUSTOM_HINT = /\b(no official form|no prescribed form|may be drafted|local form not required)\b/i;
+const RETIRED_FORM_HINT = /\b(?:superseded|obsolete|archived|withdrawn|discontinued|replaced by|no longer (?:valid|accepted|used))\b/i;
 function official(url: string): boolean { try { const host=new URL(url).hostname.toLowerCase(); return host.endsWith('.gov') || host==='gov' || host.endsWith('.uscourts.gov') || /(?:^|\.)courts?\.[a-z]{2}\.us$/.test(host); } catch { return false; } }
 function typeOf(url: string): OfficialLegalForm['contentType'] {
   const clean=url.toLowerCase().split('?')[0]; if(clean.endsWith('.pdf')) return 'pdf';
@@ -22,18 +23,30 @@ export function resolveOfficialLegalForm(research: LexaraAuthorityResearch | nul
   if(!research?.sources?.length) return { requirement:'unverified', verifiedOfficial:false, localRules:[], companionDocuments:[], provenance:[] };
   const escapedNumber = requestedFormNumber?.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const numberPattern = escapedNumber ? new RegExp(`(?:^|[^a-z0-9.:-])${escapedNumber}(?![a-z0-9.-]|:[a-z0-9])`, 'i') : null;
-  const relevant=research.sources.filter(source=>official(source.url) && FORM_HINT.test([source.title,source.excerpt].filter(Boolean).join(' '))
-    && (!numberPattern || (numberPattern.test(source.title) && (!issuingDomains || issuingDomains.some(domain => {
-      try { const host=new URL(source.url).hostname.toLowerCase(); const expected=domain.toLowerCase().replace(/^www\./, ''); return host===expected || host.endsWith('.'+expected); } catch { return false; }
-    })))));
+  // An unrelated agency's .gov file is not a form issued by this court.
+  const matchesIssuer=(url:string) => !issuingDomains?.length || issuingDomains.some(domain=>{
+    try {
+      const host=new URL(url).hostname.toLowerCase().replace(/^www\./,'');
+      const expected=domain.toLowerCase().replace(/^www\./,'');
+      return host===expected || host.endsWith('.'+expected);
+    } catch { return false; }
+  });
+  const relevant=research.sources.filter(source=>official(source.url) && matchesIssuer(source.url)
+    && source.kind!=='secondary' && source.kind!=='web'
+    && FORM_HINT.test([source.title,source.excerpt].filter(Boolean).join(' '))
+    && !RETIRED_FORM_HINT.test([source.title,source.excerpt].filter(Boolean).join(' '))
+    && (!numberPattern || numberPattern.test(source.title)));
   const documentTokens=String(documentType||'').toLowerCase().split(/[^a-z0-9]+/).filter(token=>token.length>=4 && !['form','legal','document','official'].includes(token));
   const scored=relevant.filter(source => !requestedFormNumber || !/\b(?:instructions?|guide|guidance|checklist)\b/i.test(source.title)).map(source=>{
     const haystack=[source.title,source.excerpt].filter(Boolean).join(' ').toLowerCase();
     const tokenScore=documentTokens.reduce((total,token)=>total+(haystack.includes(token)?1:0),0);
+    const titleScore=documentTokens.reduce((total,token)=>total+(source.title.toLowerCase().includes(token)?1:0),0);
     const exactFormScore=numberPattern ? 3 : 0;
-    const score=tokenScore+exactFormScore+(typeOf(source.url)!=='html'?1:0);
-    return {source,score,tokenScore,haystack};
-  }).filter(entry=>entry.tokenScore>0 || Boolean(requestedFormNumber)).sort((a,b)=>b.score-a.score);
+    const score=tokenScore+titleScore*3+exactFormScore+(typeOf(source.url)!=='html'?1:0);
+    return {source,score,tokenScore,titleScore,haystack};
+  }).filter(entry=>Boolean(requestedFormNumber)
+    || (entry.tokenScore>0 && (entry.titleScore>0 || entry.source.provider==='official-form-directory')))
+    .sort((a,b)=>b.score-a.score);
   const bestScore=scored[0]?.score||0;
   const specific=scored.filter(entry=>entry.score>=Math.max(1,bestScore-1));
   if (!specific.length) return { requirement:'unverified', verifiedOfficial:false, localRules:[], companionDocuments:[], provenance:[] };
@@ -51,7 +64,7 @@ export function resolveOfficialLegalForm(research: LexaraAuthorityResearch | nul
   const revision=revisionText.match(/\b(?:revision|revised|edition|effective|updated|rev\.?)\s*(?:date)?\s*[:#-]?\s*((?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{1,2},?\s+\d{4}|(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{4}|\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4})\b/i)?.[1];
   const localRules=relevant.filter(s=>/\b(local rule|court rule|filing requirement|instructions?)\b/i.test([s.title,s.excerpt].filter(Boolean).join(' '))).map(s=>s.title).slice(0,8);
   const companionDocuments=relevant.filter(s=>/\b(summons|civil cover sheet|fee waiver|service|appearance|proposed order)\b/i.test([s.title,s.excerpt].filter(Boolean).join(' '))).map(s=>s.title).slice(0,8);
-  return { requirement,title,formNumber,url:direct?.url,sourceTitle:direct?.title,revision,contentType:direct?.url?typeOf(direct.url):undefined,verifiedOfficial:!!direct,localRules,companionDocuments,provenance:relevant.slice(0,12).map(s=>({title:s.title,url:s.url,retrievedAt:research.searchedAt})) };
+  return { requirement,title,formNumber,url:direct?.url,sourceTitle:direct?.title,revision,contentType:direct?.url?typeOf(direct.url):undefined,verifiedOfficial:Boolean(direct && matchesIssuer(direct.url) && official(direct.url)),localRules,companionDocuments,provenance:relevant.slice(0,12).map(s=>({title:s.title,url:s.url,retrievedAt:research.searchedAt})) };
 }
 export function officialFormDirective(form: OfficialLegalForm): string {
   if(form.requirement==='mandatory') return ['A mandatory official form appears to apply. Do NOT substitute a custom-drafted pleading for that official form.',form.title ? 'Official form: '+form.title+'.' : '',form.formNumber ? 'Form number: '+form.formNumber+'.' : '',form.url ? 'Verified official source: '+form.url+'.' : '',form.companionDocuments.length ? 'Potential accompanying documents: '+form.companionDocuments.join('; ')+'.' : ''].filter(Boolean).join(' ');
