@@ -647,7 +647,7 @@ export function setupConsultationRoutes(app: Express): void {
         question:'What do you need the court form to accomplish?',
       });
     }
-    const officialForm = selectedForm || candidates[0]?.form
+    const officialForm = candidates[0]?.form
       || resolveOfficialLegalForm(formResearch, formDocumentLabel, requestedFormNumber, issuingDomains);
     if (requestedFormNumber) console.info('[LEXARA OfficialForm]', {
       requestedFormNumber,
@@ -684,11 +684,25 @@ export function setupConsultationRoutes(app: Express): void {
       return res.status(422).json({ error: 'The requested official form could not be verified from current court sources. No custom substitute was generated.' });
     }
     if (officialForm.requirement === 'mandatory' || ((officialFormRequested || reliefDocument) && officialForm.verifiedOfficial)) {
+      const officialForms=[officialForm];
+      const unavailableRequiredForms:string[]=[];
+      if(officialFormRequested && !reliefDocument) for(const companion of
+        requiredOfficialFormCompanions(officialForm,formResearch,issuingDomains)){
+        try {
+          await inspectOfficialForm(companion);
+          if(!officialForms.some(form=>form.url===companion.url)) officialForms.push(companion);
+        } catch(error) {
+          unavailableRequiredForms.push(companion.title || 'Required accompanying form');
+          log.warn('Required companion form unavailable', {
+            message:error instanceof Error?error.message:String(error),
+          });
+        }
+      }
       return res.status(409).json({
         error: 'Lexara will use the verified official form rather than substitute a custom draft.',
         documentType: documentLabel,
         jurisdiction: documentJurisdiction,
-        officialForm,
+        officialForm,officialForms,unavailableRequiredForms,
         officialFormRequired: true,
         facts,
       });
