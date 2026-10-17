@@ -39,12 +39,22 @@ async function withServer(options,fn) {
   finally {obj.isb.stop();await new Promise(resolve=>obj.server.close(resolve));}
 }
 async function request(port,path,{method='GET',host='legalwhat.com',body='',headers={}} = {}) {
-  const response = await fetch('http://127.0.0.1:'+port+path,{
-    method,body:method==='GET'||method==='HEAD'?undefined:body,
-    headers:{host,...headers},
-    redirect:'manual'
+  // Node fetch silently replaces Host with localhost; core HTTP preserves the fixture.
+  return new Promise((resolve,reject)=>{
+    const req = require('node:http').request({
+      hostname:'127.0.0.1',port,path,method,headers:{Host:host,...headers},
+    }, response=>{
+      const chunks=[];
+      response.on('data', chunk=>chunks.push(chunk));
+      response.on('end', ()=>resolve({
+        status:response.statusCode,
+        headers:{get:name=>response.headers[name.toLowerCase()] ?? null},
+        body:Buffer.concat(chunks).toString('utf8'),
+      }));
+    });
+    req.on('error',reject);
+    req.end(method==='GET'||method==='HEAD'?undefined:body);
   });
-  return {status:response.status,headers:response.headers,body:await response.text()};
 }
 
 test('login, signup, free trial, Square, Lexara, Spectra and ordinary paths are never changed',async()=>{
