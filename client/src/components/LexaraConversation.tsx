@@ -1555,11 +1555,11 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
             facts,
             state: resolvedJurisdiction,
             templateMode: data.documentIntent.templateMode === true,
-            confirmed: explicitDocumentRequest,
+            confirmed: explicitDocumentRequest || data.documentIntent.officialFormDelivery === true,
             followUpQuestion: /\?/.test(String(data.response || '')) ? String(data.response).trim() : undefined,
             packetItem: data.documentIntent.packetItem === true,
             officialFormDelivery: data.documentIntent.officialFormDelivery === true,
-            autoRetrieve: data.documentIntent.officialFormDelivery === true && explicitDocumentRequest,
+            autoRetrieve: data.documentIntent.officialFormDelivery === true,
           });
           pendingActionRef.current = { kind: 'document', label: pendingTitle };
         }
