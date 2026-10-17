@@ -9,6 +9,8 @@ const compiled = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText;
 const lanes = [];
+let stallDdgs = false;
+const ddgsTimeouts = [];
 const wait = (ms, signal) => new Promise((resolve,reject) => {
   const timer = setTimeout(resolve,ms);
   signal?.addEventListener('abort',()=>{clearTimeout(timer);reject(new Error('cancelled'));},{once:true});
@@ -21,6 +23,12 @@ async function mockFetch(url, options) {
   }
   if (requestUrl.includes(':14479/search/text')) {
     lanes.push('ddgs');
+    if (stallDdgs) {
+      const started = Date.now();
+      try { await wait(9_000, options?.signal); }
+      catch (error) { ddgsTimeouts.push(Date.now() - started); throw error; }
+      throw new Error('Stalled DDGS unexpectedly returned');
+    }
     // A federal directory is not the Iowa traffic law publisher.
     return {ok:true,status:200,headers:new Headers({'content-type':'application/json'}),
       json:async()=>({results:[{href:'https://www.justice.gov/jmd/ls/state/iowa',
@@ -28,6 +36,7 @@ async function mockFetch(url, options) {
   }
   if (requestUrl.includes(':18080/search')) {
     lanes.push('searxng');
+    if (stallDdgs) return {ok:true,status:200,headers:new Headers({'content-type':'application/json'}),json:async()=>({results:[],unresponsive_engines:[]})};
     await wait(650,options?.signal);
     return {ok:true,status:200,headers:new Headers({'content-type':'application/json'}),
       json:async()=>({results:[{url:'https://www.legis.iowa.gov/docs/code/321.261.pdf',
@@ -50,7 +59,7 @@ const stubs = {
     beginDiscoveryAttempt:()=>{const record=()=>{};record.dispatch=()=>{};return record;},
     getDiscoveryDiagnostics:()=>null,
     markDiscoveryPartial:()=>{},
-    discoveryErrorType:()=>null,
+    discoveryErrorType:error=>error?.name==='TimeoutError'?'timeout':null,
   },
   './LexaraPublicSourceRegistry':{
     buildLexaraSourceQueries:input=>[input.query],
@@ -88,4 +97,15 @@ vm.runInNewContext('(function(require,module,exports){'+compiled+'\n})',
   assert(elapsed>=600 && elapsed<1450,'must wait for actual authority, but not slow unrelated engines');
   console.log('PASS: all 3 engines started; later Iowa legislature result retained');
   console.log('PASS: legal search returned in '+elapsed+'ms, before slow OpenSERP');
+  stallDdgs = true;
+  for (let i=0;i<2;i++) {
+    await moduleStub.exports.discoverLegalMeshTier3('Iowa statute evidence unavailable test '+i,
+      undefined,{firstUseful:true,strictLegalSource:true,queryAlreadyPlanned:true,
+        jurisdiction:'Iowa',allowPaidSearch:false});
+  }
+  assert.equal(ddgsTimeouts.length,2,'both DDGS attempts should reach their bounded deadlines');
+  assert(ddgsTimeouts[0]>=2000 && ddgsTimeouts[0]<2600,'first attempt retains normal search coverage');
+  assert(ddgsTimeouts[1]<1900 && ddgsTimeouts[1]>=1200,
+    'later failure recovery should wait less time while leaving normal DDGS search unchanged');
+  console.log('PASS: one failed DDGS attempt shortens only the next recovery deadline');
 })().catch(error=>{console.error(error);process.exitCode=1;});
