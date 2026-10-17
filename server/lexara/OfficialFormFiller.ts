@@ -156,8 +156,8 @@ export async function inspectOfficialForm(form: OfficialLegalForm): Promise<Insp
     // The unaltered court-issued original remains available for download.
     return {sourceUrl:resolved.url,contentType:'pdf',bytes,fields:[],fillable:false,uninspectable:true};
   }
+  const fields: OfficialFormField[]=[];
   try {
-    const fields: OfficialFormField[]=[];
     const pages=pdf.getPages();
     for(const field of pdf.getForm().getFields()){
       const name=field.getName(); const kind=field.constructor.name.toLowerCase();
