@@ -748,6 +748,28 @@ startupTrace('listen_prepared', { rawPort, resolvedPort: port, host: listenHost 
 httpServer = createServer(app);
   startupTrace('http_server_created');
 
+  // ISB is an optional, in-process observer. All ordinary routes and responses
+  // remain owned by LegalWhat; ISB may only answer its reserved decoy prefix.
+  // An ISB failure must never prevent startup, login, subscriptions or Square.
+  try {
+    if (process.env.ISB_EMBEDDED_DISABLED !== '1') {
+      const { createEmbeddedISB } = await import('../isb/embedded.cjs');
+      const isb = createEmbeddedISB({
+        onHeartbeat: (status: {mode:string; observed:number; dropped:number; softSignals:number}) => {
+          console.log('[ISB] ' + JSON.stringify({
+            mode: status.mode, observed: status.observed,
+            dropped: status.dropped, decoyShifts: status.softSignals,
+          }));
+        },
+      });
+      app.use(isb.middleware);
+      httpServer.once('close', isb.stop);
+      console.log('[ISB] embedded passive monitor active; no authentication or payment changes');
+    }
+  } catch {
+    console.warn('[ISB] optional protection unavailable; LegalWhat continues unchanged');
+  }
+
   // Realtime LEXARA voice attaches to the actual listening server. The route
   // is additive and failure-local: legacy HTTP STT/TTS remains available.
   try {
