@@ -33,6 +33,7 @@ const PRIVATE_ROUTES = new Set([
   "/login",
   "/subscription-success",
   "/administrator",
+  "/master-signups",
   "/admin",
   "/welcome",
   "/legal-tools",

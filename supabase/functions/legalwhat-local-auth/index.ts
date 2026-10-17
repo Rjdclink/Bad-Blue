@@ -108,7 +108,7 @@ async function ensureSubscriptionPlan(supabase: any, squarePlanVariationId: stri
     .from("plans")
     .insert({
       name: "LegalWhat Subscription",
-      price: 2599,
+      price: 1999,
       currency: "USD",
       interval: "monthly",
       square_plan_id: squarePlanVariationId,
@@ -278,6 +278,50 @@ Deno.serve(async (req) => {
       if (usersProbe.error) throw new Error("Users store probe failed: " + usersProbe.error.message);
       if (accountsProbe.error) throw new Error("Auth accounts store probe failed: " + accountsProbe.error.message);
       return json({ ok: true, trialSchemaReady });
+    }
+
+    if (action === "admin_signups") {
+      // Only the Railway server may call this: the private caller secret is
+      // validated above, before any action or customer data can be read.
+      const rawPage = Number(body?.page);
+      const page = Number.isSafeInteger(rawPage) && rawPage >= 1 ? Math.min(rawPage, 10000) : 1;
+      const limit = 50;
+      const start = (page - 1) * limit;
+      const { data: rows, count, error } = await supabase
+        .from("users")
+        .select("id,email,first_name,last_name,status,has_paid_for_access,created_at,last_login_at", { count: "exact" })
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: false })
+        .range(start, start + limit - 1);
+      if (error) throw new Error("Signup list unavailable: " + error.message);
+
+      const ids = (rows || []).map((row: any) => String(row.id));
+      const { data: accounts, error: credentialError } = ids.length
+        ? await supabase.from("auth_accounts").select("user_id")
+            .eq("auth_type", "local")
+            .not("password_hash", "is", null)
+            .neq("password_hash", "")
+            .in("user_id", ids)
+        : { data: [], error: null };
+      if (credentialError) throw new Error("Credential status lookup unavailable: " + credentialError.message);
+      const credentialIds = new Set((accounts || []).map((row: any) => String(row.user_id)));
+
+      return json({
+        ok: true,
+        total: Number(count || 0),
+        page,
+        signups: (rows || []).map((row: any) => ({
+          id: String(row.id),
+          email: String(row.email || ""),
+          firstName: row.first_name == null ? null : String(row.first_name),
+          lastName: row.last_name == null ? null : String(row.last_name),
+          status: String(row.status || "pending_payment"),
+          hasPaidForAccess: row.has_paid_for_access === true,
+          hasLocalCredentials: credentialIds.has(String(row.id)),
+          createdAt: row.created_at == null ? null : String(row.created_at),
+          lastLoginAt: row.last_login_at == null ? null : String(row.last_login_at),
+        })),
+      });
     }
 
     if (action === "user") {

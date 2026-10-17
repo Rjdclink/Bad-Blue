@@ -10,6 +10,8 @@ function assert(condition, message) {
 
 const app = read("client/src/App.tsx");
 const navigator = read("client/src/components/MasterPanelNavigator.tsx");
+const signupsPage = read("client/src/pages/master-signups.tsx");
+const signupsPanel = read("client/src/components/CanonicalSignupsPanel.tsx");
 const avatar = read("client/src/components/LexaraEtherealAvatar.tsx");
 const login = read("client/src/pages/login.tsx");
 const backButton = read("client/src/components/BackButton.tsx");
@@ -23,6 +25,7 @@ const panelSet = new Set(panelPaths);
 assert(app.includes('{isMasterSession && <MasterPanelNavigator />}'), "Master navigation must actually render in the app shell");
 assert(app.indexOf('{isMasterSession && <MasterPanelNavigator />}') < app.indexOf('<Switch>'), "Master arrows must render above page content");
 assert(panelPaths[1] === "/cryptocrawler-dashboard", "Forward from Lexara must open CryptoCrawler; Back must return to Lexara");
+assert(panelPaths[2] === "/master-signups", "Forward from CryptoCrawler must open Master Signups");
 assert(panelPaths.length === panelSet.size, "Master panel navigator contains duplicate canonical paths");
 assert(panelPaths[0] === "/lexara-consent", "Master traversal must start on LegalWhat LEXARA consent");
 assert(navigator.includes("% MASTER_PANELS.length"), "Master panel Back/Forward traversal must wrap around");
@@ -36,7 +39,15 @@ for (const panelPath of panelPaths) {
 }
 
 const adminRoutes = [...appRoutes].filter(route => route.startsWith("/admin-"));
-assert(panelPaths.length === 2, "Master arrows must switch between exactly Lexara and CryptoCrawler");
+assert(panelPaths.length === 3, "Master arrows must contain exactly Lexara, CryptoCrawler, and Master Signups");
+assert(panelPaths[(2 + 1) % panelPaths.length] === "/lexara-consent", "Forward from Master Signups must wrap to LEXARA");
+assert(panelPaths[(0 - 1 + panelPaths.length) % panelPaths.length] === "/master-signups", "Back from LEXARA must wrap to Master Signups");
+assert(panelPaths[(2 - 1 + panelPaths.length) % panelPaths.length] === "/cryptocrawler-dashboard", "Back from Master Signups must return to CryptoCrawler");
+assert(app.includes('{isMasterSession && <Route path="/master-signups" component={MasterSignupsPage} />}'),
+  "Signup screen must be mounted only for a master session");
+assert(signupsPage.includes('<CanonicalSignupsPanel />'), "Third master screen must display canonical signup dashboard");
+assert(signupsPanel.includes('/api/admin/legalwhat-signups'), "Signup list must use the canonical auth authority endpoint");
+assert(!signupsPage.includes('master-login'), "Master Signups must not introduce another master sign-in workflow");
 assert(!panelSet.has('/cryptocrawler-v2'), "Legacy CryptoCrawler must not be a separate master panel");
 
 for (const foldedRoute of [

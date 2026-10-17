@@ -56,6 +56,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { SEOHead } from "@/components/SEOHead";
+import CanonicalSignupsPanel from "@/components/CanonicalSignupsPanel";
 
 // ============================================================================
 // TYPES
@@ -646,7 +647,7 @@ export default function AdminConsole() {
               <CardContent className="pt-6">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm text-gray-400">Total Users</p>
+                    <p className="text-sm text-gray-400">Neon App Users</p>
                     <p className="text-2xl font-bold text-white">{adminStats?.totalUsers || 0}</p>
                   </div>
                   <div className="p-3 rounded-lg bg-purple-500/20"><Users className="w-6 h-6 text-purple-400" /></div>
@@ -665,6 +666,8 @@ export default function AdminConsole() {
               </CardContent>
             </Card>
           </div>
+
+          <CanonicalSignupsPanel />
 
           {/* Admin Control Surface (navigation + access toggles) */}
           <Card className="bg-gray-800/50 border-white/10 mb-6">
