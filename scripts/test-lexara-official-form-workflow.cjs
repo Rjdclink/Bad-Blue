@@ -60,6 +60,47 @@ const localCourt = resolver.resolveOfficialLegalForm({ searchedAt: '2026-10-17',
 ] }, 'County Motion Form', undefined, ['statejudiciary.org']);
 assert.equal(localCourt.verifiedOfficial, true);
 
+
+for(const request of [
+  'I need to change my child support order.',
+  'We need to apply for guardianship.',
+  'I want to file for custody.',
+]) assert.equal(request.isLexaraOfficialFormDeliveryRequest(request),true,request);
+for(const question of [
+  'How do I modify child support?',
+  'What does custody mean?',
+]) assert.equal(request.isLexaraOfficialFormDeliveryRequest(question),false,question);
+
+const overlapping = { searchedAt:'2026-10-17', sources:[
+  source('www.iowacourts.gov','Application to Modify Child Support Only, Form 301'),
+  source('hhs.iowa.gov','Request for Review and Modification of Child Support'),
+  source('www.iowacourts.gov','Confidential Information Form 303','child support case'),
+  source('www.mncourts.gov','Application to Modify Child Support'),
+]};
+const alternatives = resolver.rankOfficialLegalForms(overlapping,'change my child support order',undefined,['iowacourts.gov','hhs.iowa.gov']);
+assert.equal(alternatives.length,2,'infer related procedures without an exact form name');
+assert.equal(resolver.officialFormNeedsClarification(alternatives),true);
+const choices=alternatives.map(candidate=>candidate.form.url);
+assert.equal(resolver.selectClarifiedOfficialForm(alternatives,'first',choices)?.url,choices[0]);
+assert.equal(resolver.selectClarifiedOfficialForm(alternatives,'second',choices)?.url,choices[1]);
+assert.match(resolver.selectClarifiedOfficialForm(alternatives,'agency',choices)?.url,/hhs\.iowa\.gov/);
+assert.match(resolver.selectClarifiedOfficialForm(alternatives,'court',choices)?.url,/iowacourts\.gov/);
+assert.equal(resolver.selectClarifiedOfficialForm(alternatives,'first',['https://untrusted.example.invalid/form.pdf']),null);
+const clientSource=fs.readFileSync(path.join(root,'client/src/components/LexaraConversation.tsx'),'utf8');
+const gateStart=clientSource.indexOf('const NON_PERSON_SPECTRA_TARGET_RE');
+const gateEnd=clientSource.indexOf('type ConversationPhase',gateStart);
+assert(gateStart>=0 && gateEnd>gateStart);
+const gateScript=ts.transpileModule(clientSource.slice(gateStart,gateEnd),{
+  compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022},
+}).outputText;
+const spectraTarget=new Function(gateScript+'\nreturn spectraTargetFromPrompt;')();
+assert.equal(spectraTarget('I need you to find the modification of child support obligation, the official form from Clay County, Iowa.'),null);
+assert.equal(spectraTarget('I need to change my child support order.'),null);
+assert.equal(spectraTarget('Find my friend'), 'my friend');
+assert(clientSource.includes('data?.needsFormClarification === true'));
+assert(clientSource.includes('(!pendingDocument.officialFormDelivery || !!officialFormPreview)'));
+console.log('PASS: legal-purpose inference, competing court/agency form clarification, source revalidation, and no Spectra interference');
+
 (async () => {
   const pdf = await PDFDocument.create();
   const page = pdf.addPage([612,792]);
