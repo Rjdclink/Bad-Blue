@@ -123,6 +123,10 @@ export function rankOfficialLegalForms(
   const results: OfficialFormCandidate[]=[];
   const seen=new Set<string>();
   for (const source of research.sources) {
+    // A form that merely accompanies the requested filing is not the
+    // requested instrument, even if its description repeats the same subject.
+    if (/\b(?:confidential|certificate of service|notice of service|fee waiver|instructions)\b/i.test(source.title)
+      && !/\b(?:confidential|certificate|service|fee waiver|instructions)\b/i.test(purpose)) continue;
     const directFile=/(?:\.pdf|\.docx|\/download|\/embedDocument)(?:[?#/]|$)/i.test(source.url);
     if ((!FORM_HINT.test(source.title)
       && !(directFile && FORM_HINT.test(source.excerpt||'')))
