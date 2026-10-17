@@ -458,7 +458,7 @@ export function setupConsultationRoutes(app: Express): void {
             && (host.endsWith('.'+stateCode+'.gov') || host.endsWith('.'+stateName+'.gov'));
           if(!knownIssuer && !matchingStateCourt && !matchingStateAgency) continue;
           const restored = {
-            requirement:'unverified' as const, title:documentLabel, url:parsed.toString(),
+            requirement:'unverified' as const, title:selectedOfferedChoice?.title || documentLabel, url:parsed.toString(),
             contentType: /\.docx(?:$|[?#])/i.test(parsed.pathname) ? 'docx' as const : 'pdf' as const,
             verifiedOfficial:true, trustedOfficialDomains:[host],
             localRules:[], companionDocuments:[],
@@ -467,15 +467,40 @@ export function setupConsultationRoutes(app: Express): void {
           // A successful verified fetch also seeds the existing original-file
           // cache for the follow-on preview and field interview.
           await inspectOfficialForm(restored);
+          const officialForms=[restored];
+          const unavailableRequiredForms:string[]=[];
+          for(const item of selectedOfferedChoice?.requiredForms || []){
+            try {
+              const linked=new URL(item.url);
+              const linkedHost=linked.hostname.toLowerCase().replace(/^www\./,'');
+              if(linked.protocol!=='https:' || !/(?:\.pdf|\.docx|\/download|\/embedDocument)(?:[?#/]|$)/i.test(linked.pathname)
+                || !officialIssuers.some(issuer=>linkedHost===issuer||linkedHost.endsWith('.'+issuer))) throw new Error('Different official issuer');
+              const companion={...restored,title:item.title,url:linked.toString(),
+                contentType:/\.docx$/i.test(linked.pathname)?'docx' as const:'pdf' as const,
+                trustedOfficialDomains:[linkedHost]};
+              await inspectOfficialForm(companion);
+              if(!officialForms.some(form=>form.url===companion.url)) officialForms.push(companion);
+            }catch {
+              unavailableRequiredForms.push(item.title);
+            }
+          }
           return res.status(409).json({
             error:'Lexara retrieved the previously identified official form.',
-            officialFormRequired:true, officialForm:restored,
+            officialFormRequired:true, officialForm:restored, officialForms,
+            unavailableRequiredForms,
             documentType:documentLabel,jurisdiction:documentJurisdiction,facts,
           });
         } catch (error) {
           log.warn('Previously identified official form could not be retrieved; continuing official search', {
             message:error instanceof Error?error.message:String(error),
           });
+          if(selectedOfferedChoice){
+            return res.status(422).json({
+              formSelectionUnavailable:true,
+              error:'The selected official form cannot be downloaded right now. Please choose a different official form or try again.',
+              selectedFormTitle:selectedOfferedChoice.title,
+            });
+          }
         }
       }
     }
