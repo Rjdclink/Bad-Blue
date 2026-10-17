@@ -1,6 +1,6 @@
 'use strict';
 // ISB: deliberately out of path. No network calls, decisions, credentials, or app imports.
-const HOSTS = new Set(['legalwhat.com', 'www.legalwhat.com', 'bad-blue-production.up.railway.app']);
+const HOSTS = new Set(['legalwhat.com', 'www.legalwhat.com', 'bad-blue-production.up.railway.app', 'lexara-ddgs-production.up.railway.app', 'lexara-openserp-production.up.railway.app']);
 const PROBES = [/^\/(?:\.env(?:[./]|$)|\.git(?:\/|$)|\.svn(?:\/|$))/i, /^\/(?:wp-admin|wp-login\.php|xmlrpc\.php)(?:\/|$)/i, /^\/(?:actuator\/env|server-status)(?:\/|$)/i];
 function classify(event) {
   const base = {scope:'none',level:'ignored',action:'observe'};
