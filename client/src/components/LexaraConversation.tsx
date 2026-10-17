@@ -516,9 +516,16 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
   const [officialFormPreview, setOfficialFormPreview] = useState<{
     url: string; title: string; format: 'pdf' | 'docx'; sourceUrl: string; revision?: string; notice?: string;
   } | null>(null);
+  // Keep one actual downloaded original per packet form. Revisions replace
+  // their previous blob instead of accumulating PDFs after every answer.
+  const [officialFormPacketPreviews,setOfficialFormPacketPreviews] = useState<Array<{
+    url:string;title:string;format:'pdf'|'docx';sourceUrl:string;revision?:string;notice?:string;
+  }>>([]);
+  const officialFormBlobUrlsRef=useRef<Map<string,string>>(new Map());
   useEffect(() => () => {
-    if (officialFormPreview?.url) URL.revokeObjectURL(officialFormPreview.url);
-  }, [officialFormPreview]);
+    for(const url of officialFormBlobUrlsRef.current.values()) URL.revokeObjectURL(url);
+    officialFormBlobUrlsRef.current.clear();
+  }, []);
   const [savedArtifact, setSavedArtifact] = useState<{ title: string; fileName: string; mimeType: string; downloadUrl: string } | null>(null);
   const [deadlineCalendar, setDeadlineCalendar] = useState<{ label: string; dueDate: string; downloadUrl: string } | null>(null);
   const [documentBusy, setDocumentBusy] = useState(false);
@@ -541,7 +548,8 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     followUpQuestion?: string; missingFields?: string[]; requiredFields?: string[];
     packetItem?: boolean; officialFormDelivery?: boolean; autoRetrieve?: boolean;
     officialForm?: Record<string, unknown>;
-    formChoices?: Array<{title:string;url:string}>;
+    remainingOfficialForms?: Array<Record<string, unknown>>;
+    formChoices?: Array<{title:string;url:string;requiredForms?:Array<{title:string;url:string}>}>;
     formSourceUrls?: string[];
   } | null>(null);
   const [showReviewPrompt, setShowReviewPrompt] = useState(false);
@@ -1568,6 +1576,9 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
           // A newly requested document replaces the prior document task UI.
           // Keep the conversation, but never let an older preview hide the new task.
           setConversationDocument(null);
+          for(const blobUrl of officialFormBlobUrlsRef.current.values()) URL.revokeObjectURL(blobUrl);
+          officialFormBlobUrlsRef.current.clear();
+          setOfficialFormPacketPreviews([]);
           setOfficialFormPreview(null);
           setDocumentPreviewOpen(false);
           setEsignOpen(false);
@@ -2003,7 +2014,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         const field = data?.missingFields?.[0] === 'formPurpose' ? 'formPurpose' : 'formChoice';
         const choices = Array.isArray(data?.formChoices)
           ? data.formChoices.filter((choice: any) =>
-              typeof choice?.title === 'string' && typeof choice?.url === 'string').slice(0,2)
+              typeof choice?.title === 'string' && typeof choice?.url === 'string').slice(0,12)
           : [];
         setPendingDocument(previous => previous ? {
           ...previous, missingFields:[field], requiredFields:[field],
