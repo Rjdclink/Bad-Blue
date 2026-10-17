@@ -419,12 +419,20 @@ async function discoverAuthoritySources(
         isOfficialLawHost(domain)
         || (/^federal$/i.test(context.jurisdiction || '') && /^(?:www\.)?uscourts\.gov$/i.test(domain))
       ))
-    : undefined;
-  const officialMeshPromise = officialHost && !recordLookup && !formLookup
+    : formLookup
+      ? (context.officialResources || [])
+          .filter(resource => ['forms','state-judiciary','state-trial','federal-district'].includes(resource.kind))
+          .map(resource => resource.host).find(Boolean)
+        || (context.preferredOfficialDomains || []).find(host => /(?:court|judicial|uscourts)/i.test(host))
+      : undefined;
+  // Official form searches must reach their issuing court directly. Keep the
+  // independent broader search running as a fallback, without extra retries.
+  const officialMeshPromise = officialHost && !recordLookup
     ? discoverLegalMeshTier3(
-        [context.jurisdiction, formObjective, 'statute court rule case full text', 'site:' + officialHost]
-          .filter(Boolean).join(' ').slice(0, 390),
-        signal, { ...meshOptions, allowPaidSearch: false, allowClaudePlanning: false, firstUseful: true },
+        [context.jurisdiction, formObjective,
+          formLookup ? 'official court form PDF' : 'statute court rule case full text',
+          'site:' + officialHost].filter(Boolean).join(' ').slice(0, 390),
+        signal, { ...meshOptions, allowPaidSearch: false, allowClaudePlanning: false, firstUseful: !formLookup },
       ).catch(() => [])
     : undefined;
   const supportingAuthorities: LexaraAuthoritySource[] = [];
