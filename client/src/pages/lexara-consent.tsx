@@ -252,7 +252,7 @@ export default function LexaraConsentPage() {
             <Button
               variant="ghost"
               onClick={continueTextOnly}
-              className="mt-2 min-h-11 w-full touch-manipulation text-slate-400 hover:text-slate-200"
+              className="mt-2 min-h-11 w-full touch-manipulation bg-sky-500 text-center font-semibold text-white hover:bg-sky-600 hover:text-white"
             >
               Use typing instead
             </Button>
