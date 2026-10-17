@@ -422,14 +422,16 @@ export function setupConsultationRoutes(app: Express): void {
     const discoveredCourtDomains = (authorityResearch?.sources || [])
       .filter(source => source.kind === 'primary' && source.provider === 'official-form-directory')
       .flatMap(source => { try { return [new URL(source.url).hostname.toLowerCase().replace(/^www\./, '')]; } catch { return []; } });
-    const issuingDomains = requestedFormNumber ? [...new Set([
+    // Use court-specific issuers for ALL nationwide form requests, not only
+    // requests with an explicit form number. This also permits verified
+    // judicial .org hosts present in the current court directory.
+    const courtDomains = [...new Set([
       ...(documentJurisdictionProfile?.officialResources || [])
-        .filter(resource => resource.kind !== 'directory'
-          && (!(documentJurisdictionProfile?.system === 'state' || documentJurisdictionProfile?.system === 'local')
-            || !['federal-circuit', 'federal-district'].includes(resource.kind) && resource.host !== 'uscourts.gov'))
+        .filter(resource => ['forms','state-judiciary','state-trial','federal-district'].includes(resource.kind))
         .map(resource => resource.host),
       ...discoveredCourtDomains,
-    ])] : undefined;
+    ])].filter(Boolean);
+    const issuingDomains = courtDomains.length ? courtDomains : undefined;
     const formResearch = reliefDocument && authorityResearch ? { ...authorityResearch, sources: authorityResearch.sources.filter(source =>
       source.kind === 'primary' && source.evidenceLevel === 'document' && /expung|expunc|sealing|annul|nondisclosure|set.aside|vacat/i.test([source.title,source.excerpt].join(' '))) } : authorityResearch;
     const officialForm = resolveOfficialLegalForm(formResearch, formDocumentLabel, requestedFormNumber, issuingDomains);
