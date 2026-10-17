@@ -360,6 +360,31 @@ function buildLegalSystemPrompt(
 Return only LEXARA's response text.${representationContext}`;
 }
 
+// A final answer may introduce a numbered statute not present in the law
+// packet verified before generation. Check exact document coverage, not URLs alone.
+function citedNumberedCodeSections(answer: string): string[] {
+  const sections = new Set<string>();
+  const citations = /(?:\b(?:code\s+)?sections?\b|\bcode\b|§{1,2})\s*((?:\d{1,4}[a-z]?\.\d{1,5}[a-z]?(?:\([a-z0-9]+\))*\s*(?:(?:,|and|or)\s*)?){1,8})/gi;
+  for (const match of answer.matchAll(citations)) {
+    for (const code of match[1].matchAll(/\b\d{1,4}[a-z]?\.\d{1,5}[a-z]?\b/gi)) {
+      sections.add(code[0].toUpperCase());
+    }
+  }
+  return [...sections];
+}
+
+function hasDirectlyRetrievedSection(
+  sources: NonNullable<LexaraLegalResearchOutcome['research']>['sources'],
+  section: string,
+): boolean {
+  const exact = new RegExp('(?:^|[^0-9a-z])' + section.replace(/\./g, '\\.') + '(?![0-9a-z])', 'i');
+  return sources.some(source => source.kind === 'primary'
+    && source.evidenceLevel === 'document'
+    && Boolean(source.excerpt?.trim())
+    && exact.test(source.excerpt || '')
+    && exact.test(source.title + ' ' + source.url));
+}
+
 const PERSON_PERMISSION_REFUSAL_PATTERN = /\b(?:private individual|private person|personal information|do not have permission|don't have permission|not permitted|not authorized|can't provide private|cannot provide private|unable to provide private|unable to assist with private)\b/i;
 
 function isPersonPermissionRefusal(text: string): boolean {
@@ -1223,6 +1248,68 @@ export async function generateLexaraConversationResponse(
       });
       if (!/current precedential status could not be verified/i.test(text)) {
         text += ' The cited cases\' current precedential status could not be verified.';
+      }
+    }
+  }
+
+  // Verify any *new* numbered statute the final model cited. Only a specific
+  // missing citation triggers more research; ordinary turns gain no extra wait.
+  if (legalResearchOutcome?.status === 'supported' && authorityResearch?.sources.length
+    && !answerServiceUnavailable && !context.signal?.aborted) {
+    const verifiedSources = [...authorityResearch.sources];
+    const missing = citedNumberedCodeSections(text)
+      .filter(section => !hasDirectlyRetrievedSection(verifiedSources, section));
+    if (missing.length && jurisdiction) {
+      const checks = await Promise.all(missing.map(async section => {
+        try {
+          return await completeLexaraLegalResearch(
+            `Code section ${section} — verify the specific current official statute text, jurisdiction ${jurisdiction}.`,
+            {
+              jurisdiction,
+              allowDirectStatuteLookup: true,
+              researchIntent: 'legal',
+              preferredOfficialDomains: jurisdictionOfficialDomains,
+              officialResources: jurisdictionAuthorityProfile?.officialResources,
+              signal: context.signal,
+            },
+          );
+        } catch {
+          return null;
+        }
+      }));
+      for (const result of checks) {
+        if (result?.status === 'supported' && result.research) {
+          verifiedSources.push(...result.research.sources);
+        }
+      }
+      const unresolved = missing.filter(section => !hasDirectlyRetrievedSection(verifiedSources, section));
+      try {
+        const revised = await callClaude(
+          `USER QUESTION:\n${cleanPrompt}\n\nINITIAL ANSWER:\n${text}\n\nADDITIONAL VERIFIED PRIMARY TEXT:\n${checks.filter(result => result?.status === 'supported')
+            .map(result => result?.research?.summary).filter(Boolean).join('\n\n') || 'No additional verified source text.'}\n\n`
+          + `UNVERIFIED STATUTE SECTIONS: ${unresolved.join(', ') || 'none'}.\n`
+          + 'Revise the answer concisely. Apply newly verified statute text where relevant. Preserve supported claims and necessary qualifications. Do not state the requirements, penalties, or contents of an unverified statute; omit any unsupported citation. Do not introduce new case citations. Return only the revised answer.',
+          {
+            systemPrompt,
+            model: claudeModel,
+            effort: claudeEffort,
+            maxTokens: claudeEffort === 'max' ? 3_000 : 1_500,
+            cacheSystemPrompt: true,
+            cacheSystemPromptPrefix,
+            providerPolicy: 'legalwhat',
+            signal: context.signal,
+          },
+        );
+        const revision = revised.content.trim();
+        if (revision && citedNumberedCodeSections(revision)
+          .every(section => hasDirectlyRetrievedSection(verifiedSources, section))) {
+          text = revision;
+        } else {
+          text = 'I cannot confirm every statutory provision needed to answer accurately from the official text retrieved.';
+        }
+      } catch (error) {
+        if (context.signal?.aborted) throw error;
+        text = 'I cannot confirm every statutory provision needed to answer accurately from the official text retrieved.';
       }
     }
   }
