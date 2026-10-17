@@ -30,6 +30,7 @@ import {
 import { readMatterBuffer } from '../lexara/LexaraMatterStorage';
 import { buildDeadlineCalendar, calculateLegalDeadline, LEGAL_DEADLINE_RULES, type LegalDeadlineRuleId } from '../lexara/LegalDeadlineEngine';
 import { isLexaraGenericLegalIntake, isLexaraDocumentIntakeQuestion, isLexaraOfficialFormQuestion } from '../lexara/LexaraResearchIntentRouter';
+import { isLexaraOfficialFormDeliveryRequest, lexaraRequestedOfficialFormTitle } from '../lexara/OfficialFormRequest';
 
 const router = express.Router();
 router.use(isAuthenticated);
@@ -266,6 +267,7 @@ function detectDocumentIntent(prompt: string, previousMessages: LexaraConversati
   packetItem?: boolean;
 } {
   const p = prompt.toLowerCase();
+  const officialFormDelivery = isLexaraOfficialFormDeliveryRequest(prompt);
   if (isLexaraDocumentIntakeQuestion(prompt)) return {
     requested: false, explicit: false, inferred: false, documentType: 'Custom Document', templateMode: false,
   };
@@ -273,7 +275,7 @@ function detectDocumentIntent(prompt: string, previousMessages: LexaraConversati
     || (/^(?:please\s+)?show\s+me\b/i.test(prompt.trim()) && /\b(?:blank|template|empty|fillable)\b/i.test(prompt)))
     && /\b(?:documents?|forms?|paperwork)\b/.test(p)
     && !/\b(?:want|need)\s+to\s+(?:know|understand|learn)\b/.test(p);
-  const explicit = genericDocumentRequest || /\b(draft|prepare|create|generate|write|download|downloadable|export|pdf|docx|word document)\b/.test(p);
+  const explicit = officialFormDelivery || genericDocumentRequest || /\b(draft|prepare|create|generate|write|download|downloadable|export|pdf|docx|word document)\b/.test(p);
   const currentType = resolveLegalDocumentType(prompt);
   const candidateInference = explicit ? null : inferLegalDocumentNeed(prompt);
   const inferredType = !currentType || (candidateInference === 'Answer' && currentType === 'Complaint') ? candidateInference : null;
@@ -301,7 +303,7 @@ function detectDocumentIntent(prompt: string, previousMessages: LexaraConversati
     requested,
     explicit,
     inferred: Boolean(inferredType),
-    documentType: inferredType || currentType || historyType || 'Custom Document',
+    documentType: officialFormDelivery ? lexaraRequestedOfficialFormTitle(prompt) : inferredType || currentType || historyType || 'Custom Document',
     templateMode: isBlankLegalDocumentRequest(prompt),
   };
 }
