@@ -37,8 +37,10 @@ const subject = execute('server/lexara/LexaraBackgroundSubject.ts');
 const planner = execute('server/lexara/LexaraResearchIntentRouter.ts', {
   './LexaraBackgroundSubject': subject,
 });
+const officialFormRequest = execute('server/lexara/OfficialFormRequest.ts');
 const router = execute('server/lexara/LexaraSequenceRouter.ts', {
   './LexaraResearchIntentRouter': planner,
+  './OfficialFormRequest': officialFormRequest,
 });
 
 function factual(prompt, fact, categories = []) {
