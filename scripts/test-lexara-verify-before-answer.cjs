@@ -23,7 +23,7 @@ function harness(options = {}) {
         if (prompt.startsWith('Assess whether') || prompt.startsWith('Verify only the specific rule')) {
           calls.grade.push(prompt); calls.gradeConfigs.push(config);
           if (options.gradeThrows) throw new Error('fixture assessment outage');
-          const grade = options.grade?.(calls.grade.length, config) || {sufficient: true, supportingUrls:[url]};
+          const grade = options.grade?.(calls.grade.length, config, prompt) || {sufficient: true, supportingUrls:[url]};
           if (grade && typeof grade === 'object' && Object.prototype.hasOwnProperty.call(grade, 'content')) return grade;
           return {content: typeof grade === 'string' ? grade : JSON.stringify(grade)};
         }
@@ -37,7 +37,7 @@ function harness(options = {}) {
           return {content:'Which state is this about, and what happened?'};
         }
         assert(config.systemPrompt.includes(doc.excerpt), 'verified final model must receive the supporting document');
-        return {content:'The supplied authority supports this fixture answer.'};
+        return {content:typeof options.finalAnswer === 'function' ? options.finalAnswer(calls.final.length, prompt, config) : (options.finalAnswer || 'The supplied authority supports this fixture answer.')};
       },
       async callClaudeStreaming() { calls.streaming++; throw new Error('legal answer streamed before verification'); },
       async callClaudeWebSearch(prompt, config) {
@@ -52,7 +52,7 @@ function harness(options = {}) {
         assert.equal(context.requirePrimaryText, true);
         if (options.hang) return new Promise(() => {});
         if (options.delay) await new Promise(resolve => clock.setTimeout(resolve, options.delay));
-        return options.research ? options.research(calls.research.length) : packet([doc]);
+        return options.research ? options.research(calls.research.length, question) : packet([doc]);
       },
       formatAuthorityResearchForSystem: r => r ? r.summary : '',
       hasLexaraDirectStatutePublisher: jurisdiction => /^(?:iowa|california|texas|new york|florida)$/i.test(String(jurisdiction)),
@@ -106,6 +106,52 @@ function harness(options = {}) {
 }
 const tests = [];
 const test = (name, run) => tests.push({name, run});
+
+test('a generated citation to a second Iowa statute triggers exact full-text verification before delivery',async()=>{
+  const main={...doc,url:'https://www.legis.iowa.gov/docs/code/321.261.pdf',excerpt:doc.excerpt+'\n321.261 Duty to stop. Cross-reference only: see 321.263.'};
+  const other={...doc,url:'https://www.legis.iowa.gov/docs/code/321.263.pdf',excerpt:doc.excerpt+'\n321.263 Duty to remain and provide information.'};
+  const h=harness({
+    research:n=>packet([n===1?main:other]),
+    grade:n=>({sufficient:true,supportingUrls:[n===1?main.url:other.url]}),
+    finalAnswer:n=>n===1
+      ? 'Iowa Code sections 321.261 and 321.263 describe the duties following an accident.'
+      : 'Iowa Code sections 321.261 and 321.263 provide the verified duties following an accident.',
+  });
+  const result=await h.load('server/lexara/LexaraConversationOrchestrator.ts').generateLexaraConversationResponse(
+    'Which Iowa statute addresses leaving the scene?',{jurisdiction:'Iowa'});
+  assert.equal(h.calls.research.length,2,'retrieve the statute cited only in the generated answer');
+  assert.match(h.calls.research[1],/321\.263/);
+  assert.equal(h.calls.final.length,2,'revise the final response with the new verified source');
+  assert.match(result.text,/verified duties/);
+});
+
+test('if a second cited provision remains unverified, do not present its rule as confirmed',async()=>{
+  const main={...doc,url:'https://www.legis.iowa.gov/docs/code/321.261.pdf',excerpt:doc.excerpt+'\n321.261 Duty to stop.'};
+  const h=harness({
+    research:()=>packet([main]),
+    grade:n=>n===1 ? {sufficient:true,supportingUrls:[main.url]}
+      : {sufficient:false,supportingUrls:[],nextQuery:'Find missing official 321.263 text'},
+    finalAnswer:()=> 'Iowa Code sections 321.261 and 321.263 impose confirmed duties.',
+  });
+  const out=await h.load('server/lexara/LexaraConversationOrchestrator.ts').generateLexaraConversationResponse(
+    'What does Iowa law say about leaving a crash?',{jurisdiction:'Iowa'});
+  assert(h.calls.research.length>1,'attempt to retrieve the missing provision');
+  assert.doesNotMatch(out.text,/321\.263|confirmed duties/i,'never deliver an unsupported statute or asserted legal rule');
+});
+
+test('an already supported Iowa statutory citation adds no searches or rewriting',async()=>{
+  const main={...doc,url:'https://www.legis.iowa.gov/docs/code/321.261.pdf',excerpt:doc.excerpt+'\n321.261 Duty to stop.'};
+  const h=harness({
+    research:()=>packet([main]),
+    grade:()=>({sufficient:true,supportingUrls:[main.url]}),
+    finalAnswer:()=> 'Iowa Code section 321.261 addresses leaving the scene.',
+  });
+  const result=await h.load('server/lexara/LexaraConversationOrchestrator.ts').generateLexaraConversationResponse(
+    'Which Iowa statute addresses leaving the scene?',{jurisdiction:'Iowa'});
+  assert.equal(h.calls.research.length,1);
+  assert.equal(h.calls.final.length,1);
+  assert.match(result.text,/321\.261/);
+});
 
 test('implicit legal follow-up verifies actual authority inside the shortened live budget', async()=>{
   const h=harness({delay:2500});
