@@ -128,7 +128,7 @@ export function inferLegalDocumentNeed(text: string): LegalDocumentType | null {
 }
 
 export function isBlankLegalDocumentRequest(text: string): boolean {
-  return /\b(blank|template|form|empty|fillable)\b/i.test(text);
+  return /\b(blank|template|empty|unfilled|leave\s+(?:it|the\s+form)\s+blank)\b/i.test(text);
 }
 
 export function validateLegalDocumentDraft(
