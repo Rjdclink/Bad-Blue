@@ -1978,6 +1978,16 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     return 'Text consultation';
   }, [historyReady, phase, restoreError]);
 
+  const rememberOfficialFormPreview = (preview: {
+    url:string;title:string;format:'pdf'|'docx';sourceUrl:string;revision?:string;notice?:string;
+  }) => {
+    const prior=officialFormBlobUrlsRef.current.get(preview.sourceUrl);
+    if(prior && prior!==preview.url) URL.revokeObjectURL(prior);
+    officialFormBlobUrlsRef.current.set(preview.sourceUrl,preview.url);
+    setOfficialFormPacketPreviews(previous=>[
+      ...previous.filter(item=>item.sourceUrl!==preview.sourceUrl),preview,
+    ]);
+  };
   const generateAndDownloadPendingDocument = async (format?: 'docx' | 'pdf') => {
     if (!pendingDocument || documentBusy) return;
     setErrorMessage(null);
@@ -2034,6 +2044,11 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         return;
       }
       if (generatedStatus === 409 && data?.officialFormRequired && data?.officialForm) {
+        const firstPacket=Array.isArray(data.officialForms)
+          ? data.officialForms.filter((form: any)=>typeof form?.url==='string').slice(0,12)
+          : [data.officialForm];
+        const remainingPacket=pendingDocument.remainingOfficialForms
+          || firstPacket.filter((form: any)=>form.url!==data.officialForm.url);
         const official = await fetch('/api/lexara/documents/official-form', {
           method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -2080,7 +2095,38 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
             }
           } catch { /* The official file is still available even without question metadata. */ }
         }
-        setOfficialFormPreview({url,title,format:nativeFormat,sourceUrl,revision,notice});
+        const currentPreview={url,title,format:nativeFormat,sourceUrl,revision,notice};
+        rememberOfficialFormPreview(currentPreview);
+        setOfficialFormPreview(currentPreview);
+        // Retrieve all expressly required originals right away, even though
+        // Lexara will ask their completion questions sequentially.
+        if(!pendingDocument.officialForm && remainingPacket.length){
+          for(const companion of remainingPacket){
+            try {
+              const response=await fetch('/api/lexara/documents/official-form',{
+                method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},
+                body:JSON.stringify({officialForm:companion,templateMode:true,
+                  facts:pendingDocument.facts,sessionId:sessionIdRef.current,lawType:lawTypeId}),
+              });
+              if(!response.ok) throw new Error('Companion form download unavailable');
+              const companionBlob=await response.blob();
+              const companionSource=response.headers.get('X-Lexara-Official-Source')
+                || String(companion.url||'');
+              rememberOfficialFormPreview({
+                url:URL.createObjectURL(companionBlob),
+                title:String(companion.title||'Required court form'),
+                sourceUrl:companionSource,
+                format:companionBlob.type.includes('wordprocessingml')?'docx':'pdf',
+              });
+            }catch {
+              appendMessage('lexara','A required companion form could not be downloaded. The available original forms remain accessible.');
+            }
+          }
+        }
+        if(Array.isArray(data.unavailableRequiredForms) && data.unavailableRequiredForms.length){
+          appendMessage('lexara','Some required accompanying forms were unavailable: '
+            +data.unavailableRequiredForms.join(', ')+'. This is not yet a complete filing packet.');
+        }
         if (format) {
           const anchor = document.createElement('a');
           anchor.href = url;
@@ -2092,7 +2138,9 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         const originalField = pendingDocument.missingFields?.[0];
         if (missingFields.length) {
           setPendingDocument(previous => previous ? {
-            ...previous, officialForm:data.officialForm, missingFields, requiredFields,
+            ...previous, officialForm:data.officialForm,
+            remainingOfficialForms:remainingPacket,
+            missingFields, requiredFields,
             autoRetrieve:false, followUpQuestion:undefined,
           } : previous);
           if (originalField !== missingFields[0]) {
@@ -2102,6 +2150,14 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
               : `Would you like to complete ${fieldName}, or leave it blank? Say skip to leave it blank.`;
             appendMessage('lexara', question);
           }
+        } else if(remainingPacket.length){
+          const next=remainingPacket[0];
+          setPendingDocument(previous=>previous ? {
+            ...previous,officialForm:next,remainingOfficialForms:remainingPacket.slice(1),
+            missingFields:[],requiredFields:[],autoRetrieve:true,followUpQuestion:undefined,
+          }:previous);
+          appendMessage('lexara','The current form is available. I will now complete '
+            +String(next.title||'the next required form')+'.');
         } else {
           setPendingDocument(null);
           pendingActionRef.current = null;
