@@ -533,10 +533,18 @@ async function openserp(query: string, signal?: AbortSignal, officialFormQuery =
     endpoint.searchParams.set('mode', officialFormQuery ? 'fast' : 'balanced');
     endpoint.searchParams.set('engines', activeEngines.join(','));
     let response = await discoveryFetch(fetch, endpoint, { signal: requestSignal, headers: { accept: 'application/json' } });
-    // Official-form requests use the quickest available engine. On a 5xx,
-    // use independent alternatives rather than retrying the same failing
-    // Google/Ecosia aggregator. Both attempts share the bounded deadline.
-    if (officialFormQuery && response.status >= 500 && !requestSignal.aborted) {
+    // A 200 response that reports failed engines and no results is also a
+    // failed search, not evidence that no official form exists.
+    let payload:any;
+    let needsAlternative=officialFormQuery && response.status>=500;
+    if(officialFormQuery && response.ok){
+      payload=await readDiscoveryJson(response,'openserp');
+      const initialRows=Array.isArray(payload?.results)?payload.results:payload?.data?.results;
+      needsAlternative=Array.isArray(initialRows) && initialRows.length===0
+        && (Array.isArray(payload?.meta?.engines_failed) && payload.meta.engines_failed.length>0
+          || Array.isArray(payload?.meta?.engine_errors) && payload.meta.engine_errors.length>0);
+    }
+    if(needsAlternative && !requestSignal.aborted){
       if(response.body) await response.body.cancel().catch(()=>undefined);
       const alternatives=['baidu','yandex'].filter(engineAvailable);
       if(alternatives.length){
@@ -545,9 +553,10 @@ async function openserp(query: string, signal?: AbortSignal, officialFormQuery =
         response=await discoveryFetch(fetch,endpoint,{
           signal:requestSignal,headers:{accept:'application/json'},
         });
+        payload=undefined;
       }
     }
-    const payload:any = await readDiscoveryJson(response, 'openserp');
+    if(!payload) payload=await readDiscoveryJson(response,'openserp');
     const failures = Array.isArray(payload?.meta?.engine_errors) ? payload.meta.engine_errors : [];
     const requestedEngines=(endpoint.searchParams.get('engines')||'').split(',');
     for (const failure of failures) if (requestedEngines.includes(failure?.engine)) recordEngineFailure(String(failure.engine), String(failure.error));
