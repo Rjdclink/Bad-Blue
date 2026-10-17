@@ -626,6 +626,23 @@ export function setupConsultationRoutes(app: Express): void {
       res.setHeader('X-Lexara-Official-Source', inspected.sourceUrl);
       return res.send(inspected.bytes);
     }
+    if (inspected.uninspectable) {
+      // Preserve the original court-issued PDF even when its encryption or
+      // internal structure prevents safe field mapping. Never modify it.
+      const notice = 'Original court form retrieved. Its PDF format prevents safe automatic filling; review and complete the original manually.';
+      await saveMatterArtifact(req, matterSessionId, {
+        title: String(officialForm.title || 'Official court form'), kind:'document',
+        bytes: inspected.bytes, mimeType:'application/pdf',
+        fileName:'lexara-official-form.pdf', sourceUrl:inspected.sourceUrl,
+        lawType:matterLawType,
+      }).catch(error=>log.warn('Original form retrieved but matter save failed route-locally',{error}));
+      res.setHeader('Content-Type','application/pdf');
+      res.setHeader('Content-Disposition','attachment; filename="lexara-official-form.pdf"');
+      res.setHeader('X-Lexara-Official-Source',inspected.sourceUrl);
+      res.setHeader('X-Lexara-Form-Questions',encodeURIComponent('[]'));
+      res.setHeader('X-Lexara-Form-Notice',encodeURIComponent(notice));
+      return res.send(inspected.bytes);
+    }
     const writableFields = inspected.fields.filter(field => !field.readOnly);
     const fieldNames = writableFields.map(field => field.name);
     if (facts && fieldNames.length && Object.keys(values).length === 0) {
