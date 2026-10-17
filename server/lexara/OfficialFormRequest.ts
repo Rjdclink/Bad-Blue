@@ -23,8 +23,9 @@ export function lexaraRequestedOfficialFormTitle(text: string): string {
     .replace(/^(?:(?:hey\s+)?lexara[,!:]?\s*)/i, '')
     .replace(/^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?|i\s+(?:need|want|would\s+like)\s+(?:(?:you\s+to|to)\s+)?)/i, '')
     .replace(/^(?:please\s+)?(?:find|locate|grab|fetch|retrieve|download|bring|send|provide|get|show|open|give|pull\s+up)(?:\s+(?:me|a\s+copy\s+of|the\s+copy\s+of))?\s+/i, '')
-    .replace(/^(?:(?:the|a|an)\s+)?(?:copy\s+of\s+)?/i, '')
+    .replace(/^(?:(?:the|a|an)\s+)?(?:copy\s+of\s+)?(?:(?:official|local)\s+)?/i, '')
     .replace(/[,;]\s*(?:(?:the|a|an)\s+)?(?:(?:official|local|state|federal|county|court)\s+)*(?:court\s+)?forms?\b[\s\S]*$/i, '')
+    .replace(/\s+(?:from|in)\s+(?:the\s+)?[A-Za-z][A-Za-z .'-]{0,100}\b(?:county|court|judicial branch)(?:,\s*[A-Za-z .'-]+)?$/i, '')
     .replace(/[?.!,;]+$/g, '').trim();
   return requested.slice(0, 180) || 'Official Court Form';
 }
