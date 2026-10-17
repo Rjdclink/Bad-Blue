@@ -175,6 +175,18 @@ async function run({facts='USER: Please find the Iowa child support modification
 
   response=await run({
     facts:'USER: Please find the Iowa child support modification form.\n\n'
+      +'LEXARA REQUESTED FORM FIELD: formChoice\nUSER ANSWER: 3',
+    formChoices:offered,nativeSources:[],
+  });
+  assert.equal(response.status,409);
+  assert.equal(response.body.officialForm.url,chosen.url);
+  assert.equal(response.nativeCalls,0);
+  console.log('PASS numeric third selection retrieves the original third form');
+
+
+
+  response=await run({
+    facts:'USER: Please find the Iowa child support modification form.\n\n'
       +'LEXARA REQUESTED FORM FIELD: formChoice\nUSER ANSWER: second',
     formChoices:offered,nativeSources:[alternatives[0]],
   });
