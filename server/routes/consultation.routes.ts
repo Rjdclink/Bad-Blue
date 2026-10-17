@@ -408,14 +408,14 @@ export function setupConsultationRoutes(app: Express): void {
     if (officialFormRequested && !reliefDocument && knownFormUrls.length) {
       const officialIssuers = (documentJurisdictionProfile?.officialResources || [])
         .filter(resource=>['forms','state-judiciary','state-trial','federal-district'].includes(resource.kind))
-        .map(resource=>resource.host.toLowerCase().replace(/^www\\./,''));
+        .map(resource=>resource.host.toLowerCase().replace(/^www\./,''));
       const stateName = String(documentJurisdictionProfile?.stateName || '').toLowerCase().replace(/[^a-z]/g,'');
       const stateCode = String(documentJurisdictionProfile?.stateCode || '').toLowerCase();
       for (const url of [...knownFormUrls].reverse()) {
         try {
           const parsed=new URL(url);
-          const host=parsed.hostname.toLowerCase().replace(/^www\\./,'');
-          if(parsed.protocol!=='https:' || !/(?:\\.pdf|\\.docx|\\/download|\\/embeddocument)(?:[?#/]|$)/i.test(parsed.pathname)) continue;
+          const host=parsed.hostname.toLowerCase().replace(/^www\./,'');
+          if(parsed.protocol!=='https:' || !/(?:\.pdf|\.docx|\/download|\/embeddocument)(?:[?#/]|$)/i.test(parsed.pathname)) continue;
           const knownIssuer=officialIssuers.some(issuer=>host===issuer||host.endsWith('.'+issuer));
           const matchingStateCourt=host.endsWith('.gov') && /(?:court|judicial)/.test(host)
             && Boolean(stateName) && host.includes(stateName);
@@ -424,7 +424,7 @@ export function setupConsultationRoutes(app: Express): void {
           if(!knownIssuer && !matchingStateCourt && !matchingStateAgency) continue;
           const restored = {
             requirement:'unverified' as const, title:documentLabel, url:parsed.toString(),
-            contentType: /\\.docx(?:$|[?#])/i.test(parsed.pathname) ? 'docx' as const : 'pdf' as const,
+            contentType: /\.docx(?:$|[?#])/i.test(parsed.pathname) ? 'docx' as const : 'pdf' as const,
             verifiedOfficial:true, trustedOfficialDomains:[host],
             localRules:[], companionDocuments:[],
             provenance:[{title:documentLabel,url:parsed.toString(),retrievedAt:new Date().toISOString()}],
