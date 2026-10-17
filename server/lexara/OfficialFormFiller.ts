@@ -9,7 +9,7 @@ const execFileAsync = promisify(execFile);
 import type { OfficialLegalForm } from './OfficialLegalFormResolver';
 
 const MAX_FORM_BYTES = 20 * 1024 * 1024;
-const DOWNLOAD_TIMEOUT_MS = 8_000;
+const DOWNLOAD_TIMEOUT_MS = 18_000; // Only official-form retrieval; legal chat deadlines unchanged.
 const ORIGINAL_CACHE_TTL_MS = 5 * 60_000;
 const originalFormCache = new Map<string,{bytes:Buffer;expires:number}>();
 

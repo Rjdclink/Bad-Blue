@@ -268,7 +268,16 @@ function detectDocumentIntent(prompt: string, previousMessages: LexaraConversati
   officialFormDelivery?: boolean;
 } {
   const p = prompt.toLowerCase();
-  const officialFormDelivery = isLexaraOfficialFormDeliveryRequest(prompt);
+  // "Grab it" refers to the actual court form Lexara linked in the last
+  // exchange; the user need not repeat its official title or form number.
+  const previousFormRequest=[...previousMessages].reverse().find(message=>
+    message.role==='user' && isLexaraOfficialFormDeliveryRequest(message.content));
+  const previouslyLinkedForm=previousMessages.slice(-8).some(message=>
+    message.role!=='user' && message.content.includes('https://')
+      && /(?:\.pdf|\.docx|\/download|\/embedDocument)\b/i.test(message.content));
+  const sameFormFollowup=Boolean(previousFormRequest && previouslyLinkedForm
+    && /^(?:(?:please\s+)?(?:can|could|would|will)\s+you\s+)?(?:please\s+)?(?:get|grab|fetch|retrieve|download|send|give|open|pull\s+up)\s+(?:me\s+)?(?:it|that|that\s+one|the\s+form|that\s+form)(?:\s+(?:for\s+me|please))?[?.!]*$/i.test(prompt.trim()));
+  const officialFormDelivery = isLexaraOfficialFormDeliveryRequest(prompt) || sameFormFollowup;
   if (isLexaraDocumentIntakeQuestion(prompt)) return {
     requested: false, explicit: false, inferred: false, documentType: 'Custom Document', templateMode: false,
   };
@@ -304,7 +313,10 @@ function detectDocumentIntent(prompt: string, previousMessages: LexaraConversati
     requested,
     explicit,
     inferred: Boolean(inferredType),
-    documentType: officialFormDelivery ? lexaraRequestedOfficialFormTitle(prompt) : inferredType || currentType || historyType || 'Custom Document',
+    documentType: sameFormFollowup
+      ? lexaraRequestedOfficialFormTitle(previousFormRequest!.content)
+      : officialFormDelivery ? lexaraRequestedOfficialFormTitle(prompt)
+      : inferredType || currentType || historyType || 'Custom Document',
     templateMode: isBlankLegalDocumentRequest(prompt),
     officialFormDelivery,
   };

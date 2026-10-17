@@ -542,6 +542,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     packetItem?: boolean; officialFormDelivery?: boolean; autoRetrieve?: boolean;
     officialForm?: Record<string, unknown>;
     formChoices?: Array<{title:string;url:string}>;
+    formSourceUrls?: string[];
   } | null>(null);
   const [showReviewPrompt, setShowReviewPrompt] = useState(false);
 
@@ -1553,6 +1554,16 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
             ? `${conversationFacts}\n\nAPPLICATION-SUPPLIED LEXARA BACKGROUND EVIDENCE (FOLLOW EACH ITEM’S IDENTITY/CASE MATCH STATUS; CANDIDATES ARE NOT VERIFIED USER FACTS; NOT AUTOMATICALLY ADMITTED):\n${backgroundDocumentContext}`
             : conversationFacts;
           const pendingTitle = String(data.documentIntent.documentType || 'Legal Document');
+          // Preserve actual court-PDF links Lexara has already found in this
+          // conversation. The server must independently validate every link.
+          const formSourceUrls = data.documentIntent.officialFormDelivery === true
+            ? [...previousMessages.filter(item=>item.role === 'lexara').slice(-8).map(item=>item.content),
+              String(data?.response || '')]
+                .flatMap(answer=>[...answer.matchAll(/https:\/\/[^\s<>"')\]]+/gi)]
+                  .map(match=>match[0].replace(/[.,;!?]+$/,'')))
+                .filter(url=>/(?:\.pdf|\.docx|\/download|\/embedDocument)(?:[?#/]|$)/i.test(url))
+                .slice(-6)
+            : [];
           if (!explicitDocumentRequest) documentOffer = `Would you like me to prepare the ${pendingTitle} for preview and download as DOCX or PDF?`;
           // A newly requested document replaces the prior document task UI.
           // Keep the conversation, but never let an older preview hide the new task.
@@ -1569,6 +1580,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
             followUpQuestion: /\?/.test(String(data.response || '')) ? String(data.response).trim() : undefined,
             packetItem: data.documentIntent.packetItem === true,
             officialFormDelivery: data.documentIntent.officialFormDelivery === true,
+            formSourceUrls,
             autoRetrieve: data.documentIntent.officialFormDelivery === true,
           });
           pendingActionRef.current = { kind: 'document', label: pendingTitle };
@@ -1977,6 +1989,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
             packetItem: pendingDocument.packetItem === true,
             packetItemTitle: pendingDocument.packetItem ? pendingDocument.title : undefined,
             formChoices: pendingDocument.formChoices,
+            formSourceUrls: pendingDocument.formSourceUrls,
             templateMode: pendingDocument.templateMode,
             instructions: pendingDocument.templateMode
               ? 'Retrieve the unaltered original official form.'

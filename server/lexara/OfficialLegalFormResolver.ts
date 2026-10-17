@@ -52,7 +52,7 @@ export function resolveOfficialLegalForm(research: LexaraAuthorityResearch | nul
     && source.kind!=='secondary' && source.kind!=='web'
     && FORM_HINT.test([source.title,source.excerpt].filter(Boolean).join(' '))
     && !RETIRED_FORM_HINT.test([source.title,source.excerpt].filter(Boolean).join(' '))
-    && (!numberPattern || numberPattern.test(source.title)));
+    && (!numberPattern || numberPattern.test([source.title,source.excerpt,source.url].filter(Boolean).join(' '))));
   // Official publishers often use "Application to Modify" while users ask
   // for "Modification of" the same obligation. Match the instrument's
   // meaning without requiring the user's conversational words in its title.
@@ -70,7 +70,8 @@ export function resolveOfficialLegalForm(research: LexaraAuthorityResearch | nul
     const score=tokenScore+titleScore*3+exactFormScore+(typeOf(source.url)!=='html'?1:0);
     return {source,score,tokenScore,titleScore,haystack};
   }).filter(entry=>Boolean(requestedFormNumber)
-    || (entry.tokenScore>0 && (entry.titleScore>0 || entry.source.provider==='official-form-directory')))
+    || (entry.tokenScore>0 && (entry.titleScore>0 || entry.source.provider==='official-form-directory'
+      || (entry.tokenScore>=2 && /(?:\.pdf|\.docx|\/download|\/embedDocument)(?:[?#/]|$)/i.test(entry.source.url)))))
     .sort((a,b)=>b.score-a.score);
   const bestScore=scored[0]?.score||0;
   const specific=scored.filter(entry=>entry.score>=Math.max(1,bestScore-1));
@@ -122,7 +123,13 @@ export function rankOfficialLegalForms(
   const results: OfficialFormCandidate[]=[];
   const seen=new Set<string>();
   for (const source of research.sources) {
-    if (!FORM_HINT.test(source.title)
+    // A form that merely accompanies the requested filing is not the
+    // requested instrument, even if its description repeats the same subject.
+    if (/\b(?:confidential|certificate of service|notice of service|fee waiver|instructions)\b/i.test(source.title)
+      && !/\b(?:confidential|certificate|service|fee waiver|instructions)\b/i.test(purpose)) continue;
+    const directFile=/(?:\.pdf|\.docx|\/download|\/embedDocument)(?:[?#/]|$)/i.test(source.url);
+    if ((!FORM_HINT.test(source.title)
+      && !(directFile && FORM_HINT.test(source.excerpt||'')))
       || /\b(?:instructions?|guide|guidance|checklist|directory|index)\b/i.test(source.title)) continue;
     const form=resolveOfficialLegalForm({
       ...research, sources:[source],
@@ -131,7 +138,8 @@ export function rankOfficialLegalForms(
     const titleWords=words(source.title);
     const titleOverlap=objective.filter(word=>titleWords.includes(word)).length;
     const excerptOverlap=objective.filter(word=>words(source.excerpt||'').includes(word)).length;
-    if (!requestedFormNumber && titleOverlap===0) continue;
+    if (!requestedFormNumber && titleOverlap===0
+      && !(excerptOverlap>=2 && /(?:\.pdf|\.docx|\/download|\/embedDocument)(?:[?#/]|$)/i.test(source.url))) continue;
     let score=titleOverlap*5 + Math.min(excerptOverlap,4)
       + (/(?:\.pdf|\.docx|\/download|\/embedDocument)(?:[?#]|$)/i.test(source.url)?1:0);
     if (requestedFormNumber) score+=20;
