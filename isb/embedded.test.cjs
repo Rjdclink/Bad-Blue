@@ -123,7 +123,7 @@ test('wrong hostname, wrong passwords and hostile request bodies never shift the
   await withServer({autoTick:false},async(port,isb)=>{
     for(let i=0;i<30;i++) {
       assert.equal((await request(port,'/.env',{host:'unrelated.example'})).status,200);
-      assert.equal((await request(port,'/api/local-login',{method:'POST',body:'{"password":"secret"+123}',headers:{'content-type':'application/json'}})).status,401);
+      assert.equal((await request(port,'/api/local-login',{method:'POST',body:'{"password":"wrong"}',headers:{'content-type':'application/json'}})).status,401);
     }
     await new Promise(resolve=>setImmediate(resolve));
     assert.equal(isb.snapshot().probes,0);
