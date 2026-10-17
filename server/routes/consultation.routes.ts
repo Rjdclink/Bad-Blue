@@ -629,62 +629,88 @@ export function setupConsultationRoutes(app: Express): void {
     const fieldNames = inspected.fields.map(field => field.name);
     if (facts && fieldNames.length && Object.keys(values).length === 0) {
       const mappingRaw = await generateLegalAnalysis('document-drafting', [
-        'Map ONLY user-supplied facts and relevant directly retrieved facts in the APPLICATION-SUPPLIED LEXARA BACKGROUND EVIDENCE section to the official form field names below.',
-        'Background facts must concern the same person or entity and matter. Match each fact to its proper party and field; do not treat ordinary assistant replies, unrelated history, or unverified search leads as verified evidence.',
-        'Return one JSON object whose keys exactly match applicable field names. Omit any field whose value is unknown. Never infer names, dates, addresses, identifiers, signatures, case numbers, or factual allegations.',
+        'Map ONLY supplied facts from the same user and matter to the actual form fields.',
+        'Read any explicit LEXARA REQUESTED FORM FIELD and USER ANSWER pair as the answer to that named field.',
+        'Do not fill fields that the user marked LEXARA SKIPPED FORM FIELD.',
+        'Do not invent identity, addresses, dates, signatures, case numbers, legal conclusions, or other facts.',
+        'Return JSON with only exact form field names. Omit unknown or unanswered fields.',
         'FORM FIELDS: ' + JSON.stringify(fieldNames),
         'USER FACTS: ' + facts,
-      ].join('\n\n'), { systemPrompt: 'You are a deterministic legal-form field mapper. Return JSON only. Never invent missing facts.', temperature: 0, maxTokens: 4000 });
-      try { values = JSON.parse(String(mappingRaw).replace(/^\x60\x60\x60(?:json)?\s*|\s*\x60\x60\x60$/gi, '').trim()); } catch { values = {}; }
+      ].join('\n\n'), {
+        systemPrompt: 'Map user-supplied facts to verified official form fields; JSON only, no inventions.',
+        temperature: 0, maxTokens: 4000,
+      });
+      try { values = JSON.parse(String(mappingRaw).replace(/^\x60\x60\x60(?:json)?\s*|\s*\x60\x60\x60$/gi, '').trim()); }
+      catch { values = {}; }
     }
-    const flatLayout = req.body?.flatLayout;
-    if (inspected.contentType === 'pdf' && !inspected.fillable) {
-      const detectedLayout = flatLayout || await detectFlatFormLayout(inspected.bytes, 'pdf');
-      const checkedLayout = validateFlatFormLayout(detectedLayout);
-      if (!checkedLayout.verified) return res.status(409).json({ error: 'Flat-form field coordinates did not meet verification confidence.', sourceUrl: inspected.sourceUrl });
-      if (facts && Object.keys(values).length === 0) {
-        const labels = [...new Set(checkedLayout.anchors.map(field => field.label))];
-        const mappingRaw = await generateLegalAnalysis('document-drafting', [
-          'Map ONLY user-supplied facts and relevant directly retrieved facts in the APPLICATION-SUPPLIED LEXARA BACKGROUND EVIDENCE section to the visible official-form labels below.',
-          'Background facts must concern the same person or entity and matter. Match each fact to its proper party and field; do not treat ordinary assistant replies, unrelated history, or unverified search leads as verified evidence.',
-          'Return one JSON object whose keys exactly match applicable labels. Omit unknown values. Never invent missing facts.',
-          'FORM LABELS: ' + JSON.stringify(labels),
-          'USER FACTS: ' + facts,
-        ].join('\n\n'), { systemPrompt: 'You are a deterministic legal-form field mapper. Return JSON only. Never invent missing facts.', temperature: 0, maxTokens: 4000 });
-        try { values = JSON.parse(String(mappingRaw).replace(/^\x60\x60\x60(?:json)?\s*|\s*\x60\x60\x60$/gi, '').trim()); } catch { values = {}; }
-      }
-      const missingFlatFields = checkedLayout.anchors.filter(field => values[field.label] === undefined).map(field => field.label);
-      if (missingFlatFields.length) {
-        await recordMatterMissingFields(req, matterSessionId, String(officialForm.title || 'Official form'), missingFlatFields)
-          .catch(error => log.warn('Could not persist missing official-form fields route-locally', { error }));
-        return res.status(422).json({ error: 'Additional information is required to complete the official form', missingFields: missingFlatFields, sourceUrl: inspected.sourceUrl });
-      }
-      const output = await overlayFlatOfficialPdf(inspected, checkedLayout, values);
-      await saveMatterArtifact(req, matterSessionId, {
-        title: String(officialForm.title || 'Official legal form'),
-        kind: 'document',
-        bytes: output,
-        mimeType: 'application/pdf',
-        fileName: 'lexara-official-form.pdf',
-        sourceUrl: inspected.sourceUrl,
-        documentText: JSON.stringify(values),
-        lawType: matterLawType,
-      }).catch(error => log.warn('Official form completed but persistent matter save failed route-locally', { error }));
-      res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', 'attachment; filename="lexara-official-form.pdf"');
+    if (!values || typeof values !== 'object' || Array.isArray(values)) values = {};
+    const skipped = new Set([...facts.matchAll(/LEXARA SKIPPED FORM FIELD:\s*([^\n]+)/gi)]
+      .map(match => String(match[1] || '').trim().toLowerCase()));
+    // A user's latest answer to a named question is authoritative. Do not
+    // require another model call merely to place that explicit field value.
+    for (const match of facts.matchAll(/LEXARA REQUESTED FORM FIELD:\s*([^\n]+)\nUSER ANSWER:\s*([^\n]+)/gi)) {
+      const name = fieldNames.find(field => field.toLowerCase() === String(match[1] || '').trim().toLowerCase());
+      if (name && !skipped.has(name.toLowerCase())) values[name] = String(match[2] || '').trim();
+    }
+    values = Object.fromEntries(Object.entries(values).filter(([key,value]) =>
+      fieldNames.includes(key) && (typeof value === 'string' || typeof value === 'boolean')));
+    for (const key of Object.keys(values)) if (skipped.has(key.toLowerCase())) delete values[key];
+
+    const setFormQuestionHeaders = (questions: Array<{name:string;required?:boolean}>, notice?:string) => {
+      res.setHeader('X-Lexara-Form-Questions', encodeURIComponent(JSON.stringify(questions.slice(0,40))));
       res.setHeader('X-Lexara-Official-Source', inspected.sourceUrl);
-      res.send(output);
-      return;
+      if (officialForm.revision) res.setHeader('X-Lexara-Form-Revision', String(officialForm.revision).slice(0,60));
+      if (notice) res.setHeader('X-Lexara-Form-Notice', encodeURIComponent(notice));
+    };
+
+    if (inspected.contentType === 'pdf' && !inspected.fillable) {
+      // Flat/scanned forms remain downloadable even when OCR cannot prove
+      // coordinates. Never guess where to place personal or court information.
+      const checkedLayout = validateFlatFormLayout(await detectFlatFormLayout(inspected.bytes, 'pdf'));
+      let output:Buffer = inspected.bytes;
+      let notice = 'Original court form; field placement needs manual review.';
+      if (checkedLayout.verified) {
+        const labels = checkedLayout.anchors.map(field => field.label);
+        if (facts && !Object.keys(values).length) {
+          const mappingRaw = await generateLegalAnalysis('document-drafting', [
+            'Map only supplied case facts to these exact visible labels; return JSON only.',
+            'Do not invent any fact. Omit fields the user did not answer.',
+            'FORM LABELS: ' + JSON.stringify(labels),
+            'USER FACTS: ' + facts,
+          ].join('\n\n'), {systemPrompt:'JSON only. Map supplied facts, never invent data.',temperature:0,maxTokens:3000});
+          try { values = JSON.parse(String(mappingRaw).replace(/^\x60\x60\x60(?:json)?\s*|\s*\x60\x60\x60$/gi,'').trim()); }
+          catch { values = {}; }
+        }
+        values = Object.fromEntries(Object.entries(values || {}).filter(([key,value]) =>
+          labels.includes(key) && typeof value === 'string' && !skipped.has(key.toLowerCase())));
+        const questions = labels.filter(label => values[label] === undefined && !skipped.has(label.toLowerCase()))
+          .map(name => ({name}));
+        setFormQuestionHeaders(questions);
+        output = await overlayFlatOfficialPdf(inspected,checkedLayout,values);
+        notice = 'Original court form, with verified fields completed where information was supplied.';
+      } else {
+        setFormQuestionHeaders([],notice);
+      }
+      await saveMatterArtifact(req, matterSessionId, {
+        title: String(officialForm.title || 'Official legal form'), kind: 'document',
+        bytes: output, mimeType:'application/pdf', fileName:'lexara-official-form.pdf',
+        sourceUrl: inspected.sourceUrl, documentText: JSON.stringify(values),lawType:matterLawType,
+      }).catch(error => log.warn('Official form retrieved but matter save failed route-locally',{error}));
+      res.setHeader('Content-Type','application/pdf');
+      res.setHeader('Content-Disposition','attachment; filename="lexara-official-form.pdf"');
+      res.setHeader('X-Lexara-Form-Notice',encodeURIComponent(notice));
+      return res.send(output);
     }
-    const missingFields = inspected.fields.filter(field => values[field.name] === undefined).map(field => field.name);
-    if (missingFields.length) {
-      await recordMatterMissingFields(req, matterSessionId, String(officialForm.title || 'Official form'), missingFields)
-        .catch(error => log.warn('Could not persist missing official-form fields route-locally', { error }));
-      return res.status(422).json({ error: 'Additional information is required to complete the official form', missingFields, sourceUrl: inspected.sourceUrl });
-    }
+
+    const unanswered = inspected.fields
+      .filter(field => !field.readOnly && values[field.name] === undefined && !skipped.has(field.name.toLowerCase()))
+      .map(field => ({name:field.name,required:field.required}));
+    // These questions are supplementary metadata, not a gate to obtaining
+    // the original court-issued document or a partly filled preview.
+    setFormQuestionHeaders(unanswered);
     const output = inspected.contentType === 'pdf'
-      ? await fillOfficialPdf(inspected, values, true)
-      : await fillOfficialDocx(inspected, values);
+      ? await fillOfficialPdf(inspected, values, false)
+      : Object.keys(values).length ? await fillOfficialDocx(inspected, values) : inspected.bytes;
     const extension = inspected.contentType === 'pdf' ? 'pdf' : 'docx';
     const outputMime = inspected.contentType === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
     await saveMatterArtifact(req, matterSessionId, {
