@@ -1,8 +1,8 @@
 # ISB - Iron Smart Bubble
 
-## Status: Bad-Blue in-process integration, passive by design
+## Status: Bad-Blue in-process monitoring with narrow silent probe blocking
 
-ISB is a passive, privacy-limited observer with randomized sacrificial decoy bubbles. The embedded mode runs inside Bad-Blue, with a single fail-open startup hook. It does NOT intercept, proxy, challenge, block, or change ordinary LegalWhat requests. Its "hard" containment acts ONLY on its own fake decoy paths; moving targets do not move production application code or routes. A passive observer cannot stop every real attack. LegalWhat continues to work if ISB fails.
+ISB observes ordinary traffic passively. Embedded mode can also return a plain 404 to a tiny, explicitly enumerated set of GET/HEAD requests for non-LegalWhat exploit targets such as `/.env`, `/.git/config`, `/.svn/entries`, `/wp-login.php`, `/xmlrpc.php`, `/actuator/env` and `/server-status`. These paths are not legitimate login, signup, subscription, Square, Lexara or Spectra endpoints. All other traffic remains unchanged. It never challenges, rate-blocks, inspects passwords, bans an IP or rewrites real application routes. Moving decoy bubbles still isolate fake cells only. This is not a general WAF. Blocking is an active action despite operating silently; zero impact cannot be guaranteed.
 
 Only a narrow startup hook in server/index.ts is added. No existing authentication, trial, Square, Lexara, Spectra, database, DNS, or Railway configuration logic is changed. Bad-Blue imports ISB, but ISB never imports or controls LegalWhat's application handlers.
 
@@ -26,14 +26,14 @@ Only a narrow startup hook in server/index.ts is added. No existing authenticati
 
 ## Embedded Bad-Blue operation (primary)
 
-On startup, server/index.ts loads the built-in ISB middleware BEFORE registering the application's protected routes. Monitoring is enabled by default; ISB_EMBEDDED_DISABLED=1 is the emergency disable switch. If loading ISB fails, LegalWhat continues normally. Only the reserved `/__isb__/` path is handled by ISB; all other requests continue unchanged.
+On startup, server/index.ts loads the built-in ISB middleware BEFORE registering the application's protected routes. Monitoring is enabled by default; `ISB_EMBEDDED_DISABLED=1` disables ISB entirely and `ISB_BLOCKING_DISABLED=1` disables only probe blocking. If loading ISB fails, LegalWhat continues normally. The reserved `/__isb__/` paths retain their existing decoy handling; only explicitly listed high-confidence exploit paths receive a plain 404, and other requests retain their original handlers.
 
 - Normal successful and failed logins, signup, 72-hour trial, subscriptions, Lexara, Spectra, and Square webhooks retain their existing handlers and responses.
 - After completed responses, a bounded queue records only canonical route category, known hostname, HTTP method/status and minute of observation. Usernames, passwords, body, query parameters, cookies, IP and payment details are excluded. The queue has hard limits and drops data rather than delaying traffic.
-- Recognized suspicious probes rotate decoy identifiers only. Repeated probes to ISB's reserved decoy paths can isolate/regenerate adjacent fake bubbles. This is deception/monitoring, **not production traffic blocking**.
+- Known malicious GET/HEAD probes for fixed nonapplication files/services quietly receive `404 Not Found`; the same signals are observed after the response. Broader suspicious activity remains passive, and wrong passwords never independently activate blocking. Rotating and regenerating bubbles affect fake paths only.
 - GET `/__isb__/robots.txt` provides decoy clues, and GET `/__isb__/healthz` returns a minimal `ok` health response. Existing `/robots.txt`, `/login`, `/api/*`, and application functionality are unchanged.
 - Run: `node --test isb/*.test.cjs` and `node isb/embedded-express.verify.cjs` (the latter requires root project dependencies). The production bundle must contain the embedded-activation code. No new Railway service, Railway CLI, merchant tokens, DNS or routing configuration is required.
-- Runtime status is reported in Bad-Blue logs as `[ISB] embedded passive monitor active`; aggregated counters are emitted approximately once per minute. Failures never change a client response.
+- Runtime startup is recorded as `[ISB] embedded passive monitor active`; aggregate counters are emitted approximately once per minute. Failure of the ISB component fails open. Only exact fixed probe paths are intentionally changed to 404 responses; no other client response is intentionally changed.
 
 ## Legacy standalone operation (not required for embedded mode)
 
@@ -52,7 +52,7 @@ The OPTIONAL standalone processes must run OUTSIDE the site's request path. The 
 
 Railway HTTP logs may contain sensitive information. Consume their output in memory only; never retain raw records. Source errors, missing credentials, stalled builds, and ISB crashes must have no effect on LegalWhat.
 
-## Mandatory ten-pass acceptance gate
+## Previously defined ten-pass acceptance gate
 
 Passes 1-5: real end-to-end functionality checking of both main addresses, valid and invalid logins, signup, 72-hour trial, immediate payment, Square checkout/signature-validated webhooks, Lexara, Spectra, search services, latency, and readiness.
 
@@ -68,4 +68,8 @@ A failure restarts all ten passes after repair. Passing ISB unit tests and inspe
 
 ## Explicitly excluded
 
-No Railway Under Attack Mode (could block nonbrowser Square callbacks), no DNS modifications, login/password processing, subscription changes, application binary shuffling, service restarts, IP-based tracking, production response changes, or retaliation. Production traffic filtering is NOT part of this implementation.
+No Railway Under Attack Mode (could block nonbrowser Square callbacks), DNS modifications, login/password processing, subscription changes, application binary shuffling, service restarts, IP-based tracking, general production traffic filtering, or retaliation. The sole active exception is a plain 404 for an exact enumerated set of non-LegalWhat GET/HEAD exploit probes.
+
+## Change history
+
+The high-confidence probe-blocking change was requested without running simulations or tests. This raises deployment risk. No tests or live behavioral checks were performed as part of that change; the exact Git diff and readback integrity should still be reviewed before merging.
