@@ -1171,7 +1171,9 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         ? nextRequired
           ? `What should I enter for ${nextField.replace(/[_-]+/g, ' ')}? This field is marked required.`
           : `Would you like to complete ${nextField.replace(/[_-]+/g, ' ')}, or leave it blank? Say skip to leave it blank.`
-        : `I've updated the ${pendingDocument.title}. You can preview or download the latest form.`);
+        : pendingDocument.officialFormDelivery
+          ? `I'll update the official form now.`
+          : `I've updated the ${pendingDocument.title}. You can preview or download the latest form.`);
       return;
     }
 
