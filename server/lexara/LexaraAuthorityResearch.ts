@@ -333,7 +333,7 @@ async function discoverAuthoritySources(
       title: item.title.trim().slice(0,240) || 'Research source',
       url,
       kind: classifySource(url, context.preferredOfficialDomains),
-      excerpt: item.excerpt?.trim().slice(0, item.evidenceLevel === 'document' ? context.recordReliefState ? 6500 : 3200 : 900) || undefined,
+      excerpt: item.excerpt?.trim().slice(0, item.evidenceLevel === 'document' ? context.recordReliefState ? 6500 : context.requirePrimaryText ? 12800 : 3200 : 900) || undefined,
       provider:item.provider,
       recordType:item.recordType,
       evidenceLevel:item.evidenceLevel,
@@ -589,7 +589,7 @@ async function enrichAuthoritySourcesWithLexaraRetrieval(
     const byTarget = new Map(enrichment.evidence.filter(item => item.content?.trim())
       .map(item => [item.target, recordRelief ? recordReliefEvidenceExcerpt(item.content.trim()) : formLookup ? officialFormEvidenceExcerpt(item.content.trim()) : statuteTargets.has(item.target)
         ? item.content.trim().length <= 6500 ? item.content.trim() : `${item.content.trim().slice(0, 5000)}\n[Additional section text omitted]\n${item.content.trim().slice(-1000)}`
-        : item.content.trim().slice(0, requirePrimaryText ? 6500 : courtLookup ? 3000 : 900)]));
+        : item.content.trim().slice(0, requirePrimaryText ? 12000 : courtLookup ? 3000 : 900)]));
     return sources.map(source => ({ ...source, evidenceLevel: byTarget.has(source.url) ? 'document' : source.evidenceLevel, excerpt: formLookup || recordRelief
       ? [source.excerpt, byTarget.get(source.url)].filter(Boolean).join('\n') || undefined
       : byTarget.get(source.url) || source.excerpt || undefined }));
