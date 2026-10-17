@@ -38,7 +38,7 @@ export function resolveOfficialLegalForm(research: LexaraAuthorityResearch | nul
   if(!research?.sources?.length) return { requirement:'unverified', verifiedOfficial:false, localRules:[], companionDocuments:[], provenance:[] };
   const escapedNumber = requestedFormNumber?.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const numberPattern = escapedNumber
-    ? new RegExp(`(?:^|[^a-z0-9${/^\\d+$/.test(requestedFormNumber || '') ? '' : '.:-'}])${escapedNumber}(?![a-z0-9.-]|:[a-z0-9])`, 'i')
+    ? new RegExp(`(?:^|[^a-z0-9${/^\d+$/.test(requestedFormNumber || '') ? '' : '.:-'}])${escapedNumber}(?![a-z0-9.-]|:[a-z0-9])`, 'i')
     : null;
   // An unrelated agency's .gov file is not a form issued by this court.
   const matchesIssuer=(url:string) => !issuingDomains?.length || issuingDomains.some(domain=>{
