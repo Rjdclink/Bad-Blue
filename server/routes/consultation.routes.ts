@@ -13,7 +13,7 @@ import { researchLegalAuthority, formatAuthorityResearchForSystem, discoverClaud
 import { resolveUSJurisdiction } from '../lexara/LexaraJurisdictionResolver';
 import { formatJurisdictionAuthorityForSystem, resolveJurisdictionAuthorityProfile } from '../lexara/LexaraJurisdictionAuthority';
 import { formatCitationVerificationForCorrection, verifyLegalCitationsInText } from '../lexara/LexaraCitationVerifier';
-import { resolveOfficialLegalForm, officialFormDirective, rankOfficialLegalForms, officialFormNeedsClarification, selectClarifiedOfficialForm } from '../lexara/OfficialLegalFormResolver';
+import { resolveOfficialLegalForm, officialFormDirective, rankOfficialLegalForms, officialFormNeedsClarification, selectClarifiedOfficialForm, requiredOfficialFormCompanions } from '../lexara/OfficialLegalFormResolver';
 import { isLexaraOfficialFormDeliveryRequest, lexaraRequestedOfficialFormTitle } from '../lexara/OfficialFormRequest';
 import { isRecordReliefRequest, recordReliefCaseState, recordReliefTopic, recordReliefLawQuery } from '../lexara/RecordReliefWorkflow';
 import { assessRecordReliefDocument } from '../lexara/RecordReliefDocument';
@@ -404,13 +404,42 @@ export function setupConsultationRoutes(app: Express): void {
       reliefCaseState || state,
     ).catch(() => null);
 
+    // A user's form choice is a reference to the ORIGINAL verified options,
+    // not an invitation to search again and reshuffle those options.
+    const validChoice = (value:any): value is {title:string;url:string;requiredForms?:Array<{title:string;url:string}>} =>
+      Boolean(value && typeof value.title==='string' && value.title.length<=240
+        && typeof value.url==='string' && value.url.length<=2048);
+    const offeredFormChoices = Array.isArray(req.body?.formChoices)
+      ? req.body.formChoices.filter(validChoice).slice(0,12)
+        .map((choice:any)=>({...choice,requiredForms:Array.isArray(choice.requiredForms)
+          ? choice.requiredForms.filter(validChoice).slice(0,12) : []}))
+      : [];
+    const choiceAnswer=[...facts.matchAll(/LEXARA REQUESTED FORM FIELD:\s*formChoice\s*\nUSER ANSWER:\s*([^\n]+)/gi)]
+      .at(-1)?.[1]?.trim() || '';
+    const selectedOfferedForm = offeredFormChoices.length && choiceAnswer
+      ? selectClarifiedOfficialForm(offeredFormChoices.map((choice:any)=>({
+          form:{requirement:'unverified' as const,title:choice.title,url:choice.url,
+            verifiedOfficial:false,localRules:[],companionDocuments:[],provenance:[]},
+          score:1,
+        })),choiceAnswer,offeredFormChoices.map((choice:any)=>choice.url))
+      : null;
+    const selectedOfferedChoice=offeredFormChoices.find((choice:any)=>
+      choice.url===selectedOfferedForm?.url);
+    if(offeredFormChoices.length && choiceAnswer && !selectedOfferedChoice){
+      return res.status(422).json({
+        needsFormClarification:true,missingFields:['formChoice'],
+        question:'I still need to know which of the listed forms applies. Please give its number or name.',
+        formChoices:offeredFormChoices,
+      });
+    }
     // A prior Lexara answer may already contain the original court PDF.
     // Keep that link, but accept it only after checking the current issuing
     // jurisdiction and actually downloading the court-issued document.
-    const knownFormUrls = Array.isArray(req.body?.formSourceUrls)
-      ? req.body.formSourceUrls.filter((url:unknown):url is string =>
-          typeof url === 'string' && url.length <= 2048).slice(-6)
-      : [];
+    const knownFormUrls = selectedOfferedChoice ? [selectedOfferedChoice.url]
+      : Array.isArray(req.body?.formSourceUrls)
+        ? req.body.formSourceUrls.filter((url:unknown):url is string =>
+            typeof url === 'string' && url.length <= 2048).slice(-6)
+        : [];
     if (officialFormRequested && !reliefDocument && knownFormUrls.length) {
       const officialIssuers = (documentJurisdictionProfile?.officialResources || [])
         .filter(resource=>['forms','state-judiciary','state-trial','federal-district'].includes(resource.kind))
@@ -429,7 +458,7 @@ export function setupConsultationRoutes(app: Express): void {
             && (host.endsWith('.'+stateCode+'.gov') || host.endsWith('.'+stateName+'.gov'));
           if(!knownIssuer && !matchingStateCourt && !matchingStateAgency) continue;
           const restored = {
-            requirement:'unverified' as const, title:documentLabel, url:parsed.toString(),
+            requirement:'unverified' as const, title:selectedOfferedChoice?.title || documentLabel, url:parsed.toString(),
             contentType: /\.docx(?:$|[?#])/i.test(parsed.pathname) ? 'docx' as const : 'pdf' as const,
             verifiedOfficial:true, trustedOfficialDomains:[host],
             localRules:[], companionDocuments:[],
@@ -438,16 +467,48 @@ export function setupConsultationRoutes(app: Express): void {
           // A successful verified fetch also seeds the existing original-file
           // cache for the follow-on preview and field interview.
           await inspectOfficialForm(restored);
+          const officialForms=[restored];
+          const unavailableRequiredForms:string[]=[];
+          for(const item of selectedOfferedChoice?.requiredForms || []){
+            try {
+              const linked=new URL(item.url);
+              const linkedHost=linked.hostname.toLowerCase().replace(/^www\./,'');
+              if(linked.protocol!=='https:' || !/(?:\.pdf|\.docx|\/download|\/embedDocument)(?:[?#/]|$)/i.test(linked.pathname)
+                || !officialIssuers.some(issuer=>linkedHost===issuer||linkedHost.endsWith('.'+issuer))) throw new Error('Different official issuer');
+              const companion={...restored,title:item.title,url:linked.toString(),
+                contentType:/\.docx$/i.test(linked.pathname)?'docx' as const:'pdf' as const,
+                trustedOfficialDomains:[linkedHost]};
+              await inspectOfficialForm(companion);
+              if(!officialForms.some(form=>form.url===companion.url)) officialForms.push(companion);
+            }catch {
+              unavailableRequiredForms.push(item.title);
+            }
+          }
           return res.status(409).json({
             error:'Lexara retrieved the previously identified official form.',
-            officialFormRequired:true, officialForm:restored,
+            officialFormRequired:true, officialForm:restored, officialForms,
+            unavailableRequiredForms,
             documentType:documentLabel,jurisdiction:documentJurisdiction,facts,
           });
         } catch (error) {
           log.warn('Previously identified official form could not be retrieved; continuing official search', {
             message:error instanceof Error?error.message:String(error),
           });
+          if(selectedOfferedChoice){
+            return res.status(422).json({
+              formSelectionUnavailable:true,
+              error:'The selected official form cannot be downloaded right now. Please choose a different official form or try again.',
+              selectedFormTitle:selectedOfferedChoice.title,
+            });
+          }
         }
+      }
+      if(selectedOfferedChoice){
+        return res.status(422).json({
+          formSelectionUnavailable:true,
+          error:'The selected source is not a verified downloadable form for this jurisdiction. The original selection was not replaced.',
+          selectedFormTitle:selectedOfferedChoice.title,
+        });
       }
     }
 
@@ -555,33 +616,36 @@ export function setupConsultationRoutes(app: Express): void {
         }
       }
     }
-    const offeredChoices = Array.isArray(req.body?.formChoices)
-      ? req.body.formChoices.filter((choice:unknown):choice is {title:string;url:string} =>
-          Boolean(choice && typeof choice==='object' && typeof (choice as any).url==='string'
-            && typeof (choice as any).title==='string'))
-          .slice(0,2) : [];
-    const clarification = [...facts.matchAll(/LEXARA REQUESTED FORM FIELD:\s*formChoice\s*\nUSER ANSWER:\s*([^\n]+)/gi)]
-      .at(-1)?.[1]?.trim() || '';
-    const selectedForm = clarification
-      ? selectClarifiedOfficialForm(candidates,clarification,offeredChoices.map((option:{url:string})=>option.url))
-      : null;
-    const leading = candidates.slice(0,2);
-    const isAmbiguous = officialFormNeedsClarification(candidates,requestedFormNumber);
-    if(officialFormRequested && (isAmbiguous || clarification) && !selectedForm) {
-      const [first,second] = leading;
-      if (first?.form.url && second?.form.url) {
-        const courtForm = (url:string)=>/(?:courts?|judicial|uscourts)/i.test(new URL(url).hostname);
-        const differentProcedures = courtForm(first.form.url)!==courtForm(second.form.url);
-        const question = differentProcedures
-          ? 'I found both a court application and an agency review form. Are you filing through the court or requesting a government agency review? You can also answer first or second.'
-          : 'Two different official forms may fit: (1) '+String(first.form.title).slice(0,115)
-            +'; (2) '+String(second.form.title).slice(0,115)
-            +'. Which situation applies? You can say first or second, or explain your situation.';
-        return res.status(422).json({
-          needsFormClarification:true, missingFields:['formChoice'],question,
-          formChoices:leading.map(item=>({title:item.form.title,url:item.form.url})),
-        });
-      }
+    // Several possible alternatives are NOT a filing packet. Only forms
+    // explicitly required by the selected publisher's instructions belong
+    // in its packet; exclude them from the alternative-choice interview.
+    const primaryCandidate=candidates[0]?.form;
+    const requiredCompanions=primaryCandidate
+      ? requiredOfficialFormCompanions(primaryCandidate,formResearch,issuingDomains) : [];
+    const companionUrls=new Set(requiredCompanions.map(form=>form.url));
+    const alternatives=candidates.filter(item=>!companionUrls.has(item.form.url));
+    const highestScore=alternatives[0]?.score || 0;
+    const plausible=alternatives.filter(item=>item.score>=highestScore-2).slice(0,12);
+    if(officialFormRequested && !requestedFormNumber && officialFormNeedsClarification(plausible)){
+      const [first,second]=plausible;
+      const courtForm=(url:string)=>/(?:courts?|judicial|uscourts)/i.test(new URL(url).hostname);
+      const differentProcedures=plausible.length===2
+        && first?.form.url && second?.form.url
+        && courtForm(first.form.url)!==courtForm(second.form.url);
+      const options=plausible.map((item,index)=>
+        '('+(index+1)+') '+String(item.form.title||'Official form').slice(0,115));
+      const question=differentProcedures
+        ? 'I found both a court application and an agency review form. Are you filing through the court or requesting an agency review? You can also say first or second.'
+        : 'More than one official form could apply: '+options.join('; ')+'. Which one fits your situation?';
+      return res.status(422).json({
+        needsFormClarification:true,missingFields:['formChoice'],question,
+        // Preserve the EXACT original ordered options and companion forms.
+        formChoices:plausible.map(item=>({
+          title:item.form.title,url:item.form.url,
+          requiredForms:requiredOfficialFormCompanions(item.form,formResearch,issuingDomains)
+            .map(companion=>({title:companion.title,url:companion.url})),
+        })),
+      });
     }
     if (officialFormRequested && !candidates.length && !clarifiedPurpose
       && /^(?:official\s+)?(?:court\s+)?forms?$/i.test(formDocumentLabel)) {
@@ -590,7 +654,7 @@ export function setupConsultationRoutes(app: Express): void {
         question:'What do you need the court form to accomplish?',
       });
     }
-    const officialForm = selectedForm || candidates[0]?.form
+    const officialForm = candidates[0]?.form
       || resolveOfficialLegalForm(formResearch, formDocumentLabel, requestedFormNumber, issuingDomains);
     if (requestedFormNumber) console.info('[LEXARA OfficialForm]', {
       requestedFormNumber,
@@ -627,11 +691,25 @@ export function setupConsultationRoutes(app: Express): void {
       return res.status(422).json({ error: 'The requested official form could not be verified from current court sources. No custom substitute was generated.' });
     }
     if (officialForm.requirement === 'mandatory' || ((officialFormRequested || reliefDocument) && officialForm.verifiedOfficial)) {
+      const officialForms=[officialForm];
+      const unavailableRequiredForms:string[]=[];
+      if(officialFormRequested && !reliefDocument) for(const companion of
+        requiredOfficialFormCompanions(officialForm,formResearch,issuingDomains)){
+        try {
+          await inspectOfficialForm(companion);
+          if(!officialForms.some(form=>form.url===companion.url)) officialForms.push(companion);
+        } catch(error) {
+          unavailableRequiredForms.push(companion.title || 'Required accompanying form');
+          log.warn('Required companion form unavailable', {
+            message:error instanceof Error?error.message:String(error),
+          });
+        }
+      }
       return res.status(409).json({
         error: 'Lexara will use the verified official form rather than substitute a custom draft.',
         documentType: documentLabel,
         jurisdiction: documentJurisdiction,
-        officialForm,
+        officialForm,officialForms,unavailableRequiredForms,
         officialFormRequired: true,
         facts,
       });

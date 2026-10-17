@@ -153,7 +153,7 @@ export function rankOfficialLegalForms(
     seen.add(key);
     results.push({form,score});
   }
-  return results.sort((a,b)=>b.score-a.score || String(a.form.title).localeCompare(String(b.form.title))).slice(0,5);
+  return results.sort((a,b)=>b.score-a.score || String(a.form.title).localeCompare(String(b.form.title))).slice(0,12);
 }
 
 export function officialFormNeedsClarification(candidates: OfficialFormCandidate[], requestedFormNumber?: string): boolean {
@@ -170,8 +170,10 @@ export function selectClarifiedOfficialForm(
 ): OfficialLegalForm | null {
   const offered=candidates.filter(candidate=>candidate.form.url && offeredUrls.includes(candidate.form.url));
   const normalized=String(answer||'').toLowerCase().trim();
-  const position=/^(?:1|one|first|option 1|number 1)\b/i.test(normalized) ? 0
-    : /^(?:2|two|second|option 2|number 2)\b/i.test(normalized) ? 1 : -1;
+  const numbered=/^(?:(?:i\s+(?:choose|want|need)|the|please|option|number|form)\s+)*(\d{1,2})(?:st|nd|rd|th)?\b/i.exec(normalized);
+  const ordinal=/(?:^|\b)(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)(?:\s+(?:one|option|form))?(?:\b|$)/i.exec(normalized)?.[1];
+  const ordinalWords=['first','second','third','fourth','fifth','sixth','seventh','eighth','ninth','tenth'];
+  const position=numbered ? Number(numbered[1])-1 : ordinal ? ordinalWords.indexOf(ordinal.toLowerCase()) : -1;
   if(position>=0){
     const sourceUrl=offeredUrls[position];
     return offered.find(candidate=>candidate.form.url===sourceUrl)?.form || null;
@@ -191,6 +193,41 @@ export function selectClarifiedOfficialForm(
     return normalized.length>=6 && (name.includes(normalized) || normalized.includes(name));
   });
   return matched.length===1 ? matched[0].form : null;
+}
+
+/**
+ * Identify a filing packet ONLY when current official instructions expressly
+ * require named companion forms. The mention of another form alone never
+ * establishes that it is required.
+ */
+export function requiredOfficialFormCompanions(
+  selected: OfficialLegalForm,
+  research: LexaraAuthorityResearch | null,
+  issuingDomains?: readonly string[],
+): OfficialLegalForm[] {
+  if(!selected.url || !research?.sources?.length) return [];
+  const issuer=research.sources.find(source=>source.url===selected.url);
+  if(!issuer) return [];
+  const mentions=new Set<string>();
+  const instructions=String(issuer.excerpt||'').split(/[.!?\n]+/);
+  for(const sentence of instructions) {
+    if(!/\b(?:must|shall|required|have\s+to)\b/i.test(sentence)
+      || !/\b(?:file|attach|submit|include|provide|complete|accompany)\b/i.test(sentence)
+      || /\b(?:if|unless|when|where applicable|as necessary|if required)\b/i.test(sentence)) continue;
+    for(const match of sentence.matchAll(/\bform\s+([0-9]{1,4}[a-z]?)\b/gi)) mentions.add(match[1].toLowerCase());
+  }
+  const result:OfficialLegalForm[]=[];
+  const seen=new Set<string>([selected.url]);
+  for(const source of research.sources) {
+    const label=String(source.title||'');
+    const number=label.match(/\bform\s+([0-9]{1,4}[a-z]?)\b/i)?.[1]?.toLowerCase();
+    if(!number || !mentions.has(number) || seen.has(source.url)) continue;
+    const form=resolveOfficialLegalForm({...research,sources:[source]},label,number,issuingDomains);
+    if(!form.verifiedOfficial || !form.url || /\b(?:instructions?|guide|checklist)\b/i.test(label)) continue;
+    seen.add(form.url);
+    result.push(form);
+  }
+  return result;
 }
 
 export function officialFormDirective(form: OfficialLegalForm): string {

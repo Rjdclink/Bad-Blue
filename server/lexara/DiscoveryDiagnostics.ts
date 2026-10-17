@@ -88,7 +88,8 @@ export function discoveryErrorType(error: unknown): string {
 export function beginDiscoveryAttempt(lane: string) {
   const context = contexts.getStore();
   // Only fixed code-defined lane labels are emitted, never caller-supplied text.
-  const provider = Object.prototype.hasOwnProperty.call(providerNames, lane) ? providerNames[lane] : 'other';
+  const provider = lane.startsWith('ddgsBackend:') ? 'ddgs'
+    : Object.prototype.hasOwnProperty.call(providerNames, lane) ? providerNames[lane] : 'other';
   let row = context?.providers.get(provider);
   if (context && !row) {
     row = { provider, ...counts(), errors: {} };
@@ -140,7 +141,8 @@ export function getDiscoveryDiagnostics() {
 }
 
 export function markDiscoveryPartial(lane: string): void {
-  const provider = Object.prototype.hasOwnProperty.call(providerNames, lane) ? providerNames[lane] : 'other';
+  const provider = lane.startsWith('ddgsBackend:') ? 'ddgs'
+    : Object.prototype.hasOwnProperty.call(providerNames, lane) ? providerNames[lane] : 'other';
   const row = contexts.getStore()?.providers.get(provider);
   if (row) row.partial++;
 }
