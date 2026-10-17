@@ -119,9 +119,14 @@ export async function resolveLexaraResearchDecisionSemantic(
   signal?: AbortSignal,
   conversationContext?: string,
   courtRecordIdentified = false,
+  directLawLookup = false,
 ): Promise<LexaraResearchDecision> {
   const text = String(prompt || '').trim();
   const deterministic = decideLexaraResearchNeed(text, previousUserTurns);
+  // A caller-identified narrow official-law lookup is already classified.
+  // Avoid a redundant model call while leaving every other semantic route intact.
+  if (directLawLookup && deterministic.needed && deterministic.intent === 'legal'
+    && deterministic.requestedFact === 'none') return deterministic;
   // A statute/source request already has a legal research objective. Reclassifying
   // its code title as a person/entity triggers an unrelated background search.
   if (deterministic.intent === 'legal' && deterministic.requestedFact === 'none'
