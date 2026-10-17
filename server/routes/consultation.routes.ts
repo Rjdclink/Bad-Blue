@@ -398,6 +398,53 @@ export function setupConsultationRoutes(app: Express): void {
       reliefCaseState || state,
     ).catch(() => null);
 
+    // A prior Lexara answer may already contain the original court PDF.
+    // Keep that link, but accept it only after checking the current issuing
+    // jurisdiction and actually downloading the court-issued document.
+    const knownFormUrls = Array.isArray(req.body?.formSourceUrls)
+      ? req.body.formSourceUrls.filter((url:unknown):url is string =>
+          typeof url === 'string' && url.length <= 2048).slice(-6)
+      : [];
+    if (officialFormRequested && !reliefDocument && knownFormUrls.length) {
+      const officialIssuers = (documentJurisdictionProfile?.officialResources || [])
+        .filter(resource=>['forms','state-judiciary','state-trial','federal-district'].includes(resource.kind))
+        .map(resource=>resource.host.toLowerCase().replace(/^www\\./,''));
+      const stateName = String(documentJurisdictionProfile?.stateName || '').toLowerCase().replace(/[^a-z]/g,'');
+      const stateCode = String(documentJurisdictionProfile?.stateCode || '').toLowerCase();
+      for (const url of [...knownFormUrls].reverse()) {
+        try {
+          const parsed=new URL(url);
+          const host=parsed.hostname.toLowerCase().replace(/^www\\./,'');
+          if(parsed.protocol!=='https:' || !/(?:\\.pdf|\\.docx|\\/download|\\/embeddocument)(?:[?#/]|$)/i.test(parsed.pathname)) continue;
+          const knownIssuer=officialIssuers.some(issuer=>host===issuer||host.endsWith('.'+issuer));
+          const matchingStateCourt=host.endsWith('.gov') && /(?:court|judicial)/.test(host)
+            && Boolean(stateName) && host.includes(stateName);
+          const matchingStateAgency=host.endsWith('.gov') && Boolean(stateCode)
+            && (host.endsWith('.'+stateCode+'.gov') || host.endsWith('.'+stateName+'.gov'));
+          if(!knownIssuer && !matchingStateCourt && !matchingStateAgency) continue;
+          const restored = {
+            requirement:'unverified' as const, title:documentLabel, url:parsed.toString(),
+            contentType: /\\.docx(?:$|[?#])/i.test(parsed.pathname) ? 'docx' as const : 'pdf' as const,
+            verifiedOfficial:true, trustedOfficialDomains:[host],
+            localRules:[], companionDocuments:[],
+            provenance:[{title:documentLabel,url:parsed.toString(),retrievedAt:new Date().toISOString()}],
+          };
+          // A successful verified fetch also seeds the existing original-file
+          // cache for the follow-on preview and field interview.
+          await inspectOfficialForm(restored);
+          return res.status(409).json({
+            error:'Lexara retrieved the previously identified official form.',
+            officialFormRequired:true, officialForm:restored,
+            documentType:documentLabel,jurisdiction:documentJurisdiction,facts,
+          });
+        } catch (error) {
+          log.warn('Previously identified official form could not be retrieved; continuing official search', {
+            message:error instanceof Error?error.message:String(error),
+          });
+        }
+      }
+    }
+
     const authorityPrompt = [
       `Jurisdiction: ${documentJurisdiction}. Document/form: ${documentLabel}.`,
       'Before drafting, determine from current authoritative court/government sources whether this jurisdiction requires an official/prescribed form, provides an optional official form, or permits a custom-drafted document.',
