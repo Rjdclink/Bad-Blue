@@ -447,10 +447,11 @@ function lexaraDdgsBase(): string {
       ? 'http://lexara-ddgs.railway.internal:4479' : '');
 }
 
-async function ddgsBackend(query: string, backend: string, budgetMs: number, signal?: AbortSignal): Promise<LegalMeshCandidate[]> {
+async function ddgsBackend(query: string, backend: string, budgetMs: number, signal?: AbortSignal,
+  lane='ddgsBackend'): Promise<LegalMeshCandidate[]> {
   const base = lexaraDdgsBase();
   if (!base) return skippedProvider('ddgsBackend', 'DISCOVERY_NOT_CONFIGURED');
-  const result = await withTimeout('ddgsBackend', budgetMs, signal, async requestSignal => {
+  const result = await withTimeout(lane, budgetMs, signal, async requestSignal => {
     const activeBackend = backend.split(',').filter(engineAvailable).join(',');
     if (!activeBackend) throw discoveryError('DISCOVERY_UNAVAILABLE');
     const endpoint = new URL('/search/text', base.endsWith('/') ? base : base + '/');
@@ -493,10 +494,19 @@ async function ddgs(query: string, signal?: AbortSignal, officialFormQuery = fal
   const fallback = permittedBackends(process.env.LEXARA_DDGS_FALLBACK_BACKENDS?.trim()
     || (officialFormQuery ? 'mojeek,startpage' : ''));
   if (!primary) return skippedProvider('ddgsBackend');
-  const first = await ddgsBackend(query, primary,
-    officialFormQuery ? 6_500 : (laneFailures.get('ddgsBackend') || 0) > 0 ? 1_500 : 2_200, signal);
-  return first.length || !fallback ? first : ddgsBackend(query, fallback,
-    officialFormQuery ? 4_000 : 900, signal);
+  // DDGS can drop valid results when several backends share one request and
+  // one engine returns HTTP 500. Isolate each engine's timeout and cooldown;
+  // retain successful results even when sibling engines are unavailable.
+  const firstEngines=primary.split(',').filter(Boolean);
+  const first=await Promise.all(firstEngines.map(engine=>ddgsBackend(query,engine,
+    officialFormQuery ? 6_500 : (laneFailures.get('ddgsBackend:'+engine)||0)>0 ? 1_500 : 2_200,
+    signal,'ddgsBackend:'+engine)));
+  const found=fuseRankedCandidates(first);
+  if(found.length || !fallback || signal?.aborted) return found;
+  const fallbackEngines=fallback.split(',').filter(engine=>engine && !firstEngines.includes(engine));
+  const recovered=await Promise.all(fallbackEngines.map(engine=>ddgsBackend(query,engine,
+    officialFormQuery ? 4_000 : 900,signal,'ddgsBackend:'+engine)));
+  return fuseRankedCandidates(recovered);
 }
 
 function lexaraOpenserpBase(): string {
