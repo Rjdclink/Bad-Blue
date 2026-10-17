@@ -871,6 +871,7 @@ export const LEXARAAttorneyPortrait = memo(function LEXARAAttorneyPortrait({
   const [reducedMotion, setReducedMotion] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const thinkingVideoRef = useRef<HTMLVideoElement>(null);
   const latestInputRef = useRef<LatestAvatarInput>({
     isSpeaking,
     isListening,
@@ -916,6 +917,7 @@ export const LEXARAAttorneyPortrait = memo(function LEXARAAttorneyPortrait({
     let preparedFaceFailed = false;
     let preparedFaceFailureReported = false;
     let lastMotionTurnKey = '';
+    let thinkingVideoPlayPending = false;
     let skinColor = 'rgb(177, 132, 108)';
     const engine = new LexaraEmbodimentEngine(0x4c455841);
     const image = new Image();
@@ -971,6 +973,23 @@ export const LEXARAAttorneyPortrait = memo(function LEXARAAttorneyPortrait({
       const realtimeClock = lexaraRealtimeVoiceClient.getPlaybackClock();
       const serverClock = getLexaraServerPlaybackClock();
       const audioActive = realtimeClock.active || serverClock.active;
+      // Only switch the silent visual layer; never gate voice or change lip-sync.
+      const thinkingVideo = thinkingVideoRef.current;
+      if (thinkingVideo) {
+        const visibility = !audioActive && thinkingVideo.readyState >= 2 && !thinkingVideo.error
+          ? 'visible' : 'hidden';
+        if (thinkingVideo.style.visibility !== visibility) {
+          thinkingVideo.style.visibility = visibility;
+        }
+        if (audioActive) {
+          if (!thinkingVideo.paused) thinkingVideo.pause();
+        } else if (thinkingVideo.paused && !thinkingVideoPlayPending && !thinkingVideo.error) {
+          thinkingVideoPlayPending = true;
+          void thinkingVideo.play().catch(() => {}).finally(() => {
+            thinkingVideoPlayPending = false;
+          });
+        }
+      }
       const audioTime = realtimeClock.active
         ? realtimeClock.currentTimeSec
         : serverClock.active
@@ -1127,6 +1146,20 @@ export const LEXARAAttorneyPortrait = memo(function LEXARAAttorneyPortrait({
           ref={canvasRef}
           aria-hidden="true"
           className="pointer-events-none absolute inset-0 h-full w-full select-none"
+        />
+      )}
+      {LIVE_AVATAR_ENABLED && (
+        <video
+          ref={thinkingVideoRef}
+          src="/videos/lexara-thinking.mp4"
+          autoPlay
+          muted
+          loop
+          playsInline
+          preload="auto"
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 h-full w-full object-cover select-none"
+          style={{ visibility: 'hidden' }}
         />
       )}
 
