@@ -174,14 +174,15 @@ export async function processConsultation(request: ConsultationRequest): Promise
     suggestedActions.push(value);
   }
   
+  // Keyword matches are research leads, not proof of legal correctness.
   const confidence = Math.min(
-    0.3 + (relevantCases.length * 0.1) + (relevantStatutes.length * 0.1),
-    0.95
+    0.15 + (relevantCases.length * 0.05) + (relevantStatutes.length * 0.05),
+    0.55
   );
   
   return {
     domainId: DOMAIN_ID,
-    response: `Based on ${DOMAIN_NAME} analysis: Found ${relevantCases.length} relevant cases and ${relevantStatutes.length} applicable statutes.`,
+    response: `Identified ${relevantCases.length} candidate cases and ${relevantStatutes.length} candidate statutes for ${DOMAIN_NAME}. Applicability, current text, and subsequent treatment require jurisdiction-specific verification.`,
     citations,
     templates: templates.map(t => t.id),
     confidence,
