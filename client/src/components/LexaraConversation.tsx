@@ -534,6 +534,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     title: string; facts: string; state: string; templateMode: boolean; confirmed: boolean;
     followUpQuestion?: string; missingFields?: string[]; requiredFields?: string[];
     packetItem?: boolean; officialFormDelivery?: boolean; autoRetrieve?: boolean;
+    officialForm?: Record<string, unknown>;
   } | null>(null);
   const [showReviewPrompt, setShowReviewPrompt] = useState(false);
 
@@ -1950,23 +1951,32 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     setErrorMessage(null);
     setDocumentBusy(true);
     try {
-      const generated = await fetch('/api/lexara/documents/generate', {
-        method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          state: pendingDocument.state,
-          facts: pendingDocument.facts,
-          lawType: lawTypeId,
-          documentType: pendingDocument.title,
-          packetItem: pendingDocument.packetItem === true,
-          packetItemTitle: pendingDocument.packetItem ? pendingDocument.title : undefined,
-          templateMode: pendingDocument.templateMode,
-          instructions: pendingDocument.templateMode
-            ? 'Create the requested blank/template legal document. Preserve unknown required facts as bracketed placeholders.'
-            : 'Create the requested document from the conversation facts. Preserve unknown required facts as bracketed placeholders.',
-        }),
-      });
-      const data = await generated.json().catch(() => ({}));
-      if (generated.status === 422 && (data?.needsCourtJurisdiction === true || Array.isArray(data?.missingFields))) {
+      // Once the official court form has been located, reuse that verified
+      // selection after each answer; do not run legal research again.
+      let generatedStatus = 409;
+      let data: any = pendingDocument.officialForm
+        ? { officialFormRequired:true, officialForm:pendingDocument.officialForm }
+        : null;
+      if (!data) {
+        const generated = await fetch('/api/lexara/documents/generate', {
+          method: 'POST', credentials: 'include', headers: { 'Content-Type':'application/json' },
+          body: JSON.stringify({
+            state: pendingDocument.state,
+            facts: pendingDocument.facts,
+            lawType: lawTypeId,
+            documentType: pendingDocument.title,
+            packetItem: pendingDocument.packetItem === true,
+            packetItemTitle: pendingDocument.packetItem ? pendingDocument.title : undefined,
+            templateMode: pendingDocument.templateMode,
+            instructions: pendingDocument.templateMode
+              ? 'Retrieve the unaltered original official form.'
+              : 'Retrieve the original official form and prefill supported user-provided facts.',
+          }),
+        });
+        generatedStatus = generated.status;
+        data = await generated.json().catch(() => ({}));
+      }
+      if (generatedStatus === 422 && (data?.needsCourtJurisdiction === true || Array.isArray(data?.missingFields))) {
         const missing = Array.isArray(data?.missingFields) ? data.missingFields : ['courtOrCounty'];
         setPendingDocument(previous => previous ? { ...previous, missingFields: missing } : previous);
         const question = String(data?.question || data?.error || 'Which court, agency, or county will receive this filing?');
@@ -1974,7 +1984,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         void speakLexara(question, generationRef.current).catch(() => undefined);
         return;
       }
-      if (generated.status === 409 && data?.officialFormRequired && data?.officialForm) {
+      if (generatedStatus === 409 && data?.officialFormRequired && data?.officialForm) {
         const official = await fetch('/api/lexara/documents/official-form', {
           method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -2005,17 +2015,58 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         const nativeFormat = blob.type.includes('wordprocessingml') ? 'docx' : 'pdf';
         const title = String(data?.officialForm?.title || pendingDocument.title || 'Lexara Official Form');
         const url = URL.createObjectURL(blob);
-        if (!format && nativeFormat === 'pdf') {
-          window.open(url, '_blank', 'noopener,noreferrer');
-          window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
-        } else {
-          const anchor = document.createElement('a');
-          anchor.href = url; anchor.download = title.replace(/[^a-z0-9._-]+/gi, '-') + '.' + nativeFormat;
-          document.body.appendChild(anchor); anchor.click(); anchor.remove(); URL.revokeObjectURL(url);
+        const sourceUrl = official.headers.get('X-Lexara-Official-Source') || String(data.officialForm.url || '');
+        const revision = official.headers.get('X-Lexara-Form-Revision') || undefined;
+        const noticeHeader = official.headers.get('X-Lexara-Form-Notice');
+        const notice = noticeHeader ? decodeURIComponent(noticeHeader) : undefined;
+        const questionHeader = official.headers.get('X-Lexara-Form-Questions');
+        const questions: Array<{name:string;required?:boolean}> = [];
+        if (questionHeader) {
+          try {
+            const parsed = JSON.parse(decodeURIComponent(questionHeader));
+            if (Array.isArray(parsed)) for (const item of parsed) {
+              if (item && typeof item.name === 'string') questions.push({
+                name:item.name, required:item.required === true,
+              });
+            }
+          } catch { /* The official file is still available even without question metadata. */ }
         }
-        setPendingDocument(null); pendingActionRef.current = null; return;
+        setOfficialFormPreview({url,title,format:nativeFormat,sourceUrl,revision,notice});
+        if (format) {
+          const anchor = document.createElement('a');
+          anchor.href = url;
+          anchor.download = title.replace(/[^a-z0-9._-]+/gi, '-') + '.' + nativeFormat;
+          document.body.appendChild(anchor); anchor.click(); anchor.remove();
+        }
+        const missingFields = questions.map(question => question.name);
+        const requiredFields = questions.filter(question => question.required).map(question => question.name);
+        const originalField = pendingDocument.missingFields?.[0];
+        if (missingFields.length) {
+          setPendingDocument(previous => previous ? {
+            ...previous, officialForm:data.officialForm, missingFields, requiredFields,
+            autoRetrieve:false, followUpQuestion:undefined,
+          } : previous);
+          if (originalField !== missingFields[0]) {
+            const fieldName = missingFields[0].replace(/[_-]+/g,' ');
+            const question = requiredFields.includes(missingFields[0])
+              ? `What should I enter for ${fieldName}? This field is marked required.`
+              : `Would you like to complete ${fieldName}, or leave it blank? Say skip to leave it blank.`;
+            appendMessage('lexara', question);
+          }
+        } else {
+          setPendingDocument(null);
+          pendingActionRef.current = null;
+        }
+        if (!officialFormPreview) {
+          const sourceHost = (() => {
+            try { return new URL(sourceUrl).hostname.replace(/^www\./,''); }
+            catch { return 'the official court source'; }
+          })();
+          appendMessage('lexara', `I retrieved ${title} from ${sourceHost}. The original form is ready to preview or download.`);
+        }
+        return;
       }
-      if (!generated.ok || !data?.document) throw new Error(data?.error || 'Document generation failed');
+      if (generatedStatus < 200 || generatedStatus >= 300 || !data?.document) throw new Error(data?.error || 'Document generation failed');
       // Restore the proven strict handoff: only a server-validated document of
       // the requested type may become the downloadable artifact.
       if (data?.validated !== true || String(data?.documentType || '') !== pendingDocument.title) {
