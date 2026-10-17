@@ -1,0 +1,11 @@
+const assert=require('node:assert/strict');
+const {test}=require('node:test');
+const {classify}=require('./observer.cjs');
+test('malicious path scan is signaled without a blocking decision',()=>{const x=classify({host:'legalwhat.com',path:'/.env',method:'GET',status:404});assert.equal(x.level,'suspicious');assert.equal(x.action,'observe');});
+test('failed password does not signal attack',()=>{const x=classify({host:'legalwhat.com',path:'/api/auth/login',method:'POST',status:401});assert.equal(x.level,'normal');});
+test('square callback unaffected',()=>{const x=classify({host:'legalwhat.com',path:'/api/square/webhook',method:'POST',status:200});assert.equal(x.level,'normal');});
+test('both public hosts are in same observation scope',()=>{assert.equal(classify({host:'bad-blue-production.up.railway.app',path:'/.git/config'}).scope,'legalwhat');assert.equal(classify({host:'legalwhat.com',path:'/.git/config'}).scope,'legalwhat');});
+test('unknown host is ignored',()=>{assert.equal(classify({host:'example.com',path:'/.env'}).level,'ignored');});
+test('malformed input fail open',()=>{assert.equal(classify(null).action,'observe');});
+test('no credentials in output',()=>{const result=classify({host:'legalwhat.com',path:'/api/auth/login',password:'super-secret',authorization:'Bearer secret'});assert(!JSON.stringify(result).includes('secret'));});
+test('normal browsing is normal',()=>{assert.equal(classify({host:'legalwhat.com',path:'/lexara'}).level,'normal');});
