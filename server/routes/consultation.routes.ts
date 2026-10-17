@@ -13,7 +13,7 @@ import { researchLegalAuthority, formatAuthorityResearchForSystem } from '../lex
 import { resolveUSJurisdiction } from '../lexara/LexaraJurisdictionResolver';
 import { formatJurisdictionAuthorityForSystem, resolveJurisdictionAuthorityProfile } from '../lexara/LexaraJurisdictionAuthority';
 import { formatCitationVerificationForCorrection, verifyLegalCitationsInText } from '../lexara/LexaraCitationVerifier';
-import { resolveOfficialLegalForm, officialFormDirective } from '../lexara/OfficialLegalFormResolver';
+import { resolveOfficialLegalForm, officialFormDirective, rankOfficialLegalForms, officialFormNeedsClarification, selectClarifiedOfficialForm } from '../lexara/OfficialLegalFormResolver';
 import { isLexaraOfficialFormDeliveryRequest, lexaraRequestedOfficialFormTitle } from '../lexara/OfficialFormRequest';
 import { isRecordReliefRequest, recordReliefCaseState, recordReliefTopic, recordReliefLawQuery } from '../lexara/RecordReliefWorkflow';
 import { assessRecordReliefDocument } from '../lexara/RecordReliefDocument';
@@ -361,7 +361,12 @@ export function setupConsultationRoutes(app: Express): void {
       ? rawRequestedType as (typeof LEGAL_DOCUMENT_TYPES)[number]
       : resolveLegalDocumentType(rawRequestedType)
         || (packetItemTitle || actualFormRequested ? 'Custom Document' : null);
-    const documentLabel = packetItemTitle || (actualFormRequested ? lexaraRequestedOfficialFormTitle(latestUserRequest) : rawRequestedType) || requestedType || '';
+    // A user may explain their objective only after Lexara asks what the form is for.
+    const clarifiedPurpose = [...facts.matchAll(/LEXARA REQUESTED FORM FIELD:\s*formPurpose\s*\nUSER ANSWER:\s*([^\n]+)/gi)].at(-1)?.[1]?.trim() || '';
+    const documentLabel = [
+      packetItemTitle || (actualFormRequested ? lexaraRequestedOfficialFormTitle(latestUserRequest) : rawRequestedType) || requestedType || '',
+      clarifiedPurpose,
+    ].filter(Boolean).join(' ').trim();
     const templateMode = req.body?.templateMode === true;
     const customInstructions = typeof req.body?.instructions === 'string' ? req.body.instructions.trim() : '';
     if (!state || !facts || !requestedType || !documentLabel) return res.status(400).json({ error: 'Jurisdiction, case facts, and a supported document type are required' });
@@ -403,11 +408,15 @@ export function setupConsultationRoutes(app: Express): void {
     ].join('\n\n');
     const authorityResearch = await researchLegalAuthority(authorityPrompt, {
       jurisdiction: documentJurisdiction,
-      standaloneQuery: [documentJurisdiction, documentJurisdictionProfile?.county,
-        documentJurisdictionProfile?.explicitCourt, formDocumentLabel,
-        officialFormRequested ? latestUserRequest.replace(/\b(?:give me|keep it blank|answer briefly)\b/gi, '').slice(0, 220) : '',
-        'official prescribed form required local rules filing instructions'].filter(Boolean).join(' '),
+      // Keep form discovery focused on the named instrument. Searching the
+      // entire spoken instruction (and county punctuation) loses actual PDFs.
+      standaloneQuery: officialFormRequested
+        ? [documentJurisdiction, formDocumentLabel, 'official court form PDF'].filter(Boolean).join(' ')
+        : [documentJurisdiction, documentJurisdictionProfile?.county,
+          documentJurisdictionProfile?.explicitCourt, formDocumentLabel,
+          'official prescribed form required local rules filing instructions'].filter(Boolean).join(' '),
       researchHints: documentJurisdictionProfile?.researchHints,
+      officialResources: documentJurisdictionProfile?.officialResources,
       preferredOfficialDomains: documentJurisdictionProfile?.preferredOfficialDomains,
       recordReliefState: reliefDocument ? reliefCaseState : undefined,
       disableCourtRecordPlanning: reliefDocument,
@@ -431,10 +440,63 @@ export function setupConsultationRoutes(app: Express): void {
         .map(resource => resource.host),
       ...discoveredCourtDomains,
     ])].filter(Boolean);
-    const issuingDomains = courtDomains.length ? courtDomains : undefined;
+    // A state's own agency may publish a different, legitimate route for the
+    // same relief (e.g. agency review versus court filing). Permit only domains
+    // that actually identify THIS state's government; never accept other states.
+    const stateName = String(documentJurisdictionProfile?.stateName || '').toLowerCase().replace(/[^a-z]/g, '');
+    const stateCode = String(documentJurisdictionProfile?.stateCode || '').toLowerCase();
+    const agencyDomains = (authorityResearch?.sources || []).filter(source=>source.kind==='primary')
+      .flatMap(source=>{
+        try {
+          const host=new URL(source.url).hostname.toLowerCase().replace(/^www\./,'');
+          if (!host.endsWith('.gov')) return [];
+          if ([stateName,stateCode].filter(Boolean).some(state=>host===state+'.gov' || host.endsWith('.'+state+'.gov'))) return [host];
+        } catch { /* An invalid URL cannot establish official origin. */ }
+        return [];
+      });
+    const issuerHosts = [...new Set([...courtDomains,...agencyDomains])];
+    const issuingDomains = issuerHosts.length ? issuerHosts : undefined;
     const formResearch = reliefDocument && authorityResearch ? { ...authorityResearch, sources: authorityResearch.sources.filter(source =>
       source.kind === 'primary' && source.evidenceLevel === 'document' && /expung|expunc|sealing|annul|nondisclosure|set.aside|vacat/i.test([source.title,source.excerpt].join(' '))) } : authorityResearch;
-    const officialForm = resolveOfficialLegalForm(formResearch, formDocumentLabel, requestedFormNumber, issuingDomains);
+    const candidates = officialFormRequested
+      ? rankOfficialLegalForms(formResearch,formDocumentLabel,requestedFormNumber,issuingDomains) : [];
+    const offeredChoices = Array.isArray(req.body?.formChoices)
+      ? req.body.formChoices.filter((choice:unknown):choice is {title:string;url:string} =>
+          Boolean(choice && typeof choice==='object' && typeof (choice as any).url==='string'
+            && typeof (choice as any).title==='string'))
+          .slice(0,2) : [];
+    const clarification = [...facts.matchAll(/LEXARA REQUESTED FORM FIELD:\s*formChoice\s*\nUSER ANSWER:\s*([^\n]+)/gi)]
+      .at(-1)?.[1]?.trim() || '';
+    const selectedForm = clarification
+      ? selectClarifiedOfficialForm(candidates,clarification,offeredChoices.map((option:{url:string})=>option.url))
+      : null;
+    const leading = candidates.slice(0,2);
+    const isAmbiguous = officialFormNeedsClarification(candidates,requestedFormNumber);
+    if(officialFormRequested && (isAmbiguous || clarification) && !selectedForm) {
+      const [first,second] = leading;
+      if (first?.form.url && second?.form.url) {
+        const courtForm = (url:string)=>/(?:courts?|judicial|uscourts)/i.test(new URL(url).hostname);
+        const differentProcedures = courtForm(first.form.url)!==courtForm(second.form.url);
+        const question = differentProcedures
+          ? 'I found both a court application and an agency review form. Are you filing through the court or requesting a government agency review? You can also answer first or second.'
+          : 'Two different official forms may fit: (1) '+String(first.form.title).slice(0,115)
+            +'; (2) '+String(second.form.title).slice(0,115)
+            +'. Which situation applies? You can say first or second, or explain your situation.';
+        return res.status(422).json({
+          needsFormClarification:true, missingFields:['formChoice'],question,
+          formChoices:leading.map(item=>({title:item.form.title,url:item.form.url})),
+        });
+      }
+    }
+    if (officialFormRequested && !candidates.length && !clarifiedPurpose
+      && /^(?:official\s+)?(?:court\s+)?forms?$/i.test(formDocumentLabel)) {
+      return res.status(422).json({
+        needsFormClarification:true,missingFields:['formPurpose'],
+        question:'What do you need the court form to accomplish?',
+      });
+    }
+    const officialForm = selectedForm || candidates[0]?.form
+      || resolveOfficialLegalForm(formResearch, formDocumentLabel, requestedFormNumber, issuingDomains);
     if (requestedFormNumber) console.info('[LEXARA OfficialForm]', {
       requestedFormNumber,
       documentType: documentLabel,
