@@ -315,6 +315,63 @@ async function discoverClaudeLegalFallback(
   }
 }
 
+/**
+ * Court-form-only last-resort discovery. Claude provides URLs, not verified
+ * legal forms. The calling route MUST re-check the exact official issuer and
+ * download the original document before accepting any proposed form.
+ */
+export async function discoverClaudeOfficialFormLeads(
+  legalObjective: string,
+  jurisdiction: string,
+  preferredOfficialDomains: readonly string[] = [],
+): Promise<LexaraAuthoritySource[]> {
+  try {
+    const result=await callClaudeWebSearch([
+      'Find the currently published, actual official court or government agency form',
+      'that a person needs for the stated legal objective.',
+      'Find direct PDF/DOCX URLs or official pages linking to the original form.',
+      'Do not cite generic legal explanations, unrelated instructions, archives, or unofficial copies.',
+      'Give form names, issuing agencies, and original URLs where found. Do not invent sources.',
+      'Jurisdiction: '+jurisdiction,
+      'User legal objective: '+legalObjective.slice(0,300),
+    ].join('\n'), {
+      model: CURRENT_AI_MODELS.claudeFast,
+      maxUses: 2,
+      maxTokens: 1100,
+      retryTruncatedOutput: true,
+    });
+    const seen=new Set<string>();
+    const leads=result.sources.slice(0,16).flatMap(source=>{
+      const url=cleanUrl(source.url);
+      if(!url||seen.has(url))return [];
+      let hostname='';
+      try {
+        const parsed=new URL(url);
+        if(parsed.protocol!=='https:')return [];
+        hostname=parsed.hostname.toLowerCase().replace(/^www\./,'');
+      }catch{return [];}
+      if(classifySource(url,preferredOfficialDomains)!=='primary')return [];
+      seen.add(url);
+      return [{
+        title:String(source.title||'Official court form lead').slice(0,220),
+        url, kind:'primary' as const,
+        excerpt:source.citedText?.trim().slice(0,900),
+        provider:'claude-official-form-backup',
+        evidenceLevel:'snippet' as const,
+      }];
+    });
+    console.info('[LEXARA Official Form Backup]', {
+      sourceLeads:leads.length, searches:result.searches,
+    });
+    return leads;
+  }catch(error){
+    console.warn('[LEXARA Official Form Backup] unavailable', {
+      error:error instanceof Error?error.message:String(error),
+    });
+    return [];
+  }
+}
+
 async function discoverAuthoritySources(
   query: string,
   signal: AbortSignal | undefined,
