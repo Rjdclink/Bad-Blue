@@ -31,7 +31,7 @@ function reply(){
     read(){return {status,body}}};
 }
 async function run({facts='USER: Please find the Iowa child support modification form.',
-  documentType='Custom Document', formSourceUrls=[],nativeSources=[],claudeSources=[],failUrls=[]}={}){
+  documentType='Custom Document', formSourceUrls=[],formChoices=[],nativeSources=[],claudeSources=[],failUrls=[]}={}){
   let nativeCalls=0,claudeCalls=0;
   const inspected=[];
   const routes=new Map();
@@ -84,7 +84,7 @@ async function run({facts='USER: Please find the Iowa child support modification
   });
   const response=reply();
   await routes.get('/api/lexara/documents/generate')({body:{
-    state:'Iowa',documentType,facts,formSourceUrls,
+    state:'Iowa',documentType,facts,formSourceUrls,formChoices,
   }},response);
   return {...response.read(),nativeCalls,claudeCalls,inspected};
 }
@@ -141,6 +141,123 @@ async function run({facts='USER: Please find the Iowa child support modification
   assert.equal(response.claudeCalls,1);
   assert(response.inspected.every(url=>!url.includes('mncourts')));
   console.log('PASS other-state Claude suggestion rejected without downloading');
+
+
+  // A stable selection must never search again, even if all native results
+  // disappear or arrive in a different order after the user has answered.
+  const alternatives=[
+    {kind:'primary',title:'Iowa Child Support Modification Application Form 301',
+      url:courtUrl,excerpt:'Official application'},
+    {kind:'primary',title:'Iowa Child Support Modification Petition Form 399',
+      url:'https://www.iowacourts.gov/forms/399.pdf',excerpt:'Official petition'},
+    {kind:'primary',title:'Iowa Child Support Modification Request Form 700',
+      url:'https://hhs.iowa.gov/forms/700.pdf',excerpt:'Official agency request'},
+  ];
+  const firstOptions=await run({
+    facts:'USER: Please find the Iowa child support modification form.',
+    nativeSources:alternatives,
+  });
+  assert.equal(firstOptions.status,422,'multiple genuine alternatives need one clarification');
+  assert.equal(firstOptions.body.formChoices.length,3,'no fixed two-option cap');
+  assert.equal(firstOptions.body.missingFields[0],'formChoice');
+  const offered=firstOptions.body.formChoices;
+  const chosen=offered[2];
+  response=await run({
+    facts:'USER: Please find the Iowa child support modification form.\n\n'
+      +'LEXARA REQUESTED FORM FIELD: formChoice\nUSER ANSWER: third',
+    formChoices:offered, nativeSources:[],
+  });
+  assert.equal(response.status,409);
+  assert.equal(response.body.officialForm.url,chosen.url);
+  assert.equal(response.nativeCalls,0,'selection reused original link without searching');
+  assert.equal(response.claudeCalls,0,'selection never re-invokes Claude');
+  console.log('PASS third of three alternative forms is retrieved without repeating clarification');
+
+  response=await run({
+    facts:'USER: Please find the Iowa child support modification form.\n\n'
+      +'LEXARA REQUESTED FORM FIELD: formChoice\nUSER ANSWER: second',
+    formChoices:offered,nativeSources:[alternatives[0]],
+  });
+  assert.equal(response.status,409);
+  assert.equal(response.body.officialForm.url,offered[1].url);
+  assert.equal(response.nativeCalls,0);
+  console.log('PASS offered form order remains locked when search results change');
+
+  response=await run({
+    facts:'USER: Please find the Iowa child support modification form.\n\n'
+      +'LEXARA REQUESTED FORM FIELD: formChoice\nUSER ANSWER: unclear',
+    formChoices:offered,nativeSources:[],
+  });
+  assert.equal(response.status,422);
+  assert.equal(response.body.needsFormClarification,true);
+  assert.deepEqual(response.body.formChoices,offered);
+  assert.equal(response.nativeCalls,0);
+  console.log('PASS an unclear answer retains original options without re-search');
+
+  response=await run({
+    facts:'USER: Please find the Iowa child support modification form.\n\n'
+      +'LEXARA REQUESTED FORM FIELD: formChoice\nUSER ANSWER: first',
+    formChoices:offered,failUrls:[offered[0].url],nativeSources:[],
+  });
+  assert.equal(response.status,422);
+  assert.equal(response.body.formSelectionUnavailable,true);
+  assert.equal(response.body.needsFormClarification,undefined);
+  assert.equal(response.nativeCalls,0);
+  console.log('PASS unavailable selected form reports failure instead of asking again');
+
+  const requiredPacket=[
+    {kind:'primary',title:'Iowa Child Support Modification Application Form 301',
+      url:courtUrl,
+      excerpt:'To file this application you must also include Form 302 and Form 311 with Form 301.'},
+    {kind:'primary',title:'Iowa Child Support Modification Cover Sheet Form 302',
+      url:'https://www.iowacourts.gov/forms/302.pdf',excerpt:'Official cover sheet'},
+    {kind:'primary',title:'Iowa Child Support Modification Confidential Information Form 311',
+      url:'https://www.iowacourts.gov/forms/311.pdf',excerpt:'Official companion'},
+  ];
+  response=await run({
+    facts:'USER: Please find the Iowa child support modification form.',
+    nativeSources:requiredPacket,
+  });
+  assert.equal(response.status,409,'a single filing route must not trigger unnecessary alternatives');
+  assert.equal(response.body.officialForms.length,3);
+  assert.deepEqual(response.body.officialForms.map(f=>f.url),
+    requiredPacket.map(f=>f.url));
+  console.log('PASS the main official form and two expressly required companions are delivered together');
+
+  const separateRoutes=[...requiredPacket,{
+    kind:'primary',title:'Iowa Child Support Modification Request Form 700',
+    url:'https://hhs.iowa.gov/forms/700.pdf',excerpt:'Alternative agency review request',
+  }];
+  const packetAlternatives=await run({
+    facts:'USER: Please find the Iowa child support modification form.',
+    nativeSources:separateRoutes,
+  });
+  assert.equal(packetAlternatives.status,422);
+  assert.equal(packetAlternatives.body.formChoices.length,2,
+    'required companion forms must not become extra alternatives');
+  const firstPacketChoice=packetAlternatives.body.formChoices.find(c=>c.url===courtUrl);
+  assert.equal(firstPacketChoice.requiredForms.length,2);
+  const packetOrdinal=packetAlternatives.body.formChoices.findIndex(c=>c.url===courtUrl)+1;
+  response=await run({
+    facts:'USER: Please find the Iowa child support modification form.\n\n'
+      +'LEXARA REQUESTED FORM FIELD: formChoice\nUSER ANSWER: '+packetOrdinal,
+    formChoices:packetAlternatives.body.formChoices,
+    nativeSources:[],
+  });
+  assert.equal(response.status,409);
+  assert.equal(response.body.officialForms.length,3);
+  assert.equal(response.nativeCalls,0);
+  console.log('PASS alternative chosen once retains its required packet without searching again');
+
+  response=await run({
+    facts:'USER: Please find the Iowa child support modification form.\n\n'
+      +'LEXARA REQUESTED FORM FIELD: formChoice\nUSER ANSWER: 1',
+    formChoices:[{title:'Unrelated form',url:'https://www.mncourts.gov/unrelated.pdf'}],
+  });
+  assert.equal(response.status,422);
+  assert.equal(response.body.formSelectionUnavailable,true);
+  assert.equal(response.nativeCalls,0);
+  console.log('PASS out-of-jurisdiction selected form is rejected without a new search');
 
   const source=fs.readFileSync(path.join(root,'client/src/components/LexaraConversation.tsx'),'utf8');
   assert(source.includes('formSourceUrls: pendingDocument.formSourceUrls'));
