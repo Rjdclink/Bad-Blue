@@ -1,8 +1,13 @@
 'use strict';
 // Isolated, in-memory moving decoy cells. These are not routes to LegalWhat.
-const {createHash, randomBytes: secureRandomBytes} = require('node:crypto');
-
 function createIronBubbles(options = {}) {
+  // The production server is an ESM bundle; receive native crypto from its
+  // ESM import. Standalone CommonJS users retain the existing fallback.
+  const cryptoProvider = options.cryptoProvider || require('node:crypto');
+  const {createHash, randomBytes: secureRandomBytes} = cryptoProvider;
+  if (typeof createHash !== 'function' || typeof secureRandomBytes !== 'function') {
+    throw new TypeError('ISB crypto provider unavailable');
+  }
   const size = options.size === undefined ? 128 : options.size;
   const radius = options.radius === undefined ? 2 : options.radius;
   const rotationMs = options.rotationMs === undefined ? 60_000 : options.rotationMs;
