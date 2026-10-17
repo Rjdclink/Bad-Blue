@@ -1,5 +1,5 @@
 'use strict';
-// This handler is for a completely separate decoy service, NEVER the LegalWhat app.
+// This handler serves only fake ISB paths (standalone or under /__isb__/ in Bad-Blue), never real application routes.
 const {classify} = require('./observer.cjs');
 const {createIronBubbles} = require('./bubbles.cjs');
 

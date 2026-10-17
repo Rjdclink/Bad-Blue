@@ -561,6 +561,18 @@ app.get("/robots.txt", (_req, res) => {
   res.type("text/plain").sendFile("robots.txt", { root: "public" });
 });
 
+// ISB shares this existing server; it observes suspicious paths without touching
+// authentication, subscriptions, Square callbacks or any application responses.
+// Import and initialization failures must never prevent LegalWhat from starting.
+try {
+  // @ts-ignore -- ISB's CommonJS adapter is bundled into the Node server.
+  const { installEmbeddedISB } = await import('../isb/embedded.cjs');
+  installEmbeddedISB(app);
+  console.log('[ISB] Embedded passive observation and decoy bubbles active');
+} catch {
+  console.warn('[ISB] Unavailable; LegalWhat continues without interception');
+}
+
 app.use((req, res, next) => {
   const start = Date.now();
   const path = req.path;
