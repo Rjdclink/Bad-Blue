@@ -403,11 +403,15 @@ export function setupConsultationRoutes(app: Express): void {
     ].join('\n\n');
     const authorityResearch = await researchLegalAuthority(authorityPrompt, {
       jurisdiction: documentJurisdiction,
-      standaloneQuery: [documentJurisdiction, documentJurisdictionProfile?.county,
-        documentJurisdictionProfile?.explicitCourt, formDocumentLabel,
-        officialFormRequested ? latestUserRequest.replace(/\b(?:give me|keep it blank|answer briefly)\b/gi, '').slice(0, 220) : '',
-        'official prescribed form required local rules filing instructions'].filter(Boolean).join(' '),
+      // Keep form discovery focused on the named instrument. Searching the
+      // entire spoken instruction (and county punctuation) loses actual PDFs.
+      standaloneQuery: officialFormRequested
+        ? [documentJurisdiction, formDocumentLabel, 'official court form PDF'].filter(Boolean).join(' ')
+        : [documentJurisdiction, documentJurisdictionProfile?.county,
+          documentJurisdictionProfile?.explicitCourt, formDocumentLabel,
+          'official prescribed form required local rules filing instructions'].filter(Boolean).join(' '),
       researchHints: documentJurisdictionProfile?.researchHints,
+      officialResources: documentJurisdictionProfile?.officialResources,
       preferredOfficialDomains: documentJurisdictionProfile?.preferredOfficialDomains,
       recordReliefState: reliefDocument ? reliefCaseState : undefined,
       disableCourtRecordPlanning: reliefDocument,
