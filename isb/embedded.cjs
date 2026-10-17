@@ -35,7 +35,7 @@ function createEmbeddedISB(options = {}) {
     options.maxPerSecond >= 1 && options.maxPerSecond <= 2000 ? options.maxPerSecond : MAX_PER_SECOND;
 
   const mesh = options.mesh || createMesh({maxBuckets:90});
-  const bubbles = options.bubbles || createIronBubbles({size:128});
+  const bubbles = options.bubbles || createIronBubbles({size:128, cryptoProvider:options.cryptoProvider});
   const decoy = createDecoyHandler({bubbles});
   const queue = [];
   let stopped = false, scheduled = false, second = -1, sampled = 0;
