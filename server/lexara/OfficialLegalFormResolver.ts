@@ -123,7 +123,9 @@ export function rankOfficialLegalForms(
   const results: OfficialFormCandidate[]=[];
   const seen=new Set<string>();
   for (const source of research.sources) {
-    if (!FORM_HINT.test(source.title)
+    const directFile=/(?:\.pdf|\.docx|\/download|\/embedDocument)(?:[?#/]|$)/i.test(source.url);
+    if ((!FORM_HINT.test(source.title)
+      && !(directFile && FORM_HINT.test(source.excerpt||'')))
       || /\b(?:instructions?|guide|guidance|checklist|directory|index)\b/i.test(source.title)) continue;
     const form=resolveOfficialLegalForm({
       ...research, sources:[source],
