@@ -12,7 +12,7 @@ const FILING_OBJECTIVE = /\b(?:i|we)\s+(?:need|want|would\s+like|have)\s+(?:to\s
 
 export function isLexaraOfficialFormDeliveryRequest(text: string): boolean {
   const request=String(text||'').trim();
-  if(!request || !COURT_FORM_NOUN.test(request)) return false;
+  if(!request || (!COURT_FORM_NOUN.test(request) && !COURT_PROCEDURE.test(request))) return false;
   if(/\b(?:what\s+is|what\s+are|explain|define|tell\s+me\s+about|how\s+(?:do|can)\s+i\s+(?:fill|complete)|(?:need|want)\s+to\s+know\s+(?:what|which)|what\s+forms?\s+(?:do|should)|which\s+forms?\s+(?:do|should))\b/i.test(request)) return false;
   if(/\b(?:do\s+not|don't|dont|never)\s+(?:get|find|give|provide|download|retrieve|grab|show|open)\b/i.test(request)) return false;
   if(COURT_PROCEDURE.test(request) && FILING_OBJECTIVE.test(request)
