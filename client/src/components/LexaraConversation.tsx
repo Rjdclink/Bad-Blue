@@ -1521,7 +1521,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       }
       const priorPendingDocument = pendingDocument;
       const documentIntentRequested = data?.documentIntent?.requested === true;
-      const explicitDocumentRequest = /\b(?:prepare|draft|create|generate|write|make|download|export|give\s+me|i\s+(?:need|want|would\s+like))\b[\s\S]{0,120}\b(?:document|form|letter|complaint|petition|motion|affidavit|declaration|pdf|docx|contract|request)\b/i.test(message);
+      const explicitDocumentRequest = data?.documentIntent?.officialFormDelivery === true || /\b(?:prepare|draft|create|generate|write|make|download|export|give\s+me|i\s+(?:need|want|would\s+like))\b[\s\S]{0,120}\b(?:document|form|letter|complaint|petition|motion|affidavit|declaration|pdf|docx|contract|request)\b/i.test(message);
       let documentOffer: string | null = null;
       const documentFollowup = /\b(?:document|draft|form|letter|complaint|petition|motion|affidavit|declaration|pdf|docx|edit|revise|change|paragraph|section|signature|download|export|file|filing)\b/i.test(message)
         || Boolean(priorPendingDocument?.missingFields?.length);
