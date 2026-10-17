@@ -404,13 +404,42 @@ export function setupConsultationRoutes(app: Express): void {
       reliefCaseState || state,
     ).catch(() => null);
 
+    // A user's form choice is a reference to the ORIGINAL verified options,
+    // not an invitation to search again and reshuffle those options.
+    const validChoice = (value:any): value is {title:string;url:string;requiredForms?:Array<{title:string;url:string}>} =>
+      Boolean(value && typeof value.title==='string' && value.title.length<=240
+        && typeof value.url==='string' && value.url.length<=2048);
+    const offeredFormChoices = Array.isArray(req.body?.formChoices)
+      ? req.body.formChoices.filter(validChoice).slice(0,12)
+        .map((choice:any)=>({...choice,requiredForms:Array.isArray(choice.requiredForms)
+          ? choice.requiredForms.filter(validChoice).slice(0,12) : []}))
+      : [];
+    const choiceAnswer=[...facts.matchAll(/LEXARA REQUESTED FORM FIELD:\s*formChoice\s*\nUSER ANSWER:\s*([^\n]+)/gi)]
+      .at(-1)?.[1]?.trim() || '';
+    const selectedOfferedForm = offeredFormChoices.length && choiceAnswer
+      ? selectClarifiedOfficialForm(offeredFormChoices.map((choice:any)=>({
+          form:{requirement:'unverified' as const,title:choice.title,url:choice.url,
+            verifiedOfficial:false,localRules:[],companionDocuments:[],provenance:[]},
+          score:1,
+        })),choiceAnswer,offeredFormChoices.map((choice:any)=>choice.url))
+      : null;
+    const selectedOfferedChoice=offeredFormChoices.find((choice:any)=>
+      choice.url===selectedOfferedForm?.url);
+    if(offeredFormChoices.length && choiceAnswer && !selectedOfferedChoice){
+      return res.status(422).json({
+        needsFormClarification:true,missingFields:['formChoice'],
+        question:'I still need to know which of the listed forms applies. Please give its number or name.',
+        formChoices:offeredFormChoices,
+      });
+    }
     // A prior Lexara answer may already contain the original court PDF.
     // Keep that link, but accept it only after checking the current issuing
     // jurisdiction and actually downloading the court-issued document.
-    const knownFormUrls = Array.isArray(req.body?.formSourceUrls)
-      ? req.body.formSourceUrls.filter((url:unknown):url is string =>
-          typeof url === 'string' && url.length <= 2048).slice(-6)
-      : [];
+    const knownFormUrls = selectedOfferedChoice ? [selectedOfferedChoice.url]
+      : Array.isArray(req.body?.formSourceUrls)
+        ? req.body.formSourceUrls.filter((url:unknown):url is string =>
+            typeof url === 'string' && url.length <= 2048).slice(-6)
+        : [];
     if (officialFormRequested && !reliefDocument && knownFormUrls.length) {
       const officialIssuers = (documentJurisdictionProfile?.officialResources || [])
         .filter(resource=>['forms','state-judiciary','state-trial','federal-district'].includes(resource.kind))
