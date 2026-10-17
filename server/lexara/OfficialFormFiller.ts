@@ -15,16 +15,19 @@ export interface OfficialFormField {
   name: string;
   type: 'text' | 'checkbox' | 'radio' | 'dropdown' | 'option' | 'unknown';
   requiredValue?: string;
+  required?: boolean;
+  readOnly?: boolean;
 }
 export interface InspectedOfficialForm {
   sourceUrl: string; contentType: 'pdf' | 'docx'; bytes: Buffer;
   fields: OfficialFormField[]; fillable: boolean;
 }
-async function download(url: string): Promise<Buffer> {
+async function download(url: string, trustedDomains?: readonly string[]): Promise<Buffer> {
   const controller=new AbortController(); const timer=setTimeout(()=>controller.abort(),DOWNLOAD_TIMEOUT_MS);
   try {
     const response=await fetch(url,{signal:controller.signal,redirect:'follow',headers:{'User-Agent':'LegalWhat/1.0 official-form-retriever'}});
     if(!response.ok) throw new Error('Official form download failed with HTTP '+response.status);
+    if(!officialHost(response.url || url, trustedDomains)) throw new Error('Official form redirected away from a verified court source');
     const length=Number(response.headers.get('content-length')||0);
     if(length>MAX_FORM_BYTES) throw new Error('Official form exceeds maximum size');
     const bytes=Buffer.from(await response.arrayBuffer());
@@ -36,13 +39,19 @@ function downloadableType(url: string): 'pdf' | 'docx' | null {
   const clean=url.toLowerCase().split('?')[0].split('#')[0];
   if(clean.endsWith('.pdf')) return 'pdf';
   if(/\/(?:download|embedDocument)\/?$/i.test(clean)) return 'pdf';
-  if(clean.endsWith('.docx') || clean.endsWith('.doc')) return 'docx';
+  if(clean.endsWith('.docx')) return 'docx';
   return null;
 }
 
-function officialHost(url: string): boolean {
+function officialHost(url: string, trustedDomains?: readonly string[]): boolean {
   try {
-    const host=new URL(url).hostname.toLowerCase();
+    const parsed=new URL(url);
+    if(parsed.protocol!=='https:') return false;
+    const host=parsed.hostname.toLowerCase().replace(/^www\./,'');
+    if(trustedDomains?.some(domain=>{
+      const issuer=domain.toLowerCase().replace(/^www\./,'');
+      return host===issuer || host.endsWith('.'+issuer);
+    })) return true;
     return host.endsWith('.gov') || host.endsWith('.mil') || host.endsWith('.uscourts.gov')
       || /(?:^|\.)courts?\.[a-z]{2}\.us$/.test(host)
       || (host.endsWith('.us') && /(?:court|judicial|state)/.test(host));
@@ -52,14 +61,14 @@ function officialHost(url: string): boolean {
 }
 
 async function resolveDownloadableOfficialForm(form: OfficialLegalForm): Promise<{ url: string; contentType: 'pdf' | 'docx'; bytes?: Buffer }> {
-  if(!form.verifiedOfficial || !form.url || !officialHost(form.url)) throw new Error('No verified official form source is available');
+  if(!form.verifiedOfficial || !form.url || !officialHost(form.url,form.trustedOfficialDomains)) throw new Error('No verified official form source is available');
   const directType=downloadableType(form.url);
   if(directType) return {url:form.url,contentType:directType};
   if(form.contentType!=='html') throw new Error('No verified downloadable official form is available');
 
   // Courts also serve PDFs at /download and /embedDocument URLs. Detect the
   // actual file before treating an extensionless official response as HTML.
-  const sourceBytes=await download(form.url);
+  const sourceBytes=await download(form.url,form.trustedOfficialDomains);
   if (sourceBytes.subarray(0,5).toString('ascii') === '%PDF-') {
     return { url: form.url, contentType: 'pdf', bytes: sourceBytes };
   }
@@ -75,7 +84,7 @@ async function resolveDownloadableOfficialForm(form: OfficialLegalForm): Promise
     let absolute='';
     try { absolute=new URL(href,form.url).toString(); } catch { return; }
     const contentType=downloadableType(absolute);
-    if(!contentType || !officialHost(absolute)) return;
+    if(!contentType || !officialHost(absolute,form.trustedOfficialDomains)) return;
     const label=`${$(element).text()} ${href}`.toLowerCase();
     let score=1;
     if(formNumber && label.includes(formNumber)) score+=20;
@@ -116,7 +125,7 @@ async function inspectDocxFields(bytes: Buffer): Promise<OfficialFormField[]> {
 
 export async function inspectOfficialForm(form: OfficialLegalForm): Promise<InspectedOfficialForm> {
   const resolved=await resolveDownloadableOfficialForm(form);
-  const bytes=resolved.bytes || await download(resolved.url);
+  const bytes=resolved.bytes || await download(resolved.url,form.trustedOfficialDomains);
   const contentType = bytes.subarray(0,5).toString('ascii') === '%PDF-' ? 'pdf'
     : bytes.subarray(0,4).equals(Buffer.from([0x50,0x4b,0x03,0x04])) ? 'docx' : resolved.contentType;
   if(contentType==='docx') {
@@ -128,7 +137,7 @@ export async function inspectOfficialForm(form: OfficialLegalForm): Promise<Insp
   try {
     for(const field of pdf.getForm().getFields()){
       const name=field.getName(); const kind=field.constructor.name.toLowerCase();
-      fields.push({name,type:kind.includes('text')?'text':kind.includes('check')?'checkbox':kind.includes('radio')?'radio':kind.includes('dropdown')?'dropdown':kind.includes('option')?'option':'unknown'});
+      fields.push({name,type:kind.includes('text')?'text':kind.includes('check')?'checkbox':kind.includes('radio')?'radio':kind.includes('dropdown')?'dropdown':kind.includes('option')?'option':'unknown',required:field.isRequired(),readOnly:field.isReadOnly()});
     }
   } catch {}
   return {sourceUrl:resolved.url,contentType:'pdf',bytes,fields,fillable:fields.length>0};
@@ -141,9 +150,11 @@ export async function fillOfficialPdf(inspected: InspectedOfficialForm, values: 
     const kind=field.constructor.name.toLowerCase();
     try {
       if(kind.includes('text')) (field as any).setText(String(value));
-      else if(kind.includes('check')) value ? (field as any).check() : (field as any).uncheck();
+      else if(kind.includes('check')) (value===true || /^(?:true|yes|on|1|checked)$/i.test(String(value))) ? (field as any).check() : (field as any).uncheck();
       else if(kind.includes('radio')||kind.includes('dropdown')||kind.includes('option')) (field as any).select(String(value));
-    } catch {}
+    } catch {
+      throw new Error('An official PDF field could not be filled: '+field.getName());
+    }
   }
   if(flatten) form.flatten();
   return Buffer.from(await pdf.save());
