@@ -265,6 +265,7 @@ function detectDocumentIntent(prompt: string, previousMessages: LexaraConversati
   documentType: string;
   templateMode: boolean;
   packetItem?: boolean;
+  officialFormDelivery?: boolean;
 } {
   const p = prompt.toLowerCase();
   const officialFormDelivery = isLexaraOfficialFormDeliveryRequest(prompt);
@@ -305,6 +306,7 @@ function detectDocumentIntent(prompt: string, previousMessages: LexaraConversati
     inferred: Boolean(inferredType),
     documentType: officialFormDelivery ? lexaraRequestedOfficialFormTitle(prompt) : inferredType || currentType || historyType || 'Custom Document',
     templateMode: isBlankLegalDocumentRequest(prompt),
+    officialFormDelivery,
   };
 }
 
