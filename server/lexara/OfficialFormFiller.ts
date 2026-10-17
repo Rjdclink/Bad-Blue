@@ -181,7 +181,12 @@ export async function fillOfficialPdf(inspected: InspectedOfficialForm, values: 
     const kind=field.constructor.name.toLowerCase();
     try {
       if(kind.includes('text')) (field as any).setText(String(value));
-      else if(kind.includes('check')) (value===true || /^(?:true|yes|on|1|checked)$/i.test(String(value))) ? (field as any).check() : (field as any).uncheck();
+      else if(kind.includes('check')) {
+        const answer=String(value).trim();
+        if(value===true || /^(?:true|yes|on|1|checked)$/i.test(answer)) (field as any).check();
+        else if(value===false || /^(?:false|no|off|0|unchecked)$/i.test(answer)) (field as any).uncheck();
+        else throw new Error('Unrecognized checkbox response');
+      }
       else if(kind.includes('radio')||kind.includes('dropdown')||kind.includes('option')) (field as any).select(String(value));
     } catch {
       throw new Error('An official PDF field could not be filled: '+field.getName());
