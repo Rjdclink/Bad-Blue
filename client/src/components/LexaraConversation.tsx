@@ -63,6 +63,8 @@ function spectraTargetFromPrompt(value: string): string | null {
   // comma, which the person-location parser would otherwise discard.
   if (/\b(?:official|court|judicial|legal|filing|child\s+support|custody|divorce|probate|modification)\b/i.test(normalized)
     && /\b(?:forms?|application|petition|affidavit|pleading|motion|cover\s+sheet|filing\s+packet)\b/i.test(normalized)) return null;
+  if (/\b(?:child\s+support|custody|visitation|divorce|small\s+claims|eviction|probate|guardianship)\b/i.test(normalized)
+    && /\b(?:modify|modification|change|reduce|increase|file|petition|apply|start)\b/i.test(normalized)) return null;
   // Recognize ordinary location requests locally so offering the map never
   // waits for research or adds an AI call. Keep legal/document requests in chat.
   const request = normalized.replace(/^(?:(?:hey\s+)?lexara[,!:]?\s+|please\s+|(?:can|could|would|will)\s+you\s+(?:please\s+)?|(?:help\s+me|i\s+(?:want|need|would\s+like)\s+(?:you\s+)?to|i(?:'m|\s+am)\s+trying\s+to)\s+)+/i, '');
@@ -539,6 +541,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     followUpQuestion?: string; missingFields?: string[]; requiredFields?: string[];
     packetItem?: boolean; officialFormDelivery?: boolean; autoRetrieve?: boolean;
     officialForm?: Record<string, unknown>;
+    formChoices?: Array<{title:string;url:string}>;
   } | null>(null);
   const [showReviewPrompt, setShowReviewPrompt] = useState(false);
 
@@ -1971,6 +1974,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
             documentType: pendingDocument.title,
             packetItem: pendingDocument.packetItem === true,
             packetItemTitle: pendingDocument.packetItem ? pendingDocument.title : undefined,
+            formChoices: pendingDocument.formChoices,
             templateMode: pendingDocument.templateMode,
             instructions: pendingDocument.templateMode
               ? 'Retrieve the unaltered original official form.'
@@ -1979,6 +1983,21 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         });
         generatedStatus = generated.status;
         data = await generated.json().catch(() => ({}));
+      }
+      if (generatedStatus === 422 && data?.needsFormClarification === true) {
+        const field = data?.missingFields?.[0] === 'formPurpose' ? 'formPurpose' : 'formChoice';
+        const choices = Array.isArray(data?.formChoices)
+          ? data.formChoices.filter((choice: any) =>
+              typeof choice?.title === 'string' && typeof choice?.url === 'string').slice(0,2)
+          : [];
+        setPendingDocument(previous => previous ? {
+          ...previous, missingFields:[field], requiredFields:[field],
+          formChoices:choices, followUpQuestion:undefined, autoRetrieve:false,
+        } : previous);
+        const question = String(data?.question || 'Which procedure fits your situation?');
+        appendMessage('lexara',question);
+        void speakLexara(question,generationRef.current).catch(()=>undefined);
+        return;
       }
       if (generatedStatus === 422 && (data?.needsCourtJurisdiction === true || Array.isArray(data?.missingFields))) {
         const missing = Array.isArray(data?.missingFields) ? data.missingFields : ['courtOrCounty'];
@@ -2436,7 +2455,10 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
             <div className="flex justify-start">
               <div className="max-w-[92%] rounded-2xl border bg-card p-4 text-sm shadow-sm">
                 <div className="mb-2 font-medium">{pendingDocument.title}</div>
-                {pendingDocument.confirmed && !pendingDocument.followUpQuestion && <>
+                {pendingDocument.officialFormDelivery && !officialFormPreview && (
+                  <div className="mb-3 text-muted-foreground">Finding the appropriate official form. Any required clarification will appear in the conversation.</div>
+                )}
+                {pendingDocument.confirmed && !pendingDocument.followUpQuestion && (!pendingDocument.officialFormDelivery || !!officialFormPreview) && <>
                   <div className="mb-3">
                     {pendingDocument.officialFormDelivery
                       ? 'The original court form is available while Lexara completes the remaining fields.'
