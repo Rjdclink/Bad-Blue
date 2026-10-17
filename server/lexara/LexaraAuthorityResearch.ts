@@ -48,6 +48,10 @@ export interface LexaraAuthorityResearch {
 export interface LexaraAuthorityResearchContext {
   /** Legal answers require retrieved authority text, not index snippets. */
   requirePrimaryText?: boolean;
+  /** Fast, official-text-only first attempt for straightforward statute requests. */
+  directStatuteLookup?: boolean;
+  /** Only the actual user request can opt in; synthesized legal follow-ups stay comprehensive. */
+  allowDirectStatuteLookup?: boolean;
   /** A legal-only Claude web-search attempt after native evidence was weak. */
   forceClaudeLegalWebFallback?: boolean;
   /** Reuse already downloaded law text within the SAME user turn. */
@@ -133,6 +137,12 @@ function legislativePublisherFor(jurisdiction?: string): string | undefined {
   const normalized = String(jurisdiction || '').toLowerCase();
   return Object.entries(LEGISLATIVE_PUBLISHERS)
     .find(([state]) => new RegExp('\\b' + state + '\\b', 'i').test(normalized))?.[1];
+}
+
+/** A known official code publisher makes a general court-directory fetch unnecessary. */
+export function hasLexaraDirectStatutePublisher(jurisdiction?: string): boolean {
+  if (/\bfederal\b|(?:\+|\/)/i.test(jurisdiction || '')) return false;
+  return Boolean(legislativePublisherFor(jurisdiction));
 }
 
 function officialLawSourcePriority(source: LexaraAuthoritySource, context: LexaraAuthorityResearchContext): number {
@@ -338,7 +348,7 @@ async function discoverAuthoritySources(
   // discovery before the official court and agency sources are searched.
   const formObjective = context.standaloneQuery || query.match(/Question(?:\/facts)?:\s*([\s\S]*)/i)?.[1] || query;
   const formLookup = isOfficialFormLookup(formObjective);
-  const primaryTextLookup = !formLookup && /\b(?:statutes?|statutory|code\s+(?:section|chapter|§?\s*\d[\dA-Z.]*)|official\s+(?:source|link))\b/i.test(formObjective);
+  const primaryTextLookup = context.directStatuteLookup === true || (!formLookup && /\b(?:statutes?|statutory|code\s+(?:section|chapter|§?\s*\d[\dA-Z.]*)|official\s+(?:source|link))\b/i.test(formObjective));
   const courtPlan = context.courtRecordPlan;
   const recordLookup = courtPlan ? isLexaraCourtRecordLookup(courtPlan) : false;
   const meshOptions:LegalMeshSearchOptions={
@@ -431,7 +441,7 @@ async function discoverAuthoritySources(
       add({ title: `Iowa Code section ${section}`, url: `https://www.legis.iowa.gov/docs/code/${section.toUpperCase()}.pdf`, provider: 'official-statute-directory' });
       const retrieved = await enrichAuthoritySourcesWithLexaraRetrieval(sources, signal, false, false, false, context.requirePrimaryText, context.previouslyRetrievedUrls);
       sources.splice(0, sources.length, ...retrieved);
-      if (!context.requirePrimaryText && !/\b(?:case\s+law|precedent|interpret\w*|holdings?|compare|constitutional|strategy)\b/i.test(formObjective)
+      if ((!context.requirePrimaryText || context.directStatuteLookup) && !/\b(?:case\s+law|precedent|interpret\w*|holdings?|compare|constitutional|strategy)\b/i.test(formObjective)
         && sources.some(source => source.provider === 'official-statute-directory' && source.evidenceLevel === 'document')) return sources;
       if (signal?.aborted) return sources;
     }
