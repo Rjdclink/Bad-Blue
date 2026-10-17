@@ -755,6 +755,7 @@ httpServer = createServer(app);
     if (process.env.ISB_EMBEDDED_DISABLED !== '1') {
       const { createEmbeddedISB } = await import('../isb/embedded.cjs');
       const isb = createEmbeddedISB({
+        cryptoProvider: await import('node:crypto'),
         onHeartbeat: (status: {mode:string; observed:number; dropped:number; softSignals:number}) => {
           console.log('[ISB] ' + JSON.stringify({
             mode: status.mode, observed: status.observed,
