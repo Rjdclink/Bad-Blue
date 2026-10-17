@@ -12,7 +12,8 @@ export function isLexaraOfficialFormDeliveryRequest(text: string): boolean {
   if(!request || !COURT_FORM_NOUN.test(request)) return false;
   if(/\b(?:what\s+is|what\s+are|explain|define|tell\s+me\s+about|how\s+(?:do|can)\s+i\s+(?:fill|complete))\b/i.test(request)) return false;
   if(/\b(?:do\s+not|don't|dont|never)\s+(?:get|find|give|provide|download|retrieve|grab|show|open)\b/i.test(request)) return false;
-  return DELIVERY_VERB.test(request) && (DELIVERY_PHRASE.test(request) || /^\s*(?:get|grab|find|show|provide|give|download|retrieve|fetch|locate|open|send|pull\s+up)\b/i.test(request));
+  return (DELIVERY_VERB.test(request) || /\bi\s+(?:need|want|would\s+like)\s+(?:a|an|the|my|this|that|a\s+copy\s+of)?\s*[^?]{0,140}\b(?:forms?|application|filing\s+packet)\b/i.test(request))
+    && (DELIVERY_PHRASE.test(request) || /^\s*(?:get|grab|find|show|provide|give|download|retrieve|fetch|locate|open|send|pull\s+up)\b/i.test(request));
 }
 
 export function lexaraRequestedOfficialFormTitle(text: string): string {
