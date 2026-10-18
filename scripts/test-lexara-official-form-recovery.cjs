@@ -31,15 +31,16 @@ function reply(){
     read(){return {status,body}}};
 }
 async function run({facts='USER: Please find the Iowa child support modification form.',
+  allowUnverifiedDraft=false,
   documentType='Custom Document', formSourceUrls=[],formChoices=[],nativeSources=[],claudeSources=[],failUrls=[]}={}){
-  let nativeCalls=0,claudeCalls=0;
+  let nativeCalls=0,claudeCalls=0,draftCalls=0;
   const inspected=[];
   const routes=new Map();
   const module=load('server/routes/consultation.routes.ts',{
     '../auth':{isAuthenticated(){}},
     '../errorHandler':{asyncHandler:fn=>fn},
     '../legalAI':{},
-    '../aiProvider':{generateLegalAnalysis:async()=>''},
+    '../aiProvider':{generateLegalAnalysis:async()=>{draftCalls++;return '';}},
     '../lexara/LexaraAuthorityResearch':{
       researchLegalAuthority:async()=>{nativeCalls++;return {
         searchedAt:'2026-10-17',sources:nativeSources,
@@ -84,12 +85,24 @@ async function run({facts='USER: Please find the Iowa child support modification
   });
   const response=reply();
   await routes.get('/api/lexara/documents/generate')({body:{
-    state:'Iowa',documentType,facts,formSourceUrls,formChoices,
+    state:'Iowa',documentType,facts,formSourceUrls,formChoices,allowUnverifiedDraft,
   }},response);
-  return {...response.read(),nativeCalls,claudeCalls,inspected};
+  return {...response.read(),nativeCalls,claudeCalls,draftCalls,inspected};
 }
 (async()=>{
-  let response=await run({formSourceUrls:[courtUrl]});
+  let response=await run({facts:'USER: Please draft a petition for an Iowa civil matter.',
+    documentType:'Petition'});
+  assert.equal(response.status,422);
+  assert.equal(response.body.offerCustomDraft,true,'unverified filing should offer a draft, not generate one');
+  assert.equal(response.draftCalls,0,'no drafting until user opts in');
+  console.log('PASS unverified court filing requires explicit draft consent');
+
+  response=await run({facts:'USER: Please draft a petition for an Iowa civil matter.',
+    documentType:'Petition',allowUnverifiedDraft:true});
+  assert(response.draftCalls>0,'consent should enable a clearly labeled draft only after verification fails');
+  console.log('PASS explicit user consent unlocks review-only drafting');
+
+  response=await run({formSourceUrls:[courtUrl]});
   assert.equal(response.status,409);
   assert.equal(response.body.officialForm.url,courtUrl);
   assert.equal(response.nativeCalls,0,'previous verified original bypasses redundant search');
@@ -120,6 +133,11 @@ async function run({facts='USER: Please find the Iowa child support modification
   assert.equal(response.claudeCalls,1);
   assert.equal(response.body.officialForm.url,courtUrl);
   console.log('PASS Claude source discovery activates when primary engines lack a usable form');
+
+  response=await run({nativeSources:[nativeSource],claudeSources:[],failUrls:[courtUrl]});
+  assert.equal(response.status,422,'a dead court PDF cannot be presented as retrieved');
+  assert.equal(response.body.offerCustomDraft,true);
+  console.log('PASS undownloadable form never masquerades as a verified original');
 
   response=await run({nativeSources:[nativeSource],
     claudeSources:[fallbackSource],failUrls:[courtUrl]});
