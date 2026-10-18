@@ -547,6 +547,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
     title: string; facts: string; state: string; templateMode: boolean; confirmed: boolean;
     followUpQuestion?: string; missingFields?: string[]; requiredFields?: string[];
     packetItem?: boolean; officialFormDelivery?: boolean; autoRetrieve?: boolean;
+    allowUnverifiedDraft?: boolean;
     officialForm?: Record<string, unknown>;
     remainingOfficialForms?: Array<Record<string, unknown>>;
     formChoices?: Array<{title:string;url:string;requiredForms?:Array<{title:string;url:string}>}>;
@@ -1159,6 +1160,22 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
       appendMessage('user', message);
       setUserInput('');
       const currentField = pendingDocument.missingFields?.[0];
+      if (currentField === 'customDraftConsent') {
+        const agreed = /^(?:yes|yeah|yep|sure|please do|go ahead|okay|ok)\b/i.test(message.trim());
+        const declined = /^(?:no|nope|not now|do not|don't)\b/i.test(message.trim());
+        if (!agreed && !declined) {
+          appendMessage('lexara', 'Would you like a custom draft for review instead? Please answer yes or no.');
+          return;
+        }
+        setPendingDocument(previous => agreed && previous ? {
+          ...previous, allowUnverifiedDraft: true, missingFields: [],
+          requiredFields: [], followUpQuestion: undefined, autoRetrieve: false,
+        } : null);
+        appendMessage('lexara', agreed
+          ? 'I can prepare a clearly labeled review draft. You can request its preview or download.'
+          : 'I will not create a substitute for the unverified official form.');
+        return;
+      }
       const skip = /^(?:skip|leave (?:it|this|that)(?: field)? blank|not applicable|n\/?a)$/i.test(message.trim());
       const isRequired = Boolean(currentField && pendingDocument.requiredFields?.includes(currentField));
       if (currentField && skip && isRequired) {
@@ -2011,6 +2028,7 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
             packetItemTitle: pendingDocument.packetItem ? pendingDocument.title : undefined,
             formChoices: pendingDocument.formChoices,
             formSourceUrls: pendingDocument.formSourceUrls,
+            allowUnverifiedDraft: pendingDocument.allowUnverifiedDraft === true,
             templateMode: pendingDocument.templateMode,
             instructions: pendingDocument.templateMode
               ? 'Retrieve the unaltered original official form.'
@@ -2033,6 +2051,17 @@ export default function LexaraConversation({ lawTypeId, lawTypeName }: LexaraCon
         const question = String(data?.question || 'Which procedure fits your situation?');
         appendMessage('lexara',question);
         void speakLexara(question,generationRef.current).catch(()=>undefined);
+        return;
+      }
+      if (generatedStatus === 422 && data?.offerCustomDraft === true) {
+        setPendingDocument(previous => previous ? {
+          ...previous, missingFields: ['customDraftConsent'],
+          requiredFields: ['customDraftConsent'], followUpQuestion: undefined,
+          autoRetrieve: false,
+        } : previous);
+        const question = String(data.question || 'Would you like a custom draft for review instead?');
+        appendMessage('lexara', question);
+        void speakLexara(question, generationRef.current).catch(() => undefined);
         return;
       }
       if (generatedStatus === 422 && (data?.needsCourtJurisdiction === true || Array.isArray(data?.missingFields))) {
