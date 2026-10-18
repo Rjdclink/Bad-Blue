@@ -57,8 +57,8 @@ export function resolveOfficialLegalForm(research: LexaraAuthorityResearch | nul
   // for "Modification of" the same obligation. Match the instrument's
   // meaning without requiring the user's conversational words in its title.
   const comparable=(value:string)=>String(value||'').toLowerCase()
-    .replace(/\\b(?:modification|modifying|modified)\\b/g,'modify')
-    .replace(/\\b(?:petitions?)\\b/g,'petition');
+    .replace(/\b(?:modification|modifying|modified)\b/g,'modify')
+    .replace(/\b(?:petitions?)\b/g,'petition');
   const documentTokens=comparable(documentType).split(/[^a-z0-9]+/)
     .filter(token=>token.length>=4
       && !['form','legal','document','official','requested','please','county','obligation'].includes(token));
@@ -210,10 +210,11 @@ export function requiredOfficialFormCompanions(
   if(!issuer) return [];
   const mentions=new Set<string>();
   const instructions=String(issuer.excerpt||'').split(/[.!?\n]+/);
-  for(const sentence of instructions) {
-    if(!/\b(?:must|shall|required|have\s+to)\b/i.test(sentence)
-      || !/\b(?:file|attach|submit|include|provide|complete|accompany)\b/i.test(sentence)
-      || /\b(?:if|unless|when|where applicable|as necessary|if required)\b/i.test(sentence)) continue;
+  const requiredSentences=instructions.filter(sentence=>
+    /\b(?:must|shall|required|have\s+to)\b/i.test(sentence)
+    && /\b(?:file|attach|submit|include|provide|complete|accompany)\b/i.test(sentence)
+    && !/\b(?:if|unless|when|where applicable|as necessary|if required)\b/i.test(sentence));
+  for(const sentence of requiredSentences) {
     for(const match of sentence.matchAll(/\bform\s+([0-9]{1,4}[a-z]?)\b/gi)) mentions.add(match[1].toLowerCase());
   }
   const result:OfficialLegalForm[]=[];
@@ -221,7 +222,12 @@ export function requiredOfficialFormCompanions(
   for(const source of research.sources) {
     const label=String(source.title||'');
     const number=label.match(/\bform\s+([0-9]{1,4}[a-z]?)\b/i)?.[1]?.toLowerCase();
-    if(!number || !mentions.has(number) || seen.has(source.url)) continue;
+    // Publishers also prescribe documents by NAME rather than form number.
+    // Require an exact title in an unconditional official instruction.
+    const namedTitle=label.replace(/\bform\s+[0-9]{1,4}[a-z]?\b/gi,'').trim();
+    const requiredByName=namedTitle.length>=8 && requiredSentences.some(sentence=>
+      sentence.toLowerCase().includes(namedTitle.toLowerCase()));
+    if(!(number && mentions.has(number)) && !requiredByName || seen.has(source.url)) continue;
     const form=resolveOfficialLegalForm({...research,sources:[source]},label,number,issuingDomains);
     if(!form.verifiedOfficial || !form.url || /\b(?:instructions?|guide|checklist)\b/i.test(label)) continue;
     seen.add(form.url);

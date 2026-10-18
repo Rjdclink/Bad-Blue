@@ -173,14 +173,17 @@ const workFor = ms => signal => new Promise((resolve, reject) => {
     const { stats } = await capture(() => d.ddgsBackend('fixture', 'yahoo', 500));
     assert.equal(stats.failed, 1); assert.equal(stats.empty, 0); assert.equal(stats.providers[0].errors['invalid-response'], 1);
   });
-  await test('DDGS retries one parsed-empty HTTP 500 and retains the recovered result', async () => {
+  await test('DDGS parsed-empty HTTP 500 does not double an unsuccessful search', async () => {
     let requests = 0;
-    global.fetch = async () => ++requests === 1
-      ? json({ detail: 'Search failed: No results found.' }, 500)
-      : json({ results: [{ href: 'https://example.test/recovered', title: 'Recovered' }] });
+    global.fetch = async () => {
+      requests++;
+      return json({ detail: 'Search failed: No results found.' }, 500);
+    };
     const { result, stats } = await capture(() => d.ddgsBackend('fixture', 'yahoo', 500));
-    assert.equal(requests, 2); assert.equal(result[0].url, 'https://example.test/recovered');
-    assert.equal(stats.ok, 1); assert.equal(stats.failed, 0);
+    assert.equal(requests, 1);
+    assert.equal(result.length, 0);
+    assert.equal(stats.empty, 1);
+    assert.equal(stats.failed, 0);
   });
   await test('DDGS does not retry unrelated HTTP 500 errors', async () => {
     let requests = 0;
@@ -303,22 +306,38 @@ const workFor = ms => signal => new Promise((resolve, reject) => {
     const { stats } = await capture(() => d.serpApi('fixture', []));
     assert.equal(stats.failed, 1); assert.equal(stats.empty, 0);
   });
-  await test('disabled OpenSERP engine is skipped rather than counted as healthy empty', async () => {
-    let requests = 0;
-    global.fetch = async () => { requests++; return json({ results: [], meta: { engines_failed: ['baidu'], engine_errors: [{ engine: 'baidu', error: 'CAPTCHA DO_NOT_LOG' }] } }); };
-    const { stats } = await capture(async () => { await d.openserp('fixture'); await d.openserp('fixture'); });
-    assert.equal(requests, 1); assert.equal(stats.failed, 1); assert.equal(stats.skipped, 1); assert.equal(stats.empty, 0);
+  await test('a disabled OpenSERP upstream stays excluded even after fallback', async () => {
+    const previous = process.env.LEXARA_OPENSERP_ENGINES;
+    process.env.LEXARA_OPENSERP_ENGINES='baidu'; // explicitly exercise a blocked non-default engine
+    try {
+      let requests = 0;
+      global.fetch = async () => { requests++; return json({ results: [], meta: { engines_failed: ['baidu'], engine_errors: [{ engine: 'baidu', error: 'CAPTCHA DO_NOT_LOG' }] } }); };
+      const { stats } = await capture(async () => { await d.openserp('fixture'); await d.openserp('fixture'); });
+      assert.equal(requests, 2,'one Baidu request plus one bounded alternative; no second Baidu request');
+      assert.equal(stats.failed, 1); assert.equal(stats.skipped, 1); assert.equal(stats.empty, 0);
+    } finally {
+      if(previous===undefined) delete process.env.LEXARA_OPENSERP_ENGINES;
+      else process.env.LEXARA_OPENSERP_ENGINES=previous;
+    }
   });
   await test('SerpAPI documented successful empty result remains empty', async () => {
     global.fetch = async () => json({ error: 'DO_NOT_LOG', search_metadata: { status: 'Success' }, search_information: { organic_results_state: 'Fully empty' } });
     const { stats } = await capture(() => d.serpApi('fixture', []));
     assert.equal(stats.failed, 0); assert.equal(stats.empty, 1);
   });
-  await test('queued requests recheck engine exclusions before dispatching HTTP', async () => {
-    let requests = 0;
-    global.fetch = async () => { requests++; await delay(10); return json({ results: [], meta: { engines_failed: ['baidu'], engine_errors: [{ engine: 'baidu', error: 'CAPTCHA' }] } }); };
-    const { stats } = await capture(() => Promise.all([d.openserp('fixture'), d.openserp('fixture'), d.openserp('fixture')]));
-    assert.equal(requests, 2); assert.equal(stats.failed, 2); assert.equal(stats.skipped, 1);
+  await test('queued OpenSERP calls exclude blocked engines without repeat dispatch', async () => {
+    const previous = process.env.LEXARA_OPENSERP_ENGINES;
+    process.env.LEXARA_OPENSERP_ENGINES='baidu';
+    try {
+      let requests = 0;
+      global.fetch = async () => { requests++; await delay(10); return json({ results: [], meta: { engines_failed: ['baidu'], engine_errors: [{ engine: 'baidu', error: 'CAPTCHA' }] } }); };
+      const { stats } = await capture(() => Promise.all([d.openserp('fixture'), d.openserp('fixture'), d.openserp('fixture')]));
+      assert.equal(requests, 4,'two initial probes and at most one alternative search each');
+      assert.equal(stats.failed, 2); assert.equal(stats.skipped, 1);
+    } finally {
+      if(previous===undefined) delete process.env.LEXARA_OPENSERP_ENGINES;
+      else process.env.LEXARA_OPENSERP_ENGINES=previous;
+    }
   });
   assert(!JSON.stringify(logs).includes('DO_NOT_LOG'));
   saved.info(`${passed} provider runtime checks passed; no external requests or personal data used`);

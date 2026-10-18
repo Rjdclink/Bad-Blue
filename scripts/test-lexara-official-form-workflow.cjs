@@ -49,6 +49,17 @@ const sources = { searchedAt: '2026-10-17', sources: [
 const selected = resolver.resolveOfficialLegalForm(sources, 'Child Support Modification Application Form', undefined, ['iowacourts.gov']);
 assert.match(selected.url, /iowacourts/);
 assert.equal(selected.verifiedOfficial, true);
+const synonymSource = { searchedAt: '2026-10-17', sources: [
+  source('www.iowacourts.gov','Application for Child Support Only Form 399',
+    'Court-issued alternative application for enforcement'),
+  source('www.iowacourts.gov','Application to Modify Child Support Only Form 301',
+    'Court-issued petition for child support only'),
+] };
+const synonymSelected=resolver.resolveOfficialLegalForm(
+  synonymSource,'Modification of Child Support Only',undefined,['iowacourts.gov']);
+assert.equal(synonymSelected.verifiedOfficial,true,'modification and modify must match');
+assert.match(synonymSelected.title,/Modify Child Support Only Form 301/,'the modify form must outrank the unrelated enforcement form');
+console.log('PASS modification synonyms select the original court form');
 const incorrectCourt = resolver.resolveOfficialLegalForm(sources, 'Child Support Modification Application Form', undefined, ['unknowncourt.gov']);
 assert.equal(incorrectCourt.verifiedOfficial, false);
 const retired = resolver.resolveOfficialLegalForm({ searchedAt: '2026-10-17', sources: [
@@ -71,6 +82,23 @@ for(const question of [
   'What does custody mean?',
 ]) assert.equal(request.isLexaraOfficialFormDeliveryRequest(question),false,question);
 
+const namedPacket = { searchedAt:'2026-10-17', sources:[
+  {kind:'primary',title:'Petition to Modify Child Support Form 301',
+    url:'https://www.iowacourts.gov/forms/301.pdf',
+    excerpt:'To file the petition, you must attach the Financial Affidavit. Certificate of Service may be filed separately.'},
+  {kind:'primary',title:'Financial Affidavit',
+    url:'https://www.iowacourts.gov/forms/financial-affidavit.pdf',
+    excerpt:'Official financial affidavit'},
+  {kind:'primary',title:'Certificate of Service',
+    url:'https://www.iowacourts.gov/forms/certificate-of-service.pdf',
+    excerpt:'Optional certificate of service'},
+]};
+const namedMain=resolver.resolveOfficialLegalForm({...namedPacket,sources:[namedPacket.sources[0]]},
+  'Petition to Modify Child Support Form 301',undefined,['iowacourts.gov']);
+const namedRequired=resolver.requiredOfficialFormCompanions(namedMain,namedPacket,['iowacourts.gov']);
+assert.deepEqual(namedRequired.map(form=>form.title),['Financial Affidavit'],
+  'expressly required named companions belong in packets without needing form numbers');
+console.log('PASS source instructions identify required named packet companions');
 const overlapping = { searchedAt:'2026-10-17', sources:[
   source('www.iowacourts.gov','Application to Modify Child Support Only, Form 301'),
   source('hhs.iowa.gov','Request for Review and Modification of Child Support'),
@@ -97,6 +125,10 @@ const spectraTarget=new Function(gateScript+'\nreturn spectraTargetFromPrompt;')
 assert.equal(spectraTarget('I need you to find the modification of child support obligation, the official form from Clay County, Iowa.'),null);
 assert.equal(spectraTarget('I need to change my child support order.'),null);
 assert.equal(spectraTarget('Find my friend'), 'my friend');
+assert(clientSource.includes("if (currentField === 'customDraftConsent')"),
+  'client must require user consent before preparing substitute drafts');
+assert(clientSource.includes('allowUnverifiedDraft: pendingDocument.allowUnverifiedDraft === true'),
+  'server must receive the confirmed choice');
 assert(clientSource.includes('data?.needsFormClarification === true'));
 assert(clientSource.includes('(!pendingDocument.officialFormDelivery || !!officialFormPreview)'));
 console.log('PASS: legal-purpose inference, competing court/agency form clarification, source revalidation, and no Spectra interference');

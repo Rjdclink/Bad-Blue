@@ -18,7 +18,11 @@ globalThis.__lexaraProviderlessTest = { scenario: null };
 const mocks = {
   './RecordReliefWorkflow': `export const recordReliefTopic=()=>false,generateRecordReliefResponse=async()=>null;`,
   './LexaraCourtRecords': `export const planLexaraCourtRecords=()=>undefined, formatLexaraCourtRecordPlan=()=>'';`,
-  './LexaraSemanticIntentInterpreter': `export const resolveLexaraResearchDecisionSemantic=async()=>null;`,
+  './LexaraSemanticIntentInterpreter': `export const resolveLexaraResearchDecisionSemantic=async()=>({
+    intent:'factual',needed:true,subject:'Jane Avery',requestedFact:'criminal-arrest',
+    objective:'Jane Avery arrest record',objectiveKind:'external-fact',
+    sourceCategories:['criminal'],standaloneQuery:'Jane Avery arrest record',
+    reason:'external-fact-question'});`,
   './LexaraJurisdictionResolver': `export const hasExplicitLocationCue=()=>false; export const resolveUSJurisdiction=async(_text,state)=>state?{display:state,state}:null;`,
   './LexaraJurisdictionAuthority': `export const resolveJurisdictionAuthorityProfile=async()=>null,formatJurisdictionAuthorityForSystem=()=>'';`,
   './LexaraCitationVerifier': `export const verifyLegalCitationsInText=async()=>[],formatCitationVerificationForCorrection=()=>'';`,
@@ -50,6 +54,7 @@ const mocks = {
   './LexaraAuthorityResearch': `
     export async function researchLegalAuthority(){return null;}
     export function formatAuthorityResearchForSystem(){return '';}
+    export function hasLexaraDirectStatutePublisher(){return false;}
   `,
   './LexaraBackgroundInvestigation': `
     export async function investigateLexaraBackgroundQuestion(){return globalThis.__lexaraProviderlessTest.scenario.investigation;}
@@ -62,7 +67,7 @@ const mocks = {
   './LexaraResearchIntentRouter': `
     export function decideLexaraResearchNeed(){return {needed:false,reason:'none',objective:'',objectiveKind:'none'};}
     export function isLexaraLegalAuthorityIntent(){return false;}
-    export const isLexaraGenericLegalIntake=()=>false, isLexaraRepeatRequest=()=>false, isLexaraDocumentIntakeQuestion=()=>false, isLexaraOfficialFormQuestion=()=>false;
+    export const isLexaraConversationControl=()=>false, isLexaraGenericLegalIntake=()=>false, isLexaraRepeatRequest=()=>false, isLexaraDocumentIntakeQuestion=()=>false, isLexaraOfficialFormQuestion=()=>false;
   `,
   './LexaraSequenceRouter': `
     export function planLexaraSequence(){

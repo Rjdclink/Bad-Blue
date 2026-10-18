@@ -4,8 +4,19 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const ts = require('typescript');
+const subjectExports = {};
+vm.runInNewContext(ts.transpileModule(
+  fs.readFileSync(path.join(__dirname, '../server/lexara/LexaraBackgroundSubject.ts'), 'utf8'),
+  { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText,
+  { exports: subjectExports });
 const exportsFixture = {};
-vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(__dirname, '../server/lexara/LexaraResearchIntentRouter.ts'), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText, { exports: exportsFixture });
+vm.runInNewContext(ts.transpileModule(
+  fs.readFileSync(path.join(__dirname, '../server/lexara/LexaraResearchIntentRouter.ts'), 'utf8'),
+  { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText,
+  { exports: exportsFixture, require: name => {
+    assert.equal(name, './LexaraBackgroundSubject');
+    return subjectExports;
+  } });
 for (const prompt of ['How do I file for divorce?', 'What forms do I need for custody?', 'Can I evict a tenant?', 'I need to file for bankruptcy.']) {
   test('procedural legal intent: ' + prompt, () => {
     assert.equal(exportsFixture.decideLexaraResearchNeed(prompt).objectiveKind, 'legal-authority');

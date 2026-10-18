@@ -384,8 +384,12 @@ export function setupConsultationRoutes(app: Express): void {
     if (reliefDocument && !reliefCaseState) return res.status(422).json({ error: 'The criminal case jurisdiction must be established.', missingFields: ['caseStateAndCourtSystem'], question: 'Which state was the case in, and was it in state or federal court?' });
     const localCoverSheetRequested = /\bcover\s+sheet\b/i.test(latestUserRequest)
       && /\b(?:case|court|local|filing)\b/i.test(latestUserRequest);
+    // A court filing must investigate prescribed forms even if the user does
+    // not know the instrument's official title or form number.
+    const courtFiling = /\b(?:motion|complaint|answer|counterclaim|petition|appeal|brief|summons|subpoena|proposed order)\b/i.test(documentLabel);
     const officialFormRequested = actualFormRequested || (/\bofficial\b/i.test(latestUserRequest) && /\bform\b/i.test(latestUserRequest))
-      || localCoverSheetRequested;
+      || localCoverSheetRequested
+      || (courtFiling && /\b(?:court|file|filing|petition|complaint|motion|appeal|summons|subpoena|modify|support)\b/i.test(latestUserRequest));
     // The generic artifact type must not erase the named local instrument.
     const formDocumentLabel = localCoverSheetRequested
       ? [/\b(?:family|divorce|dissolution)\b/i.test(latestUserRequest) ? 'Family'
@@ -654,8 +658,14 @@ export function setupConsultationRoutes(app: Express): void {
         question:'What do you need the court form to accomplish?',
       });
     }
-    const officialForm = candidates[0]?.form
+    let officialForm = candidates[0]?.form
       || resolveOfficialLegalForm(formResearch, formDocumentLabel, requestedFormNumber, issuingDomains);
+    // An issuing-court URL is only a lead until the actual file downloads.
+    // All nominated form files have already been inspected in the discovery
+    // branch; do not re-promote an inaccessible lead from metadata.
+    if (officialFormRequested && !reliefDocument && !candidates.length) {
+      officialForm = { ...officialForm, verifiedOfficial: false };
+    }
     if (requestedFormNumber) console.info('[LEXARA OfficialForm]', {
       requestedFormNumber,
       documentType: documentLabel,
@@ -676,7 +686,6 @@ export function setupConsultationRoutes(app: Express): void {
     // A state alone does not identify the local filing court. Never hand out a
     // potentially wrong mandatory form or custom-drafted substitute when the
     // exact court/venue is still needed to determine its local requirements.
-    const courtFiling = /\b(?:motion|complaint|answer|counterclaim|petition|appeal|brief|summons|subpoena|proposed order)\b/i.test(documentLabel);
     if (!templateMode && courtFiling && documentJurisdictionProfile?.needsCourtClarification === true) {
       return res.status(422).json({
         error: 'The filing court or venue must be established before selecting a local form.',
@@ -687,8 +696,12 @@ export function setupConsultationRoutes(app: Express): void {
       });
     }
 
-    if ((officialFormRequested || officialForm.requirement === 'mandatory') && !officialForm.verifiedOfficial) {
-      return res.status(422).json({ error: 'The requested official form could not be verified from current court sources. No custom substitute was generated.' });
+    if (officialForm.requirement === 'mandatory' && !officialForm.verifiedOfficial) {
+      return res.status(422).json({
+        error: 'A mandatory official form applies, but the original could not be verified or downloaded. No substitute was generated.',
+        missingFields: ['verifiedOfficialForm'],
+        question: 'Do you have the court-issued form or a link to the issuing court?',
+      });
     }
     if (officialForm.requirement === 'mandatory' || ((officialFormRequested || reliefDocument) && officialForm.verifiedOfficial)) {
       const officialForms=[officialForm];
@@ -712,6 +725,18 @@ export function setupConsultationRoutes(app: Express): void {
         officialForm,officialForms,unavailableRequiredForms,
         officialFormRequired: true,
         facts,
+      });
+    }
+    // Search failure is not evidence that a jurisdiction accepts a custom
+    // pleading. Offer an explicitly labeled review draft only after consent.
+    const draftPermissionNeeded = (officialFormRequested || courtFiling)
+      && (officialForm.requirement === 'unverified'
+        || (officialFormRequested && !officialForm.verifiedOfficial));
+    if (draftPermissionNeeded && req.body?.allowUnverifiedDraft !== true) {
+      return res.status(422).json({
+        error: 'The court filing requirements or original form could not be verified.',
+        offerCustomDraft: true, missingFields: ['customDraftConsent'],
+        question: 'I could not verify the required official form. Would you like me to prepare a clearly labeled draft for review instead?',
       });
     }
     if (reliefDocument && !['custom_allowed','optional'].includes(officialForm.requirement)) {
