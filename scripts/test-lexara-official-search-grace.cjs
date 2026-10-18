@@ -103,9 +103,10 @@ vm.runInNewContext('(function(require,module,exports){'+compiled+'\n})',
       undefined,{firstUseful:true,strictLegalSource:true,queryAlreadyPlanned:true,
         jurisdiction:'Iowa',allowPaidSearch:false});
   }
-  assert.equal(ddgsTimeouts.length,2,'both DDGS attempts should reach their bounded deadlines');
-  assert(ddgsTimeouts[0]>=2000 && ddgsTimeouts[0]<2600,'first attempt retains normal search coverage');
-  assert(ddgsTimeouts[1]<1900 && ddgsTimeouts[1]>=1200,
-    'later failure recovery should wait less time while leaving normal DDGS search unchanged');
+  assert.equal(ddgsTimeouts.length,6,'three independent DDGS backends are checked on each of two searches');
+  assert(ddgsTimeouts.slice(0,3).every(ms=>ms>=2000&&ms<2600),
+    'each initially healthy DDGS backend retains normal search coverage');
+  assert(ddgsTimeouts.slice(3).every(ms=>ms>=1200&&ms<1900),
+    'each previously failed backend receives a shorter recovery deadline');
   console.log('PASS: one failed DDGS attempt shortens only the next recovery deadline');
 })().catch(error=>{console.error(error);process.exitCode=1;});
