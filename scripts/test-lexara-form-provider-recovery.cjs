@@ -76,6 +76,38 @@ const json=(body,status=200)=>new Response(JSON.stringify(body),{
   assert(fallback.includes('mojeek'));
   console.log('PASS DDGS alternative remains usable after two engine outages');
 
+  // RED: a parsed-empty upstream response is not permission to retry the same
+  // engine immediately; it should fall through to the other available backend.
+  d.resetFixture();
+  let parsedEmptyYahooCalls=0;
+  global.fetch=async (_url,init)=>{
+    const backend=JSON.parse(init.body).backend;
+    if(backend==='google')return json({detail:'Upstream blocked'},500);
+    if(backend==='yahoo'){
+      parsedEmptyYahooCalls++;
+      return json({detail:'Search failed: No results found.'},500);
+    }
+    if(backend==='mojeek')return json({results:[{href:'https://www.iowacourts.gov/docs/fallback.pdf'}]});
+    return json({results:[]});
+  };
+  result=await d.ddgs('Iowa court filing packet',undefined,true);
+  assert.equal(parsedEmptyYahooCalls,1,'do not double an empty backend search');
+  assert(result.some(row=>row.url.endsWith('fallback.pdf')));
+  console.log('PASS parsed-empty DDGS backend is not retried');
+
+  d.resetFixture();
+  const ordinaryEngines=[];
+  global.fetch=async raw=>{
+    const u=new URL(String(raw));
+    ordinaryEngines.push(u.searchParams.get('engines'));
+    return json({results:[{url:'https://courts.gov/verified.pdf'}],meta:{engines_failed:[]}});
+  };
+  result=await d.openserp('ordinary court procedure',undefined,false);
+  assert(ordinaryEngines.length===1);
+  assert(!ordinaryEngines[0].split(',').includes('baidu'),'known-failing Baidu must not be the routine default');
+  assert(result.length===1);
+  console.log('PASS ordinary OpenSERP bypasses known-failing Baidu');
+
   d.resetFixture();
   const opens=[];
   global.fetch=async raw=>{
@@ -124,6 +156,30 @@ const json=(body,status=200)=>new Response(JSON.stringify(body),{
   assert.equal(result.length,0);
   assert.equal(count,2,'only the bounded original and backup attempt are permitted');
   console.log('PASS sustained OpenSerp outage stops without unbounded retries');
+  // RED: one verified court-form search lead should prevent a duplicate
+  // site:.gov broadcast to all of the same independent search providers.
+  d.resetFixture();
+  const officialSearchQueries=[];
+  global.fetch=async(raw,init={})=>{
+    const url=new URL(String(raw));
+    if(url.hostname==='api.duckduckgo.com')return json({AbstractURL:'',RelatedTopics:[]});
+    if(url.port==='18080'){
+      officialSearchQueries.push(url.searchParams.get('q'));
+      return json({results:[{title:'Iowa Child Support Court Form 301',
+        url:'https://www.iowacourts.gov/forms/301.pdf',
+        content:'Iowa child support modification form'}],unresponsive_engines:[]});
+    }
+    if(url.port==='14479')return json({results:[]});
+    if(url.port==='17000')return json({results:[],meta:{engines_failed:[]}});
+    throw Error('Unexpected provider:'+url.hostname);
+  };
+  const officialCandidates=await d.discoverLegalMeshTier3('Iowa child support modification court form',
+    undefined,{officialFormQuery:true,allowPaidSearch:false});
+  assert(officialCandidates.some(candidate=>candidate.url.endsWith('301.pdf')));
+  assert.equal(officialSearchQueries.length,1,
+    'verified official form lead should stop duplicate whole-mesh search');
+  console.log('PASS official discovery avoids unnecessary duplicate multi-engine search');
+
   console.log('LEXARA court form provider recovery verified');
 })().catch(error=>{console.error(error);process.exitCode=1}).finally(()=>{
   global.fetch=oldFetch;
