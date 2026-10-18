@@ -539,6 +539,12 @@ async function openserp(query: string, signal?: AbortSignal, officialFormQuery =
     let needsAlternative=response.status>=500;
     if(response.ok){
       payload=await readDiscoveryJson(response,'openserp');
+      // Retain failures from the first attempted engines before the fallback
+      // replaces the response. Otherwise CAPTCHA/rate-limit exclusions are
+      // silently lost and the bad upstream is queried again next turn.
+      const firstFailures=Array.isArray(payload?.meta?.engine_errors) ? payload.meta.engine_errors : [];
+      for (const failure of firstFailures) if (activeEngines.includes(failure?.engine))
+        recordEngineFailure(String(failure.engine), String(failure.error));
       const initialRows=Array.isArray(payload?.results)?payload.results:payload?.data?.results;
       needsAlternative=Array.isArray(initialRows) && initialRows.length===0
         && (Array.isArray(payload?.meta?.engines_failed) && payload.meta.engines_failed.length>0
