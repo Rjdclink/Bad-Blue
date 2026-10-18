@@ -173,14 +173,17 @@ const workFor = ms => signal => new Promise((resolve, reject) => {
     const { stats } = await capture(() => d.ddgsBackend('fixture', 'yahoo', 500));
     assert.equal(stats.failed, 1); assert.equal(stats.empty, 0); assert.equal(stats.providers[0].errors['invalid-response'], 1);
   });
-  await test('DDGS retries one parsed-empty HTTP 500 and retains the recovered result', async () => {
+  await test('DDGS parsed-empty HTTP 500 does not double an unsuccessful search', async () => {
     let requests = 0;
-    global.fetch = async () => ++requests === 1
-      ? json({ detail: 'Search failed: No results found.' }, 500)
-      : json({ results: [{ href: 'https://example.test/recovered', title: 'Recovered' }] });
+    global.fetch = async () => {
+      requests++;
+      return json({ detail: 'Search failed: No results found.' }, 500);
+    };
     const { result, stats } = await capture(() => d.ddgsBackend('fixture', 'yahoo', 500));
-    assert.equal(requests, 2); assert.equal(result[0].url, 'https://example.test/recovered');
-    assert.equal(stats.ok, 1); assert.equal(stats.failed, 0);
+    assert.equal(requests, 1);
+    assert.equal(result.length, 0);
+    assert.equal(stats.empty, 1);
+    assert.equal(stats.failed, 0);
   });
   await test('DDGS does not retry unrelated HTTP 500 errors', async () => {
     let requests = 0;
