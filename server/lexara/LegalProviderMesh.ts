@@ -461,13 +461,13 @@ async function ddgsBackend(query: string, backend: string, budgetMs: number, sig
       body: JSON.stringify({ query, max_results: 12, safesearch: 'off', backend: activeBackend }),
     };
     let response = await discoveryFetch(fetch, endpoint, init);
-    // DDGS occasionally emits HTTP 500 for a parsed-empty Yahoo page even
-    // though the upstream request succeeded. Permit one bounded recovery probe.
+    // DDGS 9.16.0 maps an empty backend result to HTTP 500. This is not a
+    // transient server crash: retrying the SAME query only doubles traffic.
+    // Treat that one backend as empty and allow the independent alternatives.
     if (response.status === 500) {
       const detail = await boundedProviderError(response).catch(() => '');
-      if (/Search failed:\s*No results found\./i.test(detail) && !requestSignal.aborted) {
-        response = await discoveryFetch(fetch, endpoint, init);
-      } else throw new Error('Discovery HTTP 500');
+      if (/Search failed:\s*No results found\./i.test(detail)) return [];
+      throw new Error('Discovery HTTP 500');
     }
     const payload:any = await readDiscoveryJson(response, ['ddgsBackend', ...activeBackend.split(',')]);
     return discoveryRows(payload).slice(0, 12).flatMap((item:any) => {
@@ -520,11 +520,11 @@ async function openserp(query: string, signal?: AbortSignal, officialFormQuery =
   const base = lexaraOpenserpBase();
   if (!base) return skippedProvider('openserp', 'DISCOVERY_NOT_CONFIGURED');
   const engines = [...new Set((process.env.LEXARA_OPENSERP_ENGINES
-    || (officialFormQuery ? 'google,ecosia' : process.env.LEXARA_EMBEDDED_SEARCH === 'true' ? 'bing,google' : 'baidu'))
+    || (officialFormQuery ? 'google,ecosia' : 'google'))
     .split(',').map(value => value.trim()).filter(value =>
       ['bing', 'google', 'baidu', 'ecosia', 'yandex', 'duckduckgo'].includes(value) && engineAvailable(value)))];
   if (!engines.length) return skippedProvider('openserp');
-  const result = await withTimeout('openserp', officialFormQuery ? 16_000 : process.env.LEXARA_EMBEDDED_SEARCH === 'true' ? 6_500 : 3_000, signal, async requestSignal => {
+  const result = await withTimeout('openserp', officialFormQuery ? 16_000 : 8_000, signal, async requestSignal => {
     const activeEngines = engines.filter(engineAvailable);
     if (!activeEngines.length) throw discoveryError('DISCOVERY_UNAVAILABLE');
     const endpoint = new URL('/mega/search', base.endsWith('/') ? base : base + '/');
@@ -536,8 +536,8 @@ async function openserp(query: string, signal?: AbortSignal, officialFormQuery =
     // A 200 response that reports failed engines and no results is also a
     // failed search, not evidence that no official form exists.
     let payload:any;
-    let needsAlternative=officialFormQuery && response.status>=500;
-    if(officialFormQuery && response.ok){
+    let needsAlternative=response.status>=500;
+    if(response.ok){
       payload=await readDiscoveryJson(response,'openserp');
       const initialRows=Array.isArray(payload?.results)?payload.results:payload?.data?.results;
       needsAlternative=Array.isArray(initialRows) && initialRows.length===0
@@ -546,7 +546,10 @@ async function openserp(query: string, signal?: AbortSignal, officialFormQuery =
     }
     if(needsAlternative && !requestSignal.aborted){
       if(response.body) await response.body.cancel().catch(()=>undefined);
-      const alternatives=['baidu','yandex'].filter(engineAvailable);
+      // Only probe engines that were not already tried. Baidu's persistent
+      // parser failures cannot be repaired by repeating an identical request.
+      const alternatives=(officialFormQuery ? ['bing','yandex'] : ['ecosia','bing'])
+        .filter(engine=>!activeEngines.includes(engine) && engineAvailable(engine));
       if(alternatives.length){
         endpoint.searchParams.set('mode','any');
         endpoint.searchParams.set('engines',alternatives.join(','));
@@ -810,7 +813,7 @@ export async function discoverLegalMeshTier3(
     getLexaraLearnedQueryPatterns(options.categories||[],options.jurisdiction,1),
     new Promise<string[]>(resolve=>setTimeout(()=>resolve([]),75)),
   ]);
-  const variants=options.queryAlreadyPlanned ? [query] : options.officialFormQuery ? [query, `${query} site:.gov`] : buildLexaraSourceQueries({
+  const variants=options.queryAlreadyPlanned ? [query] : options.officialFormQuery ? [query] : buildLexaraSourceQueries({
     query,
     subject:options.subject,
     requestedFact:options.requestedFact,
@@ -829,6 +832,21 @@ export async function discoverLegalMeshTier3(
         ? firstUsefulSearchVariants(uniqueVariants,signal,options.allowPaidSearch !== false,true)
         : firstUsefulSearchVariants(uniqueVariants,signal,options.allowPaidSearch !== false))]
     : await Promise.all(uniqueVariants.map(variant=>freeSearch(variant,signal,false,options.officialFormQuery,options.allowPaidSearch !== false)));
+  if (options.officialFormQuery && !options.queryAlreadyPlanned && !signal?.aborted) {
+    // Broaden only after the first search lacks a plausible court document.
+    const foundCourtFile=groups.flat().some(item=>{
+      try {
+        const host=new URL(item.url).hostname.toLowerCase();
+        return (host.endsWith('.gov') || host.endsWith('.uscourts.gov')
+          || /(?:^|\.)courts?\.[a-z]{2}\.us$/.test(host))
+          && /(?:\.pdf|\.docx|\/download|\/embeddocument)(?:[?#/]|$)/i.test(item.url)
+          && /\b(?:form|petition|motion|application|affidavit|complaint|order)\b/i.test(item.title);
+      } catch { return false; }
+    });
+    if (!foundCourtFile && !/\bsite:\S+/i.test(query)) {
+      groups.push(await freeSearch(query + ' site:.gov',signal,false,true,false));
+    }
+  }
   const learnedSources=await Promise.race([
     getLexaraLearnedSources(options.categories||[],options.jurisdiction,8),
     new Promise<string[]>(resolve=>setTimeout(()=>resolve([]),75)),
