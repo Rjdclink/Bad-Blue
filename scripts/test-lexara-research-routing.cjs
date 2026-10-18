@@ -207,7 +207,7 @@ for (const allowClaudePlanning of [undefined, false]) {
   });
 }
 
-test('Spectra native discovery does not buy query planning and retains supplemental sources', async () => {
+test('Spectra native search uses no paid provider without opt-in, while retaining optional supplemental sources', async () => {
   const h = harness({
     env: { DDGS_URL: 'https://ddgs.fixture.test', SERPAPI_KEY: 'fixture' },
     fetchPayload: url => url.includes('serpapi.com')
@@ -249,8 +249,14 @@ test('Spectra native discovery does not buy query planning and retains supplemen
   assert.equal(webSearchCalls, 0);
   assert.equal(h.calls.queryPlanning.length, 0, 'native-only mode must reach the nested planner');
   assert(result.results.some(item => item.url === urls[0]));
-  assert(result.results.some(item => item.url === urls[1]), 'supplemental source lanes remain available');
-  assert.equal(retrievalCalls, 1, 'discovered sources still reach direct evidence retrieval');
+  assert(!result.results.some(item => item.url === urls[1]),
+    'paid supplemental search must not run without an explicit allowance');
+  assert(!h.calls.http.some(call => call.url.includes('serpapi.com')));
+  assert.equal(retrievalCalls, 1, 'discovered free sources still reach direct evidence retrieval');
+  const allowed=await exports.runDiscoveryPass(plannedQueries,
+    { subject:'Morgan Vale', useClaude:false, allowPaidSearch:true });
+  assert(allowed.results.some(item=>item.url===urls[1]),
+    'explicit paid search permission retains the independent supplemental lane');
 });
 
 test('duplicate discovery URLs retain complementary excerpts and survive empty learned records', async () => {
@@ -429,7 +435,10 @@ test('CAPTCHA engines are excluded and rate-limited engines cool down without st
   const results = await mesh.discoverLegalMeshTier3('second fixture', undefined, { firstUseful: true });
   const requests = h.calls.http.slice(before).filter(x => x.url.includes('searx.fixture'));
   assert(requests.length > 0);
-  assert(requests.every(x => new URL(x.url).searchParams.get('engines') === 'bing'));
+  assert(requests.every(x => {
+    const engines=(new URL(x.url).searchParams.get('engines') || '').split(',');
+    return engines.includes('bing') && !engines.includes('brave') && !engines.includes('google cse');
+  }),'keep available Bing/Yahoo while excluding throttled Google CSE and Brave');
   assert(results.some(x => x.url === urls[0]), 'working-engine evidence survives');
   assert(!h.calls.http.some(x => /engines=.*duckduckgo/.test(x.url)), 'known CAPTCHA engine is never selected');
 });
